@@ -105,14 +105,22 @@ func (t *Transport) AppraiseAttestationQuote(ctx context.Context, req *transport
 	return c.AppraiseAttestationQuote(ctx, req)
 }
 
-// AppraiseAndroidKeyAttestation is not on the QUIC transport yet.
-// slice B: replaced by the QUIC verb of row 1660.
-func (t *Transport) AppraiseAndroidKeyAttestation(_ context.Context, _ *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
-	return nil, ErrNotSupported
+// AppraiseAndroidKeyAttestation appraises an Android key attestation
+// certificate chain and returns the attestation result.
+func (t *Transport) AppraiseAndroidKeyAttestation(ctx context.Context, req *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	c, err := t.appraisals()
+	if err != nil {
+		return nil, err
+	}
+	return c.AppraiseAndroidKeyAttestation(ctx, req)
 }
 
-// AppraiseEKCertificate is not on the QUIC transport yet.
-// slice B: replaced by the QUIC verb of row 1660.
-func (t *Transport) AppraiseEKCertificate(_ context.Context, _ *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
-	return nil, ErrNotSupported
+// AppraiseEKCertificate appraises a TPM endorsement key certificate chain
+// and returns the attestation result.
+func (t *Transport) AppraiseEKCertificate(ctx context.Context, req *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	c, err := t.appraisals()
+	if err != nil {
+		return nil, err
+	}
+	return c.AppraiseEKCertificate(ctx, req)
 }
