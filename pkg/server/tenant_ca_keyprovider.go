@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -56,6 +57,10 @@ const tenantLoginCAIntentID = tenantLoginCAKeyCN + ":intent"
 // tenantLoginCAProvenanceWait bounds how long adoption waits for another
 // node's provisioning pass to record the provenance of a key it just made.
 const tenantLoginCAProvenanceWait = 2 * time.Second
+
+// tenantLoginCATeardownWait bounds how long teardown waits for a generate in
+// flight on a live holder to return before it reports the claim held.
+const tenantLoginCATeardownWait = 2 * time.Second
 
 // tenantLoginCAClaimLease is how long a provisioning claim with no key behind
 // it is honoured before another pass may take it over. A claim marked
@@ -669,6 +674,12 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 	// waits on the token's mutex without a deadline), so no lease bounds
 	// when this pass can still make its key.
 	tenantLoginCAGenerateHook(tenantID)
+	// Teardown may have replaced the claim since (it fences a holder the
+	// operator named, or one whose process ended): re-check it is still
+	// this pass's generating claim, so a fenced pass makes no key.
+	if err := f.checkTenantLoginCAGenerating(ctx, tenantID, generating); err != nil {
+		return err
+	}
 	_, err = scoped.GenerateECDSA(ctx, attrs)
 	// The generate returned, so it makes no key any more: put back a plain
 	// claim, which teardown may replace and a later pass may take over once
@@ -1250,6 +1261,7 @@ func (f *tenantCAKeyFactory) cleanTenantLoginCAMaterial(ctx context.Context, cla
 func (f *tenantCAKeyFactory) tombstoneTenantLoginCAClaim(ctx context.Context, claims storage.Backend, tenantID string) error {
 	key := tenantLoginCAClaimKey(tenantID)
 	removed := []byte(tenantLoginCAClaimRemovedValue)
+	waitUntil := time.Now().Add(tenantLoginCATeardownWait)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -1276,7 +1288,15 @@ func (f *tenantCAKeyFactory) tombstoneTenantLoginCAClaim(ctx context.Context, cl
 			// deletes would outlive teardown: wait for it to return, or for
 			// proof (or the operator's fence) that its holder stopped.
 			if _, heldOwner, _ := parseTenantLoginCAClaim(held); !tenantLoginCAHolderStopped(heldOwner) && !f.fencedHolder(heldOwner) {
-				return fmt.Errorf("%w (claim holder %s)", errTenantLoginCAClaimHeld, heldOwner)
+				if time.Now().After(waitUntil) {
+					return fmt.Errorf("%w (claim holder %s)", errTenantLoginCAClaimHeld, heldOwner)
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(20 * time.Millisecond):
+				}
+				continue
 			}
 		}
 		swapper, ok := claims.(storage.CompareAndSwapper)
@@ -1391,6 +1411,24 @@ var tenantLoginCACertPublishHook = func(string) {}
 // before it generates the key. Tests set it to interleave teardown; it is a
 // no-op otherwise.
 var tenantLoginCAGenerateHook = func(string) {}
+
+// checkTenantLoginCAGenerating fails unless the tenant's claim is still
+// exactly the generating claim this pass put, so a pass whose claim teardown
+// tombstoned or recovery fenced makes no key.
+func (f *tenantCAKeyFactory) checkTenantLoginCAGenerating(ctx context.Context, tenantID string, generating []byte) error {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return err
+	}
+	held, err := claims.Get(ctx, tenantLoginCAClaimKey(tenantID))
+	if err != nil {
+		return fmt.Errorf("tenant login CA key factory: re-check claim of tenant %q: %w", tenantID, err)
+	}
+	if !bytes.Equal(held, generating) {
+		return fmt.Errorf("tenant %q: claim replaced before generate: %w", tenantID, errTenantLoginCARemoved)
+	}
+	return nil
+}
 
 func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, signer crypto.Signer) error {
 	if tenantLoginCACertValid(ctx, scoped, signer.Public()) {

@@ -131,7 +131,12 @@ func TestTenantCAKeyFactory_TeardownBeforeGenerateFencesTheKey(t *testing.T) {
 			close(release)
 			select {
 			case err := <-passA:
-				require.Error(t, err, "a pass overlapping teardown must fail")
+				// Unfenced, the pass may finish before teardown tombstones the
+				// claim (the two then ran one after the other); fenced, it must
+				// fail.
+				if fenced {
+					require.Error(t, err, "a fenced pass must fail")
+				}
 			case <-time.After(30 * time.Second):
 				t.Fatal("pass A did not finish")
 			}
