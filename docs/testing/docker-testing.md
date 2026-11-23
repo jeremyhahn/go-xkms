@@ -119,17 +119,20 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
     registry refused the read (401/403), the registry did not
     answer, or an unexpected reply (quoted).
 - **Same-repo pull request** (`CI_POOL=true`, #2299): `ci-images` runs on the
-  self-hosted `bigdisk-docker` pool. It resolves `<hash>-main` as above; for
-  each image main has not published, the step "Build the CI images on the
-  pool" runs `scripts/ci-registry.sh pool`, which builds it once and pushes
-  `go-xkms-ci-{toolchain,it}:<hash>` to the pool registry named by the
+  self-hosted `bigdisk-docker` pool. It resolves `<hash>-main` as above; when
+  main has not published the toolchain image, the step "Build the CI images
+  on the pool" runs `scripts/ci-registry.sh pool toolchain`, which builds it
+  once and pushes `go-xkms-ci-toolchain:<hash>` to the pool registry named by the
   `CI_IMAGE_REGISTRY` secret (an image already there is not rebuilt). The
   registry is masked first ("Mask the pool registry") and never printed: the
   output is `go-xkms-ci-<family>@sha256:...` with no registry, since Actions
   drops a job output that holds a secret, and each consumer's `use` adds the
   registry back from the secret and pulls by digest with no login. An empty
   reference on a same-repo pull request fails `use`; no consumer builds its
-  own image. Fork pull requests keep the path above.
+  own image. The integration image is not built on the pool: no `ci.yml` job
+  consumes `ci-images`'s `it_ref` (Integration and soak build their own, and
+  `scans.yml` resolves it itself), so an empty `it_ref` on a same-repo pull
+  request passes validation. Fork pull requests keep the path above.
 - **The publish log** shows each step: the login (`==> logged in to ... with
   the release runner's credential`), the lookup (`published already as
   <digest>`, or `has not published ... building and pushing it`), and
@@ -162,7 +165,7 @@ and keeps any image a container uses, a hold included. The gate
 `internal/buildgates/ci_image_digest_test.go` fails the build when a consumer
 stops taking its image from `ci-images`. It also fails when an output of
 `ci-images` stops naming the `publish` step (main), the `pool` step
-(same-repo pull requests) and the `resolve` step (pull requests), when either step stops writing that output, or when the
+(same-repo pull requests; it feeds `toolchain_ref` only) and the `resolve` step (pull requests), when either step stops writing that output, or when the
 Validate step stops checking it. It fails when `ci.yml`'s `CI_REGISTRY_OWNER`
 stops taking the repository variable on the forge, when `scripts/ci-registry.sh`
 writes a namespace itself or a read leaves `CI_REGISTRY_OWNER`'s namespace,
