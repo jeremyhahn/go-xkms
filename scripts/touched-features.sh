@@ -74,11 +74,25 @@ for rev in "$base" "$tip"; do
 done
 
 # Every path of the diff, both sides of a rename or copy.
-if ! status=$(git diff --name-status -M "$base" "$tip"); then
+# -z: NUL-delimited records with paths unquoted (core.quotePath quotes a
+# non-ASCII path otherwise); a rename or copy record holds two paths.
+difftmp=$(mktemp)
+if ! git diff --name-status -z -M "$base" "$tip" >"$difftmp"; then
+	rm -f "$difftmp"
 	echo "$0: git diff $base $tip failed" >&2
 	exit 2
 fi
-files=$(printf '%s\n' "$status" | cut -f2- | tr '\t' '\n' | LC_ALL=C sort -u)
+paths=()
+while IFS= read -r -d '' st; do
+	n=1
+	case "$st" in R* | C*) n=2 ;; esac
+	for ((i = 0; i < n; i++)); do
+		IFS= read -r -d '' p || break
+		paths+=("$p")
+	done
+done <"$difftmp"
+rm -f "$difftmp"
+files=$(printf '%s\n' ${paths[@]+"${paths[@]}"} | LC_ALL=C sort -u)
 
 is_feature() { # is_feature <name>: test/integration/<name> holds _test.go files
 	[ -d "test/integration/$1" ] &&
