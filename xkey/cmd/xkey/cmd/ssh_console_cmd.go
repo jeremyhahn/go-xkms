@@ -53,11 +53,19 @@ func init() {
 	sshConsoleCmd.Flags().String("identity", "", "Local identity to authenticate with: an identity file path or agent:<SHA256-fingerprint> (implies --local)")
 }
 
-func runSSHConsole(cmd *cobra.Command, args []string) error {
-	target := strings.TrimSpace(args[0])
-	if target == "" {
-		return ErrSSHConnectTarget
-	}
+// sshConsoleResolved is the target, key and key source runSSHConsole
+// resolved from its flags and an optional saved profile.
+type sshConsoleResolved struct {
+	host, user                  string
+	port                        int
+	keyName, keyScope, keyOwner string
+	identity                    string
+	local                       bool
+}
+
+// resolveSSHConsole resolves the console flags and the saved profile named
+// by target (if any) into the target, key and key source.
+func resolveSSHConsole(cmd *cobra.Command, target string) sshConsoleResolved {
 	keyName, _ := cmd.Flags().GetString("key")
 	keyScope, _ := cmd.Flags().GetString("key-scope")
 	keyOwner, _ := cmd.Flags().GetString("key-owner")
@@ -109,6 +117,22 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 	if keyName == "" {
 		local = true
 	}
+	return sshConsoleResolved{
+		host: host, user: user, port: port,
+		keyName: keyName, keyScope: keyScope, keyOwner: keyOwner,
+		identity: identity, local: local,
+	}
+}
+
+func runSSHConsole(cmd *cobra.Command, args []string) error {
+	target := strings.TrimSpace(args[0])
+	if target == "" {
+		return ErrSSHConnectTarget
+	}
+	r := resolveSSHConsole(cmd, target)
+	host, user, port := r.host, r.user, r.port
+	keyName, keyScope, keyOwner := r.keyName, r.keyScope, r.keyOwner
+	identity, local := r.identity, r.local
 
 	// Initial terminal size + type.
 	rows, cols := 24, 80
