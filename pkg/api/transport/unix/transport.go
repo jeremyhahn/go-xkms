@@ -125,7 +125,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 				if err != nil {
 					return &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
 				}
-				tlsConfig.Certificates = []tls.Certificate{cert}
+				transport.PresentClientCertificate(tlsConfig, cert)
 			}
 
 			// SPKI pin verification

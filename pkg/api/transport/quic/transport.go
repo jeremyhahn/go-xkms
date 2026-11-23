@@ -213,7 +213,7 @@ func (t *Transport) buildTLSConfig() (*tls.Config, error) {
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
 		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
+		transport.PresentClientCertificate(tlsConfig, cert)
 	}
 
 	// SPKI pin verification
