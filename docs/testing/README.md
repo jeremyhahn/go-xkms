@@ -65,7 +65,10 @@ feature list.
   `./test/integration/<feature>`. A suite whose explicit recipe runs no
   `go test` of it the script can read (it hands the suite to Compose, whose
   Dockerfile builds what it runs) is selected by every change that selects
-  any feature. A nested suite (`test/integration/<feature>/<dir>` with
+  any feature. A suite whose `go test` line runs inside a Makefile define
+  helper (`run_with_server`, which starts `xkmsd`) keeps the `-tags` of that
+  line, but the helper's binaries are unknown, so it too is selected by every
+  change that selects any feature. A nested suite (`test/integration/<feature>/<dir>` with
   `_test.go` files) counts as run by `integration-test-<feature>` only when a
   `go test` line of that target tests `<dir>` or a parent with `/...`
   (`integration-test-pkcs11` runs only `test/integration/pkcs11`, so
