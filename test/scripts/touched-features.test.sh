@@ -23,6 +23,12 @@ put .changelog/unreleased/added-x.md '- x'
 printf 'more\n' >>"$REPO/README.md"
 DOC=$(commit_all docs)
 RN=$(move_file test/integration/beta/extra_test.go test/integration/alpha/extra_test.go)
+# The moved file still says package beta, which breaks alpha's package in the
+# tree every case reads (a load error is ALL): give it alpha's clause.
+put test/integration/alpha/extra_test.go '//go:build integration
+
+package alpha'
+FX=$(commit_all "extra_test.go in package alpha")
 
 echo "touched-features.sh"
 if [ -x "$SCRIPT" ]; then ok "the script is executable"; else no "the script is executable"; fi
@@ -40,7 +46,7 @@ eq "a rename between features prints both sides" "$(two alpha beta)" "$(run "$DO
 
 # The integration-test-% recipe's full tag set, += lines included.
 G=$(commit_file pkg/g/g.go '// g')
-eq "a package only tag-gated feature tests import prints that feature" "gamma" "$(run "$RN" "$G")"
+eq "a package only tag-gated feature tests import prints that feature" "gamma" "$(run "$FX" "$G")"
 # A binary the suite builds and runs counts with its package deps.
 T=$(commit_file pkg/t/t.go '// t')
 eq "a dep of a binary the suite's own files build prints that feature" "delta" "$(run "$G" "$T")"
