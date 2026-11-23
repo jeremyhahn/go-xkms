@@ -407,28 +407,7 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 			continue
 		}
 
-		// Build overrides to replace hardcoded key IDs with unique ones
-		overrides := make(map[string]string)
-		for _, arg := range cmd.RequiredArgs {
-			if arg.Description == "Key ID" {
-				if uniqueID, ok := keyIDs[arg.Value]; ok {
-					overrides[arg.Description] = uniqueID
-				}
-			}
-			// Make CA issue CN unique per protocol+run to avoid "certificate
-			// already exists". Including the protocol prevents collisions when two
-			// RunAllCommandsForProtocol calls share a runID (coarse clock).
-			if arg.Flag == "cn" && cmd.Category == CategoryCA {
-				overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
-			}
-			if strings.Contains(arg.Value, MatrixWorkDir) {
-				key := arg.Flag
-				if arg.IsPositional {
-					key = arg.Description
-				}
-				overrides[key] = strings.ReplaceAll(arg.Value, MatrixWorkDir, workDir)
-			}
-		}
+		overrides := commandOverrides(cmd, protocol, runID, keyIDs, workDir)
 
 		// For key-verify, use the captured signature from key-sign
 		if cmd.Name == "key-verify" && capturedSignature != "" {
@@ -469,6 +448,33 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 	}
 
 	return results
+}
+
+// commandOverrides builds the per-cell argument overrides for cmd: unique
+// key IDs, a per-protocol CA common name and work-dir file paths.
+func commandOverrides(cmd CommandDefinition, protocol ProtocolType, runID int64, keyIDs map[string]string, workDir string) map[string]string {
+	overrides := make(map[string]string)
+	for _, arg := range cmd.RequiredArgs {
+		if arg.Description == "Key ID" {
+			if uniqueID, ok := keyIDs[arg.Value]; ok {
+				overrides[arg.Description] = uniqueID
+			}
+		}
+		// Make CA issue CN unique per protocol+run to avoid "certificate
+		// already exists". Including the protocol prevents collisions when two
+		// RunAllCommandsForProtocol calls share a runID (coarse clock).
+		if arg.Flag == "cn" && cmd.Category == CategoryCA {
+			overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
+		}
+		if strings.Contains(arg.Value, MatrixWorkDir) {
+			key := arg.Flag
+			if arg.IsPositional {
+				key = arg.Description
+			}
+			overrides[key] = strings.ReplaceAll(arg.Value, MatrixWorkDir, workDir)
+		}
+	}
+	return overrides
 }
 
 // Helper functions
