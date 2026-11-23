@@ -288,7 +288,39 @@ func (s *daoCredentialStore) dropClaim(ctx context.Context, userID string) error
 // — to this account or any other — is refused with
 // ErrCredentialAlreadyExists and the stored record is left untouched.
 func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
+	// A fenced first-credential write reaches Save through the configured
+	// store, decorators included, with its claim in ctx (Codex round-2 P1).
+	if claim := firstCredentialClaimFromContext(ctx); claim != nil {
+		if claim.store != s {
+			return ErrForeignFirstCredentialClaim
+		}
+		return claim.Save(ctx, cred)
+	}
 	return s.save(ctx, cred, "")
+}
+
+// ErrForeignFirstCredentialClaim is returned by a store's Save when the
+// first-credential claim its context carries was issued by another store.
+var ErrForeignFirstCredentialClaim = errors.New("webauthn: first-credential claim belongs to another credential store")
+
+type firstCredentialClaimKey struct{}
+
+// contextWithFirstCredentialClaim returns ctx carrying claim, so that the
+// configured CredentialStore's Save, through any decorator that embeds the
+// store and overrides Save, persists the credential bound to it. It returns
+// false for a claim the built-in store did not issue: that claim's own Save
+// is its fenced write.
+func contextWithFirstCredentialClaim(ctx context.Context, claim FirstCredentialClaim) (context.Context, bool) {
+	c, ok := claim.(*daoFirstCredentialClaim)
+	if !ok {
+		return ctx, false
+	}
+	return context.WithValue(ctx, firstCredentialClaimKey{}, c), true
+}
+
+func firstCredentialClaimFromContext(ctx context.Context) *daoFirstCredentialClaim {
+	c, _ := ctx.Value(firstCredentialClaimKey{}).(*daoFirstCredentialClaim)
+	return c
 }
 
 // save persists cred, bound to the first-credential claim token when token

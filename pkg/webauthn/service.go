@@ -692,11 +692,17 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 			return nil, WrapError("claim first credential", err)
 		}
 	}
-	save := s.creds.Save
+	// The fenced write goes through s.creds.Save, so a decorator that
+	// overrides Save sees it; the claim rides in the context (Codex round-2
+	// P1). A claim another store issued keeps its own Save.
+	save, saveCtx := s.creds.Save, ctx
 	if claim != nil {
-		save = claim.Save
+		var carried bool
+		if saveCtx, carried = contextWithFirstCredentialClaim(ctx, claim); !carried {
+			save = claim.Save
+		}
 	}
-	if err := save(ctx, cred); err != nil {
+	if err := save(saveCtx, cred); err != nil {
 		if claim != nil {
 			if relErr := claim.Release(context.WithoutCancel(ctx)); relErr != nil {
 				s.logger.Error("release first-credential claim after a failed save", "error", relErr)
