@@ -100,6 +100,13 @@ func TestHandler_DeriveHMACSecret(t *testing.T) {
 	t.Run("wrong credential", func(t *testing.T) {
 		concrete, sim := simulatedHandler(t, "")
 		var handler Handler = concrete
+		sim.checkAllowList = true
+		known, err := handler.DeriveHMACSecret(&AuthenticationConfig{
+			RelyingPartyID: "kms.example.com", CredentialID: sim.credentialID, Salt: salt,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, known)
+
 		unknown := bytes.Clone(sim.credentialID)
 		unknown[0] ^= 0xff
 
