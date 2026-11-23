@@ -305,7 +305,8 @@ type Server struct {
 	clusterCAKeyProvider *clustercapkg.KeyProvider
 
 	// headSignerProvider signs verifiable-log checkpoints with the CA key;
-	// built with the node, bound to the TrustedCA once the CA is built.
+	// built with the node, bound to the cluster CA identity of the
+	// TrustedCA once the CA is built (bindCAProviders).
 	headSignerProvider *tlog.HeadSignerProvider
 
 	// tenantService is the node's go-qrdb TenantService, built over the
@@ -2195,15 +2196,8 @@ func (s *Server) initializeCA() error {
 
 	// The node was built before the CA, whose stores live in it: bind the
 	// TrustedCA as go-qrdb's cluster CA (Key A) now.
-	if s.clusterCAKeyProvider != nil {
-		if err := s.clusterCAKeyProvider.Bind(trustedCA); err != nil {
-			return &ErrCAInit{Operation: "bind cluster CA", Err: err}
-		}
-	}
-	if s.headSignerProvider != nil {
-		if err := s.headSignerProvider.Bind(trustedCA); err != nil {
-			return &ErrCAInit{Operation: "bind transparency-log head signer", Err: err}
-		}
+	if err := s.bindCAProviders(trustedCA); err != nil {
+		return err
 	}
 
 	cn := s.config.CA.Identity[0].Subject.CommonName

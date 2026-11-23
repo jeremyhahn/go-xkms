@@ -54,3 +54,34 @@ func (s *Server) headSignerProviderOptions() []qrdbnode.NodeOption {
 	s.headSignerProvider = tlog.NewHeadSignerProvider()
 	return []qrdbnode.NodeOption{qrdbnode.WithHeadSignerProvider(s.headSignerProvider)}
 }
+
+// bindCAProviders binds the cluster CA key provider and the
+// transparency-log head signer to the TrustedCA once it is built. The head
+// signer signs with the cluster CA identity (docs/SPEC.md): the same
+// identity-resolving provider as Key A, so IssuerForIdentity(ClusterCACN)
+// when that is set and the selected CA otherwise.
+func (s *Server) bindCAProviders(trustedCA clustercapkg.SigningCA) error {
+	if s.clusterCAKeyProvider != nil {
+		if err := s.clusterCAKeyProvider.Bind(trustedCA); err != nil {
+			return &ErrCAInit{Operation: "bind cluster CA", Err: err}
+		}
+	}
+	if s.headSignerProvider == nil {
+		return nil
+	}
+	identity := s.clusterCAKeyProvider
+	if identity == nil {
+		cn := ""
+		if s.config != nil {
+			cn = s.config.Cluster.RaftEnrollment.ClusterCACN
+		}
+		identity = clustercapkg.NewKeyProvider(cn)
+		if err := identity.Bind(trustedCA); err != nil {
+			return &ErrCAInit{Operation: "bind transparency-log head signer", Err: err}
+		}
+	}
+	if err := s.headSignerProvider.Bind(identity); err != nil {
+		return &ErrCAInit{Operation: "bind transparency-log head signer", Err: err}
+	}
+	return nil
+}
