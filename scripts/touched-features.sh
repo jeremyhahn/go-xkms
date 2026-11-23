@@ -29,7 +29,9 @@
 #     against the root and every nested module (a suite that builds
 #     ./cmd/xkey with its working directory in xkey); one that resolves
 #     nowhere makes the suite unresolved (below). A binary that does not
-#     load prints ALL;
+#     load prints ALL. A suite whose go test line calls a Makefile define
+#     (run_with_server, which starts xkmsd) is unresolved too: the helper's
+#     body is not expanded, so its binaries are unknown;
 #   - a nested suite test/integration/<feature>/<dir> with _test.go files
 #     counts as run by integration-test-<feature> only when a go test line
 #     of that target tests <dir> or a parent with /...; a change in, or a
@@ -230,10 +232,16 @@ recipe_binaries() {
 		}
 		return r
 	}
+	# First pass: the names of define helpers. A recipe line that calls one
+	# (run_with_server, say) runs a body that may build or start binaries
+	# the parser does not expand, so its suites get unreadable tags (U).
+	NR == FNR { if ($1 == "define" && $2 != "") { d = $2; sub(/[[:space:]]*[:+?!]?=.*$/, "", d); defs[d] = 1 }; next }
 	{
 		line = cont $0
 		if (line ~ /\\$/) { sub(/\\$/, "", line); cont = line " "; next }
 		cont = ""
+		helper = 0
+		if (line ~ /^\t/) for (d in defs) if (index(line, "$(call " d ",") || index(line, "$(call " d ")") || index(line, "$(" d ")")) helper = 1
 		if (line !~ /^\t/) {
 			# A rule header (not a variable or target-specific variable)
 			# starts the recipe of its targets; a define body has none.
@@ -267,7 +275,7 @@ recipe_binaries() {
 			isbuild = seg[s] ~ /(^|[^A-Za-z0-9_])(go|GO\))[[:space:]]+build([[:space:]]|$)/
 			istest = seg[s] ~ /(^|[^A-Za-z0-9_])(go|GO\))[[:space:]]+test([[:space:]]|$)/
 			btags = isbuild ? build_tags(seg[s]) : ""
-			texpr = istest ? raw_tags(seg[s]) : ""
+			texpr = (istest && !helper) ? raw_tags(seg[s]) : ""
 			for (i = first; i <= nt; i++) {
 				t = clean(tok[i])
 				if (isbuild && t ~ /^\.\.?\// && t ~ /(^|\/)cmd\/[^\/]/) {
@@ -286,7 +294,7 @@ recipe_binaries() {
 		}
 		for (i = 1; i <= nf; i++) for (j = 1; j <= nb; j++) if (bins[j] != "")
 			print feats[i] "\t" bins[j] "\t" tags btag[j]
-	}' Makefile
+	}' Makefile Makefile
 }
 
 if [ "${#pending[@]}" -gt 0 ] || [ "${#nested[@]}" -gt 0 ]; then
