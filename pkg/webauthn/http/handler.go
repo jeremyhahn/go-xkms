@@ -29,7 +29,28 @@ import (
 // These handlers can be mounted on any HTTP router.
 type Handler struct {
 	service *webauthn.Service
+	tenants *webauthn.TenantRouter
 	logger  *slog.Logger
+}
+
+// WithTenants makes login tenant-aware (go-xkms#2319): begin and finish
+// select the relying party of the tenant named by the request body's
+// tenant_id or the X-Tenant-Id header, or of the host mapped in
+// tenant_hosts.
+func (h *Handler) WithTenants(router *webauthn.TenantRouter) *Handler {
+	h.tenants = router
+	return h
+}
+
+// loginService returns the relying party a login request reaches.
+func (h *Handler) loginService(r *http.Request, tenantID string) (*webauthn.Service, error) {
+	if h.tenants == nil {
+		return h.service, nil
+	}
+	if tenantID == "" {
+		tenantID = r.Header.Get(HeaderTenantID)
+	}
+	return h.tenants.ForRequest(r.Context(), r.Host, tenantID)
 }
 
 // NewHandler creates a new WebAuthn HTTP handler.
@@ -203,11 +224,15 @@ func (h *Handler) BeginLogin(w http.ResponseWriter, r *http.Request) {
 		// Allow empty body for discoverable credentials
 		req = BeginLoginRequest{}
 	}
+	svc, err := h.loginService(r, req.TenantID)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
 
 	var (
 		options   *protocol.CredentialAssertion
 		sessionID string
-		err       error
 	)
 	switch {
 	case req.UserID != "":
@@ -216,11 +241,11 @@ func (h *Handler) BeginLogin(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid user ID encoding")
 			return
 		}
-		options, sessionID, err = h.service.BeginLoginForHandle(r.Context(), userID)
+		options, sessionID, err = svc.BeginLoginForHandle(r.Context(), userID)
 	case req.Email != "":
-		options, sessionID, err = h.service.BeginLoginForEmail(r.Context(), req.Email)
+		options, sessionID, err = svc.BeginLoginForEmail(r.Context(), req.Email)
 	default:
-		options, sessionID, err = h.service.BeginLogin(r.Context(), nil)
+		options, sessionID, err = svc.BeginLogin(r.Context(), nil)
 	}
 	if err != nil {
 		h.handleServiceError(w, err)
@@ -258,7 +283,12 @@ func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 	// The session records whether the ceremony is discoverable or
 	// user-identified, and which account it is for; no caller-supplied user
 	// ID is consulted.
-	pair, user, err := h.service.FinishLoginPair(r.Context(), sessionID, nil, response)
+	svc, err := h.loginService(r, "")
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+	pair, user, err := svc.FinishLoginPair(r.Context(), sessionID, nil, response)
 	if err != nil {
 		h.handleLoginFinishError(w, err)
 		return

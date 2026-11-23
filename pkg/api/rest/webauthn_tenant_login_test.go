@@ -25,7 +25,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -35,8 +34,8 @@ const (
 	tenantLoginEmail   = "bea@example.com"
 )
 
-// tenantLoginFixture is a tenant-aware relying party over an embedded
-// first-boot node holding the system tenant and tenant-b.
+// tenantLoginFixture is a tenant-aware relying party over the fake qrdb
+// identity plane, with tenant-b as the one known non-system tenant.
 type tenantLoginFixture struct {
 	router *webauthn.TenantRouter
 	issuer *WebAuthnTokenAdapter
@@ -48,9 +47,7 @@ type tenantLoginFixture struct {
 
 func newTenantLoginFixture(t *testing.T) *tenantLoginFixture {
 	t.Helper()
-	n, err := testutil.NewFirstBootNode(t)
-	require.NoError(t, err)
-	require.NoError(t, n.ProvisionTenant(tenantLoginTenantB))
+	client, _ := newFakeQRDBClient(t)
 
 	open := true
 	cfg := &webauthn.Config{
@@ -64,7 +61,7 @@ func newTenantLoginFixture(t *testing.T) *tenantLoginFixture {
 	router, err := BuildWebAuthnTenantRouter(WebAuthnTenantRouterParams{
 		Service: WebAuthnServiceParams{
 			Config:      cfg,
-			QRDBClient:  n.Client(),
+			QRDBClient:  client,
 			DAOFactory:  newTenantLoginDAOFactory(),
 			TokenIssuer: issuer,
 		},
@@ -106,6 +103,7 @@ func (f *tenantLoginFixture) enrol(t *testing.T) {
 	user, err := svc.GetUserByEmail(ctx, tenantLoginEmail)
 	require.NoError(t, err)
 	f.handle = user.WebAuthnID()
+	f.authn.Options.UserHandle = f.handle
 }
 
 type loginKind int

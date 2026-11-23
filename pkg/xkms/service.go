@@ -113,6 +113,7 @@ type XKMSService struct {
 	peerEvidence    subsystem[*peergate.Collector]
 	appraiser       subsystem[*appraisal.Appraiser]
 	webauthnService *webauthn.Service
+	webauthnTenants *webauthn.TenantRouter
 
 	// tokenIssuer mints and revokes the browser/desktop session token
 	// pairs behind the WebAuthn, PIV, and mTLS login flows. DisableUser and
@@ -299,6 +300,35 @@ func (s *XKMSService) SetEscrowRegistry(r *escrow.Registry) { s.escrow = r }
 
 // SetWebAuthn sets the WebAuthn/FIDO2 subsystem.
 func (s *XKMSService) SetWebAuthn(w *webauthn.Service) { s.webauthnService = w }
+
+// SetWebAuthnTenants makes the passkey ceremonies tenant-aware
+// (go-xkms#2319): a request naming a tenant reaches that tenant's relying
+// party, an unknown tenant reaches the decoy, and an empty tenant keeps the
+// SetWebAuthn service.
+func (s *XKMSService) SetWebAuthnTenants(r *webauthn.TenantRouter) { s.webauthnTenants = r }
+
+// WebAuthnTenantExists reports whether tenantID names a registered tenant,
+// for TenantRouter. A login is unauthenticated, so this asks the tenant
+// service directly with no caller admission; it answers only the router,
+// never a client. Any lookup failure reads as an unknown tenant, which the
+// router answers with the decoy.
+func (s *XKMSService) WebAuthnTenantExists(ctx context.Context, tenantID string) (bool, error) {
+	if s.tenantService == nil || tenantID == "" {
+		return false, nil
+	}
+	if _, err := s.tenantService.GetTenant(ctx, tenantID); err != nil {
+		return false, nil
+	}
+	return true, nil
+}
+
+// webauthnFor returns the relying party of tenantID.
+func (s *XKMSService) webauthnFor(ctx context.Context, tenantID string) (*webauthn.Service, error) {
+	if s.webauthnTenants == nil || tenantID == "" {
+		return s.webauthnService, nil
+	}
+	return s.webauthnTenants.For(ctx, tenantID)
+}
 
 // SetInviteStore wires the per-tenant enrollment-invitation store
 // (go-xkms#1294 part B) into the service. Nil leaves invitations

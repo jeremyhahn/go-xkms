@@ -244,7 +244,12 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 		return nil, ErrInviteUnusable
 	}
 
-	options, sessionID, err := s.webauthnService.BeginInviteRegistration(ctx, u.Email)
+	// The invitation enrols through its tenant's relying party (go-xkms#2319).
+	rp, err := s.webauthnFor(ctx, req.TenantID)
+	if err != nil {
+		return nil, ErrInviteUnusable
+	}
+	options, sessionID, err := rp.BeginInviteRegistration(ctx, u.Email)
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable
@@ -282,7 +287,11 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
 	}
 
-	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, parsed)
+	rp, err := s.webauthnFor(ctx, req.TenantID)
+	if err != nil {
+		return nil, ErrInviteUnusable
+	}
+	user, err := rp.FinishInviteRegistration(ctx, req.SessionID, parsed)
 	if err != nil {
 		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
 			return nil, ErrInviteUnusable

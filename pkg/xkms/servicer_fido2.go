@@ -123,7 +123,11 @@ func (s *XKMSService) BeginAuthentication(ctx context.Context, req *transport.Be
 	// BeginLoginForEmail answers an unknown email, or an account without
 	// credentials, with decoy options rather than an error, so this verb
 	// does not reveal whether the account exists (go-xkms#1296).
-	assertion, sessionID, err := s.webauthnService.BeginLoginForEmail(ctx, req.Email)
+	rp, err := s.webauthnFor(ctx, req.TenantID)
+	if err != nil {
+		return nil, &ErrWebAuthnCeremony{Operation: "begin authentication", Err: err}
+	}
+	assertion, sessionID, err := rp.BeginLoginForEmail(ctx, req.Email)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "begin authentication", Err: err}
 	}
@@ -166,7 +170,11 @@ func (s *XKMSService) FinishAuthentication(ctx context.Context, req *transport.F
 	// The session begun by BeginAuthentication records the account; the
 	// email is not resolved again, so an unknown email fails exactly like a
 	// wrong assertion instead of revealing that it names no account.
-	token, loggedIn, err := s.webauthnService.FinishLogin(ctx, req.SessionID, nil, parsed)
+	rp, err := s.webauthnFor(ctx, req.TenantID)
+	if err != nil {
+		return nil, &ErrWebAuthnCeremony{Operation: "finish authentication", Err: err}
+	}
+	token, loggedIn, err := rp.FinishLogin(ctx, req.SessionID, nil, parsed)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "finish authentication", Err: err}
 	}

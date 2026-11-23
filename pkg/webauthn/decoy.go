@@ -100,6 +100,20 @@ func decoySubject(kind byte, subject []byte) []byte {
 	return append(out, subject...)
 }
 
+// scopedDecoySubject is decoySubject over the service tenant, a 0x00
+// separator and subject, so the decoy for one requested account differs per
+// tenant and stays deterministic within it (go-xkms#2319). A service with no
+// tenant derives its decoys from subject alone.
+func (s *Service) scopedDecoySubject(kind byte, subject []byte) []byte {
+	if s.tenantID == "" {
+		return decoySubject(kind, subject)
+	}
+	scoped := make([]byte, 0, len(s.tenantID)+1+len(subject))
+	scoped = append(scoped, s.tenantID...)
+	scoped = append(scoped, 0x00)
+	return decoySubject(kind, append(scoped, subject...))
+}
+
 // decoyUser derives the decoy account for subject: an 8-byte handle and one
 // or two credentials with realistic ID lengths and transport hints.
 func (s *Service) decoyUser(subject []byte) (*DefaultUser, error) {

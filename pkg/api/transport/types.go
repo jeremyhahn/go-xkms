@@ -1009,6 +1009,10 @@ type BeginAuthenticationRequest struct {
 	// with GetUserByEmail; a username is a different identifier and is not
 	// accepted.
 	Email string `json:"email"`
+
+	// TenantID is the tenant of the account (go-xkms#2319). Empty selects
+	// the system tenant; an unknown tenant gets decoy options.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // BeginAuthenticationResponse carries the session ID and the JSON-marshaled
@@ -1039,6 +1043,10 @@ type FinishAuthenticationRequest struct {
 	// authenticator (the response from navigator.credentials.get()). It is the
 	// exact body that protocol.ParseCredentialRequestResponseBody expects.
 	AssertionJSON string `json:"assertion_json"`
+
+	// TenantID is the tenant named at BeginAuthentication; the session is
+	// held by that tenant's relying party.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // FinishAuthenticationResponse contains the result of WebAuthn authentication.

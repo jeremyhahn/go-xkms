@@ -435,6 +435,7 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	params := webauthn.ServiceParams{
+		TenantID:        tenantID,
 		Config:          p.Config,
 		UserStore:       userStore,
 		SessionStore:    webauthn.NewMemorySessionStore(),
@@ -453,6 +454,44 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		return nil, &WebAuthnServiceBuildError{Err: err}
 	}
 	return svc, nil
+}
+
+// WebAuthnTenantRouterParams configures BuildWebAuthnTenantRouter.
+type WebAuthnTenantRouterParams struct {
+	// Service builds every tenant's relying party; its TenantID is the
+	// system tenant (DefaultWebAuthnTenant when empty).
+	Service WebAuthnServiceParams
+	// System is the already-built system relying party; nil builds it.
+	System *webauthn.Service
+	// TenantExists reports whether a tenant exists (the qrdb tenant lookup).
+	TenantExists func(ctx context.Context, tenantID string) (bool, error)
+}
+
+// BuildWebAuthnTenantRouter builds the tenant router of go-xkms#2319: each
+// confirmed tenant gets BuildWebAuthnService with its TenantID and the same
+// issuer, decorator and logger, so its tokens carry that tenant.
+func BuildWebAuthnTenantRouter(p WebAuthnTenantRouterParams) (*webauthn.TenantRouter, error) {
+	systemTenant := p.Service.TenantID
+	if systemTenant == "" {
+		systemTenant = DefaultWebAuthnTenant
+	}
+	system := p.System
+	if system == nil {
+		var err error
+		if system, err = BuildWebAuthnService(p.Service); err != nil {
+			return nil, err
+		}
+	}
+	return webauthn.NewTenantRouter(webauthn.TenantRouterParams{
+		SystemTenant: systemTenant,
+		System:       system,
+		TenantExists: p.TenantExists,
+		Build: func(tenantID string) (*webauthn.Service, error) {
+			params := p.Service
+			params.TenantID = tenantID
+			return BuildWebAuthnService(params)
+		},
+	})
 }
 
 // isNilCredentialStore reports whether cs carries no usable store. It
@@ -822,6 +861,26 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				// Without this the SDK lane fails ErrNotConfigured on a
 				// host while the browser lane works.
 				hc.XKMSService.SetWebAuthn(svc)
+				router, rErr := BuildWebAuthnTenantRouter(WebAuthnTenantRouterParams{
+					Service: WebAuthnServiceParams{
+						Config:                   hc.WebAuthn,
+						QRDBClient:               hc.QRDBClient,
+						DAOFactory:               hc.DAOFactory,
+						TenantID:                 tenantID,
+						TokenIssuer:              cfg.TokenIssuer,
+						CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
+						Logger:                   logger,
+						AuditLogger:              hc.AuditLogger,
+					},
+					System:       svc,
+					TenantExists: hc.XKMSService.WebAuthnTenantExists,
+				})
+				if rErr != nil {
+					logger.Error("host REST surface: WebAuthn tenant router construction failed; login stays system-tenant only", "error", rErr)
+				} else {
+					cfg.WebAuthnTenants = router
+					hc.XKMSService.SetWebAuthnTenants(router)
+				}
 			}
 		}
 	}

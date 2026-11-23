@@ -66,10 +66,30 @@ type Service struct {
 	// decoyKey keys the decoy login ceremonies (decoy.go). It is drawn
 	// once per process and never leaves memory.
 	decoyKey []byte
+
+	// tenantID scopes the decoy subjects (decoy.go) to the tenant.
+	tenantID string
+}
+
+// TenantID returns the tenant this relying party serves.
+func (s *Service) TenantID() string { return s.tenantID }
+
+// forTenant returns a shallow copy of s whose decoys are scoped to
+// tenantID. The copy shares every store, so a ceremony begun on it is
+// finished on any other copy.
+func (s *Service) forTenant(tenantID string) *Service {
+	c := *s
+	c.tenantID = tenantID
+	return &c
 }
 
 // ServiceParams contains dependencies for creating a WebAuthn service.
 type ServiceParams struct {
+	// TenantID is the tenant whose accounts this relying party serves. It
+	// scopes the decoy ceremonies (go-xkms#2319); empty for a single-tenant
+	// service.
+	TenantID string
+
 	// Config is the WebAuthn configuration (required).
 	Config *Config
 
@@ -144,6 +164,7 @@ func NewService(params ServiceParams) (*Service, error) {
 		auditLogger: params.AuditLogger,
 		configured:  true,
 		decoyKey:    decoyKey,
+		tenantID:    params.TenantID,
 	}, nil
 }
 
@@ -507,7 +528,7 @@ func (s *Service) BeginLoginForEmail(ctx context.Context, email string) (*protoc
 		return nil, "", NewError("begin login", ErrInvalidRequest)
 	}
 	user, err := s.users.GetByEmail(ctx, email)
-	return s.beginLoginOrDecoy(ctx, user, err, decoySubject(decoyKindEmail, []byte(email)))
+	return s.beginLoginOrDecoy(ctx, user, err, s.scopedDecoySubject(decoyKindEmail, []byte(email)))
 }
 
 // BeginLoginForHandle is BeginLoginForEmail for a caller that addresses the
@@ -521,7 +542,7 @@ func (s *Service) BeginLoginForHandle(ctx context.Context, userID []byte) (*prot
 		return nil, "", NewError("begin login", ErrInvalidRequest)
 	}
 	user, err := s.users.GetByID(ctx, userID)
-	return s.beginLoginOrDecoy(ctx, user, err, decoySubject(decoyKindHandle, userID))
+	return s.beginLoginOrDecoy(ctx, user, err, s.scopedDecoySubject(decoyKindHandle, userID))
 }
 
 // beginLoginOrDecoy starts the real ceremony for a resolved account in good
