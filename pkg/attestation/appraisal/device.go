@@ -17,6 +17,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/x509"
+	"encoding/hex"
+	"errors"
+	"strings"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
@@ -45,20 +48,94 @@ type AppraiseEKCertificateRequest struct {
 	IntermediatesDER [][]byte `json:"intermediates_der,omitempty"`
 }
 
-// anyApplication admits every attesting application. The appraisal verb
-// answers whether the key lives in genuine, locked secure hardware; which
-// application may use it is the relying party's policy, not the Verifier's.
-type anyApplication struct{}
+// AndroidApplicationSource supplies the tenant-controlled allow-list an
+// Android key attestation's application must be on (docs/SPEC.md:43).
+type AndroidApplicationSource interface {
+	// AndroidApplications returns the tenant's application matcher, or nil
+	// when the tenant has none configured.
+	AndroidApplications(ctx context.Context, tenant string) (android.ApplicationMatcher, error)
+}
 
-// Match admits app.
-func (anyApplication) Match(*android.AttestationApplicationID) (string, string, error) {
-	return "", "", nil
+// WithAndroidApplications sets the source of each tenant's Android
+// application allow-list. Without one every Android appraisal is refused.
+func WithAndroidApplications(source AndroidApplicationSource) Option {
+	return func(a *Appraiser) { a.androidApps = source }
+}
+
+// AndroidApplicationAllowList maps an Android package name to the hex
+// SHA-256 digests of the signing certificates accepted for it. A package is
+// only an identity together with its signing digest, so an entry without
+// digests admits nothing.
+type AndroidApplicationAllowList map[string][]string
+
+// Match admits appID when one of its packages is listed with one of its
+// signing digests.
+func (l AndroidApplicationAllowList) Match(appID *android.AttestationApplicationID) (string, string, error) {
+	if appID == nil || len(appID.Packages) == 0 {
+		return "", "", ErrNoAttestedApplication
+	}
+	for _, pkg := range appID.Packages {
+		for _, want := range l[pkg.Name] {
+			for _, digest := range appID.SignatureDigests {
+				if got := hex.EncodeToString(digest); strings.EqualFold(strings.TrimSpace(want), got) {
+					return pkg.Name, got, nil
+				}
+			}
+		}
+	}
+	return "", "", ErrApplicationNotAllowed
+}
+
+// AndroidApplicationPolicies is a static AndroidApplicationSource: each
+// tenant's allow-list by tenant name. A tenant absent from it, or with an
+// empty allow-list, has none.
+type AndroidApplicationPolicies map[string]AndroidApplicationAllowList
+
+// AndroidApplications returns tenant's allow-list, or nil when it has none.
+func (p AndroidApplicationPolicies) AndroidApplications(_ context.Context, tenant string) (android.ApplicationMatcher, error) {
+	if list := p[tenant]; len(list) > 0 {
+		return list, nil
+	}
+	return nil, nil
+}
+
+// attestedApplication refuses an attestation naming no application before
+// the tenant's matcher sees it, whatever matcher the tenant supplied.
+type attestedApplication struct {
+	allowed android.ApplicationMatcher
+}
+
+// Match refuses a missing application identity, then defers to the
+// tenant's matcher.
+func (m attestedApplication) Match(appID *android.AttestationApplicationID) (string, string, error) {
+	if appID == nil || len(appID.Packages) == 0 {
+		return "", "", ErrNoAttestedApplication
+	}
+	return m.allowed.Match(appID)
+}
+
+// androidApplications resolves tenant's application matcher, failing
+// closed when the Appraiser or the tenant has no allow-list.
+func (a *Appraiser) androidApplications(ctx context.Context, tenant string) (android.ApplicationMatcher, error) {
+	if a.androidApps == nil {
+		return nil, ErrNoApplicationAllowList
+	}
+	allowed, err := a.androidApps.AndroidApplications(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	if allowed == nil {
+		return nil, ErrNoApplicationAllowList
+	}
+	return attestedApplication{allowed: allowed}, nil
 }
 
 // AppraiseAndroidKeyAttestation verifies an Android key attestation chain
 // under the tenant's android-root endorsements: the chain anchors in one,
 // the key was generated in TEE or StrongBox hardware for signing, and the
-// device reports a locked bootloader and a verified boot chain. Evidence
+// device reports a locked bootloader and a verified boot chain, and the
+// attested application is on the tenant's allow-list (refused when the
+// tenant has none or the chain names no application). Evidence
 // that fails is refused with an *EvidenceRefusedError.
 func (a *Appraiser) AppraiseAndroidKeyAttestation(ctx context.Context, tenant string, req *AppraiseAndroidKeyAttestationRequest) (*AttestationResult, error) {
 	if req == nil {
@@ -75,7 +152,14 @@ func (a *Appraiser) AppraiseAndroidKeyAttestation(ctx context.Context, tenant st
 	if len(roots) == 0 {
 		return nil, refuse(attestation.ErrNoTrustAnchors)
 	}
-	key, err := attestation.VerifyAndroidDeviceKey(req.ChainDER, &attestation.AndroidDeviceTrust{Roots: pool, Applications: anyApplication{}})
+	apps, err := a.androidApplications(ctx, tenant)
+	if errors.Is(err, ErrNoApplicationAllowList) {
+		return nil, refuse(err)
+	}
+	if err != nil {
+		return nil, err
+	}
+	key, err := attestation.VerifyAndroidDeviceKey(req.ChainDER, &attestation.AndroidDeviceTrust{Roots: pool, Applications: apps})
 	if err != nil {
 		return nil, refuse(err)
 	}

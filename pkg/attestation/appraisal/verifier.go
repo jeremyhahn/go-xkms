@@ -276,6 +276,7 @@ type Appraiser struct {
 	store       *Store
 	now         func() time.Time
 	signingKeys SigningKeySource
+	androidApps AndroidApplicationSource
 }
 
 // Option configures an Appraiser.

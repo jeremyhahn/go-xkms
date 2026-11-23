@@ -94,6 +94,18 @@ var (
 	// attestation chain or a TPM EK certificate) that did not verify under
 	// the tenant's endorsements. See EvidenceRefusedError.
 	ErrEvidenceRefused = errors.New("attestation: evidence refused")
+
+	// ErrNoApplicationAllowList indicates an Android appraisal for a tenant
+	// with no application allow-list configured; it fails closed.
+	ErrNoApplicationAllowList = errors.New("attestation: no android application allow-list for the tenant")
+
+	// ErrNoAttestedApplication indicates an Android key attestation that
+	// names no attesting application.
+	ErrNoAttestedApplication = errors.New("attestation: android attestation names no application")
+
+	// ErrApplicationNotAllowed indicates an attested Android application, or
+	// its signing digest, the tenant's allow-list does not hold.
+	ErrApplicationNotAllowed = errors.New("attestation: android application not on the tenant's allow-list")
 )
 
 // EvidenceRefusedError refuses device evidence: the chain is empty or does

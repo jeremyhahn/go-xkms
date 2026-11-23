@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -31,7 +32,9 @@ func newSigningKeyMCP(t *testing.T) *Server {
 	server := createTestServer(t)
 	store, err := appraisal.NewStore(appraisal.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
-	appraiser, err := appraisal.NewAppraiser(store)
+	appraiser, err := appraisal.NewAppraiser(store, appraisal.WithAndroidApplications(appraisal.AndroidApplicationPolicies{
+		"acme": {appraisaltest.FixtureApplicationPackage: {appraisaltest.FixtureApplicationDigest}},
+	}))
 	require.NoError(t, err)
 	server.xkmsService.SetAttestationAppraiser(appraiser)
 	return server
