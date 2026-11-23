@@ -1289,6 +1289,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       # #2299: the pool registry is a secret; mask it, and its host, before
       # any step prints an image reference.
@@ -1435,6 +1439,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Reap stale CI stacks
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
@@ -1616,6 +1624,10 @@ jobs:
       # before any step that builds can print one.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       # CUSTOMIZE (go-xkms, #2183): read-only resource snapshots around the
       # toolchain image build, so a stalled shard shows whether the runner
@@ -1751,6 +1763,10 @@ jobs:
       # before any step that builds can print one.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Take the toolchain image
         if: ${{ needs.preflight.outputs.docs_only != 'true' }}
@@ -1849,6 +1865,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       # A source check on the runner's shell: no make recipe runs here.
       - name: Does the Makefile define lint-gates?
@@ -2366,6 +2386,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2485,6 +2509,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2657,6 +2685,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2774,6 +2806,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -2949,6 +2985,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -3088,6 +3128,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
@@ -3257,6 +3301,10 @@ jobs:
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
+        env:
+          # The pool registry is a secret: the script masks its host forms
+          # and resolved addresses, which Actions does not (Codex P1 #2296).
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
 
       - name: Reap stale CI stacks
         if: runner.environment == 'github-hosted'
