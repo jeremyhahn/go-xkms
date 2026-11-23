@@ -86,14 +86,19 @@ func registrationBegin(t *testing.T, extra func(node ServiceModuleNodeUserSource
 
 // TestWithServiceModuleNodeUsers_WiresNodeUserSource proves a host building
 // on the SDK can hand the embedded node's user service to the module, so the
-// public WebAuthn routes resolve users through it.
+// public WebAuthn routes resolve users through it. Anonymous registration of
+// a nonexistent account is refused (403): the user is created through the
+// authorized client and the xkms service principal holds no users:create
+// grant (serviceprincipal.WebAuthnGrant); accounts are provisioned by an
+// administrator and enrolled by invitation.
 func TestWithServiceModuleNodeUsers_WiresNodeUserSource(t *testing.T) {
 	users := &countingNodeUsers{}
 	w := registrationBegin(t, func(node ServiceModuleNodeUserSource) []ServiceModuleOption {
 		users.inner = node
 		return []ServiceModuleOption{WithServiceModuleNodeUsers(users)}
 	})
-	require.Equal(t, http.StatusOK, w.Code, "registration/begin: %s", w.Body.String())
+	require.Equal(t, http.StatusForbidden, w.Code, "registration/begin: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "registration_refused")
 	assert.Positive(t, users.calls.Load(), "the module must resolve users through the wired source")
 }
 
