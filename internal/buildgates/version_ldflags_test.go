@@ -263,10 +263,68 @@ func TestReleaseLDFlagsStampVersionTargets(t *testing.T) {
 				continue
 			}
 			lines++
+			if rel == releaseWorkflow {
+				requireRecoveryTargetSet(t, fmt.Sprintf("%s:%d", rel, i+1), line)
+				continue
+			}
 			requireStampedTargetSet(t, fmt.Sprintf("%s:%d", rel, i+1), targets)
 		}
 		if wantLines >= 0 && lines != wantLines {
 			t.Errorf("%s: %d lines stamp package main, want %d", rel, lines, wantLines)
+		}
+	}
+	t.Run("older-tag recovery stamps legacy names", func(t *testing.T) {
+		for _, name := range legacyMainVars {
+			if _, ok := releaseRecoveryTargets["main."+name]; !ok {
+				t.Errorf("release.yml recovery targets lack main.%s, declared by tags cut before #2255", name)
+			}
+		}
+	})
+}
+
+// releaseWorkflow builds from RELEASE_TAG on a workflow_dispatch repair, so
+// its main.* stamps must cover the variable names of older tags too.
+const releaseWorkflow = ".github/workflows/release.yml"
+
+// legacyMainVars are the pre-#2255 cmd/xkmsd variable names (tag v0.64.2-alpha).
+var legacyMainVars = []string{"version", "commit", "date"}
+
+// releaseRecoveryTargets maps each main.* target a release.yml build line
+// must stamp to its value variable: the current names and the legacy ones.
+var releaseRecoveryTargets = map[string]string{
+	"main.Version":   "VERSION",
+	"main.GitCommit": "COMMIT",
+	"main.BuildDate": "DATE",
+	"main.version":   "VERSION",
+	"main.commit":    "COMMIT",
+	"main.date":      "DATE",
+}
+
+var ldflagsXMainValue = regexp.MustCompile(`-X\s+(main\.[^=\s]+)=\$\{?(\w+)\}?`)
+
+// requireRecoveryTargetSet checks that line stamps exactly the
+// releaseRecoveryTargets, each once and with its value variable.
+func requireRecoveryTargetSet(t *testing.T, source, line string) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, m := range ldflagsXMainValue.FindAllStringSubmatch(line, -1) {
+		target, value := m[1], m[2]
+		want, ok := releaseRecoveryTargets[target]
+		if !ok {
+			t.Errorf("%s stamps %q, which is not one of the version targets", source, target)
+			continue
+		}
+		if value != want {
+			t.Errorf("%s stamps %s from %s, want %s", source, target, value, want)
+		}
+		if seen[target] {
+			t.Errorf("%s stamps %q twice", source, target)
+		}
+		seen[target] = true
+	}
+	for target := range releaseRecoveryTargets {
+		if !seen[target] {
+			t.Errorf("%s does not stamp %s", source, target)
 		}
 	}
 }
