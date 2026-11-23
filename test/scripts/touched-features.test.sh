@@ -230,6 +230,41 @@ case "$got" in
 ALL | *upsilon*) ok "a binary a define helper of a suite's recipe builds selects that suite" ;;
 *) no "a binary a define helper of a suite's recipe builds selects that suite: got [$got]" ;;
 esac
+# omega's target wraps go test in the in_box define (the run_in_devcontainer
+# shape) with an explicit omega tag its test file needs. The helper hides its
+# binaries, not its -tags: a change to a package omega imports selects a
+# list holding omega, not ALL.
+cat >>"$REPO/Makefile" <<'EOF'
+
+define in_box
+	$(1)
+endef
+
+integration-test-omega:
+	$(call in_box,go test -tags "integration omega" ./test/integration/omega/...,integration-test-omega)
+EOF
+put pkg/w/w.go 'package w
+
+func W() {}'
+put test/integration/omega/omega_test.go '//go:build integration && omega
+
+package omega
+
+import (
+	"testing"
+
+	"example.com/m/pkg/w"
+)
+
+func TestOmega(t *testing.T) { w.W() }'
+OT=$(commit_all omega)
+OC=$(commit_file pkg/w/w.go '// omega')
+got=$(run "$OT" "$OC")
+case "$got" in
+ALL) no "a suite a define helper wraps keeps its explicit tags: got ALL" ;;
+*omega*) ok "a suite a define helper wraps keeps its explicit tags" ;;
+*) no "a suite a define helper wraps keeps its explicit tags: got [$got]" ;;
+esac
 # lambda's only test file is gated on a tag no recipe passes (last, since
 # from here on every package change prints ALL).
 put test/integration/lambda/lambda_test.go '//go:build integration && neverset
