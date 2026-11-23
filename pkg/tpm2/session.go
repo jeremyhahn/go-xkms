@@ -1,6 +1,7 @@
 package tpm2
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1032,6 +1033,9 @@ func (tpm *TPM2) LoadKeyPair(
 			slog.String("cn", keyAttrs.CN))
 		return nil, err
 	}
+	if isKeyRecoveryFence(pub) {
+		return nil, fmt.Errorf("tpm: key %q is incomplete: an unfinished recovery's fence holds its public blob", keyAttrs.CN)
+	}
 	tpm.logger.Debug("tpm: LoadKeyPair - loaded public blob", slog.Int("bytes", len(pub)))
 	if err := checkLoadAreaSizes(pub, priv); err != nil {
 		return nil, err
@@ -1200,6 +1204,14 @@ func (tpm *TPM2) LoadKeyPairFromBlobs(
 
 // Saves the requested TPMAlgKeyedHash encrypted public and private
 // blobs to the blob store.
+// keyRecoveryFence is what a recovering SaveKeyPair stores in a key's public
+// blob before it rewrites the private blob. Its leading size, 0xffff, exceeds
+// its length, so it never unmarshals as a TPM2B_PUBLIC; LoadKeyPair refuses
+// it by name.
+var keyRecoveryFence = []byte("\xff\xfftpm2-key-recovery-fence")
+
+func isKeyRecoveryFence(pub []byte) bool { return bytes.Equal(pub, keyRecoveryFence) }
+
 func (tpm *TPM2) SaveKeyPair(
 	keyAttrs *types.KeyAttributes,
 	outPrivate tpm2.TPM2BPrivate,
@@ -1217,31 +1229,47 @@ func (tpm *TPM2) SaveKeyPair(
 	// finds a private blob without a public blob meets either an incomplete
 	// earlier save (a storage fault or crash between the two writes) or a
 	// live writer between its two writes, possibly on another backend
-	// instance or node: the two cannot be told apart. So the public blob is
-	// the per-key fence: the recovering save creates it, create-only, before
-	// it touches the private blob. If the live writer's public blob is
-	// already there, the recovery refuses and leaves the pair alone; if the
-	// recovery's is, the live writer's own public save refuses and only the
-	// recovering writer then writes the private blob. A complete pair still
+	// instance or node: the two cannot be told apart. So the recovering save
+	// first creates, create-only, a recovery fence in the public blob's
+	// place: a value no reader accepts as a public area. If the live writer's
+	// public blob is already there, the recovery refuses and leaves the pair
+	// alone; if the fence is, the live writer's own public save refuses. Only
+	// then does the recovery overwrite the private blob and, last, replace
+	// the fence with its public blob. A process death at any point between
+	// leaves the fence, never one writer's public blob beside another's
+	// private blob (Codex round-2 P1); a create-only save that meets a fence
+	// refuses, as it cannot tell a dead recovery from a live one, and a
+	// delete or an overwriting save repairs the key. A complete pair still
 	// refuses.
 	err := backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, overwrite)
 	if err != nil && !overwrite && errors.Is(err, store.ErrBlobExists) {
-		if _, perr := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB); !errors.Is(perr, store.ErrBlobNotFound) {
+		pub, perr := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
+		if perr == nil && isKeyRecoveryFence(pub) {
+			return fmt.Errorf("tpm: key %q holds an unfinished recovery's fence (delete the key or save it with overwrite): %w", keyAttrs.CN, err)
+		}
+		if !errors.Is(perr, store.ErrBlobNotFound) {
 			return err
 		}
 		tpm.logger.Warn("tpm: replacing an incomplete key pair (private blob without public blob)",
 			slog.String("cn", keyAttrs.CN))
-		if err := backend.Save(keyAttrs, outPublic.Bytes(), store.FSEXT_PUBLIC_BLOB, false); err != nil {
+		if err := backend.Save(keyAttrs, keyRecoveryFence, store.FSEXT_PUBLIC_BLOB, false); err != nil {
 			return err
 		}
-		if err := backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, true); err != nil {
-			// This save owns the key now: drop the pair so a retry starts
-			// clean rather than meeting this public blob beside another
-			// writer's private blob.
-			if derr := backend.Delete(keyAttrs); derr != nil {
-				return errors.Join(err, derr)
+		for _, blob := range []struct {
+			data []byte
+			ext  types.FSExtension
+		}{
+			{outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB},
+			{outPublic.Bytes(), store.FSEXT_PUBLIC_BLOB},
+		} {
+			if err := backend.Save(keyAttrs, blob.data, blob.ext, true); err != nil {
+				// This save owns the key now: drop it so a retry starts
+				// clean. If the delete fails too, the fence stays.
+				if derr := backend.Delete(keyAttrs); derr != nil {
+					return errors.Join(err, derr)
+				}
+				return err
 			}
-			return err
 		}
 		return nil
 	}
