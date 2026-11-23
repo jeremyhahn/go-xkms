@@ -522,8 +522,13 @@ func encrypt(cfg *Config, printer *Printer, keyID, plaintext, aad string) {
 var keyDecryptCmd = &cobra.Command{
 	Use:   "decrypt <key-id> <ciphertext>",
 	Short: "Decrypt data with a key",
-	Long:  `Decrypt data using a cryptographic key (asymmetric or symmetric)`,
-	Args:  cobra.ExactArgs(2),
+	Long: `Decrypt data using a cryptographic key (asymmetric or symmetric).
+
+RSA keys decrypt with RSA-OAEP SHA-256 by default (--padding oaep-sha256),
+matching key encrypt-asym. --padding pkcs1v15 selects RSA PKCS#1 v1.5, which
+the server refuses unless crypto.allow_legacy_key_wrap is enabled. Symmetric
+keys ignore --padding.`,
+	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		keyID := args[0]
 		ciphertext := args[1]
@@ -535,6 +540,7 @@ var keyDecryptCmd = &cobra.Command{
 		nonce := fr.String("nonce")
 		tag := fr.String("tag")
 		keyVersion := fr.Uint32("key-version")
+		padding := fr.String("padding")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
@@ -542,14 +548,40 @@ var keyDecryptCmd = &cobra.Command{
 
 		printVerbose("Decrypting data with key: %s", keyID)
 
-		decrypt(cfg, printer, keyID, ciphertext, aad, nonce, tag, keyVersion)
+		decrypt(cfg, printer, keyID, ciphertext, aad, nonce, tag, padding, keyVersion)
 	},
+}
+
+// key decrypt --padding values.
+const (
+	decryptPaddingOAEPSHA256 = "oaep-sha256"
+	decryptPaddingPKCS1v15   = "pkcs1v15"
+)
+
+// decryptPaddingOptions maps a key decrypt --padding value to the
+// DecryptRequest Padding and Hash fields. An unknown value returns a
+// *DecryptPaddingError.
+func decryptPaddingOptions(padding string) (string, string, error) {
+	switch padding {
+	case decryptPaddingOAEPSHA256:
+		return "oaep", "sha256", nil
+	case decryptPaddingPKCS1v15:
+		return "pkcs1v15", "", nil
+	default:
+		return "", "", &DecryptPaddingError{Value: padding}
+	}
 }
 
 // decrypt decrypts data using the SDK client. A zero keyVersion lets the
 // server choose: every enabled version for AEAD and RSA-OAEP ciphertext, the
 // one enabled version otherwise.
-func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag string, keyVersion uint32) {
+func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag, padding string, keyVersion uint32) {
+	padScheme, padHash, err := decryptPaddingOptions(padding)
+	if err != nil {
+		handleError(err)
+		return
+	}
+
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -576,6 +608,8 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 		KeyID:      keyID,
 		Ciphertext: ciphertextBytes,
 		KeyVersion: keyVersion,
+		Padding:    padScheme,
+		Hash:       padHash,
 	}
 
 	if aad != "" {
@@ -1942,6 +1976,7 @@ func init() {
 	keyDecryptCmd.Flags().String("nonce", "", "Nonce/IV (base64, required for symmetric decryption)")
 	keyDecryptCmd.Flags().String("tag", "", "Authentication tag (base64, required for symmetric decryption)")
 	keyDecryptCmd.Flags().Uint32("key-version", 0, "Key version the encrypt reported (default: chosen by the server; required for AES-CBC and RSA PKCS#1 v1.5 once a key has several enabled versions)")
+	keyDecryptCmd.Flags().String("padding", decryptPaddingOAEPSHA256, "RSA padding: oaep-sha256 or pkcs1v15 (pkcs1v15 needs crypto.allow_legacy_key_wrap on the server; ignored for symmetric keys)")
 
 	// Flags for import command. --key-type names the ALGORITHM of the material
 	// being imported, not a purpose: the server receives opaque wrapped bytes

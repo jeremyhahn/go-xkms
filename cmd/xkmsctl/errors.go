@@ -857,6 +857,10 @@ var (
 	// not a positive integer.
 	ErrInvalidKeyVersion = errors.New("invalid key version: must be a positive integer")
 
+	// ErrInvalidDecryptPadding is returned (inside a *DecryptPaddingError)
+	// for a key decrypt --padding value that is not oaep-sha256 or pkcs1v15.
+	ErrInvalidDecryptPadding = errors.New("invalid --padding")
+
 	// ErrSOPINRequired is the sentinel error "--so-pin is required".
 	ErrSOPINRequired = errors.New("--so-pin is required")
 
@@ -1499,6 +1503,24 @@ func (e *WrappedError) Error() string {
 // Unwrap returns both the sentinel and the underlying cause.
 func (e *WrappedError) Unwrap() []error {
 	return []error{e.Sentinel, e.Err}
+}
+
+// DecryptPaddingError reports a key decrypt --padding value outside the
+// accepted set. It unwraps to ErrInvalidDecryptPadding.
+type DecryptPaddingError struct {
+	// Value is the rejected --padding value.
+	Value string
+}
+
+// Error renders the rejected value and the accepted values.
+func (e *DecryptPaddingError) Error() string {
+	return fmt.Sprintf("%s %q (accepted: %s, %s)", ErrInvalidDecryptPadding.Error(), e.Value,
+		decryptPaddingOAEPSHA256, decryptPaddingPKCS1v15)
+}
+
+// Unwrap exposes ErrInvalidDecryptPadding to errors.Is.
+func (e *DecryptPaddingError) Unwrap() error {
+	return ErrInvalidDecryptPadding
 }
 
 // WrappedDetailError pairs a sentinel error with a contextual detail string
