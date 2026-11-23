@@ -157,8 +157,8 @@ import (
 func TestGamma(t *testing.T) { _ = g.G() }'
 # kappa: alpha imports pkg/k, and so does kappa's only test file, gated on
 # simx, a tag only kappa's explicit rule adds (the clusterca/tpm_simulator
-# shape). lambda: alpha imports pkg/l, and so does lambda's only test file,
-# gated on a tag no recipe passes.
+# shape). alpha also imports pkg/l, which touched-features.test.sh gives a
+# suite (lambda) no recipe's tags build.
 put pkg/k/k.go 'package k
 
 func K() int { return 11 }'
@@ -176,17 +176,6 @@ func TestKappa(t *testing.T) { _ = k.K() }'
 put pkg/l/l.go 'package l
 
 func L() int { return 12 }'
-put test/integration/lambda/lambda_test.go '//go:build integration && neverset
-
-package lambda
-
-import (
-	"testing"
-
-	"example.com/m/pkg/l"
-)
-
-func TestLambda(t *testing.T) { _ = l.L() }'
 # delta: its test builds and runs ./cmd/tool, which imports pkg/t.
 put pkg/t/t.go 'package t
 

@@ -53,8 +53,22 @@ eq "a dep of a nested-module binary the recipe builds prints that feature" "zeta
 # Each explicit suite's graph under its own recipe's tags.
 K=$(commit_file pkg/k/k.go '// k')
 eq "a package a suite imports under its explicit rule's extra tag prints that suite" "$(two alpha kappa)" "$(run "$U" "$K")"
+# lambda's only test file is gated on a tag no recipe passes (last, since
+# from here on every package change prints ALL).
+put test/integration/lambda/lambda_test.go '//go:build integration && neverset
+
+package lambda
+
+import (
+	"testing"
+
+	"example.com/m/pkg/l"
+)
+
+func TestLambda(t *testing.T) { _ = l.L() }'
+LT=$(commit_all lambda)
 L=$(commit_file pkg/l/l.go '// l')
-eq "a suite whose tests no recipe's tags build makes any package change ALL" "ALL" "$(run "$K" "$L")"
+eq "a suite whose tests no recipe's tags build makes any package change ALL" "ALL" "$(run "$LT" "$L")"
 
 OUT=$(run "$BASE" no-such-revision 2>&1)
 RC=$?
