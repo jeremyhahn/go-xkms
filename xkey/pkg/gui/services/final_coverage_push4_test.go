@@ -880,7 +880,7 @@ func TestFCP6_AppLockService_ResetAutoLockTimer_ZeroMinutes(t *testing.T) {
 
 func TestFCP6_AuditService_ExportEntries_NoEntries(t *testing.T) {
 	// Use nil store which returns empty entries.
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	// With nil store, GetEntries returns empty []AuditEntry.
 	// So ExportEntries should return ErrAuditNoEntries.
 	_, err := svc.ExportEntries("json", nil)
@@ -898,7 +898,7 @@ func TestFCP6_AuditService_ExportEntries_CSV(t *testing.T) {
 		}},
 	}
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 	data, err := svc.ExportEntries("csv", nil)
 	assert.NoError(t, err)
 	assert.Contains(t, string(data), "key_created")
@@ -917,7 +917,7 @@ func TestFCP6_AuditService_ExportEntries_JSON(t *testing.T) {
 		}},
 	}
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 	data, err := svc.ExportEntries("json", nil)
 	assert.NoError(t, err)
 

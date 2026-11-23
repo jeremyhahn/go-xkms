@@ -845,6 +845,7 @@ func (s *AdminService) GetAuditLogs(filter *AuditFilter) ([]AuditEntry, error) {
 	// Delegate to shared audit query logic.
 	auditSvc := NewAuditService(s.auditStore)
 	auditSvc.SetContext(s.ctx)
+	auditSvc.SetAuthorizer(s.authorizer)
 	return auditSvc.GetEntries(filter)
 }
 
@@ -945,6 +946,7 @@ func (s *AdminService) ExportAuditLogs(format string) ([]byte, error) {
 
 	auditSvc := NewAuditService(s.auditStore)
 	auditSvc.SetContext(s.ctx)
+	auditSvc.SetAuthorizer(s.authorizer)
 
 	entries, err := auditSvc.GetEntries(nil)
 	if err != nil {

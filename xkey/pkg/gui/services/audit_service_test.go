@@ -30,19 +30,19 @@ import (
 )
 
 func TestNewAuditService(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	assert.NotNil(t, svc)
 }
 
 func TestAuditService_SetContext(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	ctx := context.Background()
 	svc.SetContext(ctx)
 	assert.Equal(t, ctx, svc.ctx)
 }
 
 func TestAuditService_GetEntries_Empty(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	entries, err := svc.GetEntries(nil)
 	require.NoError(t, err)
 	assert.NotNil(t, entries)
@@ -50,7 +50,7 @@ func TestAuditService_GetEntries_Empty(t *testing.T) {
 }
 
 func TestAuditService_GetEntries_NilStoreWithFilter(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	filter := &AuditFilter{
 		Operation: "key_created",
 		Limit:     10,
@@ -68,7 +68,7 @@ func TestAuditService_GetEntries_WithStore(t *testing.T) {
 	store.LogKeyOperation(audit.OpKeyDeleted, "tpm2", "key2", true, nil, 50)
 	store.LogCryptoOperation(audit.OpSignRequest, "software", "key1", "dev1", "My Device", true, nil, 25)
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 
 	t.Run("all entries no filter", func(t *testing.T) {
 		entries, err := svc.GetEntries(nil)
@@ -138,7 +138,7 @@ func TestAuditService_GetEntries_ErrorField(t *testing.T) {
 	testErr := errors.New("operation failed")
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", false, testErr, 10)
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 	entries, err := svc.GetEntries(nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
@@ -147,21 +147,21 @@ func TestAuditService_GetEntries_ErrorField(t *testing.T) {
 }
 
 func TestAuditService_ExportEntries_InvalidFormat(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	_, err := svc.ExportEntries("xml", nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAuditInvalidFormat))
 }
 
 func TestAuditService_ExportEntries_NoEntries_JSON(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	_, err := svc.ExportEntries("json", nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAuditNoEntries))
 }
 
 func TestAuditService_ExportEntries_NoEntries_CSV(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	_, err := svc.ExportEntries("csv", nil)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrAuditNoEntries))
@@ -173,7 +173,7 @@ func TestAuditService_ExportEntries_JSON(t *testing.T) {
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "test-key", true, nil, 42)
 	store.LogKeyOperation(audit.OpKeyDeleted, "tpm2", "key2", true, nil, 10)
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 
 	data, err := svc.ExportEntries("json", nil)
 	require.NoError(t, err)
@@ -192,7 +192,7 @@ func TestAuditService_ExportEntries_JSONWithFilter(t *testing.T) {
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "k1", true, nil, 42)
 	store.LogKeyOperation(audit.OpKeyDeleted, "tpm2", "k2", true, nil, 10)
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 
 	data, err := svc.ExportEntries("json", &AuditFilter{Backend: "tpm2"})
 	require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestAuditService_ExportEntries_CSV(t *testing.T) {
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpSignRequest, "software", "sign-key", true, nil, 99)
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 
 	data, err := svc.ExportEntries("csv", nil)
 	require.NoError(t, err)
@@ -235,7 +235,7 @@ func TestAuditService_ExportCSV_MultipleEntries(t *testing.T) {
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 10)
 	store.LogKeyOperation(audit.OpKeyDeleted, "hw", "k2", false, errors.New("denied"), 20)
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 	entries, err := svc.GetEntries(nil)
 	require.NoError(t, err)
 
@@ -312,7 +312,7 @@ func TestAuditService_GetEntries_PolicyGate(t *testing.T) {
 			require.NoError(t, storeErr)
 			store.Log(audit.Entry{Operation: audit.OpKeyCreated, Success: true})
 
-			svc := NewAuditService(store)
+			svc := newAuditReaderService(store)
 			svc.SetPolicy(tt.policy)
 
 			countBefore := store.Count()
@@ -338,7 +338,7 @@ func TestAuditService_ExportEntries_PolicyGate(t *testing.T) {
 	require.NoError(t, storeErr)
 	store.Log(audit.Entry{Operation: audit.OpKeyCreated, Success: true})
 
-	svc := NewAuditService(store)
+	svc := newAuditReaderService(store)
 	svc.SetPolicy(&config.PolicySection{UserCanViewAuditLog: false})
 
 	data, err := svc.ExportEntries("json", nil)

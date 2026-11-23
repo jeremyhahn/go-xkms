@@ -1344,8 +1344,7 @@ func TestFinalCoveragePush_BarrierService_Unseal_EmptyStrategy(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFinalCoveragePush_AuditService_GetEntries_NilStore(t *testing.T) {
-	svc := NewAuditService(nil)
-	svc.SetContext(context.Background())
+	svc := newAuditReaderService(nil)
 
 	entries, err := svc.GetEntries(nil)
 	require.NoError(t, err)
@@ -1363,8 +1362,7 @@ func TestFinalCoveragePush_AuditService_GetEntries_WithFilter(t *testing.T) {
 		Backend:   "software",
 	})
 
-	svc := NewAuditService(store)
-	svc.SetContext(context.Background())
+	svc := newAuditReaderService(store)
 
 	filter := &AuditFilter{
 		Operation: string(audit.OpBarrierInitialized),
@@ -1378,7 +1376,7 @@ func TestFinalCoveragePush_AuditService_GetEntries_WithFilter(t *testing.T) {
 }
 
 func TestFinalCoveragePush_AuditService_ExportCSV(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	entries := []AuditEntry{
 		{
 			Timestamp:  time.Now(),
@@ -1930,16 +1928,14 @@ func TestFinalCoveragePush_PINService_ResetLockout_Success(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFinalCoveragePush_AuditService_ExportEntries_InvalidFormat(t *testing.T) {
-	svc := NewAuditService(nil)
-	svc.SetContext(context.Background())
+	svc := newAuditReaderService(nil)
 
 	_, err := svc.ExportEntries("xml", nil)
 	assert.ErrorIs(t, err, ErrAuditInvalidFormat)
 }
 
 func TestFinalCoveragePush_AuditService_ExportEntries_NilStore(t *testing.T) {
-	svc := NewAuditService(nil)
-	svc.SetContext(context.Background())
+	svc := newAuditReaderService(nil)
 
 	_, err := svc.ExportEntries("json", nil)
 	assert.ErrorIs(t, err, ErrAuditNoEntries)
@@ -1955,8 +1951,7 @@ func TestFinalCoveragePush_AuditService_ExportEntries_JSON(t *testing.T) {
 		Success:   true,
 	})
 
-	svc := NewAuditService(store)
-	svc.SetContext(context.Background())
+	svc := newAuditReaderService(store)
 
 	data, err := svc.ExportEntries("json", nil)
 	require.NoError(t, err)
@@ -1973,8 +1968,7 @@ func TestFinalCoveragePush_AuditService_ExportEntries_CSV(t *testing.T) {
 		Success:   true,
 	})
 
-	svc := NewAuditService(store)
-	svc.SetContext(context.Background())
+	svc := newAuditReaderService(store)
 
 	data, err := svc.ExportEntries("csv", nil)
 	require.NoError(t, err)

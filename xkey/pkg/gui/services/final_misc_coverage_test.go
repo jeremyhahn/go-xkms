@@ -1238,7 +1238,7 @@ func TestFM_FIDO2Service_StopPhoneBridge_NotRunning(t *testing.T) {
 
 // TestFM_AuditService_ExportEntries_InvalidFormat covers line 128-129.
 func TestFM_AuditService_ExportEntries_InvalidFormat(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	_, err := svc.ExportEntries("xml", nil)
 	assert.ErrorIs(t, err, ErrAuditInvalidFormat)
 }

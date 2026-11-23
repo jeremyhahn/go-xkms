@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
@@ -72,6 +73,28 @@ type AuditService struct {
 	// field gates GetEntries and ExportEntries. nil in personal mode.
 	// See SetPolicy.
 	policy atomic.Pointer[config.PolicySection]
+
+	// authorizer decides audit:read for the go-qrdb identity bound to ctx.
+	// nil refuses every read (checkAuditRead). See SetAuthorizer.
+	authorizer atomic.Pointer[xkmssdk.QRDBAuthorizer]
+}
+
+// SetAuthorizer installs go-qrdb's authorizer (go-xkms's Service.Authorizer
+// through sdk/go). GetEntries and ExportEntries require audit:read for the
+// identity bound to the service context; with no authorizer they refuse.
+func (s *AuditService) SetAuthorizer(authorizer xkmssdk.QRDBAuthorizer) {
+	if authorizer == nil {
+		s.authorizer.Store(nil)
+		return
+	}
+	s.authorizer.Store(&authorizer)
+}
+
+func (s *AuditService) loadAuthorizer() xkmssdk.QRDBAuthorizer {
+	if p := s.authorizer.Load(); p != nil {
+		return *p
+	}
+	return nil
 }
 
 // NewAuditService creates a new AuditService.
@@ -120,6 +143,9 @@ func (s *AuditService) requireViewAuditLog(operation string) error {
 // GetEntries returns audit log entries matching the filter.
 func (s *AuditService) GetEntries(filter *AuditFilter) ([]AuditEntry, error) {
 	if err := s.requireViewAuditLog("get_entries"); err != nil {
+		return nil, err
+	}
+	if err := checkAuditRead(s.ctx, s.loadAuthorizer()); err != nil {
 		return nil, err
 	}
 	if s.store == nil {

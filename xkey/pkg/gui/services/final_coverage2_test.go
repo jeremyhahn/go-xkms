@@ -365,7 +365,7 @@ func TestFinal2_Connection_Disconnect_NotConnected(t *testing.T) {
 }
 
 func TestFinal2_AuditService_GetEntries_NilStore(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	entries, err := svc.GetEntries(nil)
 	assert.NoError(t, err)
 	assert.NotNil(t, entries)
@@ -374,7 +374,7 @@ func TestFinal2_AuditService_GetEntries_NilStore(t *testing.T) {
 
 func TestFinal2_AuditService_ExportEntries_NilStore(t *testing.T) {
 	// L133-135, L146-147: ExportEntries calls GetEntries which fails on nil store.
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 	data, err := svc.ExportEntries("csv", nil)
 	assert.Error(t, err)
 	assert.Nil(t, data)

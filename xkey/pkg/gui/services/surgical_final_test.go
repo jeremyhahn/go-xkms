@@ -552,7 +552,7 @@ func TestSurg_FIDO2HandleBridgeRequest_NotRunning(t *testing.T) {
 
 // TestSurg_AuditExportEntries_NoEntries covers L137-139 (ErrAuditNoEntries).
 func TestSurg_AuditExportEntries_NoEntries(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 
 	_, err := svc.ExportEntries("json", nil)
 	assert.Error(t, err)
@@ -561,7 +561,7 @@ func TestSurg_AuditExportEntries_NoEntries(t *testing.T) {
 
 // TestSurg_AuditExportEntries_InvalidFormat covers L146-147 default case.
 func TestSurg_AuditExportEntries_InvalidFormat(t *testing.T) {
-	svc := NewAuditService(nil)
+	svc := newAuditReaderService(nil)
 
 	_, err := svc.ExportEntries("xml", nil)
 	assert.Error(t, err)
