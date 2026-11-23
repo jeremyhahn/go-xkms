@@ -4,7 +4,12 @@
 
 ## Bootstrap a new server
 
-1. Write `xkmsd.yaml` (storage, seal strategy, relying party).
+1. Write `xkmsd.yaml` (storage, seal strategy, relying party) with
+   `datastore.path` set to the durable directory, the same one step 2 passes
+   as `--data-dir` (here `/var/lib/xkms`), so `xkmsd init` and `xkmsd run`
+   share one datastore and `xkmsd run` advertises the CA bundle init wrote.
+   `--data-dir` is only the fallback for an empty `datastore.path` and the
+   directory init writes its artifacts to.
 2. Run `xkmsd init` with the Security Officer PIN and the factors the
    administrator will log in with:
 
@@ -15,9 +20,7 @@
 
 3. Distribute `/var/lib/xkms/ca-bundle.pem` (the bundle init writes under
    `--data-dir`) and the pin in `/var/lib/xkms/spki-pin.txt` to first-contact
-   clients (`xkmsctl bootstrap`). `xkmsd run` advertises
-   `<datastore.path>/ca-bundle.pem`, so set `datastore.path` in `xkmsd.yaml` to
-   the same directory as `--data-dir`.
+   clients (`xkmsctl bootstrap`).
 4. Keep `admin-key.pem` private; it is the administrator's mTLS credential.
 5. Start the daemon: `xkmsd --config xkmsd.yaml`.
 
