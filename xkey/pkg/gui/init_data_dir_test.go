@@ -296,6 +296,28 @@ func TestInitializeDataDir_SecondAuditWriterOnTheDataDirFailsInit(t *testing.T) 
 	require.ErrorIs(t, err, audit.ErrAuditWriterLocked)
 }
 
+// TestApp_ShutdownReleasesTheAuditWriterLock proves a clean exit closes the
+// audit store, so the next launch opens the same chain instead of failing
+// with ErrAuditWriterLocked.
+func TestApp_ShutdownReleasesTheAuditWriterLock(t *testing.T) {
+	app := newWiredApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	dir := t.TempDir()
+	app.dataDir = dir
+	require.NoError(t, app.initializeDataDir())
+	require.True(t, app.auditStore.SealedAtRest())
+
+	app.shutdown(context.Background())
+
+	mem, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	defer func() { _ = mem.Close() }()
+	reopened, err := audit.OpenBarrierSink(context.Background(), mem, auditRingCapacity,
+		audit.WithWriterLock(filepath.Join(dir, auditWriterLockFile)))
+	require.NoError(t, err, "the next launch must get the writer lock")
+	require.NoError(t, reopened.Close())
+}
+
 // TestInitializeDataDir_NoBarrierPersistsNoAudit proves that without a
 // barrier the audit events stay in memory and no audit file is written.
 func TestInitializeDataDir_NoBarrierPersistsNoAudit(t *testing.T) {

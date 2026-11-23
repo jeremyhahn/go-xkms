@@ -771,6 +771,15 @@ func (a *App) closeStaticPWStore() error {
 	return err
 }
 
+// closeAuditStore closes the audit store and with it the sink it owns,
+// releasing the durable sink's writer lock so the next launch can open it.
+func (a *App) closeAuditStore() error {
+	if a.auditStore == nil {
+		return nil
+	}
+	return a.auditStore.Close()
+}
+
 func (a *App) initializeDataDir() error {
 	if a.dataDirInit {
 		return ErrDataDirAlreadyInit
@@ -3807,6 +3816,12 @@ func (a *App) shutdown(ctx context.Context) {
 			}
 			return nil
 		})
+
+		// Close the audit store once its producers have stopped and before
+		// the backends go: it releases the sink's writer lock
+		// (<data dir>/audit.lock), which a stale file on !unix would
+		// otherwise hold against the next launch.
+		shutdownStep(a.log, "audit-store-close", 1*time.Second, a.closeAuditStore)
 
 		// Close the backend registry.
 		shutdownStep(a.log, "backend-registry-close", 1*time.Second, func() error {
