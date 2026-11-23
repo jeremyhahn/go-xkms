@@ -358,3 +358,62 @@ func TestCopyKeyRefusesSubFloorRSASource(t *testing.T) {
 	assert.False(t, imported,
 		"the destination must never receive an import of a source key that fails the RSA floor")
 }
+
+// TestCopyKeyDefaultsWrappingAlgorithmFromDestination pins go-xkms#2283: a
+// copy request with no algorithm gets the DESTINATION backend's default --
+// TPM2_DUPLICATE for a TPM 2.0 store, whose import surface accepts nothing
+// else, and RSAES_OAEP_SHA_256 for every other store -- while an algorithm
+// the caller names is passed through unchanged.
+func TestCopyKeyDefaultsWrappingAlgorithmFromDestination(t *testing.T) {
+	cases := []struct {
+		name      string
+		destStore types.StoreType
+		requested string
+		want      backend.WrappingAlgorithm
+	}{
+		{"tpm2 destination, none given", types.StoreTPM2, "", backend.WrappingAlgorithmTPM2Duplicate},
+		{"software destination, none given", types.StoreSoftware, "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256},
+		{"tpm2 destination, caller's choice", types.StoreTPM2, string(backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256), backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			Reset()
+			t.Cleanup(Reset)
+
+			srcKP := newBoostIEKeyProvider()
+			srcStore := newMockKeyStore("source")
+			srcStore.backend = srcKP
+
+			dstKP := newBoostIEKeyProvider()
+			dstStore := newMockKeyStore("dest")
+			dstStore.backend = dstKP
+			dstStore.storeType = tc.destStore
+
+			require.NoError(t, Initialize(&ServiceConfig{
+				Backends:       map[string]Backend{"source": srcStore, "dest": dstStore},
+				DefaultBackend: "source",
+			}))
+			svc, err := Get()
+			require.NoError(t, err)
+
+			boostGenIEKey(t, srcStore, srcKP, &types.KeyAttributes{
+				CN:           "src-key",
+				KeyAlgorithm: x509.ECDSA,
+			})
+
+			_, err = svc.CopyKey(context.Background(), &transport.CopyKeyRequest{
+				SourceBackend: "source",
+				SourceKeyID:   "src-key",
+				DestBackend:   "dest",
+				DestKeyID:     "src-key-copy",
+				Algorithm:     tc.requested,
+			})
+			require.NoError(t, err)
+
+			wrapped, ok := dstKP.importedKeys["src-key-copy"]
+			require.True(t, ok, "the destination must receive the import")
+			assert.Equal(t, tc.want, wrapped.Algorithm,
+				"the destination's import parameters must be requested with this algorithm")
+		})
+	}
+}

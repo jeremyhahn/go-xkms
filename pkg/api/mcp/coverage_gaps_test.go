@@ -73,7 +73,6 @@ func TestHandlers_CopyKey_MissingFields(t *testing.T) {
 		{"missing source_key_id", CopyKeyParams{SourceBackend: "s", DestBackend: "d", DestKeyID: "k2", Algorithm: "rsa"}, "source_key_id"},
 		{"missing dest_backend", CopyKeyParams{SourceBackend: "s", SourceKeyID: "k", DestKeyID: "k2", Algorithm: "rsa"}, "dest_backend"},
 		{"missing dest_key_id", CopyKeyParams{SourceBackend: "s", SourceKeyID: "k", DestBackend: "d", Algorithm: "rsa"}, "dest_key_id"},
-		{"missing algorithm", CopyKeyParams{SourceBackend: "s", SourceKeyID: "k", DestBackend: "d", DestKeyID: "k2"}, "algorithm"},
 	}
 
 	for _, tt := range tests {

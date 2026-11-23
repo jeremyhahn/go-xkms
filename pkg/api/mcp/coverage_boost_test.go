@@ -53,11 +53,6 @@ func TestHandleCopyKey_ValidationErrors(t *testing.T) {
 			params:      CopyKeyParams{SourceBackend: "software", SourceKeyID: "k1", DestBackend: "software", Algorithm: "AES-KW"},
 			expectedMsg: "dest_key_id is required",
 		},
-		{
-			name:        "missing algorithm",
-			params:      CopyKeyParams{SourceBackend: "software", SourceKeyID: "k1", DestBackend: "software", DestKeyID: "k2"},
-			expectedMsg: "algorithm is required",
-		},
 	}
 
 	for _, tc := range tests {

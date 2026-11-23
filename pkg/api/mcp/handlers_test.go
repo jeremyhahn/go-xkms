@@ -1832,9 +1832,9 @@ func TestHandler_CopyKey(t *testing.T) {
 		assert.Contains(t, err.Error(), "dest_key_id is required")
 	})
 
-	t.Run("fails with missing algorithm", func(t *testing.T) {
+	t.Run("omitted algorithm reaches the service (go-xkms#2283)", func(t *testing.T) {
 		params := CopyKeyParams{
-			SourceBackend: "software",
+			SourceBackend: "notreal",
 			SourceKeyID:   "key1",
 			DestBackend:   "software",
 			DestKeyID:     "key2",
@@ -1849,8 +1849,9 @@ func TestHandler_CopyKey(t *testing.T) {
 		}
 
 		_, err := server.handleCopyKey(context.Background(), req)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "algorithm is required")
+		// The handler no longer rejects an empty algorithm: the service
+		// resolves the source backend first and picks the default itself.
+		assertCopyKeyBackendError(t, err, "source")
 	})
 
 	t.Run("fails with invalid params", func(t *testing.T) {
@@ -5545,11 +5546,11 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 		assert.Contains(t, err.Error(), "dest_key_id is required")
 	})
 
-	t.Run("missing algorithm", func(t *testing.T) {
+	t.Run("omitted algorithm is not a validation error (go-xkms#2283)", func(t *testing.T) {
 		params := CopyKeyParams{
 			SourceBackend: "software",
 			SourceKeyID:   "test-key",
-			DestBackend:   "software",
+			DestBackend:   "notreal",
 			DestKeyID:     "dest-key",
 		}
 		paramsJSON, _ := json.Marshal(params)
@@ -5562,8 +5563,7 @@ func TestHandler_CopyKey_ErrorPaths(t *testing.T) {
 		}
 
 		_, err := server.handleCopyKey(context.Background(), req)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "algorithm is required")
+		assertCopyKeyBackendError(t, err, "destination")
 	})
 
 	t.Run("invalid source backend", func(t *testing.T) {
