@@ -293,7 +293,14 @@ func (s *daoCredentialStore) dropClaim(ctx context.Context, userID string) error
 // Save stores a NEW credential. A credential ID that is already registered
 // — to this account or any other — is refused with
 // ErrCredentialAlreadyExists and the stored record is left untouched.
+//
+// A ctx that carries a first-credential claim (WithFirstCredentialClaim)
+// stores cred through that claim instead, bound to its token, so a decorator
+// over this store sees the claimed save in its own Save.
 func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
+	if claim := FirstCredentialClaimFrom(ctx); claim != nil {
+		return claim.Save(WithFirstCredentialClaim(ctx, nil), cred)
+	}
 	return s.save(ctx, cred, "")
 }
 

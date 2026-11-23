@@ -132,6 +132,26 @@ type CredentialStore interface {
 	ClaimFirstCredential(ctx context.Context, userID []byte) (FirstCredentialClaim, error)
 }
 
+// firstCredentialClaimKey is the context key WithFirstCredentialClaim uses.
+type firstCredentialClaimKey struct{}
+
+// WithFirstCredentialClaim returns ctx carrying claim. The Service saves an
+// account's first credential with CredentialStore.Save under such a ctx, so a
+// decorator over the store keeps its Save side effects for claimed saves; the
+// store that won the claim then persists through claim.Save, keeping the
+// claim's fence. A store that persists credentials itself, instead of
+// delegating Save, must do the same. A nil claim clears it.
+func WithFirstCredentialClaim(ctx context.Context, claim FirstCredentialClaim) context.Context {
+	return context.WithValue(ctx, firstCredentialClaimKey{}, claim)
+}
+
+// FirstCredentialClaimFrom returns the claim WithFirstCredentialClaim put in
+// ctx, or nil.
+func FirstCredentialClaimFrom(ctx context.Context) FirstCredentialClaim {
+	claim, _ := ctx.Value(firstCredentialClaimKey{}).(FirstCredentialClaim)
+	return claim
+}
+
 // FirstCredentialClaim is a won CredentialStore.ClaimFirstCredential.
 type FirstCredentialClaim interface {
 	// Save persists cred, the account's first credential, bound to this

@@ -718,11 +718,14 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 			return nil, WrapError("claim first credential", err)
 		}
 	}
-	save := s.creds.Save
+	// A claimed save still goes through the configured store's Save, so a
+	// decorator's side effects (a composer's auth factor) apply to it; the
+	// claim in ctx makes the underlying store persist it fenced by the claim.
+	saveCtx := ctx
 	if claim != nil {
-		save = claim.Save
+		saveCtx = WithFirstCredentialClaim(ctx, claim)
 	}
-	if err := save(ctx, cred); err != nil {
+	if err := s.creds.Save(saveCtx, cred); err != nil {
 		if claim != nil {
 			if relErr := claim.Release(context.WithoutCancel(ctx)); relErr != nil {
 				s.logger.Error("release first-credential claim after a failed save", "error", relErr)
