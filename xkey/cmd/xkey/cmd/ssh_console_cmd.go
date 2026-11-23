@@ -46,7 +46,7 @@ func init() {
 	SSHCmd.AddCommand(sshConsoleCmd)
 	sshConsoleCmd.Flags().String("key", "", "SSH key name to authenticate with")
 	sshConsoleCmd.Flags().String("key-scope", "user", "Key scope")
-	sshConsoleCmd.Flags().String("key-owner", "", "Key owner (defaults to local)")
+	sshConsoleCmd.Flags().String("key-owner", "", "Key owner (default: none sent to an xkmsd server, which uses the caller; local for the local store, --local, --identity or no key)")
 	sshConsoleCmd.Flags().Int("port", 0, "Target port (default 22)")
 	sshConsoleCmd.Flags().String("user", "", "Remote user")
 	sshConsoleCmd.Flags().Bool("local", false, "Authenticate using the local ssh-agent/~/.ssh identities instead of an xkey-managed key")
@@ -76,9 +76,6 @@ func resolveSSHConsole(cmd *cobra.Command, target string) sshConsoleResolved {
 	identity = strings.TrimSpace(identity)
 	if identity != "" {
 		local = true
-	}
-	if keyOwner == "" {
-		keyOwner = "local"
 	}
 
 	host := target
@@ -117,6 +114,10 @@ func resolveSSHConsole(cmd *cobra.Command, target string) sshConsoleResolved {
 	if keyName == "" {
 		local = true
 	}
+	// Only the local store path (local identities, or no xkmsd server)
+	// defaults the owner to "local": it has no logged-in caller. A server
+	// resolves an empty owner to the caller.
+	keyOwner = defaultSSHKeyOwner(keyOwner, local || !sshTargetsServer(cmd))
 	return sshConsoleResolved{
 		host: host, user: user, port: port,
 		keyName: keyName, keyScope: keyScope, keyOwner: keyOwner,

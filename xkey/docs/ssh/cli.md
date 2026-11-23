@@ -127,7 +127,7 @@ xkey ssh authorized-keys remove --name ci-runner
 | `--user` | *(empty)* | Remote user |
 | `--key` | *(empty)* | xkey-managed key name |
 | `--key-scope` | `user` | Key scope |
-| `--key-owner` | *(empty — defaults to `local`)* | Key owner |
+| `--key-owner` | *(empty — none for a server profile, so the server uses the caller; `local` with `--key-source local`)* | Key owner |
 | `--key-source` | *(empty — xkey-managed)* | `""` or `local` |
 | `--ssh-config-alias` | *(empty)* | `ssh_config(5)` `Host` alias (implies `--key-source local`) |
 | `--identity` | *(empty)* | Identity file path or `agent:<SHA256-fingerprint>` (implies `--key-source local`) |
@@ -156,7 +156,7 @@ binary.
 |---|---|---|
 | `--key` | *(from profile)* | xkey-managed key name to authenticate with |
 | `--key-scope` | `user` | Key scope |
-| `--key-owner` | *(empty — defaults to `local` for GUI keys, `$USER` for CLI keys)* | Key owner |
+| `--key-owner` | *(empty — none sent to an xkmsd server, which resolves it to the caller; `local` for the local store (no server configured), `--local`, `--identity` or `--ssh-config-alias`)* | Key owner |
 | `--port` | `0` (→ `22`) | Target port |
 | `--user` | *(empty)* | Remote user (for `user@host` targets without an inline user) |
 | `--known-hosts-policy` | `barrier` | Where to record new pins: `barrier`\|`system`\|`both` |
@@ -186,7 +186,7 @@ the same capability the embedded GUI console uses.
 |---|---|---|
 | `--key` | *(from profile)* | xkey-managed key name |
 | `--key-scope` | `user` | Key scope |
-| `--key-owner` | *(empty — defaults to `local`)* | Key owner |
+| `--key-owner` | *(empty — none sent to an xkmsd server, which resolves it to the caller; `local` for the local store (no server configured), `--local`, `--identity` or no key)* | Key owner |
 | `--port` | `0` (→ `22`) | Target port |
 | `--user` | *(empty)* | Remote user |
 | `--local` | `false` | Authenticate via the operator's own ssh-agent/`~/.ssh` identities |

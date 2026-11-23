@@ -2177,7 +2177,7 @@ Usage: `xkey ssh connect [profile|user@host] [flags]`
 |---|---|---|---|
 | `--identity` | string |  | Local identity to authenticate with: an identity file path (passed to ssh as -i) or agent:<SHA256-fingerprint> for an agent-held key (implies --local) |
 | `--key` | string |  | SSH key name to authenticate with |
-| `--key-owner` | string |  | Key owner (defaults to local for GUI keys, $USER for CLI keys) |
+| `--key-owner` | string |  | Key owner (default: none sent to an xkmsd server, which uses the caller; local for the local store, --local, --identity or --ssh-config-alias) |
 | `--key-scope` | string | user | Key scope |
 | `--known-hosts-policy` | string | barrier | Where to record host-key pins: barrier\|system\|both |
 | `--local` | bool | false | Authenticate using the local ssh-agent/~/.ssh identities instead of an xkey-managed key (plain passthrough `ssh`, no in-process agent) |
@@ -2195,7 +2195,7 @@ Usage: `xkey ssh console [profile|user@host] [flags]`
 |---|---|---|---|
 | `--identity` | string |  | Local identity to authenticate with: an identity file path or agent:<SHA256-fingerprint> (implies --local) |
 | `--key` | string |  | SSH key name to authenticate with |
-| `--key-owner` | string |  | Key owner (defaults to local) |
+| `--key-owner` | string |  | Key owner (default: none sent to an xkmsd server, which uses the caller; local for the local store, --local, --identity or no key) |
 | `--key-scope` | string | user | Key scope |
 | `--local` | bool | false | Authenticate using the local ssh-agent/~/.ssh identities instead of an xkey-managed key |
 | `--port` | int | 0 | Target port (default 22) |
@@ -2375,7 +2375,7 @@ Usage: `xkey ssh profile add [flags]`
 | `--host` | string |  | Target host (required) |
 | `--identity` | string |  | Local identity pin: an identity file path or agent:<SHA256-fingerprint> (implies --key-source=local) |
 | `--key` | string |  | SSH key name |
-| `--key-owner` | string |  | Key owner (defaults to local) |
+| `--key-owner` | string |  | Key owner (default: none for a server profile, which uses the caller; local with --key-source=local) |
 | `--key-scope` | string | user | Key scope |
 | `--key-source` | string |  | Authentication key source: "" (xkey-managed, default) or "local" (ssh-agent/~/.ssh) |
 | `--name` | string |  | Profile name (required) |
