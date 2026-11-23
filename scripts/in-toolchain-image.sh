@@ -199,7 +199,8 @@ if [ "$cache" = on ]; then
   # daemon reaches the same inode; a one-shot holder container mounting the
   # volume (after the chown above, so the lock file is the build uid's) takes
   # it and keeps it until its stdin, this script's fd, closes at exit. A lock
-  # that cannot be taken never blocks the build: it warns and runs unlocked.
+  # that cannot be taken (mktemp, mkfifo, flock or the holder failing) never
+  # blocks the build: it warns and the stage runs on private caches.
   # hold: the same script as in scripts/trim-ci-caches.sh.
   # shellcheck disable=SC2016
   hold='command -v flock >/dev/null || exit 0
@@ -222,17 +223,27 @@ read -r _ || :'
       read -r state <"$lockfifo/$v.out" || state=
     fi
     if [ "$state" != locked ]; then
-      echo "in-toolchain-image: warn: cache lock in volume $vols-$v not taken; running unlocked" >&2
+      echo "in-toolchain-image: warn: cache lock in volume $vols-$v not taken; using private caches" >&2
+      cache=private
     fi
   done
   [ -z "$lockfifo" ] || rm -rf "$lockfifo"
-  args+=(
-    -v "$vols-gobuild:/cache/gobuild" --env GOCACHE=/cache/gobuild
-    -v "$vols-golangci:/cache/golangci" --env GOLANGCI_LINT_CACHE=/cache/golangci
-  )
-  if [ "$network" = bridge ]; then
-    args+=(-v "$vols-gomod:/cache/gomod")
-    modcache=/cache/gomod
+  if [ "$cache" = private ]; then
+    # A shared volume without its lock is open to a trim's eviction: release
+    # the locks taken and mount none, as with CI_CACHE=off.
+    for fd in ${lockfds[@]+"${lockfds[@]}"}; do exec {fd}>&-; done
+    [ -z "${lockpids[*]:-}" ] || wait "${lockpids[@]}" 2>/dev/null || true
+    lockfds=()
+    lockpids=()
+  else
+    args+=(
+      -v "$vols-gobuild:/cache/gobuild" --env GOCACHE=/cache/gobuild
+      -v "$vols-golangci:/cache/golangci" --env GOLANGCI_LINT_CACHE=/cache/golangci
+    )
+    if [ "$network" = bridge ]; then
+      args+=(-v "$vols-gomod:/cache/gomod")
+      modcache=/cache/gomod
+    fi
   fi
 fi
 if [ "$network" = bridge ]; then
