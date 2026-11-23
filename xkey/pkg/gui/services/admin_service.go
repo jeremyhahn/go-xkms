@@ -230,7 +230,15 @@ func (s *AdminService) SetAuthorizer(authorizer xkmssdk.QRDBAuthorizer) {
 // to the service context holds audit:read. A missing authorizer, a missing
 // identity and a denial are all refusals.
 func (s *AdminService) authorizeAuditRead() error {
-	if s.authorizer == nil {
+	return checkAuditRead(s.ctx, s.authorizer)
+}
+
+// checkAuditRead is the one audit-read decision of every audit-read surface
+// (AdminService and AuditService): the go-qrdb authorizer decides whether
+// the identity bound to ctx holds audit:read. A missing authorizer, a missing
+// identity or a denial refuses with *AuditReadDeniedError.
+func checkAuditRead(ctx context.Context, authorizer xkmssdk.QRDBAuthorizer) error {
+	if authorizer == nil {
 		return &AuditReadDeniedError{Reason: "no authorizer"}
 	}
 	ctx := s.ctx
