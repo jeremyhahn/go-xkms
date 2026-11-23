@@ -6,7 +6,12 @@ import (
 )
 
 // The errors are named for the mechanism that failed, the configfs-tsm report
-// interface or the SNP derived key, as docs/backends/confidential-vm.md "Failure modes" proposes.
+// interface or the SNP derived key, as docs/plans/2380.md records.
+
+// ErrInvalidNonce reports a nonce that is empty or longer than the 64-byte
+// report data. It stands in for go-enclave v0.12's enclave.ErrInvalidNonce,
+// which go-enclave v0.8.0-alpha (go-xkms's pin) does not have.
+var ErrInvalidNonce = errors.New("confidentialvm: nonce must be 1 to 64 bytes")
 
 // ErrTSMReportUnavailable reports that the configfs-tsm report interface
 // refused: it is absent (not a confidential VM, configfs not mounted, not

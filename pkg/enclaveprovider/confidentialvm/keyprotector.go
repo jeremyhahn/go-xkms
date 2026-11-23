@@ -290,7 +290,7 @@ func openBlob(dk, blob, key []byte) error {
 // withKey derives the key req selects into locked memory, runs fn on it and
 // wipes and frees it on every path.
 func (kp *KeyProtector) withKey(ctx context.Context, req keyRequest, fn func(dk []byte) error) (err error) {
-	mem, err := enclave.NewMemorySized(derivedKeySize)
+	mem, err := enclave.NewMemoryEnclaveSized(derivedKeySize)
 	if err != nil {
 		return &DerivedKeyError{Op: opMemory, Cause: err}
 	}
@@ -311,7 +311,7 @@ func (kp *KeyProtector) withKey(ctx context.Context, req keyRequest, fn func(dk 
 // receiveKey runs fill on a response buffer in locked memory, then copies
 // the derived key into dst; the buffer is wiped and freed on every path.
 func receiveKey(dst []byte, fill func(resp *[keyResponseSize]byte) error) (err error) {
-	mem, err := enclave.NewMemorySized(keyResponseSize)
+	mem, err := enclave.NewMemoryEnclaveSized(keyResponseSize)
 	if err != nil {
 		return &DerivedKeyError{Op: opMemory, Cause: err}
 	}

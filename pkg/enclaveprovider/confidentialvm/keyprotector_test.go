@@ -262,7 +262,7 @@ func TestKeyProtector_ChecksContextAndItsMakingBeforeAnyRequest(t *testing.T) {
 	if err := kp.Unprotect(context.Background(), []byte{1}, make([]byte, 32)); !errors.Is(err, enclave.ErrSealedAuthentication) {
 		t.Fatalf("Unprotect(1 byte) = %v, want ErrSealedAuthentication", err)
 	}
-	_, err := kp.Protect(nil, make([]byte, 32))
+	_, err := kp.Protect(nil, make([]byte, 32)) //nolint:staticcheck // SA1012: the nil-ctx contract is under test
 	if supported {
 		wantDerived(t, err, "open")
 	} else {

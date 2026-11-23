@@ -50,7 +50,7 @@ func deriveKey(ctx context.Context, device string, r keyRequest, dst []byte) err
 	if err != nil {
 		return &DerivedKeyError{Op: "open", Cause: err}
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }() // the ioctl's result is the outcome; closing the device fd changes nothing
 
 	req := new([keyRequestSize]byte)
 	*req = r.encode()

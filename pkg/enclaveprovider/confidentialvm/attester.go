@@ -8,11 +8,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/jeremyhahn/go-enclave"
 )
 
-// The evidence formats, the names the [enclave.Evidence] doc comment uses
+// The evidence formats, the names the [Evidence] doc comment uses
 // (design Q4). Data is the report or quote exactly as outblob returned it.
 const (
 	// FormatSEVSNPReport is the SEV-SNP firmware's 1184-byte
@@ -44,8 +42,25 @@ var tsmReportRoot = "/sys/kernel/config/tsm/report"
 // errEmptyOutblob is the Cause when outblob reads empty.
 var errEmptyOutblob = errors.New("outblob is empty")
 
+// Evidence is a confidential VM's attestation evidence. Format names how Data
+// is laid out ([FormatSEVSNPReport] or [FormatTDXQuote]); Data is the report
+// or quote exactly as the platform returned it, for a relying party to verify.
+//
+// It has the fields and meaning of go-enclave v0.12's enclave.Evidence and
+// becomes that type when go-xkms lifts its go-enclave v0.8.0-alpha hold.
+type Evidence struct {
+	Format string
+	Data   []byte
+}
+
+// attester is the method set of go-enclave v0.12's enclave.Attester over the
+// package's own [Evidence]; it becomes enclave.Attester with the hold lifted.
+type attester interface {
+	Attest(ctx context.Context, nonce []byte) (Evidence, error)
+}
+
 // Attester attests the confidential VM the program runs in. It implements
-// [enclave.Attester] and nothing else of the seam: it is no backend and holds
+// Attest and nothing else of go-enclave's seam: it is no backend and holds
 // no material. Its methods are safe for concurrent use; concurrent calls never
 // share a report entry.
 type Attester struct {
@@ -53,7 +68,7 @@ type Attester struct {
 	format   string
 }
 
-var _ enclave.Attester = (*Attester)(nil)
+var _ attester = (*Attester)(nil)
 
 // NewAttester returns the Attester of the SEV-SNP or TDX guest the program
 // runs in. It makes one configfs-tsm report entry, reads its provider and
@@ -76,7 +91,7 @@ func NewAttester() (*Attester, error) {
 	return &Attester{provider: provider, format: format}, nil
 }
 
-// Format is the [enclave.Evidence] format the Attester returns:
+// Format is the [Evidence] format the Attester returns:
 // [FormatSEVSNPReport] or [FormatTDXQuote].
 func (a *Attester) Format() string {
 	if a == nil {
@@ -92,23 +107,23 @@ func (a *Attester) Format() string {
 // provider is the one [NewAttester] saw and that generation counts only its
 // own write, and removes the entry on every path.
 //
-// A bad nonce is [enclave.ErrInvalidNonce] before any request; an ended ctx
+// A bad nonce is [ErrInvalidNonce] before any request; an ended ctx
 // is its error; a refused step is a *TSMReportError matching
 // [ErrTSMReportUnavailable], with Cause [ErrTSMReportConflict] when another
 // writer moved generation. A nil ctx is the background context.
-func (a *Attester) Attest(ctx context.Context, nonce []byte) (enclave.Evidence, error) {
+func (a *Attester) Attest(ctx context.Context, nonce []byte) (Evidence, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	rd, err := reportData(nonce)
 	if err != nil {
-		return enclave.Evidence{}, err
+		return Evidence{}, err
 	}
 	if err := ctx.Err(); err != nil {
-		return enclave.Evidence{}, err
+		return Evidence{}, err
 	}
 	if a == nil || a.format == "" {
-		return enclave.Evidence{}, &TSMReportError{Op: opProvider, Cause: errors.New("attester not made by NewAttester")}
+		return Evidence{}, &TSMReportError{Op: opProvider, Cause: errors.New("attester not made by NewAttester")}
 	}
 	type result struct {
 		data []byte
@@ -124,11 +139,11 @@ func (a *Attester) Attest(ctx context.Context, nonce []byte) (enclave.Evidence, 
 	select {
 	case r := <-done:
 		if r.err != nil {
-			return enclave.Evidence{}, r.err
+			return Evidence{}, r.err
 		}
-		return enclave.Evidence{Format: a.format, Data: r.data}, nil
+		return Evidence{Format: a.format, Data: r.data}, nil
 	case <-ctx.Done():
-		return enclave.Evidence{}, ctx.Err()
+		return Evidence{}, ctx.Err()
 	}
 }
 
@@ -137,7 +152,7 @@ func reportData(nonce []byte) ([reportDataSize]byte, error) {
 	var rd [reportDataSize]byte
 	if len(nonce) == 0 || len(nonce) > reportDataSize {
 		return rd, fmt.Errorf("%w: confidentialvm: nonce of %d bytes, want 1 to %d",
-			enclave.ErrInvalidNonce, len(nonce), reportDataSize)
+			ErrInvalidNonce, len(nonce), reportDataSize)
 	}
 	copy(rd[:], nonce)
 	return rd, nil
