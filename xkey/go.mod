@@ -29,7 +29,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
-	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
+	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: v1.0.3-alpha requires go-enclave v0.11.1-alpha (enclave.ByteAccess); go-enclave stays at v0.8.0-alpha with the root module
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha

@@ -36,7 +36,7 @@ require (
 	github.com/jeremyhahn/go-codec v1.5.1-alpha
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-frost v0.3.1-alpha
-	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
+	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: v1.0.3-alpha requires go-enclave v0.11.1-alpha (enclave.ByteAccess) and the go-enclave replace pins v0.8.0-alpha
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: v0.7.1-alpha requires go-enclave v0.10.0-alpha (enclave.ByteAccess, enclave.As) and the go-enclave replace pins v0.8.0-alpha
