@@ -320,15 +320,21 @@ func TestCIImagesBuildsOnceOnThePoolForSameRepoPRs(t *testing.T) {
 	if len(pool) != 1 {
 		t.Fatalf("ci-images has %d pool build steps, want 1", len(pool))
 	}
-	for _, want := range []string{"env.CI_POOL == 'true'", poolSecretEnv, "scripts/ci-registry.sh pool toolchain", "scripts/ci-registry.sh pool it"} {
+	for _, want := range []string{"env.CI_POOL == 'true'", poolSecretEnv, "scripts/ci-registry.sh pool toolchain"} {
 		if !strings.Contains(pool[0], want) {
 			t.Errorf("the pool build step lacks %q", want)
 		}
 	}
-	for _, want := range []string{"steps.pool.outputs.toolchain_ref", "steps.pool.outputs.it_ref"} {
-		if !strings.Contains(job, want) {
-			t.Errorf("ci-images does not output %s", want)
-		}
+	// No ci.yml job consumes the integration image's reference, so the pool
+	// builds and pushes none (#2302 Codex P2).
+	if strings.Contains(pool[0], "ci-registry.sh pool it") {
+		t.Errorf("the pool build step builds the unconsumed integration image")
+	}
+	if !strings.Contains(job, "steps.pool.outputs.toolchain_ref") {
+		t.Errorf("ci-images does not output steps.pool.outputs.toolchain_ref")
+	}
+	if strings.Contains(job, "steps.pool.outputs.it_ref") {
+		t.Errorf("ci-images references steps.pool.outputs.it_ref")
 	}
 	mask := stepBlocks(job, "- name: Mask the pool registry")
 	if len(mask) != 1 || !strings.Contains(mask[0], "::add-mask::") || !strings.Contains(mask[0], poolSecretEnv) {
