@@ -159,6 +159,31 @@ func TestResolveBackendPIN_SealedUnderPKCS11BarrierIsSelfStore(t *testing.T) {
 	}
 }
 
+// PKCS#11 is never the store for its own PIN, but only sealed stores the PIN
+// under the barrier: a PIN sealed to the TPM (credentials.seal_strategy tpm2)
+// under barrier.strategy pkcs11 is not a self-store and resolves to tpm2,
+// while sealed under the same barrier stays refused (docs/plans/2262.md).
+func TestResolveBackendPIN_TPM2UnderPKCS11BarrierIsNotSelfStore(t *testing.T) {
+	for _, strategy := range []string{"tpm2", "auto"} {
+		s, opened, _ := backendPINTestServer(t, strategy, []byte("backend-pin-1"), true, true)
+		s.config.Barrier.Strategy = "pkcs11"
+		s.config.Credentials.SealStrategy = "tpm2"
+		require.NoError(t, s.resolveBackendPIN(), "strategy=%q", strategy)
+		require.Equal(t, "tpm2", s.BackendPINStrategy(), "strategy=%q", strategy)
+		persisted, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+		require.NoError(t, err)
+		require.Equal(t, pinselect.BackendPINTPM2, persisted, "strategy=%q", strategy)
+		require.Empty(t, *opened, "strategy=%q", strategy)
+	}
+
+	s, opened, _ := backendPINTestServer(t, "sealed", []byte("backend-pin-1"), true, true)
+	s.config.Barrier.Strategy = "pkcs11"
+	s.config.Credentials.SealStrategy = "tpm2"
+	require.ErrorIs(t, s.resolveBackendPIN(), pinselect.ErrBackendPINSelfStore)
+	require.Nil(t, s.backendPIN)
+	require.Empty(t, *opened)
+}
+
 // rngPKCS11PINServer is a backend PIN test server whose only PKCS#11 PIN is
 // an active rng.pkcs11.pin: the PKCS#11 key backend is absent.
 func rngPKCS11PINServer(t *testing.T, strategy string, pin []byte) (*Server, *[][]byte) {
