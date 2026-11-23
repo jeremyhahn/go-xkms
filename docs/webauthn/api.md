@@ -255,3 +255,38 @@ routes are not deprecated.
 Changing `RPID` is not a version change, it is an invalidation: every enrolled
 credential stops working. Treat it as a migration with user impact, never as
 configuration tidying.
+
+## Tenant-aware login (go-xkms#2319)
+
+A passkey login reaches the relying party of one tenant
+(`pkg/webauthn/tenant_router.go:41`). The tenant is chosen like this:
+
+- `tenant_id` in the `POST /login/begin` body (`pkg/webauthn/http/types.go:43`)
+  or the `X-Tenant-Id` header (`pkg/webauthn/http/types.go:20`). `FinishLogin`
+  reads only the header, so a client that names a tenant at begin sends the
+  header on both calls.
+- If neither is given, the request host's entry in `tenant_hosts` is used.
+  Each host there must be the host of an `rp_origins` entry
+  (`pkg/webauthn/config.go:100`):
+
+  ```yaml
+  webauthn:
+    rp_origins: ["https://example.com", "https://b.example.com"]
+    tenant_hosts:
+      b.example.com: tenant-b
+  ```
+
+- If there is still no tenant, the system tenant is used.
+
+Rules (`pkg/webauthn/tenant_router.go:122`):
+
+- On a host mapped in `tenant_hosts`, a request that names another tenant is
+  treated as an unknown tenant.
+- An unknown tenant gets decoy options shaped like a real begin, and its finish
+  fails like a wrong assertion. Unknown tenants are never cached.
+- The account lookup is scoped to the tenant (`pkg/webauthn/qrdb_userstore.go:119`),
+  so another tenant's account reads as unknown.
+- The minted token carries the tenant.
+
+The SDK verbs `BeginAuthentication` and `FinishAuthentication` take the same
+optional `tenant_id` (`pkg/api/transport/types.go:1014`, `:1048`).

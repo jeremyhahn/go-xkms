@@ -180,3 +180,12 @@ The same shape is carried by every transport's `CreateUser` (gRPC
 `UserResponse.invite`, MCP `user.create`'s JSON-RPC result, the embedded SDK,
 QUIC). `enabled` is `false` on this response for an invited account: it is
 `LifecyclePending`, not yet active.
+
+## Tenant relying party (go-xkms#2319)
+
+`BeginInviteRegistration` and `FinishInviteRegistration` enrol through the
+relying party of the invitation's `tenant_id`, which `XKMSService.webauthnFor`
+resolves (`pkg/xkms/service.go:307`). The passkey therefore belongs to the
+tenant's account, and a login on that tenant (`tenant_id`, `X-Tenant-Id` or a
+`tenant_hosts` host; see [webauthn/api.md](../webauthn/api.md)) mints a token
+that carries the tenant.
