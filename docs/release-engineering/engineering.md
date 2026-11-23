@@ -34,12 +34,15 @@ decisions without changing anything.
 `scripts/check-public-literals.sh` (go-xkms#1030) is the public-release
 readiness gate: it fails with `file:line` output if any file in the tree
 carries a lab-network address, a fleet host name, or an owner workstation
-path. The exact literals are declared once, in the script's own `PATTERN`
-and its header comment — not repeated here, so there is exactly one place to
-keep them current as the fleet changes. It scans with `grep -rIniE`, so
-binary files are skipped automatically (`-I`), and excludes `.git` (file or
-directory, so it works from an ordinary checkout or a worktree), `.claude/`,
-`CLAUDE.md`, `AGENTS.md` and its own source — those are agent-instruction
+path. The literals are private, so the pattern list is an input, never
+written in the repository: `RELEASABILITY_PATTERNS` holds the
+`class<TAB>regex` lines, or `RELEASABILITY_PATTERNS_FILE` names a file holding
+them. With neither set the gate refuses — the script exits 2 and
+`make check-public-literals` (so `make lint-gates` too) exits non-zero with a
+line naming both variables; it never skips and passes, so every caller must
+hand it the list. It scans tracked files only (`git grep`), reports each
+finding as `path:line` without the matched text, and excludes `.claude/`,
+`CLAUDE.md` and `AGENTS.md` — those are agent-instruction
 files the owner publishes on a separate schedule, not part of the scrub. A fleet
 host name that is also an ordinary word is matched as its exact full host
 name, not a wildcard on the bare word: the bare word appears legitimately
