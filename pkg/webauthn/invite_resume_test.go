@@ -3,6 +3,7 @@ package webauthn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -85,6 +86,80 @@ func TestInviteResume_ValidAssertionResumesOnce(t *testing.T) {
 
 	_, err = f.svc.FinishInviteResume(ctx, sessionID, a.WebAuthnID(), issuedAt, assertion)
 	require.Error(t, err, "a replayed assertion is refused")
+}
+
+// crashBeforeCommitStore hands out first-credential claims whose Commit
+// never reaches the store: the process stops between Save and Commit.
+type crashBeforeCommitStore struct {
+	CredentialStore
+}
+
+type crashBeforeCommitClaim struct {
+	FirstCredentialClaim
+}
+
+var errProcessDied = errors.New("injected: the process died before Commit")
+
+func (s *crashBeforeCommitStore) ClaimFirstCredential(ctx context.Context, userID []byte) (FirstCredentialClaim, error) {
+	claim, err := s.CredentialStore.ClaimFirstCredential(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &crashBeforeCommitClaim{FirstCredentialClaim: claim}, nil
+}
+
+func (c *crashBeforeCommitClaim) Commit(context.Context, *Credential) error {
+	return errProcessDied
+}
+
+// TestInviteResume_InterruptedBeforeCommitResumesWithTheSavedKey is Codex
+// round-3 P1: a first-credential finish saves its credential and the
+// process stops before Commit. Once the claim's lease has expired, the retry
+// must offer a get ceremony for the saved credential, and its assertion must
+// complete the registration, with no second key creation: an authenticator
+// whose last slot holds the original key cannot create another.
+func TestInviteResume_InterruptedBeforeCommitResumesWithTheSavedKey(t *testing.T) {
+	ctx := context.Background()
+	f := newEnrollFixture(t, false)
+	store, ok := f.creds.(*daoCredentialStore)
+	require.True(t, ok, "the fixture's credential store is the DAO store")
+	issuedAt := time.Now().Add(-time.Minute)
+	a := f.mustCreatePending(t, "a@example.com")
+
+	// The first finish runs on a replica that stops between Save and Commit.
+	crashing, err := NewService(ServiceParams{
+		Config:          f.svc.Config(),
+		UserStore:       f.users,
+		SessionStore:    NewMemorySessionStore(),
+		CredentialStore: &crashBeforeCommitStore{CredentialStore: store},
+	})
+	require.NoError(t, err)
+	options, sessionID, err := crashing.BeginInviteRegistration(ctx, a.WebAuthnID())
+	require.NoError(t, err)
+	credential := newEC2Credential(t)
+	parsed, err := parseAttestationResponse(f.inviteAttestation(t, options, credential))
+	require.NoError(t, err)
+	_, err = crashing.FinishInviteRegistration(ctx, sessionID, a.WebAuthnID(), parsed)
+	require.ErrorIs(t, err, errProcessDied)
+
+	// The claim's lease runs out.
+	store.now = func() time.Time { return time.Now().Add(firstCredentialClaimLease + time.Minute) }
+
+	// The retry selects get, not create, for the saved credential.
+	_, _, err = f.svc.BeginInviteRegistration(ctx, a.WebAuthnID())
+	require.ErrorIs(t, err, ErrRegistrationRefused, "the account holds its saved credential: no create ceremony")
+	resume, resumeSession, err := f.svc.BeginInviteResume(ctx, a.WebAuthnID(), issuedAt)
+	require.NoError(t, err, "the expired claim's saved credential resumes the registration")
+	require.Len(t, resume.Response.AllowedCredentials, 1)
+
+	assertion := f.assert(t, resume, credential, nil)
+	resumed, err := f.svc.FinishInviteResume(ctx, resumeSession, a.WebAuthnID(), issuedAt, assertion)
+	require.NoError(t, err, "the original key's assertion completes the registration")
+	assert.Equal(t, a.WebAuthnID(), resumed.WebAuthnID())
+
+	creds, err := f.creds.GetByUserID(ctx, a.WebAuthnID())
+	require.NoError(t, err)
+	assert.Len(t, creds, 1, "no second credential was created")
 }
 
 // Every finish without a valid assertion by the enrolled credential over the
