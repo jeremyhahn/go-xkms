@@ -420,14 +420,16 @@ func (tpm *TPM2) SealKey(
 	backend KeyBackend,
 	overwrite bool) (*tpm2.CreateResponse, error) {
 
-	if err := requireSealProtection(keyAttrs); err != nil {
-		return nil, err
-	}
+	// Resolve first: an unreadable TPM-backed password reports
+	// ErrPlatformPasswordUnavailable, not a seal without protection.
 	restore, err := resolveSealAuth(keyAttrs)
 	if err != nil {
 		return nil, err
 	}
 	defer restore()
+	if err := requireSealProtection(keyAttrs); err != nil {
+		return nil, err
+	}
 	tpm.sealMu.Lock()
 	defer tpm.sealMu.Unlock()
 	return tpm.sealKeyInternal(keyAttrs, backend, overwrite)
@@ -506,7 +508,19 @@ func resolvedPassword(pw types.Password) (types.Password, error) {
 	if !ok || platform == nil {
 		return nil, nil
 	}
-	auth := platform.Bytes()
-	defer enclave.Wipe(auth)
-	return store.NewPassword(auth)
+	// WithBytes fails closed with ErrPlatformPasswordUnavailable when the
+	// secret cannot be unsealed: an empty stand-in would authorize the seal
+	// with an empty credential.
+	var resolved types.Password
+	err := platform.WithBytes(func(secret []byte) error {
+		auth := append([]byte{}, secret...)
+		defer enclave.Wipe(auth)
+		var err error
+		resolved, err = store.NewPassword(auth)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resolved, nil
 }
