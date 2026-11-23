@@ -203,6 +203,7 @@ func (h *knownHostsClient) Remove(ctx context.Context, req sdkssh.RemoveKnownHos
 
 // Verify implements sdkssh.KnownHostsClient.
 func (h *knownHostsClient) Verify(ctx context.Context, scope, owner, host string, received gossh.PublicKey) error {
+	owner = h.c.ownerOf(ctx, scope, owner)
 	p, err := h.c.serve(ctx, scope, owner)
 	if err != nil {
 		return err
@@ -216,6 +217,7 @@ func (h *knownHostsClient) Verify(ctx context.Context, scope, owner, host string
 // Callback implements sdkssh.KnownHostsClient. A callback over pins the
 // caller does not own rejects every host as unpinned.
 func (h *knownHostsClient) Callback(ctx context.Context, scope, owner string) gossh.HostKeyCallback {
+	owner = h.c.ownerOf(ctx, scope, owner)
 	p, err := h.c.serve(ctx, scope, owner)
 	if err != nil {
 		return func(string, net.Addr, gossh.PublicKey) error { return err }
@@ -346,8 +348,16 @@ func (s *sessionClient) Dial(ctx context.Context, req sdkssh.SessionDialRequest)
 	if req.HostKeyScope != "" {
 		hostScope = req.HostKeyScope
 	}
-	if req.HostKeyOwner != "" {
+	switch {
+	case req.HostKeyOwner != "":
 		hostOwner = req.HostKeyOwner
+	case hostScope != req.KeyScope:
+		// The key owner names a principal of another scope: an omitted
+		// host-key owner is the caller's own pin store for hostScope.
+		if owner := s.c.ownerOf(ctx, hostScope, ""); owner != "" {
+			hostOwner = owner
+			req.HostKeyOwner = owner
+		}
 	}
 	pins, err := s.c.serve(ctx, hostScope, hostOwner)
 	if err != nil {
