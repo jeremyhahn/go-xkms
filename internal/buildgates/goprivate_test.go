@@ -112,7 +112,7 @@ func TestGoPrivateDefaultProblemsCatchAnInHouseDefault(t *testing.T) {
 func TestGoPrivateDefaultProblemsAllowAPassThrough(t *testing.T) {
 	for _, line := range []string{
 		"GOMODAUTH_GOPRIVATE := $(GOPRIVATE)",
-		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-}",
+		"      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GOPRIVATE:-}}",
 		`export GOPRIVATE="${GOPRIVATE:-}"`,
 		"                    -e GOPRIVATE='$(GOMODAUTH_GOPRIVATE)' \\",
 		"# GOPRIVATE=" + inHouseModulePath + "/* was the old default",

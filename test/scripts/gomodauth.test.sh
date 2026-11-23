@@ -160,6 +160,15 @@ expect_all GOPRIVATE "$GLOB" direct
 env -i "${GO_CACHE_ENV[@]}" bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
 expect_all GIT_CONFIG_COUNT "" direct-public
 expect_all GOPRIVATE "" direct-public
+# A direct launch keeps the caller's GOPRIVATE when GOMODAUTH_GOPRIVATE (the
+# make-exported value) is unset (Codex #2203 compose.yaml:141); when both are
+# set, GOMODAUTH_GOPRIVATE wins, as make passes the caller's value through it.
+env -i "${GO_CACHE_ENV[@]}" GOPRIVATE="$CALLER_GLOB" \
+	bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
+expect_all GOPRIVATE "$CALLER_GLOB" direct-caller
+env -i "${GO_CACHE_ENV[@]}" GOPRIVATE='example.org/other/*' GOMODAUTH_GOPRIVATE="$CALLER_GLOB" \
+	bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
+expect_all GOPRIVATE "$CALLER_GLOB" direct-both
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
