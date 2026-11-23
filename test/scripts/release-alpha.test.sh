@@ -580,6 +580,41 @@ eq "a refused real cut created no release branch" "" "$(fxgit "$FXFORGE" branch 
 false_ "a refused real cut pushed nothing" \
 	fxgit "$FXFORGE" ls-remote --exit-code --heads dev release/v0.2.0-alpha
 
+# Error handling: pr_html_url reads the forge's answer with jq. A host without
+# jq must be refused before the script runs git, pushes or calls the forge --
+# not after it has pushed a branch and opened a pull request it cannot report.
+# The PATH below is the caller's PATH with every tool but jq on it.
+section "a missing tool is refused before any side effect"
+
+NOJQ="$FXROOT/nojq-bin"
+mkdir -p "$NOJQ"
+IFS=: read -ra PATHDIRS <<<"$PATH"
+for d in "${PATHDIRS[@]}"; do
+	[ -d "$d" ] || continue
+	for f in "$d"/*; do
+		n=${f##*/}
+		[ "$n" != jq ] && [ ! -e "$NOJQ/$n" ] && [ -f "$f" ] && [ -x "$f" ] && ln -s "$f" "$NOJQ/$n"
+	done
+done
+true_ "the fixture PATH has no jq" test ! -e "$NOJQ/jq"
+
+FXNOJQ="$FXROOT/nojq"
+mkfixture "$FXNOJQ" >/dev/null
+fxgit "$FXNOJQ" config user.name test
+fxgit "$FXNOJQ" config user.email test@example.invalid
+fxgit "$FXNOJQ" config commit.gpgsign false
+: >"$GITLOG"
+: >"$CURLLOG"
+OUT=$(PATH="$NOJQ" GIT="$FXROOT/git-wrap" fxrelease "$FXNOJQ" --version 0.2.0-alpha --bump minor)
+RC=$?
+eq "a real cut without jq is refused" "1" "$RC"
+true_ "the refusal names jq" grep -qF "'jq' is not installed" <<<"$OUT"
+eq "no git command ran before the refusal" "" "$(cat "$GITLOG")"
+eq "no forge API call was made before the refusal" "" "$(cat "$CURLLOG")"
+eq "no release branch was created" "" "$(fxgit "$FXNOJQ" branch --list 'release/*')"
+false_ "nothing was pushed" \
+	fxgit "$FXNOJQ" ls-remote --exit-code --heads dev release/v0.2.0-alpha
+
 # Error handling: a malformed entry name must fail the rehearsal, and must
 # fail it without having consumed anything either. The bad entry is pushed to
 # the fixture's own remote -- a fetch-based script cannot be tripped by an
