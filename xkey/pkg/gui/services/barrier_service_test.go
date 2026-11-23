@@ -15,8 +15,10 @@ package services
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -43,6 +45,68 @@ func TestBarrierService_SealStateHookFollowsTransitions(t *testing.T) {
 	require.NoError(t, svc.Unseal("hook-test-password", ""))
 
 	assert.Equal(t, []bool{false, true, false}, seen)
+}
+
+// readFailBackend fails every Get once failReads is set, standing in for a
+// store that can no longer be read.
+type readFailBackend struct {
+	xkms.StorageBackend
+	failReads atomic.Bool
+}
+
+var errStoreRead = errors.New("store read failed")
+
+func (b *readFailBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	if b.failReads.Load() {
+		return nil, errStoreRead
+	}
+	return b.StorageBackend.Get(ctx, key)
+}
+
+func TestBarrierService_PasswordBound_StoreReadFailureIsReturned(t *testing.T) {
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+	var backend *readFailBackend
+	svc.SetBaseBackendFactory(func(dir string) (xkms.StorageBackend, error) {
+		base, err := xkms.StorageOpenEngine(xkms.StorageEngineConfig{Kind: xkms.StorageEngineFile, Path: dir})
+		if err != nil {
+			return nil, err
+		}
+		backend = &readFailBackend{StorageBackend: base}
+		return backend, nil
+	})
+	require.NoError(t, svc.Initialize("old-pin", "passphrase"))
+	require.NotNil(t, backend)
+
+	backend.failReads.Store(true)
+	bound, err := svc.PasswordBound("old-pin")
+	require.ErrorIs(t, err, errStoreRead)
+	assert.False(t, bound)
+}
+
+func TestBarrierService_PasswordBound_CancelledContextIsReturned(t *testing.T) {
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, svc.Initialize("old-pin", "passphrase"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc.SetContext(ctx)
+
+	bound, err := svc.PasswordBound("old-pin")
+	require.Error(t, err)
+	assert.False(t, bound)
+}
+
+func TestBarrierService_PasswordBound_MismatchIsNotAnError(t *testing.T) {
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, svc.Initialize("barrier-password", "passphrase"))
+
+	bound, err := svc.PasswordBound("old-pin")
+	require.NoError(t, err)
+	assert.False(t, bound)
+
+	bound, err = svc.PasswordBound("barrier-password")
+	require.NoError(t, err)
+	assert.True(t, bound)
 }
 
 // A failed transition leaves the state unchanged and must not notify.
