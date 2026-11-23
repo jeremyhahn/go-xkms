@@ -407,12 +407,9 @@ func TestCIDockerJobs_BigdiskForSameRepositoryHostedOtherwise(t *testing.T) {
 			}
 		}
 		for _, tc := range cases {
-			var want []string
-			switch {
-			case tc.ev.serverURL == runnerGitHub:
+			want := otherForgeLabels
+			if tc.ev.serverURL == runnerGitHub {
 				want = hostedLabels
-			default:
-				want = otherForgeLabels
 			}
 			t.Run(name+"/"+tc.name, func(t *testing.T) {
 				got, err := runsOnLabels(j.RunsOn.Value, tc.ev)
