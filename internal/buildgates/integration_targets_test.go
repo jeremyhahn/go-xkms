@@ -231,8 +231,9 @@ func featureDirsNotRun(mk string, dirs, suites []string, delegated map[string]st
 }
 
 // TestFeatureDirGateNeedsARunningCommand proves a directory mention alone
-// (an echo, or a go test on a similarly prefixed directory) does not satisfy
-// the explicit-target gate, while a go test on the suite, or Compose files
+// (an echo, a cd into it without go test after, or a go test on a similarly
+// prefixed directory) does not satisfy the explicit-target gate, while a go
+// test on the suite (from the root or after a cd into it), or Compose files
 // that run it, do.
 func TestFeatureDirGateNeedsARunningCommand(t *testing.T) {
 	mk := "integration-test-%:\n" +
@@ -254,13 +255,32 @@ func TestFeatureDirGateNeedsARunningCommand(t *testing.T) {
 		"\tdocker compose -f test/integration/echoed/docker-compose.yml up --exit-code-from tests\n" +
 		"\n" +
 		"integration-test-nested:\n" +
-		"\tgo test -tags integration ./test/integration/nested/inner/...\n"
+		"\tgo test -tags integration ./test/integration/nested/inner/...\n" +
+		"\n" +
+		"integration-test-cdonly:\n" +
+		"\tcd test/integration/cdonly && ls\n" +
+		"\n" +
+		"integration-test-cdtrue:\n" +
+		"\tcd ./test/integration/cdtrue; true\n" +
+		"\n" +
+		"integration-test-cdvet:\n" +
+		"\tcd test/integration/cdvet && go vet ./...\n" +
+		"\n" +
+		"integration-test-cdprefixed:\n" +
+		"\tcd test/integration/cdpre && go test ./...\n" +
+		"\n" +
+		"integration-test-cdrun:\n" +
+		"\tcd test/integration/cdrun && go test -tags integration ./...\n" +
+		"\n" +
+		"integration-test-cddot:\n" +
+		"\tcd test/integration/cddot && go test -tags integration .\n"
 	delegated := map[string]string{
 		"composed": "      go test -tags integration ./test/integration/composed",
 		"echoed":   "",
 	}
-	got := featureDirsNotRun(mk, []string{"signing", "sign", "runs", "composed", "echoed", "nested", "patterned"}, []string{"nested/inner"}, delegated)
-	want := []string{"signing", "sign", "echoed"}
+	dirs := []string{"signing", "sign", "runs", "composed", "echoed", "nested", "patterned", "cdonly", "cdtrue", "cdvet", "cdprefixed", "cdrun", "cddot"}
+	got := featureDirsNotRun(mk, dirs, []string{"nested/inner"}, delegated)
+	want := []string{"signing", "sign", "echoed", "cdonly", "cdtrue", "cdvet", "cdprefixed"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("feature dirs not run = %q, want %q", got, want)
 	}
