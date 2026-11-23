@@ -512,10 +512,12 @@ jobs:
           fi
 
           # Static linking flags (adjust for FIPS builds which don't use CGO)
+          # Legacy lowercase targets stamp tags cut before #2255 on a workflow_dispatch
+          # repair; the linker ignores whichever set the checked-out source lacks.
           if [ "$CGO_MODE" = "0" ]; then
-            LDFLAGS="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -s -w"
+            LDFLAGS="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w"
           else
-            LDFLAGS="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -s -w -linkmode external -extldflags '-static'"
+            LDFLAGS="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w -linkmode external -extldflags '-static'"
           fi
 
           echo "Building for linux/${GOARCH} with CGO_ENABLED=${CGO_MODE} CC=${CC:-cc (native)}"
@@ -872,7 +874,7 @@ jobs:
           RUN CGO_ENABLED=1 GOOS=linux go build \
               -buildvcs=false \
               -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,frost" \
-              -ldflags="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -s -w" \
+              -ldflags="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
               -o /build/xkmsd \
               ./cmd/xkmsd
 
