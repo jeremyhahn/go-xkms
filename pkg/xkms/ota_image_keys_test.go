@@ -28,11 +28,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/veraison/go-cose"
 )
 
 func otaKey(backend, boardID string) *transport.OTAImageKeyRequest {
@@ -470,4 +472,94 @@ func TestFixedWidthECDSASignature(t *testing.T) {
 			assert.NotEmpty(t, encErr.Error())
 		})
 	}
+}
+
+// otaPublicKeyFromPEM parses the PKIX PEM public key a key response carries.
+func otaPublicKeyFromPEM(t *testing.T, pemKey string) *ecdsa.PublicKey {
+	t.Helper()
+	block, _ := pem.Decode([]byte(pemKey))
+	require.NotNil(t, block)
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	require.NoError(t, err)
+	ec, ok := pub.(*ecdsa.PublicKey)
+	require.True(t, ok)
+	return ec
+}
+
+// assertOTAPublicExport checks an export against the expected public key:
+// raw X || Y (each left-padded to 32 bytes) and an EC2 P-256 COSE_Key
+// (RFC 9052 §7, RFC 9053 §7.1.1) with the key id and no private part.
+func assertOTAPublicExport(t *testing.T, resp *transport.OTAImagePublicKeyResponse, want *ecdsa.PublicKey, keyID string) {
+	t.Helper()
+	point, err := want.Bytes() // 0x04 || X || Y, 32 bytes each
+	require.NoError(t, err)
+	require.Len(t, point, 65)
+	x, y := point[1:33], point[33:]
+
+	require.Len(t, resp.Raw, 64, "the raw export is X || Y")
+	assert.Equal(t, x, resp.Raw[:32])
+	assert.Equal(t, y, resp.Raw[32:])
+
+	var coseKey map[int]any
+	require.NoError(t, cbor.Unmarshal(resp.COSEKey, &coseKey))
+	assert.Equal(t, uint64(2), coseKey[1], "kty is EC2")
+	assert.Equal(t, []byte(keyID), coseKey[2], "kid is the board key id")
+	assert.Equal(t, int64(-7), coseKey[3], "alg is ES256")
+	assert.Equal(t, uint64(1), coseKey[-1], "crv is P-256")
+	assert.Equal(t, x, coseKey[-2])
+	assert.Equal(t, y, coseKey[-3])
+	_, hasD := coseKey[-4]
+	assert.False(t, hasD, "the COSE_Key carries no private key")
+}
+
+func TestOTAImageKeys_ExportPublicKey(t *testing.T) {
+	svc := setupDeriveService(t)
+	ctx := context.Background()
+	keyID, err := OTAImageKeyID("cm4")
+	require.NoError(t, err)
+
+	created, err := svc.CreateOTAImageKey(ctx, otaKey("software", "cm4"))
+	require.NoError(t, err)
+
+	resp, err := svc.ExportOTAImagePublicKey(ctx, otaKey("software", "cm4"))
+	require.NoError(t, err)
+	assert.Equal(t, keyID, resp.KeyID)
+	assert.Equal(t, "cm4", resp.BoardID)
+	assert.Equal(t, uint32(1), resp.Version)
+	assertOTAPublicExport(t, resp, otaPublicKeyFromPEM(t, created.PublicKeyPEM), keyID)
+
+	_, err = svc.ExportOTAImagePublicKey(ctx, otaKey("software", "pi5"))
+	assert.ErrorIs(t, err, ErrKeyNotFound, "a board with no key has nothing to export")
+
+	_, err = svc.ExportOTAImagePublicKey(ctx, nil)
+	assert.ErrorIs(t, err, ErrNilConfig)
+
+	rotated, err := svc.RotateOTAImageKey(ctx, otaKey("software", "cm4"))
+	require.NoError(t, err)
+	resp, err = svc.ExportOTAImagePublicKey(ctx, otaKey("software", "cm4"))
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), resp.Version, "the export follows the rotation")
+	assertOTAPublicExport(t, resp, otaPublicKeyFromPEM(t, rotated.PublicKeyPEM), keyID)
+
+	// #1778: a go-cose consumer decodes the exported COSE_Key and verifies
+	// a SignOTAImage signature (r || s) made after the rotation.
+	var key cose.Key
+	require.NoError(t, key.UnmarshalCBOR(resp.COSEKey))
+	assert.Equal(t, cose.KeyTypeEC2, key.Type)
+	assert.Equal(t, cose.AlgorithmES256, key.Algorithm)
+	assert.Equal(t, []byte(keyID), key.ID)
+	crv, x, y, d := key.EC2()
+	assert.Equal(t, cose.CurveP256, crv)
+	assert.Equal(t, resp.Raw, append(append([]byte{}, x...), y...), "Raw is X || Y of the COSE_Key")
+	assert.Empty(t, d, "the COSE_Key carries no d")
+
+	image := []byte("firmware image after rotation")
+	sig, err := svc.SignOTAImage(ctx, &transport.OTAImageSignRequest{Backend: "software", BoardID: "cm4", Data: image})
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), sig.KeyVersion)
+	pub, err := key.PublicKey()
+	require.NoError(t, err)
+	verifier, err := cose.NewVerifier(cose.AlgorithmES256, pub)
+	require.NoError(t, err)
+	assert.NoError(t, verifier.Verify(image, sig.Signature), "the exported key verifies the new version's signature")
 }
