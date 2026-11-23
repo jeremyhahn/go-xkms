@@ -250,3 +250,72 @@ func TestUpdateVersions_StaleReadDoesNotDropANewerVersion(t *testing.T) {
 	_, err = stored.Version(3)
 	assert.NoError(t, err, "the newer version stays recorded")
 }
+
+// Retirement reads the record (versions 1 and 2, current 3), then another
+// process changes it, by disabling version 2 or by taking a rotation claim,
+// before the retirement is stored (Codex round 5, #2225). The stored record
+// must never advertise a version whose key material is gone, and an
+// unversioned Verify must still succeed.
+func TestRetireKeyVersion_ConcurrentChangeNeverStrandsAnAdvertisedVersion(t *testing.T) {
+	for name, interleave := range map[string]func(ctx context.Context, t *testing.T, elsewhere *XKMSService){
+		"disable version 2": func(ctx context.Context, t *testing.T, elsewhere *XKMSService) {
+			_, err := elsewhere.DisableKeyVersion(ctx, &transport.KeyVersionRequest{Backend: "software", KeyID: "k", Version: 2})
+			require.NoError(t, err)
+		},
+		"live rotation claim": func(ctx context.Context, t *testing.T, elsewhere *XKMSService) {
+			store, err := elsewhere.requireVersionStore()
+			require.NoError(t, err)
+			rec, found, err := store.Load(ctx, "", "software", "k")
+			require.NoError(t, err)
+			require.True(t, found)
+			_, _, err = store.Claim(ctx, "", "software", "k", rec)
+			require.NoError(t, err)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			kv := qrdbsdk.NewMemoryKVStore()
+			base := setupDeriveService(t)
+			shared, err := base.LookupBackend("software")
+			require.NoError(t, err)
+			hook := &deleteHookBackend{Backend: shared}
+			newProcess := func(b Backend) *XKMSService {
+				svc, err := NewService(&ServiceConfig{Backends: map[string]Backend{"software": b}, DefaultBackend: "software"})
+				require.NoError(t, err)
+				store, err := keyversion.NewStore(dao.NewStoreFactory(kv))
+				require.NoError(t, err)
+				svc.SetKeyVersionStore(store)
+				return svc
+			}
+			retirer, elsewhere := newProcess(hook), newProcess(shared)
+
+			genKey(t, elsewhere, "", "k", "ed25519", 0)
+			rotate(t, elsewhere, "", "k")
+			require.Equal(t, uint32(3), rotate(t, elsewhere, "", "k"))
+			data := []byte("signed under version 3")
+			sig := sign(t, elsewhere, "k", data)
+
+			hook.beforeDelete = func(ctx context.Context) { interleave(ctx, t, elsewhere) }
+			_, retireErr := retirer.RetireKeyVersion(ctx, &transport.KeyVersionRequest{Backend: "software", KeyID: "k", Version: 1})
+			if retireErr != nil {
+				require.ErrorIs(t, retireErr, keyversion.ErrVersionConflict)
+			}
+
+			store, err := elsewhere.requireVersionStore()
+			require.NoError(t, err)
+			stored, found, err := store.Load(ctx, "", "software", "k")
+			require.NoError(t, err)
+			require.True(t, found)
+			for _, v := range stored.Versions {
+				if v.State == keyversion.StateRetired {
+					continue
+				}
+				_, err := findKeyAttrs(ctx, shared, keyversion.Name("k", v.Number))
+				assert.NoError(t, err, "advertised version %d keeps its key material", v.Number)
+			}
+			resp, err := verify(elsewhere, "k", data, sig.Signature, 0)
+			require.NoError(t, err, "unversioned Verify still builds its trial versions")
+			assert.True(t, resp.Valid)
+		})
+	}
+}
