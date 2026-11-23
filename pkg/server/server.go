@@ -2198,25 +2198,40 @@ func (s *Server) initializeCA() error {
 	cn := s.config.CA.Identity[0].Subject.CommonName
 	s.logger.Info("CA initialized", "identity", cn)
 
-	// If TLS is enabled with a server_cn, auto-issue a TLS server certificate
-	// so that buildTLSConfig() can retrieve it for HTTPS/gRPC/QUIC.
-	if s.config.TLS.Enabled && s.config.TLS.ServerCN != "" {
-		// Boot-time issuance writes the key + certificate into the
-		// replicated store; on a cluster this races the initial leader
-		// election, so not-leader failures are retried (leader_retry.go).
-		if err := retryNotLeader(s.ctx, s.logger, "tls server certificate", func() error {
-			return s.ensureTLSServerCert(trustedCA, keystoreType)
-		}); err != nil {
-			return &ErrTLSCertOp{Operation: "ensure TLS server certificate", Err: err}
-		}
-		// Swap the CA-issued certificate into the unified API server's
-		// rotating provider; until now it served the bootstrap material.
-		if err := s.upgradeUnifiedTLSCert(trustedCA); err != nil {
-			s.logger.Warn("unified API server keeps serving the bootstrap TLS certificate",
+	return s.adoptComposedCA(trustedCA, keystoreType)
+}
+
+// adoptComposedCA wires the composed CA into the unified API server. With a
+// server_cn it issues the TLS server certificate and swaps it in together
+// with the client-CA pool. Without one the operator's cert_file keeps
+// serving, but the pool must still gain the CA's bundle: the CA issues the
+// first-boot administrator certificate, and a listener that does not
+// advertise its issuer makes TLS clients withhold that certificate.
+func (s *Server) adoptComposedCA(trustedCA tlsBootstrapCA, keystoreType types.StoreType) error {
+	if !s.config.TLS.Enabled {
+		return nil
+	}
+	if s.config.TLS.ServerCN == "" {
+		if err := s.trustUnifiedCAClients(trustedCA); err != nil {
+			s.logger.Warn("unified API server: client-CA pool not upgraded",
 				slog.Any("error", err))
 		}
+		return nil
 	}
-
+	// Boot-time issuance writes the key + certificate into the
+	// replicated store; on a cluster this races the initial leader
+	// election, so not-leader failures are retried (leader_retry.go).
+	if err := retryNotLeader(s.ctx, s.logger, "tls server certificate", func() error {
+		return s.ensureTLSServerCert(trustedCA, keystoreType)
+	}); err != nil {
+		return &ErrTLSCertOp{Operation: "ensure TLS server certificate", Err: err}
+	}
+	// Swap the CA-issued certificate into the unified API server's
+	// rotating provider; until now it served the bootstrap material.
+	if err := s.upgradeUnifiedTLSCert(trustedCA); err != nil {
+		s.logger.Warn("unified API server keeps serving the bootstrap TLS certificate",
+			slog.Any("error", err))
+	}
 	return nil
 }
 
