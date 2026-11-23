@@ -532,6 +532,20 @@ describe('TpmPolicyClient (named TPM policy lifecycle)', () => {
     expect(described.description).toBe('firmware');
   });
 
+  it('sends the signed branch form of a PCR-policy update', async () => {
+    const fake = newFakeFetch({ body: { name: 'boot', branches: [], index: 1, approved: true, created_at: '' } });
+    const c = make(fake);
+    await c.tpmPolicies.update('boot', 't1', { branch: 'next', reference_values: 'oUQBAgME' });
+    expect(fake.calls[0]?.method).toBe('POST');
+    expect(fake.calls[0]?.url).toBe(`${BASE}/api/v1/tpm/policies/boot/update`);
+    expect(fake.calls[0]?.body).toEqual({
+      tenant_id: 't1',
+      name: 'boot',
+      branch: 'next',
+      reference_values: 'oUQBAgME',
+    });
+  });
+
   it('surfaces a refused description change as an API error', async () => {
     const fake = newFakeFetch({ status: 400, body: { error: 'tpmpolicy: description too long' } });
     const c = make(fake);
