@@ -307,6 +307,11 @@ func TestNewHostServer_PublicRegistrationBeginRefusedOverEnforcingNode(t *testin
 
 	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 	require.Empty(t, w.Header().Get(webauthnhttp.HeaderSessionID), "a refused begin opens no ceremony")
+	// The browser fixture (passkeyAccount.ts expectAnonymousSignUpRefused)
+	// relies on this code on the enforcing node as on the default tier.
+	var refused map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &refused))
+	require.Equal(t, webauthnhttp.ErrorCodeRegistrationRefused, refused["error"], "body: %s", w.Body.String())
 
 	u, err := auth.NewNodeUserClient(node).GetUserByEmail(context.Background(), DefaultWebAuthnTenant, email)
 	require.Error(t, err, "the refused begin must leave no account, found %+v", u)
