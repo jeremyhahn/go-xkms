@@ -6,6 +6,7 @@ package authenticator
 // authenticator that answers without a touch always wins the choice.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -380,6 +381,69 @@ func TestSelection_GrantSatisfiesNextMakeCredential(t *testing.T) {
 		require.Equal(t, int32(3), h.calls.Load(), "a cancelled Selection leaves no grant")
 	})
 
+}
+
+// selNoCredentialAssertion is a GetAssertion for an RP the authenticator holds
+// no credential for: the HID transport defers it (multi-authenticator
+// coexistence) instead of answering.
+func selNoCredentialAssertion(t *testing.T) []byte {
+	t.Helper()
+	clientDataHash := sha256.Sum256([]byte("deferred"))
+	data, err := cbor.Marshal(map[int]interface{}{
+		0x01: "nocred.example.com",
+		0x02: clientDataHash[:],
+	})
+	require.NoError(t, err)
+	return append([]byte{CmdGetAssertion}, data...)
+}
+
+// selGrantSurvivesDeferral approves a Selection on the device's channel, runs
+// a deferred GetAssertion on the same channel to its end (end performs the
+// cancel or waits for the safety timeout), and reports whether a following
+// MakeCredential on that channel asked for presence again.
+func selGrantSurvivesDeferral(t *testing.T, end func(d *selHIDDevice)) {
+	t.Helper()
+	d := newSelHIDDevice(t)
+	d.up.auto.Store(true)
+	d.hid.HandleMessage(selHIDPacket(d.cid, CTAPHIDCBOR, []byte{CmdSelection}))
+	status, ok := d.cborStatus()
+	require.True(t, ok, "no Selection response")
+	require.Equal(t, byte(StatusOK), status)
+	before := d.up.calls.Load()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		d.hid.HandleMessage(selHIDPacket(d.cid, CTAPHIDCBOR, selNoCredentialAssertion(t)))
+	}()
+	require.Eventually(t, func() bool {
+		return bytes.IndexByte(d.probe.keepaliveStatuses(d.cid), KeepaliveStatusProcessing) >= 0
+	}, 3*time.Second, 5*time.Millisecond, "the GetAssertion was not deferred")
+	end(d)
+	select {
+	case <-done:
+	case <-time.After(2 * noCredentialsSafetyTimeout):
+		t.Fatal("the deferred GetAssertion never ended")
+	}
+
+	resp, err := d.hid.Authenticator().ProcessCBORWithContext(WithCTAPHIDChannel(context.Background(), d.cid),
+		CmdMakeCredential, selMakeCredentialData(t, false))
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, before+1, d.up.calls.Load(),
+		"the MakeCredential after a deferred GetAssertion must ask for presence again")
+}
+
+func TestSelection_GrantRevokedWhenDeferredAssertionCancelled(t *testing.T) {
+	t.Parallel()
+	selGrantSurvivesDeferral(t, func(d *selHIDDevice) {
+		d.hid.HandleMessage(selHIDPacket(d.cid, CTAPHIDCancel, nil))
+	})
+}
+
+func TestSelection_GrantRevokedWhenDeferredAssertionTimesOut(t *testing.T) {
+	t.Parallel()
+	selGrantSurvivesDeferral(t, func(*selHIDDevice) {})
 }
 
 // --- CTAPHID transport helpers -------------------------------------------
