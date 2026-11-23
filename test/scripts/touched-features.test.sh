@@ -25,7 +25,7 @@ DOC=$(commit_all docs)
 RN=$(move_file test/integration/beta/extra_test.go test/integration/alpha/extra_test.go)
 
 echo "touched-features.sh"
-[ -x "$SCRIPT" ] && ok "the script is executable" || no "the script is executable"
+if [ -x "$SCRIPT" ]; then ok "the script is executable"; else no "the script is executable"; fi
 eq "a feature-only diff prints that feature" "alpha" "$(run "$BASE" "$FA")"
 eq "a package a feature imports transitively prints that feature" "alpha" "$(run "$FA" "$PA")"
 eq "a package a second feature imports prints that feature" "beta" "$(run "$PA" "$PC")"

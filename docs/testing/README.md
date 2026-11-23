@@ -48,8 +48,12 @@ feature list.
   `make integration-test-<feature>` must run. A feature is a
   `test/integration/<feature>/` directory holding `_test.go` files. A changed
   file under it, or a package its tests import (directly or transitively,
-  `go list -deps -test` under the tags `make -n integration-test-<feature>`
-  prints, so conditional `BUILD_TAGS +=` tags count), selects it. So does a
+  `go list -deps -test` under that suite's own tags), selects it. A suite's
+  tags are the `-tags` of the recipe lines that `go test` its directory
+  (`integration-test-clusterca` adds `tpm_simulator`), expanded by make, else
+  those of `integration-test-%` (from `make -n`, so conditional
+  `BUILD_TAGS +=` tags count). If none of a suite's tests builds under its
+  tags, any package change prints `ALL`. So does a
   change to a binary the suite builds and runs, or to one of its deps: a
   quoted `.../cmd/<name>` path in the suite's Go files, or a recipe line that
   builds `./cmd/<name>` (after any `cd`, so `xkey/cmd/xkey` counts) and tests

@@ -21,7 +21,7 @@ DOC=$(commit_all docs)
 RN=$(move_file pkg/a/extra.go pkg/e/extra.go)
 
 echo "touched-packages.sh"
-[ -x "$SCRIPT" ] && ok "the script is executable" || no "the script is executable"
+if [ -x "$SCRIPT" ]; then ok "the script is executable"; else no "the script is executable"; fi
 eq "a changed package prints itself and its direct importer" "$(printf 'pkg/a\npkg/b')" "$(run "$BASE" "$PA")"
 eq "a package without importers prints only itself" "pkg/c" "$(run "$PA" "$PC")"
 eq "a testdata file prints the package that holds it" "pkg/c" "$(run "$PC" "$TD")"

@@ -11,8 +11,12 @@
 #   - a changed file under test/integration/<feature>/ names that feature;
 #   - a changed Go package (or a file inside one, such as testdata) names
 #     every feature whose integration tests import it, directly or
-#     transitively, under the tags the integration-test-% recipe passes
-#     (read from `make -n`, so += tags count);
+#     transitively, under that suite's own tags: the -tags of the recipe lines
+#     that go test ./test/integration/<feature> (an explicit rule such as
+#     integration-test-clusterca adding tpm_simulator), expanded by make,
+#     else the tags of the integration-test-% recipe (from `make -n`, so +=
+#     tags count). A suite none of whose tests builds under its tags prints
+#     ALL for any such change;
 #   - it also names every feature whose suite builds and runs a binary that
 #     is, or depends on, that package: a quoted .../cmd/<name> path in the
 #     suite's own Go files, or a Makefile recipe line that builds
@@ -135,11 +139,13 @@ module_root() {
 	printf '%s\n' "$d"
 }
 
-# recipe_binaries <integration tags>: lines "<feature> TAB <binary dir> TAB
-# <tags>" for each Makefile recipe line that builds ./.../cmd/<name> and
-# tests ./test/integration/<feature>; the tags add the build's literal ones.
+# recipe_binaries <integration tags> <suites file>: lines "<feature> TAB
+# <binary dir> TAB <tags>" for each Makefile recipe line that builds
+# ./.../cmd/<name> and tests ./test/integration/<feature>; the tags add the
+# build's literal ones. Each go test line that runs ./test/integration/<feature>
+# also appends "<feature> TAB <its -tags as written>" to <suites file>.
 recipe_binaries() {
-	awk -v tags="$1" '
+	awk -v tags="$1" -v suites="$2" '
 	function resolve(cwd, p,   n, parts, out, i, k, r) {
 		sub(/\/\.\.\.$/, "", p)
 		if (p ~ /^\//) return ""
@@ -157,6 +163,17 @@ recipe_binaries() {
 	function clean(t) {
 		gsub(/^["'\''(]+/, "", t); gsub(/["'\''),]+$/, "", t)
 		return t
+	}
+	# raw_tags <segment>: the -tags value as written, unexpanded; "" when it
+	# has no -tags or its parentheses do not balance.
+	function raw_tags(s,   v, o, c) {
+		if (!match(s, /-tags[= ]*["'\''][^"'\'']*["'\'']/) && !match(s, /-tags[= ]*[^[:space:]]+/)) return ""
+		v = substr(s, RSTART, RLENGTH)
+		sub(/^-tags[= ]*/, "", v)
+		gsub(/["'\'']/, "", v)
+		o = gsub(/\(/, "(", v); c = gsub(/\)/, ")", v)
+		if (o != c || v ~ /\$[*@<]/) return ""
+		return v
 	}
 	function build_tags(s,   v, n, w, i, r) {
 		if (!match(s, /-tags[= ]*["'\''][^"'\'']*["'\'']/) && !match(s, /-tags[= ]*[^[:space:]]+/)) return ""
@@ -193,6 +210,7 @@ recipe_binaries() {
 			isbuild = seg[s] ~ /(^|[^A-Za-z0-9_])(go|GO\))[[:space:]]+build([[:space:]]|$)/
 			istest = seg[s] ~ /(^|[^A-Za-z0-9_])(go|GO\))[[:space:]]+test([[:space:]]|$)/
 			btags = isbuild ? build_tags(seg[s]) : ""
+			texpr = istest ? raw_tags(seg[s]) : ""
 			for (i = first; i <= nt; i++) {
 				t = clean(tok[i])
 				if (isbuild && t ~ /^\.\.?\// && t ~ /(^|\/)cmd\/[^\/]/) {
@@ -202,6 +220,7 @@ recipe_binaries() {
 					r = resolve(cwd, t)
 					if (r ~ /^test\/integration\/[^\/]+/) {
 						split(r, rp, "/"); feats[++nf] = rp[3]
+						if (texpr != "") print rp[3] "\t" texpr > suites
 					}
 				}
 			}
@@ -233,17 +252,85 @@ if [ "${#pending[@]}" -gt 0 ]; then
 	fi
 	deps=$(mktemp)
 	bins=$(mktemp)
-	trap 'rm -f "$deps" "$bins"' EXIT
-	# One line per package of the integration tree and its dependencies:
-	# <dir> TAB <import path> TAB <deps>. A feature reaches the directories
-	# of its own packages' deps.
-	if ! go list -e -deps -test -tags "$tags" \
-		-f '{{if not .Standard}}{{.Dir}}{{"\t"}}{{.ImportPath}}{{"\t"}}{{join .Deps " "}}{{end}}' \
-		./test/integration/... >"$deps" 2>/dev/null; then
-		echo "$0: go list ./test/integration/... failed; every feature runs" >&2
-		echo ALL
-		exit 0
+	suites=$(mktemp)
+	evalmk=$(mktemp)
+	trap 'rm -f "$deps" "$bins" "$suites" "$evalmk"' EXIT
+	# The binaries each suite builds, and the -tags of every go test line
+	# that runs a suite, as written in the recipes.
+	if [ -f Makefile ]; then
+		recipe_binaries "$tags" "$suites" >"$bins"
 	fi
+	# suite_tags: "<feature> TAB <tags>", each suite's recipe tags expanded by
+	# make itself (union over its go test lines). A suite without one runs
+	# under the integration-test-% tags.
+	suite_tags=
+	if [ -s "$suites" ]; then
+		{
+			printf '__touched_suite_tags:\n\t@:\n'
+			while IFS=$'\t' read -r feat expr; do
+				# shellcheck disable=SC2016 # a make $(info), written literally
+				printf '$(info __TS__ %s %s)\n' "$feat" "$expr"
+			done <"$suites"
+		} >"$evalmk"
+		if ! out=$(env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -s --no-print-directory \
+			-f Makefile -f "$evalmk" __touched_suite_tags 2>/dev/null); then
+			echo "$0: make could not expand the suites' -tags; every feature runs" >&2
+			echo ALL
+			exit 0
+		fi
+		suite_tags=$(printf '%s\n' "$out" | awk '
+			$1 == "__TS__" {
+				f = $2
+				for (i = 3; i <= NF; i++) {
+					n = split($i, w, ",")
+					for (j = 1; j <= n; j++) if (w[j] != "" && !seen[f, w[j]]++) t[f] = t[f] (t[f] == "" ? "" : ",") w[j]
+				}
+			}
+			END { for (f in t) print f "\t" t[f] }')
+	fi
+	# One go list per tag set, over the suites that run under it. Each line:
+	# <dir> TAB <import path> TAB <deps> TAB T when it holds tests. A feature
+	# reaches the directories of its own packages' deps.
+	groups=$(for fd in test/integration/*/; do
+		feat=$(basename "$fd")
+		is_feature "$feat" || continue
+		t=$(printf '%s\n' "$suite_tags" | awk -F'\t' -v f="$feat" '$1 == f { print $2; exit }')
+		printf '%s\t%s\n' "${t:-$tags}" "$feat"
+	done | LC_ALL=C sort | awk -F'\t' '
+		$1 != p { if (NR > 1) print p "\t" l; p = $1; l = $2; next }
+		{ l = l " " $2 }
+		END { if (NR) print p "\t" l }')
+	: >"$deps"
+	while IFS=$'\t' read -r t flist; do
+		[ -n "$flist" ] || continue
+		pats=()
+		for feat in $flist; do
+			pats+=("./test/integration/$feat/...")
+		done
+		if ! go list -e -deps -test -tags "$t" \
+			-f '{{if not .Standard}}{{.Dir}}{{"\t"}}{{.ImportPath}}{{"\t"}}{{join .Deps " "}}{{"\t"}}{{if or .TestGoFiles .XTestGoFiles}}T{{end}}{{end}}' \
+			"${pats[@]}" >>"$deps" 2>/dev/null; then
+			echo "$0: go list -tags $t failed; every feature runs" >&2
+			echo ALL
+			exit 0
+		fi
+	done <<<"$groups"
+	# A suite none of whose tests builds under its tags has unknown imports:
+	# every feature runs rather than that suite being dropped.
+	tested=$(awk -F'\t' -v top="$top/" '
+		$4 == "T" && substr($1, 1, length(top)) == top {
+			rel = substr($1, length(top) + 1)
+			if (rel ~ /^test\/integration\/[^\/]+/) { sub(/^test\/integration\//, "", rel); sub(/\/.*/, "", rel); print rel }
+		}' "$deps" | LC_ALL=C sort -u)
+	while IFS=$'\t' read -r t flist; do
+		for feat in $flist; do
+			if ! printf '%s\n' "$tested" | grep -qxF -- "$feat"; then
+				echo "$0: no test of test/integration/$feat builds under -tags $t; every feature runs" >&2
+				echo ALL
+				exit 0
+			fi
+		done
+	done <<<"$groups"
 	# reach: lines "<repo-relative dir> TAB <feature>".
 	reach=$(awk -F'\t' -v top="$top/" '
 		$1 == "" { next }
@@ -279,10 +366,7 @@ if [ "${#pending[@]}" -gt 0 ]; then
 				printf '%s\t%s\t%s\n' "$feat" "$b" "$tags"
 			fi
 		done < <(grep -rhoE --include='*.go' '"[^"[:space:]]*cmd/[A-Za-z0-9_.-]+(/\.\.\.)?"' "$fd" 2>/dev/null | tr -d '"' | LC_ALL=C sort -u)
-	done >"$bins"
-	if [ -f Makefile ]; then
-		recipe_binaries "$tags" >>"$bins"
-	fi
+	done >>"$bins"
 	# Each binary reaches its own directory and its deps' directories.
 	bin_reach=$(while IFS=$'\t' read -r bin btags; do
 		mod=$(module_root "$bin")
