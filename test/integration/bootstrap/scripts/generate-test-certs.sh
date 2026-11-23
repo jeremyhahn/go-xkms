@@ -190,6 +190,11 @@ tls:
   # in the presented chain (RFC 7671 Section 5.2.2).
   cert_file: ${CERT_DIR}/fullchain.crt
   key_file: ${CERT_DIR}/server.key
+  # ca_file makes xkmsd serve ca.crt on /v1/ca/bootstrap (without it the
+  # bundle is the CA instance's own root, generated at start). truststrap's
+  # DANE method checks that bundle against the TLSA records, which
+  # setup/generate-zone.sh computes from ca.crt.
+  ca_file: ${CERT_DIR}/ca.crt
   # "verify" (VerifyClientCertIfGiven): the TLS layer requests a client
   # certificate, so the suite's admin calls (bootstrap show-keys, tenants)
   # authenticate with the first-boot administrator certificate xkmsd writes
