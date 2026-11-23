@@ -56,8 +56,33 @@ git init -q "$REPO"
 put go.mod 'module example.com/m
 
 go 1.22'
-put Makefile 'BUILD_TAGS := codec_json
-TEST_TAGS := codec_json'
+mkdir -p "$REPO"
+# The tags come from conditional += lines, as in go-xkms; eps and zeta build
+# the binary their tests run in the recipe (zeta from a nested module).
+cat >"$REPO/Makefile" <<'EOF'
+WITH_GAMMA ?= 1
+BUILD_TAGS := codec_json
+ifeq ($(WITH_GAMMA),1)
+	BUILD_TAGS += gamma
+endif
+TEST_TAGS := codec_json
+ifeq ($(WITH_GAMMA),1)
+	TEST_TAGS += gamma
+endif
+
+test-pkg:
+	go test -tags "$(TEST_TAGS)" ./$(PKG)
+
+integration-test-eps:
+	go build -o build/bin/srv ./cmd/srv && go test -tags "integration $(BUILD_TAGS)" ./test/integration/eps/...
+
+integration-test-zeta:
+	cd sub && go build -o ../build/bin/cli ./cmd/cli && cd .. && \
+		go test -tags "integration $(BUILD_TAGS)" ./test/integration/zeta/...
+
+integration-test-%:
+	go test -v -tags "integration $(BUILD_TAGS)" ./test/integration/$*/...
+EOF
 put README.md '# m'
 put pkg/a/a.go 'package a
 
@@ -102,5 +127,92 @@ put test/integration/beta/extra_test.go '//go:build integration
 
 package beta'
 put pkg/a/extra.go 'package a'
+# gamma: only a gamma-tagged test file imports pkg/g; pkg/h imports pkg/g
+# only from a gamma-tagged file.
+put pkg/g/g.go 'package g
+
+func G() int { return 7 }'
+put pkg/h/h.go '//go:build gamma
+
+package h
+
+import "example.com/m/pkg/g"
+
+func H() int { return g.G() }'
+put test/integration/gamma/gamma_test.go '//go:build integration && gamma
+
+package gamma
+
+import (
+	"testing"
+
+	"example.com/m/pkg/g"
+)
+
+func TestGamma(t *testing.T) { _ = g.G() }'
+# delta: its test builds and runs ./cmd/tool, which imports pkg/t.
+put pkg/t/t.go 'package t
+
+func T() int { return 8 }'
+put cmd/tool/main.go 'package main
+
+import "example.com/m/pkg/t"
+
+func main() { _ = t.T() }'
+put test/integration/delta/delta_test.go '//go:build integration
+
+package delta
+
+import (
+	"os/exec"
+	"testing"
+)
+
+func TestDelta(t *testing.T) {
+	bin := t.TempDir() + "/tool"
+	if err := exec.Command("go", "build", "-o", bin, "./cmd/tool").Run(); err != nil {
+		t.Fatal(err)
+	}
+}'
+# eps: the Makefile recipe builds ./cmd/srv (imports pkg/s) for the tests.
+put pkg/s/s.go 'package s
+
+func S() int { return 9 }'
+put cmd/srv/main.go 'package main
+
+import "example.com/m/pkg/s"
+
+func main() { _ = s.S() }'
+put test/integration/eps/eps_test.go '//go:build integration
+
+package eps
+
+import "testing"
+
+func TestEps(t *testing.T) {}'
+# zeta: the recipe builds sub/cmd/cli, a nested module's binary importing
+# the root module's pkg/u.
+put pkg/u/u.go 'package u
+
+func U() int { return 10 }'
+put sub/go.mod 'module example.com/m/sub
+
+go 1.22
+
+require example.com/m v0.0.0
+
+replace example.com/m => ../'
+put sub/cmd/cli/main.go 'package main
+
+import "example.com/m/pkg/u"
+
+func main() { _ = u.U() }'
+put test/integration/zeta/zeta_test.go '//go:build integration
+
+package zeta
+
+import "testing"
+
+func TestZeta(t *testing.T) {}'
 BASE=$(commit_all base)
 export BASE

@@ -28,6 +28,9 @@ eq "a testdata file prints the package that holds it" "pkg/c" "$(run "$PC" "$TD"
 eq "a docs-only change prints nothing" "" "$(run "$TD" "$DOC")"
 eq "an empty diff prints nothing" "" "$(run "$DOC" "$DOC")"
 eq "a rename prints both sides and the source's importer" "$(printf 'pkg/a\npkg/b\npkg/e')" "$(run "$DOC" "$RN")"
+# test-pkg's tag set, += lines included: pkg/h imports pkg/g only under gamma.
+G=$(commit_file pkg/g/g.go '// g')
+eq "a tag-gated importer prints with the package" "$(printf 'pkg/g\npkg/h')" "$(run "$RN" "$G")"
 
 OUT=$(run "$BASE" no-such-revision 2>&1)
 RC=$?

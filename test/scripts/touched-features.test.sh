@@ -38,6 +38,19 @@ eq "a docs-only change prints nothing" "" "$(run "$PD" "$DOC")"
 eq "an empty diff prints nothing" "" "$(run "$DOC" "$DOC")"
 eq "a rename between features prints both sides" "$(two alpha beta)" "$(run "$DOC" "$RN")"
 
+# The integration-test-% recipe's full tag set, += lines included.
+G=$(commit_file pkg/g/g.go '// g')
+eq "a package only tag-gated feature tests import prints that feature" "gamma" "$(run "$RN" "$G")"
+# A binary the suite builds and runs counts with its package deps.
+T=$(commit_file pkg/t/t.go '// t')
+eq "a dep of a binary the suite's own files build prints that feature" "delta" "$(run "$G" "$T")"
+CT=$(commit_file cmd/tool/main.go '// tool')
+eq "the binary the suite's own files build prints that feature" "delta" "$(run "$T" "$CT")"
+S=$(commit_file pkg/s/s.go '// s')
+eq "a dep of a binary the feature's recipe builds prints that feature" "eps" "$(run "$CT" "$S")"
+U=$(commit_file pkg/u/u.go '// u')
+eq "a dep of a nested-module binary the recipe builds prints that feature" "zeta" "$(run "$S" "$U")"
+
 OUT=$(run "$BASE" no-such-revision 2>&1)
 RC=$?
 eq "a bad revision exits 2" "2" "$RC"

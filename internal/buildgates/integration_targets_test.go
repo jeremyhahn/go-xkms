@@ -238,3 +238,28 @@ func TestMakefileHasTestPkgTarget(t *testing.T) {
 		t.Errorf("test-pkg must run $(GO) test on ./$(PKG); recipe:\n%s", recipe)
 	}
 }
+
+// TestMakefileTestPkgUsesUnitTestTags: make test-pkg runs a package's unit
+// tests, so it passes the unit-test tag set (TEST_FLAGS, built from
+// TEST_TAGS: tpm_simulator, frost) and not the build tags of TAG_FLAGS;
+// touched-packages.sh reads imports under the same tags.
+func TestMakefileTestPkgUsesUnitTestTags(t *testing.T) {
+	mk := readMakefile(t)
+	recipe, ok := makeRecipe(mk, "test-pkg")
+	if !ok {
+		t.Fatal("Makefile has no test-pkg rule")
+	}
+	for _, line := range strings.Split(recipe, "\n") {
+		if !strings.Contains(line, "$(GO) test") {
+			continue
+		}
+		if !strings.Contains(line, "$(TEST_FLAGS)") && !strings.Contains(line, "$(TEST_TAGS)") {
+			t.Errorf("test-pkg must pass the unit-test tags ($(TEST_FLAGS) or $(TEST_TAGS)); line:\n%s", line)
+		}
+		if strings.Contains(line, "$(TAG_FLAGS)") {
+			t.Errorf("test-pkg passes $(TAG_FLAGS), the build tags, not the unit-test tags; line:\n%s", line)
+		}
+		return
+	}
+	t.Errorf("test-pkg has no $(GO) test line; recipe:\n%s", recipe)
+}
