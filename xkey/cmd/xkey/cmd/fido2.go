@@ -35,6 +35,8 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
+	// The SDK facade aliases the handler but not the CTAPHID command bytes.
+	ctaphid "github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -799,12 +801,23 @@ func init() {
 	}
 }
 
+// hidPacketSource yields the 64-byte HID output reports the host writes.
+// *uhid.Device satisfies it; tests inject a fake.
+// fido2EventQueueSize bounds the HID packets waiting for the event loop's
+// worker while a command is pending.
+const fido2EventQueueSize = 64
+
+type hidPacketSource interface {
+	ReadOutput() ([]byte, error)
+}
+
 // fido2Device manages the virtual FIDO2 USB device and integrates the IPC
 // server, virtual keyboard, password store, and notification subsystem.
 type fido2Device struct {
 	cfg             *FIDO2Config
 	logger          *slog.Logger
 	uhidDevice      *uhid.Device
+	packetSource    hidPacketSource
 	auth            *authenticator.Authenticator
 	hidHandler      *authenticator.CTAPHIDHandler
 	storage         authenticator.StatefulCredentialStorage
@@ -1003,6 +1016,7 @@ func (d *fido2Device) Run(ctx context.Context) error {
 		return errors.Join(ErrFIDO2UHIDOpenFailed, err)
 	}
 	d.uhidDevice = uhidDev
+	d.packetSource = uhidDev
 
 	// Create the virtual HID device with FIDO2 descriptor
 	createCfg := &uhid.CreateConfig{
@@ -1254,6 +1268,26 @@ var _ ipc.Handler = (*fido2Device)(nil)
 func (d *fido2Device) eventLoop(ctx context.Context) error {
 	d.logger.Info("starting FIDO2 HID event loop")
 
+	source := d.packetSource
+
+	// A CBOR command stays inside HandleMessage until its presence wait
+	// ends, so HandleMessage runs on a worker in arrival order while this
+	// goroutine keeps reading: a CTAPHID_CANCEL for the pending command is
+	// handed to the handler at once (it does not hold the handler's lock
+	// the blocked command released).
+	work := make(chan []byte, fido2EventQueueSize)
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		for packet := range work {
+			d.hidHandler.HandleMessage(packet)
+		}
+	}()
+	defer func() {
+		close(work)
+		<-workerDone
+	}()
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1261,7 +1295,7 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 			return ctx.Err()
 		default:
 			// Read 64-byte HID packet from UHID
-			packet, err := d.uhidDevice.ReadOutput()
+			packet, err := source.ReadOutput()
 			if err != nil {
 				// Handle timeout - this is expected for polling
 				if errors.Is(err, uhid.ErrTimeout) {
@@ -1296,8 +1330,23 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 				slog.String("cmd_or_seq", formatCmd(packet)),
 			)
 
-			// Process the HID packet through the CTAP-HID handler
-			d.hidHandler.HandleMessage(packet)
+			// CTAPHID_CANCEL must reach the handler while a command is
+			// pending, so it never queues behind that command.
+			if packet[4] == ctaphid.CTAPHIDCancel {
+				d.hidHandler.HandleMessage(packet)
+				continue
+			}
+
+			// The reader never blocks on the worker: a CTAP HID host sends
+			// nothing but CANCEL to a busy channel, so a full queue drops.
+			select {
+			case work <- packet:
+			default:
+				d.logger.Warn("HID packet queue full, dropping packet",
+					slog.String("cid", formatCID(packet)),
+					slog.String("cmd_or_seq", formatCmd(packet)),
+				)
+			}
 		}
 	}
 }

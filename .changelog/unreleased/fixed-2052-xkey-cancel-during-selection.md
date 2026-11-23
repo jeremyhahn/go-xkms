@@ -1,0 +1,1 @@
+- xkey answers CTAPHID_CANCEL while a Selection or presence prompt is pending, so the browser's cancel after another key is touched closes the prompt at once (#2052).
