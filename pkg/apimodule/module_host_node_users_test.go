@@ -90,7 +90,11 @@ func TestModuleHost_NodeUsers_WebAuthnBeginOverAuthNode(t *testing.T) {
 		"email":        "passkey-user@example.com",
 		"display_name": "Passkey User",
 	})
-	require.Equal(t, http.StatusOK, w.Code, "registration/begin: %s", w.Body.String())
+	// The lookup no longer fails unauthenticated (ruling 973); the
+	// anonymous create is then refused for want of users:create (CA
+	// ruling 602), never a server fault.
+	require.Equal(t, http.StatusForbidden, w.Code, "registration/begin: %s", w.Body.String())
+	require.NotContains(t, w.Body.String(), "unauthenticated")
 }
 
 // TestModuleHost_NodeUsers_FreshInviteRedeemsOverAuthNode is ruling 973 on

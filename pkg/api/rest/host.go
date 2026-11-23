@@ -32,6 +32,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -445,7 +446,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 
 	var users webauthn.QRDBUsers = p.QRDBClient.Users()
 	if p.NodeUsers != nil {
-		users = auth.NewNodeUserClient(p.NodeUsers)
+		users = nodeWebAuthnUsers{
+			NodeUserClient: auth.NewNodeUserClient(p.NodeUsers),
+			creator:        users,
+		}
 	}
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
 		Users:       users,
@@ -486,6 +490,24 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		return nil, &WebAuthnServiceBuildError{Err: err}
 	}
 	return svc, nil
+}
+
+// nodeWebAuthnUsers is the WebAuthn user store's view of an embedded node:
+// reads, updates and deletes run on the node's user service (the ceremony
+// routes are public, so their request context carries no qrdb credentials,
+// ruling 973), but CreateUser runs on the qrdb client, whose transport
+// checks users:create. The node's routing user service checks no
+// permission, so creating through it would let anonymous registration/begin
+// persist an account the service principal is not granted to create (CA
+// ruling 602).
+type nodeWebAuthnUsers struct {
+	*auth.NodeUserClient
+	creator webauthn.QRDBUsers
+}
+
+// CreateUser creates the user through the authorized qrdb client.
+func (u nodeWebAuthnUsers) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+	return u.creator.CreateUser(ctx, req)
 }
 
 // isNilCredentialStore reports whether cs carries no usable store. It

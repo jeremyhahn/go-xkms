@@ -11,13 +11,16 @@ import (
 
 	"github.com/descope/virtualwebauthn"
 	"github.com/go-webauthn/webauthn/protocol"
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -69,11 +72,14 @@ func TestWebAuthnCeremony_NonSystemTenantOverRBACNode(t *testing.T) {
 	ds := s.datastore.Load()
 	require.NotNil(t, ds)
 	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
-		Config:      s.webauthnConfig,
-		QRDBClient:  ds.Client(),
-		NodeUsers:   s.nodeUserSource(),
-		DAOFactory:  ds.DAOFactory(),
-		TenantID:    tenantID,
+		Config:     s.webauthnConfig,
+		QRDBClient: ds.Client(),
+		NodeUsers:  s.nodeUserSource(),
+		DAOFactory: ds.DAOFactory(),
+		TenantID:   tenantID,
+		// As xkmsd builds it (server.go): calls run as the node's
+		// service principal.
+		CallContext: s.qrdbNode.ServiceContext,
 		TokenIssuer: s.tokenIssuer,
 		Logger:      s.logger,
 		AuditLogger: s.auditLogger,
@@ -85,7 +91,24 @@ func TestWebAuthnCeremony_NonSystemTenantOverRBACNode(t *testing.T) {
 	ctx := context.Background()
 	const email = "tenant-passkey@example.com"
 
-	creation, sessionID, err := svc.BeginRegistration(ctx, email, "Tenant Passkey")
+	// Anonymous public registration is refused over the RBAC node: the
+	// service principal holds no users:create (CA ruling 602). The tenant
+	// account is enrolled as an invitation's pending account instead.
+	_, _, err = svc.BeginRegistration(ctx, email, "Tenant Passkey")
+	require.ErrorIs(t, err, xkmswebauthn.ErrRegistrationRefused, "anonymous registration in a non-system tenant")
+
+	users := auth.NewNodeUserClient(s.nodeUserSource())
+	invitee, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+		TenantID: tenantID,
+		Username: email,
+		Email:    email,
+		Name:     "Tenant Passkey",
+		Pending:  true,
+	})
+	require.NoError(t, err, "create the invited account in a non-system tenant")
+	handle := xkmswebauthn.HandleFromUserID(invitee.ID)
+
+	creation, sessionID, err := svc.BeginInviteRegistration(ctx, handle)
 	require.NoError(t, err, "begin registration in a non-system tenant")
 	raw, err := json.Marshal(creation.Response)
 	require.NoError(t, err)
@@ -94,8 +117,11 @@ func TestWebAuthnCeremony_NonSystemTenantOverRBACNode(t *testing.T) {
 	attestation := virtualwebauthn.CreateAttestationResponse(rp, virtualwebauthn.NewAuthenticator(), credential, *attOpts)
 	parsedAtt, err := protocol.ParseCredentialCreationResponseBody(strings.NewReader(attestation))
 	require.NoError(t, err)
-	_, _, err = svc.FinishRegistration(ctx, sessionID, parsedAtt)
+	_, err = svc.FinishInviteRegistration(ctx, sessionID, handle, parsedAtt)
 	require.NoError(t, err, "finish registration in a non-system tenant")
+	// As xkms activates an invited account: on the invitation's tenant.
+	_, err = users.UpdateUser(qrdbtenant.WithTenantID(ctx, tenantID), &qrdbtransport.UpdateUserRequest{ID: invitee.ID, Lifecycle: string(qrdbsdk.LifecycleActive)})
+	require.NoError(t, err, "activate the invited account in a non-system tenant")
 
 	assertion, sessionID, err := svc.BeginLoginForEmail(ctx, email)
 	require.NoError(t, err, "begin login in a non-system tenant")

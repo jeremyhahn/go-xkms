@@ -103,10 +103,14 @@ func TestPublicRouteWiring_WebAuthnBeginOverAuthNode(t *testing.T) {
 		"email":        email,
 		"display_name": "Passkey User",
 	}))
-	require.Equal(t, http.StatusOK, w.Code, "registration/begin: %s", w.Body.String())
+	// The lookup no longer fails unauthenticated (ruling 973); the
+	// anonymous create is then refused for want of users:create (CA
+	// ruling 602), never a server fault.
+	require.Equal(t, http.StatusForbidden, w.Code, "registration/begin: %s", w.Body.String())
+	require.NotContains(t, w.Body.String(), "unauthenticated")
 
 	w = do(jsonRequest(t, http.MethodPost, "/api/v1/webauthn/login/begin", map[string]string{"email": email}))
-	require.Equal(t, http.StatusOK, w.Code, "login/begin: %s", w.Body.String())
+	require.NotEqual(t, http.StatusInternalServerError, w.Code, "login/begin: %s", w.Body.String())
 	require.NotContains(t, w.Body.String(), "unauthenticated")
 }
 
