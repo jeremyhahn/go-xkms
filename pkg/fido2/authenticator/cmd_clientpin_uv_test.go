@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -438,6 +439,48 @@ func TestGetPinUvAuthTokenUsingUv_UnavailableSpendsNoRetry(t *testing.T) {
 	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
 	_, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
 	require.ErrorIs(t, err, ErrUVBlocked, "a real refusal still spends the retry")
+}
+
+// The production verifier refuses an RP name the phone cannot show (over 64
+// bytes or with a control character; CBOR decoding already refuses text
+// that is not UTF-8) before it contacts the
+// phone, with an error that is not an outage. The authenticator must refuse
+// such a name as an invalid parameter before the ceremony: otherwise each
+// request spends a uvRetries count with no verification attempted.
+func TestGetPinUvAuthTokenUsingUv_InvalidRPNameSpendsNoRetry(t *testing.T) {
+	for name, rpID := range map[string]string{
+		"over 64 bytes":     strings.Repeat("a", 65),
+		"control character": "example.com\nApproved",
+	} {
+		t.Run(name, func(t *testing.T) {
+			backend := &verifyingKeyBackend{
+				mockUVKeyBackend: mockUVKeyBackend{handlesUV: true},
+				err:              errors.New("test: verifier refused the RP name"),
+			}
+			auth := newVerifyingAuthenticator(t, backend)
+			auth.state.SetUVRetries(3)
+
+			for range 4 {
+				reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionMakeCredential, rpID)
+				resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+
+				require.ErrorIs(t, err, ErrInvalidParameter)
+				require.Equal(t, []byte{byte(StatusInvalidParameter)}, resp)
+				require.Equal(t, 3, auth.state.UVRetries(), "no verification was attempted")
+				require.Nil(t, auth.GetPinUvAuthToken())
+			}
+			require.Zero(t, backend.calls, "the phone is never asked about a name it cannot show")
+		})
+	}
+
+	t.Run("64 bytes still asks", func(t *testing.T) {
+		backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+		auth := newVerifyingAuthenticator(t, backend)
+		reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionMakeCredential, strings.Repeat("a", 64))
+		_, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+		require.NoError(t, err)
+		require.Equal(t, 1, backend.calls)
+	})
 }
 
 // TestGetPinUvAuthTokenUsingUv_MalformedRequestNeverPrompts pins that the
