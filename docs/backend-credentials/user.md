@@ -83,7 +83,7 @@ name with a permission error and leave it out of their listing.
 
 The PIN of a PIN-protected PKCS#11 backend (`backends.pkcs11.pin`, and an
 active `rng.pkcs11.pin`) is resolved at start-up by
-`Server.resolveBackendPIN` (`pkg/server/backend_pin.go:70`) through
+`Server.resolveBackendPIN` (`pkg/server/backend_pin.go:71`) through
 `pinselect.ResolveBackendPIN` (`pkg/pinselect/backendpin.go:141`). Every
 refusal below stops `xkmsd` from starting (fail closed). Configure it with
 `backend_pin` (`pkg/config/backend_pin.go`):
@@ -104,7 +104,7 @@ backend_pin:
 - **auto** picks `tpm2` when a TPM is present, otherwise `sealed`
   (`pkg/pinselect/backendpin.go:171-175`). The server reports a TPM only
   when `credentials.seal_strategy` is `tpm2`
-  (`pkg/server/backend_pin.go:87-90,120-122`), so a TPM beside a
+  (`pkg/server/backend_pin.go:110-113,164-166`), so a TPM beside a
   barrier-sealed PIN gives `sealed`. The i.MX 95 has no TPM and gets
   `sealed`.
 - **Minimum.** `minimum` orders `sealed` < `tpm2` < `manual`. A resolved
@@ -113,7 +113,7 @@ backend_pin:
 - **Persisted record.** The first resolution writes the concrete strategy to
   `<PINDir>/backend-strategy`, where `<PINDir>` is
   `<datastore.path>/pin` (`pkg/pinselect/backendpin.go:186-189`,
-  `pkg/server/backend_pin.go:45-47`). Later starts use that record. If
+  `pkg/server/backend_pin.go:46-48`). Later starts use that record. If
   you configure a strategy other than `auto` that disagrees with it, start-up
   is refused with `BackendPINMismatchError`
   (`pkg/pinselect/backendpin.go:163-169`). A strategy that is not available
@@ -123,7 +123,7 @@ backend_pin:
 - **PKCS#11 self-store refusal.** PKCS#11 is never the store for its own
   PIN. `sealed` is refused with `ErrBackendPINSelfStore` when
   `barrier.strategy` or `credentials.seal_strategy` is `pkcs11`
-  (`pkg/pinselect/backendpin.go:213-216`, `pkg/server/backend_pin.go:128-130`).
+  (`pkg/pinselect/backendpin.go:213-216`, `pkg/server/backend_pin.go:172-174`).
   This applies only to `sealed`: a PIN sealed to the TPM (`tpm2` with
   `credentials.seal_strategy: tpm2`) under `barrier.strategy: pkcs11` is not
   a self-store and resolves to `tpm2`
@@ -132,16 +132,26 @@ backend_pin:
 - **rng.pkcs11.pin.** An active RNG PIN is held to the same policy even
   without the PKCS#11 key backend. It counts as active when `rng.pkcs11.pin`
   is set and `rng.mode` is `pkcs11` or `auto`, or `rng.fallback_mode` is
-  `pkcs11` (`pkg/server/backend_pin.go:57-63,73-75`).
+  `pkcs11` (`pkg/server/backend_pin.go:58-64,74-76`).
 - **manual is refused at start-up.** `strategy: manual`, `minimum: manual`
   and a `manual` record left by an earlier release all fail with
   `ErrBackendPINManualUnavailable`. This happens before anything is
-  persisted or any token is opened (`pkg/server/backend_pin.go:41,78-81,97-100`).
+  persisted or any token is opened (`pkg/server/backend_pin.go:42,97-100,123-126`).
   It stays refused until the unseal request carries a backend PIN: the go-qrdb
   sealed window does not carry one yet.
+- **A Raft key on the token needs tpm2.** With
+  `cluster.raft_enrollment.key_backend: pkcs11` the token opens before the
+  Raft node starts, before unseal, when only `tpm2` can release the PIN.
+  The strategy is resolved with a `tpm2` floor before that open, and
+  `sealed`, `auto` resolving to `sealed`, a persisted `sealed` record or a
+  lower minimum stop start-up with `ErrBackendPINNodeKeyBeforeUnseal`; no
+  token opens and no record is written (`resolvePreNodeBackendPIN`,
+  `pkg/server/backend_pkcs11.go`; `resolveBackendPINStrategy` and
+  `preNodeBackendPINError`, `pkg/server/backend_pin.go`;
+  `pkg/server/errors.go:67`).
 - **Status.** The resolved strategy is reported as `backend_pin_strategy`.
   It is empty when no PKCS#11 PIN is in use
-  (`Server.BackendPINStrategy`, `pkg/server/backend_pin.go:261-266`, wired at
+  (`Server.BackendPINStrategy`, `pkg/server/backend_pin.go:305-310`, wired at
   `pkg/server/server.go:979`). Read it over REST with
   `GET /api/v1/credentials/strategy` (`pkg/api/rest/handlers_credentials.go`)
   or over gRPC with `GetCredentialStrategy`
