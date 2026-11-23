@@ -122,6 +122,10 @@ var (
 	// ErrPossessionCSRMalformed, when a possession set's measurements claim
 	// (273) is not the one shape that carries the application evidence.
 	ErrPossessionMeasurementsShape = errors.New("device-attest-01: the measurements claim is not the application evidence shape")
+	// ErrPossessionEvidenceMismatch rejects a possession request whose
+	// application evidence differs from the evidence the verified alias
+	// certificate carries.
+	ErrPossessionEvidenceMismatch = errors.New("device-attest-01: the possession request's application evidence is not the alias certificate's")
 )
 
 // PossessionRequest is what a possession certificate request states.
