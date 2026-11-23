@@ -112,10 +112,11 @@ func TestKeyDecrypt_EmbeddedRSARoundTripDefaultPolicy(t *testing.T) {
 
 	const keyID = "rsa-decrypt-2280"
 	_, err = cl.GenerateKey(ctx, &client.GenerateKeyRequest{
-		KeyID:   keyID,
-		Backend: cfg.Backend,
-		KeyType: "rsa",
-		KeySize: 2048,
+		KeyID:     keyID,
+		Backend:   cfg.Backend,
+		KeyType:   "rsa",
+		KeySize:   2048,
+		Algorithm: "rsa",
 	})
 	require.NoError(t, err)
 
