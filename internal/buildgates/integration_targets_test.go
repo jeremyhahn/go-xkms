@@ -325,6 +325,9 @@ func TestNestedSuiteGateIgnoresNestedModuleRunners(t *testing.T) {
 		"integration-test-xkey-fido2:\n" +
 		"\tcd xkey && go test -tags integration ./test/integration/...\n" +
 		"\n" +
+		"integration-test-xkey-wrapped:\n" +
+		"\t$(call run_in_devcontainer,cd xkey && go test -tags integration ./test/integration/...,integration-test-xkey-wrapped)\n" +
+		"\n" +
 		"integration-test-pkcs11-module:\n" +
 		"\tgo test -tags integration ./test/integration/pkcs11/module\n"
 	got := nestedSuitesWithoutRunner(mk, []string{"challenges/dns01", "pkcs11/module"})
