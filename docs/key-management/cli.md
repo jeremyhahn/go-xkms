@@ -141,8 +141,8 @@ xkmsctl key import imported-signer wrapped.bin --key-type rsa --key-size 3072
 `--dest-backend` (default `software`), `--dest-keydir`,
 `--algorithm` (no fixed default). Without `--algorithm` the request carries no
 wrapping algorithm and the server picks the destination backend's default
-(`TPM2_DUPLICATE` for `tpm2`); pass e.g. `--algorithm RSAES_OAEP_SHA_256` to
-choose one (go-xkms#2283).
+(`TPM2_DUPLICATE` for a `tpm2` destination, `RSAES_OAEP_SHA_256` otherwise);
+pass e.g. `--algorithm RSA_AES_KEY_WRAP_SHA_256` to choose one (go-xkms#2283).
 
 ```
 xkmsctl key copy web-tls web-tls-backup --dest-backend software
