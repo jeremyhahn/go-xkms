@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/stretchr/testify/assert"
@@ -85,53 +86,39 @@ func TestMountChi(t *testing.T) {
 	}
 }
 
-// mockMuxRouter implements MuxRouter for testing
-type mockMuxRouter struct {
-	routes map[string]mockMuxRoute
-}
-
-func newMockMuxRouter() *mockMuxRouter {
-	return &mockMuxRouter{routes: make(map[string]mockMuxRoute)}
-}
-
-func (m *mockMuxRouter) HandleFunc(path string, f func(http.ResponseWriter, *http.Request)) MuxRoute {
-	route := mockMuxRoute{path: path, handler: f}
-	m.routes[path] = route
-	return &route
-}
-
-type mockMuxRoute struct {
-	path    string
-	methods []string
-	handler func(http.ResponseWriter, *http.Request)
-}
-
-func (m *mockMuxRoute) Methods(methods ...string) MuxRoute {
-	m.methods = methods
-	return m
-}
-
+// TestMountMux mounts the ceremony routes on a real gorilla/mux router: the
+// mount helper must accept *mux.Router itself, register each ceremony path
+// for POST only, and dispatch to the handler.
 func TestMountMux(t *testing.T) {
 	svc := newTestService(t)
 	h := NewHandler(svc)
 
-	r := newMockMuxRouter()
-	MountMux(r, h)
+	r := mux.NewRouter()
+	MountMux(r.PathPrefix("/api/v1/webauthn").Subrouter(), h)
 
-	// Verify all routes are registered
 	expectedRoutes := []string{
-		"/registration/begin",
-		"/registration/finish",
-		"/login/begin",
-		"/login/finish",
+		"/api/v1/webauthn/registration/begin",
+		"/api/v1/webauthn/registration/finish",
+		"/api/v1/webauthn/login/begin",
+		"/api/v1/webauthn/login/finish",
+	}
+	for _, path := range expectedRoutes {
+		var match mux.RouteMatch
+		post := httptest.NewRequest(http.MethodPost, path, nil)
+		assert.True(t, r.Match(post, &match), "POST %s should match", path)
+		assert.NoError(t, match.MatchErr, "POST %s", path)
+
+		get := httptest.NewRequest(http.MethodGet, path, nil)
+		match = mux.RouteMatch{}
+		r.Match(get, &match)
+		assert.ErrorIs(t, match.MatchErr, mux.ErrMethodMismatch, "GET %s", path)
 	}
 
-	assert.Len(t, r.routes, len(expectedRoutes))
-	for _, path := range expectedRoutes {
-		route, ok := r.routes[path]
-		assert.True(t, ok, "route %s should be registered", path)
-		assert.NotNil(t, route.handler, "route %s should have handler", path)
-	}
+	// A POST reaches the handler: an empty body is a client error, not 404/405.
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin", strings.NewReader("{}")))
+	assert.NotEqual(t, http.StatusNotFound, rec.Code)
+	assert.NotEqual(t, http.StatusMethodNotAllowed, rec.Code)
 }
 
 func TestMountStdlib(t *testing.T) {

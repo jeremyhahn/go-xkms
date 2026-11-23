@@ -14,9 +14,12 @@
 package xkms
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"testing"
 
+	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	sshscope "github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
@@ -47,8 +50,6 @@ func TestConsumerExports_WebAuthn(t *testing.T) {
 	sameType[WebAuthnAuthResponse, webauthnhttp.AuthResponse](t)
 	sameType[WebAuthnBeginLoginRequest, webauthnhttp.BeginLoginRequest](t)
 	sameType[WebAuthnErrorResponse, webauthnhttp.ErrorResponse](t)
-	sameType[WebAuthnMuxRouter, webauthnhttp.MuxRouter](t)
-	sameType[WebAuthnMuxRoute, webauthnhttp.MuxRoute](t)
 	sameType[WebAuthnRouteEntry, webauthnhttp.RouteEntry](t)
 
 	if ErrWebAuthnCredentialNotFound != webauthn.ErrCredentialNotFound {
@@ -79,6 +80,28 @@ func TestConsumerExports_WebAuthn(t *testing.T) {
 	for name, pair := range consts {
 		if pair[0] != pair[1] {
 			t.Errorf("WebAuthn %s = %q, want %q", name, pair[0], pair[1])
+		}
+	}
+}
+
+// TestConsumerExports_WebAuthnMountMuxGorilla mounts the ceremony routes the
+// way a consumer does: on a real gorilla/mux subrouter. The mount helper must
+// accept *mux.Router itself and register each ceremony path for POST.
+func TestConsumerExports_WebAuthnMountMuxGorilla(t *testing.T) {
+	var mount func(*mux.Router, *webauthnhttp.Handler) = WebAuthnMountMux
+
+	r := mux.NewRouter()
+	mount(r.PathPrefix("/api/v1/webauthn").Subrouter(), nil)
+
+	for _, path := range []string{
+		"/api/v1/webauthn/registration/begin",
+		"/api/v1/webauthn/registration/finish",
+		"/api/v1/webauthn/login/begin",
+		"/api/v1/webauthn/login/finish",
+	} {
+		var match mux.RouteMatch
+		if !r.Match(httptest.NewRequest(http.MethodPost, path, nil), &match) || match.MatchErr != nil {
+			t.Errorf("POST %s does not match a mounted route (err %v)", path, match.MatchErr)
 		}
 	}
 }
