@@ -682,6 +682,27 @@ func TestClientAssignableFromSubInterfaces(t *testing.T) {
 	var _ Client = stub
 }
 
+// TestDeviceAppraisalRequestAliases pins the two device appraisal request
+// types to the pkg/api/transport types they alias: a pointer to the SDK type
+// is assignable to a pointer to the server type only when the two are the
+// same type.
+func TestDeviceAppraisalRequestAliases(t *testing.T) {
+	var android *pkgtransport.AppraiseAndroidKeyAttestationRequest = &AppraiseAndroidKeyAttestationRequest{
+		ChainDER: [][]byte{{0x30, 0x01}},
+	}
+	var ek *pkgtransport.AppraiseEKCertificateRequest = &AppraiseEKCertificateRequest{
+		CertificateDER:   []byte{0x30, 0x02},
+		IntermediatesDER: [][]byte{{0x30, 0x03}},
+	}
+
+	if len(android.ChainDER) != 1 || android.ChainDER[0][1] != 0x01 {
+		t.Fatalf("AppraiseAndroidKeyAttestationRequest.ChainDER = %v, want the SDK value", android.ChainDER)
+	}
+	if ek.CertificateDER[1] != 0x02 || len(ek.IntermediatesDER) != 1 {
+		t.Fatalf("AppraiseEKCertificateRequest = %+v, want the SDK value", ek)
+	}
+}
+
 func (*stubClient) SetSigningKeyBinding(context.Context, *SetSigningKeyBindingRequest) (*SigningKeyBinding, error) {
 	return nil, nil
 }
@@ -722,10 +743,10 @@ func (*stubClient) AppraiseAttestationQuote(context.Context, *AppraiseAttestatio
 	return nil, nil
 }
 
-func (*stubClient) AppraiseAndroidKeyAttestation(context.Context, *pkgtransport.AppraiseAndroidKeyAttestationRequest) (*AttestationResult, error) {
+func (*stubClient) AppraiseAndroidKeyAttestation(context.Context, *AppraiseAndroidKeyAttestationRequest) (*AttestationResult, error) {
 	return nil, nil
 }
 
-func (*stubClient) AppraiseEKCertificate(context.Context, *pkgtransport.AppraiseEKCertificateRequest) (*AttestationResult, error) {
+func (*stubClient) AppraiseEKCertificate(context.Context, *AppraiseEKCertificateRequest) (*AttestationResult, error) {
 	return nil, nil
 }
