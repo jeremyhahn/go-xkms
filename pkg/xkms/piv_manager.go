@@ -873,7 +873,7 @@ func SelfSignExistingPIVKey(ctx context.Context, backend, slotStr, commonName st
 	}
 	var attrs *types.KeyAttributes
 	for _, ka := range keys {
-		if ka.CN == cn {
+		if isSystemTenantKey(ka) && ka.CN == cn {
 			attrs = ka
 			break
 		}
