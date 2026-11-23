@@ -32,8 +32,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-enclave"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // testSRKUserPIN is a test-local literal; no real PIN is ever written.
@@ -321,6 +323,49 @@ func TestFIDO2TPM2BackendCloseClosesTPM(t *testing.T) {
 	assert.Equal(t, 1, closes, "Close closes the TPM the backend opened")
 	require.NoError(t, backend.Close())
 	assert.Equal(t, 1, closes, "a second Close does not close the TPM again")
+}
+
+// TestFIDO2TPM2BackendCloseDestroysSRKPassword proves the Platform SRK
+// password copy the backend sets on the SRK attributes is destroyed by
+// Close: it is unreadable afterwards and the process allocator's locked
+// bytes return to their level before the backend was created.
+func TestFIDO2TPM2BackendCloseDestroysSRKPassword(t *testing.T) {
+	sim := installTPMForSRK(t)
+	pinFile := writeSRKPINFile(t, testSRKUserPIN)
+	_, err := runSRKEnroll(t, "", "--pin-file", pinFile)
+	require.NoError(t, err)
+
+	openFreshSRKTPM(t, sim)
+	savedOpenForDevice := openTPMForDevice
+	t.Cleanup(func() { openTPMForDevice = savedOpenForDevice })
+	openTPMForDevice = func(string) (xkms.TrustedPlatformModule, error) {
+		return newSharedTPM(t, sim.tpm), nil
+	}
+	setViperForTest(t, "fido2.pin_file", pinFile)
+	setViperForTest(t, "fido2.pin_stdin", false)
+
+	alloc, err := enclave.ProcessAllocator()
+	require.NoError(t, err)
+	lockedBefore := alloc.InUse()
+
+	cfg := &FIDO2Config{TPMDevice: ""}
+	cfg.PlatformSRKPIN, cfg.PlatformSRKPINErr = resolveFIDO2PlatformSRKPIN()
+	backend, err := createFIDO2TPM2KeyBackend(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+
+	owned, ok := backend.(*ownedTPM2KeyBackend)
+	require.True(t, ok, "the tpm2 backend is an ownedTPM2KeyBackend")
+	password := owned.srkPassword
+	require.NotNil(t, password, "the backend owns the SRK password it set")
+	pin := password.Bytes()
+	require.Equal(t, testSRKUserPIN, string(pin))
+	secure.Wipe(pin)
+	assert.Greater(t, alloc.InUse(), lockedBefore, "the SRK password is held in locked memory while the backend is open")
+
+	require.NoError(t, backend.Close())
+	assert.Nil(t, password.Bytes(), "Close destroys the SRK password")
+	assert.Nil(t, owned.srkPassword)
+	assert.Equal(t, lockedBefore, alloc.InUse(), "Close releases every locked byte the backend allocated")
 }
 
 // TestTPMSRKEnrollFreshOpenIdempotent: enrolling again from a fresh open of
