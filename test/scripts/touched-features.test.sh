@@ -50,6 +50,11 @@ S=$(commit_file pkg/s/s.go '// s')
 eq "a dep of a binary the feature's recipe builds prints that feature" "eps" "$(run "$CT" "$S")"
 U=$(commit_file pkg/u/u.go '// u')
 eq "a dep of a nested-module binary the recipe builds prints that feature" "zeta" "$(run "$S" "$U")"
+# Each explicit suite's graph under its own recipe's tags.
+K=$(commit_file pkg/k/k.go '// k')
+eq "a package a suite imports under its explicit rule's extra tag prints that suite" "$(two alpha kappa)" "$(run "$U" "$K")"
+L=$(commit_file pkg/l/l.go '// l')
+eq "a suite whose tests no recipe's tags build makes any package change ALL" "ALL" "$(run "$K" "$L")"
 
 OUT=$(run "$BASE" no-such-revision 2>&1)
 RC=$?

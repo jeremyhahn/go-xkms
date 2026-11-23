@@ -80,6 +80,9 @@ integration-test-zeta:
 	cd sub && go build -o ../build/bin/cli ./cmd/cli && cd .. && \
 		go test -tags "integration $(BUILD_TAGS)" ./test/integration/zeta/...
 
+integration-test-kappa:
+	go test -v -tags "integration simx $(BUILD_TAGS)" ./test/integration/kappa/... -timeout 10m
+
 integration-test-%:
 	go test -v -tags "integration $(BUILD_TAGS)" ./test/integration/$*/...
 EOF
@@ -109,9 +112,11 @@ import (
 	"testing"
 
 	"example.com/m/pkg/b"
+	"example.com/m/pkg/k"
+	"example.com/m/pkg/l"
 )
 
-func TestAlpha(t *testing.T) { _ = b.B() }'
+func TestAlpha(t *testing.T) { _ = b.B() + k.K() + l.L() }'
 put test/integration/beta/beta_test.go '//go:build integration
 
 package beta
@@ -150,6 +155,38 @@ import (
 )
 
 func TestGamma(t *testing.T) { _ = g.G() }'
+# kappa: alpha imports pkg/k, and so does kappa's only test file, gated on
+# simx, a tag only kappa's explicit rule adds (the clusterca/tpm_simulator
+# shape). lambda: alpha imports pkg/l, and so does lambda's only test file,
+# gated on a tag no recipe passes.
+put pkg/k/k.go 'package k
+
+func K() int { return 11 }'
+put test/integration/kappa/kappa_test.go '//go:build integration && simx
+
+package kappa
+
+import (
+	"testing"
+
+	"example.com/m/pkg/k"
+)
+
+func TestKappa(t *testing.T) { _ = k.K() }'
+put pkg/l/l.go 'package l
+
+func L() int { return 12 }'
+put test/integration/lambda/lambda_test.go '//go:build integration && neverset
+
+package lambda
+
+import (
+	"testing"
+
+	"example.com/m/pkg/l"
+)
+
+func TestLambda(t *testing.T) { _ = l.L() }'
 # delta: its test builds and runs ./cmd/tool, which imports pkg/t.
 put pkg/t/t.go 'package t
 
