@@ -1263,12 +1263,12 @@ func (tpm *TPM2) SaveKeyPair(
 			{outPublic.Bytes(), store.FSEXT_PUBLIC_BLOB},
 		} {
 			if err := backend.Save(keyAttrs, blob.data, blob.ext, true); err != nil {
-				// This save owns the key now: drop it so a retry starts
-				// clean. If the delete fails too, the fence stays.
-				if derr := backend.Delete(keyAttrs); derr != nil {
-					return errors.Join(err, derr)
-				}
-				return err
+				// The fence stays. Deleting the key here would drop it
+				// under a live writer paused between its writes, whose
+				// create-only public save would then succeed beside no
+				// private blob (Codex round-3 P1). A delete or an
+				// overwriting save repairs the key.
+				return fmt.Errorf("tpm: recovering key %q failed; its fence stays (delete the key or save it with overwrite): %w", keyAttrs.CN, err)
 			}
 		}
 		return nil
