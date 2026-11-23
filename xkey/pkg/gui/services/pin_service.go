@@ -421,6 +421,13 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	// with its own password keeps it.
 	if barrierBound {
 		if err := bsvc.ChangePassword(currentUserPIN, newUserPIN); err != nil {
+			// The rewrite committed and only a later step failed: the
+			// barrier is on the new PIN, so the PIN change stands.
+			var committed *BarrierCommittedError
+			if errors.As(err, &committed) {
+				s.log.Error("ChangeUserPIN: barrier re-sealed, post-commit step failed", "error", err)
+				return err
+			}
 			s.log.Error("ChangeUserPIN: barrier re-seal failed", "error", err)
 			if rbErr := svc.ChangeUserPIN(newUserPIN, currentUserPIN); rbErr != nil {
 				s.log.Error("ChangeUserPIN: PIN rollback failed", "error", rbErr)

@@ -569,6 +569,20 @@ func destroyCredentials(c xkms.SealCredentials) error {
 	return c.Secret.Destroy()
 }
 
+// BarrierCommittedError reports a failure that happened after a barrier
+// password change was persisted (its audit record or credential cleanup).
+// The barrier is sealed with the new password: callers must not undo
+// the credential change that matches it.
+type BarrierCommittedError struct {
+	Err error
+}
+
+func (e *BarrierCommittedError) Error() string {
+	return "barrier_service: password changed, post-commit step failed: " + e.Err.Error()
+}
+
+func (e *BarrierCommittedError) Unwrap() error { return e.Err }
+
 // ChangePassword re-seals the barrier root key with new credentials after
 // proving the current ones. The barrier must be initialized and unsealed.
 // For hardware-backed strategies this is a no-op because those strategies
@@ -580,6 +594,15 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 	if s.barrier == nil {
 		return ErrBarrierNotInitialized
 	}
+
+	// Registered first so it runs last: once the rewrite has committed,
+	// every later failure (audit, credential cleanup) is post-commit.
+	committed := false
+	defer func() {
+		if committed && err != nil {
+			err = &BarrierCommittedError{Err: err}
+		}
+	}()
 
 	ctx := s.context()
 	// CredentialsFor: ChangePassword is a no-op for hardware-backed
@@ -601,6 +624,7 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 	if err := s.barrier.ChangePassword(ctx, current, next); err != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)
 	}
+	committed = true
 
 	if auditErr := s.logBarrierEvent(audit.OpBarrierPasswordChanged, true, nil, nil); auditErr != nil {
 		return auditErr
