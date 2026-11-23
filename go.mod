@@ -33,7 +33,7 @@ require (
 	github.com/gorilla/mux v1.8.1
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/hashicorp/vault/api v1.23.0
-	github.com/jeremyhahn/go-codec v1.4.0
+	github.com/jeremyhahn/go-codec v1.5.1-alpha
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-frost v0.3.1-alpha
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
