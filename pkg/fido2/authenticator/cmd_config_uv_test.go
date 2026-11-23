@@ -98,3 +98,32 @@ func TestConfig_BuiltInUVWithoutPINRequiresConfigToken(t *testing.T) {
 		require.NotEqual(t, before, auth.config.AlwaysUV)
 	})
 }
+
+// A backend configured with a user verifier that cannot verify a user now (no
+// configured verifier, or a phone without local.verifyUser) still guards
+// authenticatorConfig: availability may change, so an unauthenticated
+// toggleAlwaysUv must not disable alwaysUv while verification is unavailable.
+func TestConfig_UnavailableUVWithoutPINRequiresConfigToken(t *testing.T) {
+	backend := &unavailableVerifyingKeyBackend{
+		verifyingKeyBackend: verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}},
+	}
+	auth, err := NewAuthenticator(&Config{
+		UserPresenceHandler:        NewAutoGrantHandler(),
+		Storage:                    NewMemoryStorage(),
+		EnablePIN:                  true,
+		EnableCredentialManagement: true,
+		PINMinLength:               4,
+		PINMaxRetries:              8,
+		SupportedAlgorithms:        []int{COSEAlgES256},
+		KeyBackend:                 backend,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, auth.Close()) })
+	require.False(t, auth.IsPINSet())
+	require.Nil(t, auth.userVerifier(), "the verifier is unavailable")
+
+	auth.config.AlwaysUV = true
+	_, err = auth.ProcessCBOR(CmdConfig, toggleAlwaysUVRequest(t, nil))
+	require.ErrorIs(t, err, ErrPINAuthInvalid)
+	require.True(t, auth.config.AlwaysUV, "alwaysUv must stay on")
+}
