@@ -57,6 +57,9 @@ type restMockUserClient struct {
 	unsuspendUser     func(ctx context.Context, id uint64) error
 	addCertBinding    func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
 	updateUser        func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
+
+	activatePendingUser     func(ctx context.Context, userID uint64) (*qrdbtransport.User, error)
+	activateWithCertBinding func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
 }
 
 var _ qrdbtransport.UserClient = (*restMockUserClient)(nil)
@@ -127,6 +130,23 @@ func (m *restMockUserClient) SuspendUser(ctx context.Context, id uint64) error {
 
 func (m *restMockUserClient) UnsuspendUser(ctx context.Context, id uint64) error {
 	return m.unsuspendUser(ctx, id)
+}
+
+// ActivatePendingUser and ActivateWithCertBinding make the mock an
+// xkms.InviteUserClient (guarded pending-to-active activation); without
+// them the invite routes answer 503 not configured.
+func (m *restMockUserClient) ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+	if m.activatePendingUser != nil {
+		return m.activatePendingUser(ctx, userID)
+	}
+	return nil, errors.New("mock: ActivatePendingUser not configured")
+}
+
+func (m *restMockUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	if m.activateWithCertBinding != nil {
+		return m.activateWithCertBinding(ctx, userID, thumbprint, notAfterUnix)
+	}
+	return nil, errors.New("mock: ActivateWithCertBinding not configured")
 }
 
 type restMockRoleClient struct {

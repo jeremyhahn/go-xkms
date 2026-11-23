@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -90,6 +91,16 @@ func setupInviteHandlerTest(t *testing.T) *inviteHandlerFixture {
 			if req.Lifecycle != "" {
 				qrdbUser.Lifecycle = req.Lifecycle
 			}
+			return qrdbUser, nil
+		},
+		activatePendingUser: func(_ context.Context, id uint64) (*qrdbtransport.User, error) {
+			if id != userID {
+				return nil, &qrdbtransport.UserNotFoundError{ID: id}
+			}
+			if qrdbUser.Lifecycle != string(qrdbsdk.LifecyclePending) {
+				return nil, errors.New("mock: account is not pending")
+			}
+			qrdbUser.Lifecycle = string(qrdbsdk.LifecycleActive)
 			return qrdbUser, nil
 		},
 	}
