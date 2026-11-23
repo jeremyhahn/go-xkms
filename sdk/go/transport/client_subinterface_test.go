@@ -687,13 +687,16 @@ func TestClientAssignableFromSubInterfaces(t *testing.T) {
 // is assignable to a pointer to the server type only when the two are the
 // same type.
 func TestDeviceAppraisalRequestAliases(t *testing.T) {
-	var android *pkgtransport.AppraiseAndroidKeyAttestationRequest = &AppraiseAndroidKeyAttestationRequest{
+	// pin compiles only when the SDK pointers are the server's types.
+	pin := func(*pkgtransport.AppraiseAndroidKeyAttestationRequest, *pkgtransport.AppraiseEKCertificateRequest) {}
+	android := &AppraiseAndroidKeyAttestationRequest{
 		ChainDER: [][]byte{{0x30, 0x01}},
 	}
-	var ek *pkgtransport.AppraiseEKCertificateRequest = &AppraiseEKCertificateRequest{
+	ek := &AppraiseEKCertificateRequest{
 		CertificateDER:   []byte{0x30, 0x02},
 		IntermediatesDER: [][]byte{{0x30, 0x03}},
 	}
+	pin(android, ek)
 
 	if len(android.ChainDER) != 1 || android.ChainDER[0][1] != 0x01 {
 		t.Fatalf("AppraiseAndroidKeyAttestationRequest.ChainDER = %v, want the SDK value", android.ChainDER)

@@ -112,6 +112,21 @@ xkey device device-info "Pixel-8"
 xkey device enroll-phone --device "Pixel-8" --ca xkms --validity 2160h
 ```
 
+### Server appraisal of `device attest`
+
+When an xkmsd server URL is configured (the same flag, environment or `xkmsd.address` setting every xkmsd-backed command reads), `device attest` sends the certificate
+chain it has just verified locally to the server's
+`AppraiseAndroidKeyAttestation` through the SDK client, and prints the
+server's verdict under **Server Appraisal** (verdict, trust anchor, boot state,
+key origin). The local verification still runs first and still decides on its
+own; the server appraises the chain under the tenant's stored endorsements and
+application allow-list. A server refusal, or a verdict that does not verify,
+exits non-zero with `device: server refused the device evidence`; a server
+that cannot be reached exits with `device: server appraisal failed` (or the
+xkmsd connect error). With no server configured, nothing is sent and the
+output is the local result alone. `--no-verify` skips both. Only the public
+certificate chain leaves the host.
+
 ## PIV on the phone
 
 These live under `xkey piv`, not `xkey device` — see [piv/cli.md](../piv/cli.md)

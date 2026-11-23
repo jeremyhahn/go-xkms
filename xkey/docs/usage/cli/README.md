@@ -171,6 +171,14 @@ xkey tpm ek show         # endorsement key
 xkey tpm quote           # signed quote
 ```
 
+With an xkmsd server URL configured (the same flag, environment or `xkmsd.address` setting every xkmsd-backed command reads), `xkey tpm ek show` also sends the EK
+certificate it verified locally to the server's `AppraiseEKCertificate`
+through the SDK client and prints the server's verdict under **Server
+Appraisal** (on stderr with JSON output, so stdout stays one JSON
+document). A refusal exits non-zero with `device: server refused the device
+evidence`; an unreachable server with `device: server appraisal failed`. With
+no server configured the output is the local verification alone.
+
 `xkey tpm ek` takes `show`, `export`, `backup` and `restore`; `iak` and
 `idevid` take `show`/`create`/`export`/`csr`. Under `idevid`, `cert` has the
 single subcommand `import` (a CA-signed IDevID certificate; self-signed is
