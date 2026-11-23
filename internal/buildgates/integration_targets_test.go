@@ -273,12 +273,22 @@ func goTestCovers(recipe, dir string) bool {
 // suite, so some explicit integration-test-* target must run it.
 func TestEveryNestedIntegrationSuiteIsRun(t *testing.T) {
 	mk := readMakefile(t)
-	pattern, ok := makeRecipe(mk, "integration-test-%")
-	if !ok {
+	if _, ok := makeRecipe(mk, "integration-test-%"); !ok {
 		t.Fatal("Makefile has no integration-test-% pattern rule")
 	}
+	for _, d := range nestedSuitesWithoutRunner(mk, nestedIntegrationSuites(t)) {
+		t.Errorf("test/integration/%s holds _test.go files but neither integration-test-%s nor any explicit integration-test-* target runs go test on it (or a parent with /...)", d, strings.SplitN(d, "/", 2)[0])
+	}
+}
+
+// nestedSuitesWithoutRunner returns the nested suites (dirs relative to
+// test/integration) that neither their feature's target nor any explicit
+// integration-test-* target of mk runs go test on.
+func nestedSuitesWithoutRunner(mk string, suites []string) []string {
+	pattern, _ := makeRecipe(mk, "integration-test-%")
 	targets := explicitIntegrationTargets(mk)
-	for _, d := range nestedIntegrationSuites(t) {
+	var missing []string
+	for _, d := range suites {
 		feat := strings.SplitN(d, "/", 2)[0]
 		target := "integration-test-" + feat
 		var own string
@@ -299,8 +309,27 @@ func TestEveryNestedIntegrationSuiteIsRun(t *testing.T) {
 			}
 		}
 		if runner == "" {
-			t.Errorf("test/integration/%s holds _test.go files but neither %s nor any explicit integration-test-* target runs go test on it (or a parent with /...)", d, target)
+			missing = append(missing, d)
 		}
+	}
+	return missing
+}
+
+// A recursive ./test/integration/... runner inside a nested module (cd xkey)
+// runs that module's suites, not the root's: a root nested suite with no
+// runner of its own is still missing one.
+func TestNestedSuiteGateIgnoresNestedModuleRunners(t *testing.T) {
+	mk := "integration-test-%:\n" +
+		"\tgo test -tags \"integration $*\" ./test/integration/$*\n" +
+		"\n" +
+		"integration-test-xkey-fido2:\n" +
+		"\tcd xkey && go test -tags integration ./test/integration/...\n" +
+		"\n" +
+		"integration-test-pkcs11-module:\n" +
+		"\tgo test -tags integration ./test/integration/pkcs11/module\n"
+	got := nestedSuitesWithoutRunner(mk, []string{"challenges/dns01", "pkcs11/module"})
+	if len(got) != 1 || got[0] != "challenges/dns01" {
+		t.Errorf("nested suites without a runner = %q, want [challenges/dns01] (xkey's runner covers only xkey suites)", got)
 	}
 }
 
