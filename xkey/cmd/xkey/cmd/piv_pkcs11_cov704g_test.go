@@ -22,8 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
-	pkcs11backend "github.com/jeremyhahn/go-xkms/pkg/backend/pkcs11"
-	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
@@ -78,7 +76,7 @@ func TestEnsurePKCS11Backend_RefusesAWrongPIN(t *testing.T) {
 	cfg := pkcs11PIVConfig(t, "xkey-piv-wrong-pin")
 	cfg.PKCS11PIN = "0000"
 
-	require.ErrorIs(t, ensurePKCS11Backend(cfg, discardLogger()), pkcs11backend.ErrSessionPoolLogin)
+	require.ErrorIs(t, ensurePKCS11Backend(cfg, discardLogger()), xkms.ErrPKCS11SessionPoolLogin)
 }
 
 // TestEnsurePKCS11Backend_RefusesAMissingLibrary proves a library path that
@@ -119,7 +117,7 @@ func TestCreatePKCS11PIVStorage_RefusesAMissingLibrary(t *testing.T) {
 	cfg.PKCS11Library = filepath.Join(t.TempDir(), "missing.so")
 
 	storage, err := createPKCS11PIVStorage(cfg, discardLogger())
-	var storageErr *pivcert.PIVStorageError
+	var storageErr *xkms.PIVStorageError
 	require.ErrorAs(t, err, &storageErr)
 	require.Nil(t, storage)
 }

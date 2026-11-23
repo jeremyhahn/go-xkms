@@ -37,3 +37,7 @@ var NewPKCS11Backend = pkcs11backend.NewBackend
 // ErrPKCS11BackendNotInitialized is returned when the PKCS#11 backend is used
 // before initialization.
 var ErrPKCS11BackendNotInitialized = pkcs11backend.ErrNotInitialized
+
+// ErrPKCS11SessionPoolLogin is returned when the session pool cannot log in
+// to the token.
+var ErrPKCS11SessionPoolLogin = pkcs11backend.ErrSessionPoolLogin

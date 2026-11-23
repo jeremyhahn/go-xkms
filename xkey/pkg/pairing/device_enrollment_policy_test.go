@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	android "github.com/jeremyhahn/go-xkms/pkg/attestation/android"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -131,13 +131,13 @@ func TestMinSecurityRank(t *testing.T) {
 func TestSecurityLevelName(t *testing.T) {
 	tests := []struct {
 		name  string
-		level android.SecurityLevel
+		level xkms.AndroidSecurityLevel
 		want  string
 	}{
-		{"StrongBox", android.SecurityLevelStrongBox, pairingproto.SecurityLevelStrongBox},
-		{"TEE", android.SecurityLevelTrustedEnvironment, pairingproto.SecurityLevelTEE},
-		{"software", android.SecurityLevelSoftware, pairingproto.SecurityLevelSoftware},
-		{"unrecognised", android.SecurityLevel(99), pairingproto.SecurityLevelSoftware},
+		{"StrongBox", xkms.AndroidSecurityLevelStrongBox, pairingproto.SecurityLevelStrongBox},
+		{"TEE", xkms.AndroidSecurityLevelTrustedEnvironment, pairingproto.SecurityLevelTEE},
+		{"software", xkms.AndroidSecurityLevelSoftware, pairingproto.SecurityLevelSoftware},
+		{"unrecognised", xkms.AndroidSecurityLevel(99), pairingproto.SecurityLevelSoftware},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
