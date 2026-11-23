@@ -61,6 +61,7 @@ type mockKeyClient struct {
 	exportKeyErr        error
 	copyKeyResp         *client.CopyKeyResponse
 	copyKeyErr          error
+	lastCopyKeyReq      *client.CopyKeyRequest
 	getImportParamsResp *client.GetImportParametersResponse
 	getImportParamsErr  error
 	wrapKeyResp         *client.WrapKeyResponse
@@ -124,6 +125,7 @@ func (m *mockKeyClient) ExportKey(_ context.Context, req *client.ExportKeyReques
 }
 
 func (m *mockKeyClient) CopyKey(_ context.Context, req *client.CopyKeyRequest) (*client.CopyKeyResponse, error) {
+	m.lastCopyKeyReq = req
 	return m.copyKeyResp, m.copyKeyErr
 }
 
@@ -2726,6 +2728,12 @@ func TestKeyCopyCmd_HasFlags(t *testing.T) {
 		if flags.Lookup(flag) == nil {
 			t.Errorf("expected flag %q not found on keyCopyCmd", flag)
 		}
+	}
+
+	// No fixed wrapping algorithm: the server picks the destination
+	// backend's default (TPM2_DUPLICATE for tpm2) unless one is given.
+	if def := flags.Lookup("algorithm").DefValue; def != "" {
+		t.Errorf("algorithm flag default = %q, want empty", def)
 	}
 
 	// The copy takes its algorithm, size, curve, hash and partition from the
