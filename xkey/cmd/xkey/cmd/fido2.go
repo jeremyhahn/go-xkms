@@ -1262,6 +1262,18 @@ var _ ipc.Handler = (*fido2Device)(nil)
 
 // eventLoop processes incoming HID packets until the context is cancelled.
 func (d *fido2Device) eventLoop(ctx context.Context) error {
+	return d.runHIDEventLoop(ctx, d.uhidDevice)
+}
+
+// hidReportReader is the UHID side the event loop reads host output
+// reports from: *uhid.Device in production, a fake in tests.
+type hidReportReader interface {
+	ReadOutput() ([]byte, error)
+}
+
+// runHIDEventLoop reads host output reports from r and feeds them to the
+// CTAP-HID handler until ctx ends or the device closes.
+func (d *fido2Device) runHIDEventLoop(ctx context.Context, r hidReportReader) error {
 	d.logger.Info("starting FIDO2 HID event loop")
 
 	for {
@@ -1271,7 +1283,7 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 			return ctx.Err()
 		default:
 			// Read 64-byte HID packet from UHID
-			packet, err := d.uhidDevice.ReadOutput()
+			packet, err := r.ReadOutput()
 			if err != nil {
 				// Handle timeout - this is expected for polling
 				if errors.Is(err, uhid.ErrTimeout) {
