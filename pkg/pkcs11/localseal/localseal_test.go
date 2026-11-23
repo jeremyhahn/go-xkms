@@ -267,6 +267,19 @@ func TestController_Unseal_CredentialsFailureSurfacesError(t *testing.T) {
 		"Unseal must surface a CredentialsFor failure rather than swallow it")
 }
 
+func TestController_UnsealEmptyPassphraseReturnsBarrierError(t *testing.T) {
+	ctrl, _, err := New(storage.NewMemory(), testRootKeyPath, nil)
+	require.NoError(t, err)
+
+	for _, pin := range [][]byte{nil, {}} {
+		var unsealErr error
+		require.NotPanics(t, func() { unsealErr = ctrl.Unseal(pin) },
+			"Unseal with an empty PIN must not panic in credential cleanup")
+		assert.Error(t, unsealErr, "an empty PIN must not unseal the barrier")
+		assert.True(t, ctrl.barrier.IsSealed(), "the barrier must stay sealed after an empty PIN")
+	}
+}
+
 // TestController_Rekey_OldCredentialsFailureSurfacesError proves the
 // oldPassphrase CredentialsFor failure inside a sealed Rekey is returned to
 // the caller.
