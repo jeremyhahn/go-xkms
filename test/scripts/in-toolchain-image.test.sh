@@ -68,6 +68,15 @@ case $1 in
       elif flock -n -x "$FAKE_LOCK" true; then echo free
       else echo held; fi >"$FAKE_STATE/lock"
     fi
+    # FAKE_TRIM: a trim in another job container on this volume's lock; it
+    # evicts entries the stage resolved when it gets the exclusive lock while
+    # the stage runs on the shared cache volume.
+    if [ -n "${FAKE_TRIM:-}" ]; then
+      mkdir -p "$(dirname "$FAKE_TRIM")"
+      if ! flock -n -x "$FAKE_TRIM" true; then echo kept-out
+      elif grep -q ':/cache/gobuild$' "$FAKE_STATE/create.args"; then echo evicted
+      else echo private; fi >"$FAKE_STATE/trim"
+    fi
     mapfile -t envs <"$FAKE_STATE/env"
     # The caller's Go caches, each only when set, before the container's -e
     # values (#2295).
@@ -159,8 +168,28 @@ eq "the lock is released when the script exits" "free" \
 	"$(if flock -n -x "$WORK/vols/src-ci-cache-pr-gobuild/.ci-cache.lock" true; then echo free; else echo held; fi)"
 run FAKE_ROOT=/proc/no-such-volume-root
 eq "a lock that cannot be taken never blocks the build" "0" "$RC"
-eq "it warns and runs unlocked" "yes" \
-	"$(case $OUT in *"in-toolchain-image: warn: cache lock in volume src-ci-cache-pr-gobuild not taken; running unlocked"*) echo yes ;; *) echo no ;; esac)"
+eq "it warns and falls back to private caches" "yes" \
+	"$(case $OUT in *"in-toolchain-image: warn: cache lock in volume src-ci-cache-pr-gobuild not taken; using private caches"*) echo yes ;; *) echo no ;; esac)"
+
+# --- a stage without its cache lock never mounts the shared caches ------------
+# A job-local mktemp or mkfifo failure leaves no shared lock: a trim in another
+# job container then takes the volume's exclusive lock, so the stage must run
+# on private caches, never on the shared volumes unlocked (Codex P1 on #2322).
+section "lock setup failure"
+mkdir -p "$WORK/failbin"
+for tool in mktemp mkfifo; do
+	rm -f "$WORK/failbin/"*
+	printf '#!/bin/sh\nexit 1\n' >"$WORK/failbin/$tool"
+	chmod +x "$WORK/failbin/$tool"
+	run PATH="$WORK/failbin:$WORK/bin:$PATH" FAKE_TRIM="$WORK/vols/src-ci-cache-pr-gobuild/.ci-cache.lock"
+	eq "the stage exits 0 when $tool fails" "0" "$RC"
+	eq "a concurrent trim never evicts under the stage when $tool fails" "private" \
+		"$(cat "$FAKE_STATE/trim" 2>/dev/null)"
+	eq "no shared cache volume is mounted when $tool fails" "no" \
+		"$(grep -q 'src-ci-cache-pr-' "$FAKE_STATE/create.args" && echo yes || echo no)"
+	eq "GOCACHE is not the shared volume when $tool fails" "no" \
+		"$(grep -q '^GOCACHE=/cache/' "$FAKE_STATE/env" && echo yes || echo no)"
+done
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
