@@ -15,7 +15,10 @@ package server
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -28,7 +31,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
-	"github.com/jeremyhahn/go-xkms/pkg/webauthn/client"
 	wahttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
@@ -40,7 +42,7 @@ import (
 // must run as the node's service principal like the rest of the datastore;
 // on the caller's context the node refuses them and every registration
 // answered 500 internal_error.
-func TestWebAuthnService_RegistersOnAuthenticatingNode(t *testing.T) {
+func TestWebAuthnService_AnonymousRegistrationRefusedOnAuthenticatingNode(t *testing.T) {
 	cfg := qrdbsdk.DefaultDaemonConfig()
 	cfg.Raft.DataDir = t.TempDir()
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
@@ -80,18 +82,22 @@ func TestWebAuthnService_RegistersOnAuthenticatingNode(t *testing.T) {
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
-	c, err := client.NewClient(&client.Config{
-		ServerURL:            srv.URL,
-		Origin:               origin,
-		AuthenticatorAdapter: client.NewSoftwareAdapter(),
-	})
+	// The service runs with the node's service call context, so the call
+	// reaches qrdb (no "unauthenticated", no 500); qrdb then refuses the
+	// anonymous user create, as the service principal holds no
+	// users:create (CA ruling 602; registration is invite-only, ruling 979).
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/webauthn/registration/begin",
+		strings.NewReader(`{"email":"alice@example.com","display_name":"Alice"}`))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", origin)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
-	res, err := c.Register(context.Background(), &client.RegistrationRequest{
-		Username:    "alice@example.com",
-		DisplayName: "Alice",
-	})
-	require.NoError(t, err, "registration on an authenticating node")
-	assert.NotEmpty(t, res.UserID)
-	assert.NotEmpty(t, res.JWT, "finish answers 200 with a session token")
+	assert.NotEqual(t, http.StatusInternalServerError, resp.StatusCode, "registration/begin: %s", body)
+	require.Equal(t, http.StatusForbidden, resp.StatusCode, "registration/begin: %s", body)
+	assert.NotContains(t, string(body), "unauthenticated")
 }
