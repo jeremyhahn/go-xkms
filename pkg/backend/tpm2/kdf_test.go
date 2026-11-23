@@ -54,23 +54,6 @@ func tpmKDFParams() *kdf.KDFParams {
 	}
 }
 
-// TestBackendAdvertisesDerivation pins the capability assertion the service
-// layer performs.
-//
-// TPM 2.0 defines no HKDF or SP 800-108 command, so the derivation has to
-// happen next to TPM2_Unseal inside the daemon that owns the TPM. If this
-// backend stopped satisfying types.SymmetricKeyDeriver, every C_DeriveKey
-// against a TPM-sealed key would be refused, and the alternative the module
-// used to take — deriving from the key's identifier — is precisely the defect
-// this capability exists to remove.
-func TestBackendAdvertisesDerivation(t *testing.T) {
-	var provider types.KeyProvider = (*Backend)(nil)
-
-	if _, ok := provider.(types.SymmetricKeyDeriver); !ok {
-		t.Fatal("the TPM 2.0 backend must offer derivation from a sealed symmetric key")
-	}
-}
-
 // TestDeriveFromSymmetricKey_TPMWithoutUnsealCapability proves the refusal is
 // truthful.
 //

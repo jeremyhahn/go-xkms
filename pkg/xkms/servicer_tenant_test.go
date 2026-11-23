@@ -70,6 +70,28 @@ func TestListTenants_RequiresTenantService(t *testing.T) {
 	assert.ErrorIs(t, err, ErrTenantServiceNotConfigured)
 }
 
+// TestListTenantDetails_StatusRefused proves a status filter is refused with
+// the typed unsupported-field error until go-qrdb carries a tenant status.
+// The service has no TenantService, so the typed error winning over
+// ErrTenantServiceNotConfigured shows the refusal comes before any lookup.
+func TestListTenantDetails_StatusRefused(t *testing.T) {
+	svc := &XKMSService{}
+	for _, status := range []string{"active", "suspended", "deleted", "bogus"} {
+		t.Run(status, func(t *testing.T) {
+			details, err := svc.ListTenantDetails(context.Background(), status)
+			assert.Nil(t, details)
+			assert.ErrorIs(t, err, ErrTenantStatusUnsupported)
+			var unsupported *TenantUnsupportedFieldError
+			if assert.ErrorAs(t, err, &unsupported) {
+				assert.Equal(t, "status", unsupported.Field)
+			}
+		})
+	}
+
+	_, err := svc.ListTenantDetails(context.Background(), "")
+	assert.ErrorIs(t, err, ErrTenantServiceNotConfigured)
+}
+
 func TestDeleteTenant_EmptyID(t *testing.T) {
 	svc := &XKMSService{}
 	err := svc.DeleteTenant(context.Background(), "")

@@ -1354,7 +1354,7 @@ func (s *Server) buildAuthenticator() error {
 		if !s.config.TLS.Enabled {
 			return ErrMTLSRequiresTLS
 		}
-		mtlsConfig := &auth.MTLSConfig{}
+		mtlsConfig := &auth.MTLSConfig{TrustDomain: s.TrustDomain()}
 		if us := s.mtlsUserStore(); us != nil {
 			mtlsConfig.UserStore = us
 		}
@@ -1431,7 +1431,7 @@ func (s *Server) createCompositeAuthenticator() (auth.Authenticator, error) {
 			if !s.config.TLS.Enabled {
 				return nil, ErrCompositeMTLSRequiresTLS
 			}
-			mtlsConfig := &auth.MTLSConfig{}
+			mtlsConfig := &auth.MTLSConfig{TrustDomain: s.TrustDomain()}
 			if us := s.mtlsUserStore(); us != nil {
 				mtlsConfig.UserStore = us
 			}
@@ -1477,7 +1477,7 @@ func (s *Server) deriveCompositeAuthenticator() (auth.Authenticator, error) {
 		derived = append(derived, "jwt")
 	}
 	if s.config.TLS.Enabled {
-		mtlsConfig := &auth.MTLSConfig{}
+		mtlsConfig := &auth.MTLSConfig{TrustDomain: s.TrustDomain()}
 		if us := s.mtlsUserStore(); us != nil {
 			mtlsConfig.UserStore = us
 		}
@@ -2683,13 +2683,7 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	// Cross-origin access is opt-in: without an explicit allowlist the REST
 	// router emits no CORS headers and browsers enforce same-origin (the
 	// embedded web UI is served same-origin and needs none).
-	if s.config.CORS.Enabled {
-		restConfig.CORS = &rest.CORSOptions{
-			AllowedOrigins:   s.config.CORS.AllowedOrigins,
-			AllowCredentials: s.config.CORS.AllowCredentials,
-			MaxAgeSeconds:    s.config.CORS.MaxAgeSeconds,
-		}
-	}
+	restConfig.CORS = s.corsOptions()
 
 	// Rate-limit identity: forwarding headers are believed only from the
 	// configured reverse proxies (server.trusted_proxies; none by default).
