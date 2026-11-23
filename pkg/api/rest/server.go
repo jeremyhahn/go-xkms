@@ -319,6 +319,10 @@ func NewServer(cfg *Config) (*Server, error) {
 		return nil, ErrPIVLoginUnattestedWithAnchors
 	}
 
+	if err := cfg.CORS.Validate(); err != nil {
+		return nil, err
+	}
+
 	// Set up logger (default to stdlib if not provided)
 	log := cfg.Logger
 	if log == nil {

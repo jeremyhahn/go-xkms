@@ -1,0 +1,1 @@
+- **CORS allowed origins are validated at start (#2331)** - rest.NewServer and apimodule.NewModule refuse the wildcard "*" and any entry that is not a bare http(s)://host[:port] origin, naming the entry in the error.

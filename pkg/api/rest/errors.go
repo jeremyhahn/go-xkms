@@ -107,6 +107,11 @@ var (
 	// around the very check the anchors configure.
 	ErrPIVLoginUnattestedWithAnchors = errors.New("rest: piv login cannot allow unattested logins when attestation roots are configured")
 
+	// ErrInvalidCORSOrigin is returned by CORSOptions.Validate (and so by
+	// NewServer and apimodule.NewModule) for an allowed-origin entry that is
+	// the wildcard "*" or not a bare http(s)://host[:port] origin.
+	ErrInvalidCORSOrigin = errors.New("rest: invalid CORS allowed origin")
+
 	// ErrPIVAttestationUnparseable is the profile failure for an attestation
 	// certificate carrying a PIV attestation extension that does not decode.
 	ErrPIVAttestationUnparseable = errors.New("rest: piv attestation carries an extension that does not decode")
