@@ -846,8 +846,11 @@ func (a *Authenticator) verifyConfigPinUvAuth(req *configRequest, subCmd uint8) 
 		return nil
 	}
 
-	// If PIN is set, require authentication
-	if a.IsPINSet() {
+	// Require a token whenever one can be minted: with a PIN set, or with a
+	// built-in user verifier, which mints pinUvAuthTokens without any PIN.
+	// Skipping the check for a verifier without a PIN would let any client
+	// reconfigure the authenticator (e.g. disable alwaysUv) unverified.
+	if a.IsPINSet() || a.userVerifier() != nil {
 		if req.pinUvAuthParam == nil {
 			return ErrPINAuthInvalid
 		}
