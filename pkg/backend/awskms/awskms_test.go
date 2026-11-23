@@ -386,7 +386,7 @@ func TestDeleteNilAttributes(t *testing.T) {
 func TestDeleteKMSError(t *testing.T) {
 	mockClient := &MockKMSClient{
 		ScheduleKeyDeletionFunc: func(ctx context.Context, params *kms.ScheduleKeyDeletionInput, optFns ...func(*kms.Options)) (*kms.ScheduleKeyDeletionOutput, error) {
-			return nil, errors.New("key not found")
+			return nil, &kmstypes.NotFoundException{Message: aws.String("key not found")}
 		},
 	}
 

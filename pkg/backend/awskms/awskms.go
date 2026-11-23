@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -261,27 +262,43 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 		return err
 	}
 
-	// Remove metadata. A missing entry is not an error here (Delete is
-	// idempotent): storage.DeleteKey's ErrNotFound is swallowed exactly
-	// like ScheduleKeyDeletion's below.
-	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return &errs.Wrapped{Msg: "failed to remove key metadata", Err: err}
-	}
-
-	// Schedule key deletion in KMS (7 day minimum waiting period)
+	// Schedule key deletion in KMS first (7 day minimum waiting period).
+	// Only "already gone" outcomes (the key does not exist, or it is
+	// already pending deletion) count as success; any other failure
+	// (access denial, outage) is returned and the metadata is kept, so the
+	// still-enabled key stays discoverable through ListKeys.
 	pendingWindowInDays := int32(7)
 
 	_, err = b.client.ScheduleKeyDeletion(ctx, &kms.ScheduleKeyDeletionInput{
 		KeyId:               aws.String(keyID),
 		PendingWindowInDays: &pendingWindowInDays,
 	})
-	if err != nil {
-		// If key doesn't exist, that's okay (idempotent operation)
-		// We still removed the metadata above
-		return nil
+	if err != nil && !isKeyAlreadyGone(err) {
+		return &errs.Wrapped{Msg: "failed to schedule KMS key deletion", Err: err}
+	}
+
+	// Remove metadata. A missing entry is not an error here (Delete is
+	// idempotent).
+	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return &errs.Wrapped{Msg: "failed to remove key metadata", Err: err}
 	}
 
 	return nil
+}
+
+// isKeyAlreadyGone reports whether a ScheduleKeyDeletion error means the key
+// no longer needs deleting: it does not exist, or it is already pending
+// deletion.
+func isKeyAlreadyGone(err error) bool {
+	var notFound *awstypes.NotFoundException
+	if errors.As(err, &notFound) {
+		return true
+	}
+	var invalidState *awstypes.KMSInvalidStateException
+	if errors.As(err, &invalidState) {
+		return strings.Contains(strings.ToLower(invalidState.ErrorMessage()), "pending deletion")
+	}
+	return false
 }
 
 // Close releases any resources held by the backend. Config.KeyStorage's
