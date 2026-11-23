@@ -15,6 +15,7 @@ package server
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // buildAttestationAppraiser composes the attestation Verifier xkmsd serves:
@@ -31,5 +32,12 @@ func (s *Server) buildAttestationAppraiser() (*appraisal.Appraiser, error) {
 	if err != nil {
 		return nil, &ErrStorageCreate{Resource: "attestation appraisal storage", Err: err}
 	}
-	return appraisal.NewAppraiser(store)
+	// The XKMSService, initialized with the key store before this call,
+	// holds each tenant's repository signing keys: without it as the
+	// source, every repository-signed CoRIM fails as a ConfigError.
+	var opts []appraisal.Option
+	if svc, err := xkms.Get(); err == nil {
+		opts = append(opts, appraisal.WithSigningKeySource(svc))
+	}
+	return appraisal.NewAppraiser(store, opts...)
 }
