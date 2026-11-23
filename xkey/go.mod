@@ -32,7 +32,7 @@ require (
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: v1.0.3-alpha requires go-enclave v0.11.1-alpha (enclave.ByteAccess); go-enclave stays at v0.8.0-alpha with the root module
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
-	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
+	github.com/jeremyhahn/go-xkms/sdk/go v0.64.2-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
 	github.com/makiuchi-d/gozxing v0.1.1
 	github.com/mdp/qrterminal/v3 v3.2.1

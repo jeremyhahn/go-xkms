@@ -152,7 +152,7 @@ require (
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.22.0-alpha // indirect
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // indirect
-	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha // indirect
+	github.com/jeremyhahn/go-xkms/sdk/go v0.64.2-alpha // indirect
 	github.com/jeremyhahn/trusted-firmware/sdk/go v0.4.2-alpha // indirect
 	github.com/jeroenrinzema/psql-wire v0.20.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
