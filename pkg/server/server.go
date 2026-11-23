@@ -54,6 +54,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -302,6 +303,10 @@ type Server struct {
 	// initializeCA once the TrustedCA exists (go-xkms#1381). nil when the
 	// TrustedCA is not the cluster CA (see trustedCAIsClusterCA).
 	clusterCAKeyProvider *clustercapkg.KeyProvider
+
+	// headSignerProvider signs verifiable-log checkpoints with the CA key;
+	// built with the node, bound to the TrustedCA once the CA is built.
+	headSignerProvider *tlog.HeadSignerProvider
 
 	// tenantService is the node's go-qrdb TenantService, built over the
 	// node's barrier registry with the node seal strategy injected. It owns the
@@ -2193,6 +2198,11 @@ func (s *Server) initializeCA() error {
 	if s.clusterCAKeyProvider != nil {
 		if err := s.clusterCAKeyProvider.Bind(trustedCA); err != nil {
 			return &ErrCAInit{Operation: "bind cluster CA", Err: err}
+		}
+	}
+	if s.headSignerProvider != nil {
+		if err := s.headSignerProvider.Bind(trustedCA); err != nil {
+			return &ErrCAInit{Operation: "bind transparency-log head signer", Err: err}
 		}
 	}
 

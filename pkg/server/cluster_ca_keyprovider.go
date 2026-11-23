@@ -16,6 +16,7 @@ package server
 import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 )
 
@@ -43,4 +44,13 @@ func (s *Server) clusterCAKeyProviderOptions() []qrdbnode.NodeOption {
 	}
 	s.clusterCAKeyProvider = clustercapkg.NewKeyProvider(s.config.Cluster.RaftEnrollment.ClusterCACN)
 	return []qrdbnode.NodeOption{qrdbnode.WithClusterCAKeyProvider(s.clusterCAKeyProvider)}
+}
+
+// headSignerProviderOptions returns the node option that makes the CA key
+// sign every verifiable log's checkpoints (docs/SPEC.md transparency log):
+// without it go-qrdb falls back to its software head-signing key. The
+// provider is bound to the TrustedCA once the CA is built (initCA).
+func (s *Server) headSignerProviderOptions() []qrdbnode.NodeOption {
+	s.headSignerProvider = tlog.NewHeadSignerProvider()
+	return []qrdbnode.NodeOption{qrdbnode.WithHeadSignerProvider(s.headSignerProvider)}
 }

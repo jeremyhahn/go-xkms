@@ -266,6 +266,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 
 	// The TrustedCA as the cluster CA (Key A), bound once initializeCA runs.
 	nodeOpts = append(nodeOpts, s.clusterCAKeyProviderOptions()...)
+	nodeOpts = append(nodeOpts, s.headSignerProviderOptions()...)
 
 	// newQRDBNode is build-tag specific: the default (!raft) build hosts a
 	// standalone node; the -tags raft build hosts a clustered node when
