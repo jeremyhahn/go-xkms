@@ -37,6 +37,11 @@ const (
 	EnvHostname  = "BOOTSTRAP_HOSTNAME"
 	EnvSPKIPin   = "BOOTSTRAP_SPKI_PIN"
 	EnvTLSCA     = "BOOTSTRAP_TLS_CA"
+	// EnvAdminCert and EnvAdminKey name the first-boot administrator's mTLS
+	// pair xkmsd writes into its datastore.path: the admin API requires
+	// authentication.
+	EnvAdminCert = "BOOTSTRAP_ADMIN_CERT"
+	EnvAdminKey  = "BOOTSTRAP_ADMIN_KEY"
 
 	// xkmsBundlePath is the REST API path for the CA bootstrap bundle endpoint.
 	// This matches the path hardcoded in go-truststrap for DANE/SPKI bootstrapping.
@@ -105,10 +110,13 @@ func newSDKTransport(t *testing.T) *rest.Transport {
 
 	serverURL := requiredEnv(t, EnvServerURL)
 	caFile := requiredEnv(t, EnvTLSCA)
+	certFile := requiredEnv(t, EnvAdminCert)
+	keyFile := requiredEnv(t, EnvAdminKey)
+	waitForFiles(t, 60*time.Second, certFile, keyFile)
 
 	tr, err := rest.New(
 		transport.WithAddress(serverURL),
-		transport.WithTLS(caFile),
+		transport.WithMTLS(certFile, keyFile, caFile),
 	)
 	if err != nil {
 		t.Fatalf("create REST transport: %v", err)
@@ -123,6 +131,24 @@ func newSDKTransport(t *testing.T) *rest.Transport {
 
 	t.Cleanup(func() { tr.Close() })
 	return tr
+}
+
+// waitForFiles waits until every path exists: xkmsd writes the admin
+// credential during first boot, which can trail its health check.
+func waitForFiles(t *testing.T, timeout time.Duration, paths ...string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for _, p := range paths {
+		for {
+			if _, err := os.Stat(p); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s did not appear within %s", p, timeout)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 }
 
 // requiredEnv reads a harness-supplied environment variable.

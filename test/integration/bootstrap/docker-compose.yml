@@ -119,6 +119,9 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      # The first-boot administrator's mTLS pair, which xkmsd writes into
+      # datastore.path: the admin API the suite calls requires authentication.
+      - xkms-data:/data:ro
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
@@ -127,6 +130,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
+      - BOOTSTRAP_ADMIN_CERT=/data/datastore/admin-cert.pem
+      - BOOTSTRAP_ADMIN_KEY=/data/datastore/admin-key.pem
     working_dir: /workspace
     networks:
       - bootstrap-net
