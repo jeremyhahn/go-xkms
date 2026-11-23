@@ -144,6 +144,33 @@ func TestStartPKCS11AfterUnseal_SealedStartsWithReleasedPIN(t *testing.T) {
 	require.ErrorIs(t, s.UnsealBackendPIN(context.Background(), []byte("other")), pinselect.ErrBackendPINNotManual)
 }
 
+// The plaintext copy handed to the opener is wiped once the opener
+// returns, on success and on failure (docs/SPEC.md:78 zeroization).
+func TestOpenPKCS11WithHeldPIN_WipesOpenerCopy(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		pin := []byte("backend-pin-1")
+		s, _, _ := backendPINTestServer(t, "sealed", pin, false, true)
+		require.NoError(t, s.resolveBackendPIN())
+		var captured []byte
+		s.pkcs11PINOpener = func(p []byte) (types.KeyProvider, error) {
+			captured = p
+			require.True(t, bytes.Equal(pin, p), "opener sees the PIN")
+			if fail {
+				return nil, errors.New("open failed")
+			}
+			return &fakePKCS11Provider{}, nil
+		}
+		err := s.startPKCS11AfterUnseal()
+		if fail {
+			require.Error(t, err)
+		} else {
+			require.NoError(t, err)
+		}
+		require.Len(t, captured, len(pin))
+		require.True(t, bytes.Equal(make([]byte, len(pin)), captured), "opener copy wiped (fail=%v)", fail)
+	}
+}
+
 func TestStartPKCS11AfterUnseal_SealedWithoutPINFailsClosed(t *testing.T) {
 	s, opened, _ := backendPINTestServer(t, "sealed", nil, false, true)
 	require.NoError(t, s.resolveBackendPIN())
