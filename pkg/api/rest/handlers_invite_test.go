@@ -92,6 +92,13 @@ func setupInviteHandlerTest(t *testing.T) *inviteHandlerFixture {
 			}
 			return qrdbUser, nil
 		},
+		activatePendingUser: func(_ context.Context, id uint64) (*qrdbtransport.User, error) {
+			if id != userID {
+				return nil, &qrdbtransport.UserNotFoundError{ID: id}
+			}
+			qrdbUser.Lifecycle = string(qrdbsdk.LifecycleActive)
+			return qrdbUser, nil
+		},
 	}
 	svc.SetUserClients(users, &restMockRoleClient{})
 
