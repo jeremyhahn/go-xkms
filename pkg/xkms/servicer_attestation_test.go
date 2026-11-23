@@ -41,7 +41,9 @@ func newVerifierFixture(t *testing.T) *verifierFixture {
 	t.Helper()
 	store, err := appraisal.NewStore(appraisal.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
-	appraiser, err := appraisal.NewAppraiser(store)
+	appraiser, err := appraisal.NewAppraiser(store, appraisal.WithAndroidApplications(appraisal.AndroidApplicationPolicies{
+		"acme": {appraisaltest.FixtureApplicationPackage: {appraisaltest.FixtureApplicationDigest}},
+	}))
 	require.NoError(t, err)
 
 	f := &verifierFixture{svc: &XKMSService{}, pcrs: appraisaltest.PCRValues(0, 4, 7)}

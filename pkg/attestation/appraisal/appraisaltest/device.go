@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"math/big"
 	"strconv"
 	"time"
@@ -32,13 +33,37 @@ import (
 // Android key attestation under root: a TEE-backed key generated in secure
 // hardware for signing, whose boot claim is rot. A nil rot omits the claim.
 func AndroidKeyAttestation(root *Authority, rot *android.RootOfTrust) ([][]byte, error) {
+	return AndroidKeyAttestationFor(root, rot, FixtureApplication())
+}
+
+// FixtureApplicationPackage is the package FixtureApplication names.
+const FixtureApplicationPackage = "com.example.appraisal"
+
+// FixtureApplicationDigest is the hex SHA-256 signing-certificate digest
+// FixtureApplication carries.
+const FixtureApplicationDigest = "a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0"
+
+// FixtureApplication is the attested application AndroidKeyAttestation's
+// chains name: FixtureApplicationPackage signed with FixtureApplicationDigest.
+func FixtureApplication() *android.AttestationApplicationID {
+	digest, _ := hex.DecodeString(FixtureApplicationDigest)
+	return &android.AttestationApplicationID{
+		Packages:         []android.AttestationPackageInfo{{Name: FixtureApplicationPackage, Version: 1}},
+		SignatureDigests: [][]byte{digest},
+	}
+}
+
+// AndroidKeyAttestationFor is AndroidKeyAttestation naming appID as the
+// attested application; a nil appID omits the application identity.
+func AndroidKeyAttestationFor(root *Authority, rot *android.RootOfTrust, appID *android.AttestationApplicationID) ([][]byte, error) {
 	ext, err := android.BuildAttestationExtensionWithOptions(4, android.SecurityLevelTrustedEnvironment,
 		4, android.SecurityLevelTrustedEnvironment, []byte("appraisal-challenge"), nil,
 		&android.AttestationExtensionOptions{
-			RootOfTrust: rot,
-			Origin:      android.OriginGenerated,
-			HasOrigin:   true,
-			Purpose:     []int{android.PurposeSign},
+			RootOfTrust:   rot,
+			Origin:        android.OriginGenerated,
+			HasOrigin:     true,
+			Purpose:       []int{android.PurposeSign},
+			ApplicationID: appID,
 		})
 	if err != nil {
 		return nil, &FixtureError{Step: "android attestation extension", Cause: err}
