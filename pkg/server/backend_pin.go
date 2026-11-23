@@ -35,6 +35,10 @@ var errBackendPINNoConfiguredPIN = errors.New("server: neither backends.pkcs11.p
 // to the TPM (credentials.seal_strategy is not tpm2).
 var errBackendPINNotTPMSealed = errors.New("server: backend PIN strategy tpm2 needs credentials.seal_strategy tpm2")
 
+// errBackendPINNotBarrierSealed reports a sealed release whose PIN is not
+// stored under the barrier (credentials.seal_strategy is not barrier).
+var errBackendPINNotBarrierSealed = errors.New("server: backend PIN strategy sealed needs credentials.seal_strategy barrier")
+
 // ErrBackendPINManualUnavailable refuses backend_pin.strategy manual (and
 // minimum manual) until manual can be operational: the go-qrdb unseal
 // request carries no backend PIN, and the xkms service cannot register a
@@ -54,13 +58,14 @@ func (s *Server) pkcs11Enabled() bool {
 
 // rngPKCS11PINActive reports an rng.pkcs11.pin the RNG can use: a PIN is
 // configured and the PKCS#11 RNG is selected (mode pkcs11 or auto, or the
-// pkcs11 fallback).
+// pkcs11 fallback). An empty rng.mode is auto, as Config.GetRNGConfig and
+// the RNG resolver read it.
 func (s *Server) rngPKCS11PINActive() bool {
 	rng := s.config.RNG
 	if rng.PKCS11 == nil || rng.PKCS11.PIN == nil {
 		return false
 	}
-	return rng.Mode == "pkcs11" || rng.Mode == "auto" || rng.FallbackMode == "pkcs11"
+	return rng.Mode == "pkcs11" || rng.Mode == "auto" || rng.Mode == "" || rng.FallbackMode == "pkcs11"
 }
 
 // resolveBackendPIN resolves the backend PIN strategy through
@@ -107,12 +112,16 @@ func (s *Server) resolveBackendPINStrategy(preNode bool) (pinselect.BackendPINSt
 		PINDir:   s.backendPINDir(),
 		Strategy: pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy),
 		Minimum:  minimum,
-		// tpm2 is only available when the PIN is actually sealed to the
-		// TPM: a TPM beside a barrier-sealed PIN protects nothing, so it
-		// never satisfies strategy or minimum tpm2 (docs/SPEC.md:78).
-		TPMPresent:       tpmPresent && s.pinSealedToTPM(),
+		// auto selects tpm2 whenever a TPM 2.0 is present (docs/SPEC.md:78).
+		// Store makes the strategy match the PIN's actual storage
+		// (credentials.seal_strategy): tpm2 needs a PIN sealed to the TPM,
+		// sealed a PIN stored under the barrier. Any other storage is
+		// refused before a record is persisted, and a persisted record is
+		// refused when the storage changed since (fail closed).
+		TPMPresent:       tpmPresent,
 		BarrierAvailable: barrierAvailable,
 		SealerIsPKCS11:   s.sealerIsPKCS11(),
+		Store:            s.backendPINStore(),
 	})
 	if err != nil {
 		if preNode {
@@ -159,10 +168,22 @@ func (s *Server) installBackendPIN(strategy pinselect.BackendPINStrategy) {
 	}
 }
 
-// pinSealedToTPM reports backend credentials sealed to the TPM
-// (credentials.seal_strategy tpm2), the protection strategy tpm2 asserts.
-func (s *Server) pinSealedToTPM() bool {
-	return s.config.Credentials.SealStrategy == "tpm2"
+// backendPINStore maps credentials.seal_strategy, the storage the configured
+// PIN (a credential:// reference) is resolved from, to the backend PIN
+// strategy it provides: tpm2 for a PIN sealed to the TPM, sealed for a PIN
+// stored under the barrier. Any other storage is returned by name (unset is
+// manual, the credentials default) and matches no backend PIN strategy.
+func (s *Server) backendPINStore() pinselect.BackendPINStrategy {
+	switch store := s.config.Credentials.SealStrategy; store {
+	case "tpm2":
+		return pinselect.BackendPINTPM2
+	case "barrier":
+		return pinselect.BackendPINSealed
+	case "":
+		return "manual"
+	default:
+		return pinselect.BackendPINStrategy(store)
+	}
 }
 
 // sealerIsPKCS11 reports a PKCS#11 token as the actual sealer of a sealed
@@ -173,16 +194,20 @@ func (s *Server) sealerIsPKCS11() bool {
 	return s.config.Barrier.Strategy == "pkcs11" || s.config.Credentials.SealStrategy == "pkcs11"
 }
 
-// backendPINRelease is the strategy-specific release: tpm2 re-checks at
-// every release that the PIN is still sealed to the TPM, so a holder never
+// backendPINRelease is the strategy-specific release: tpm2 and sealed
+// re-check at every release that the PIN is still stored as the strategy
+// asserts (sealed to the TPM, under the barrier), so a holder never
 // releases a PIN whose protection is weaker than the persisted strategy.
 func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy) func(context.Context) ([]byte, error) {
-	if strategy != pinselect.BackendPINTPM2 {
+	if strategy != pinselect.BackendPINTPM2 && strategy != pinselect.BackendPINSealed {
 		return s.releaseConfiguredPKCS11PIN
 	}
 	return func(ctx context.Context) ([]byte, error) {
-		if !s.pinSealedToTPM() {
-			return nil, errBackendPINNotTPMSealed
+		if store := s.backendPINStore(); store != strategy {
+			if strategy == pinselect.BackendPINTPM2 {
+				return nil, errBackendPINNotTPMSealed
+			}
+			return nil, errBackendPINNotBarrierSealed
 		}
 		return s.releaseConfiguredPKCS11PIN(ctx)
 	}

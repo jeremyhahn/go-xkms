@@ -132,6 +132,25 @@ type BackendPINConfig struct {
 	// SealerIsPKCS11 reports a barrier whose key is on the PKCS#11 backend
 	// itself: sealed would make the backend the store of its own PIN.
 	SealerIsPKCS11 bool
+	// Store names where the configured PIN is actually stored: tpm2 for a
+	// PIN sealed to the TPM, sealed for a PIN stored under the barrier, or
+	// any other value (for example a cloud seal strategy) for storage that
+	// is neither. When set, a resolved or persisted strategy that differs
+	// from it is refused with BackendPINStoreError before anything is
+	// persisted: the strategy never claims a protection the store lacks.
+	// Empty skips the check; manual, never stored, is not checked.
+	Store BackendPINStrategy
+}
+
+// BackendPINStoreError refuses a strategy that the PIN's actual storage
+// does not provide.
+type BackendPINStoreError struct {
+	Strategy BackendPINStrategy
+	Store    BackendPINStrategy
+}
+
+func (e *BackendPINStoreError) Error() string {
+	return fmt.Sprintf("pinselect: backend PIN strategy %q resolved but the PIN is stored under %q", e.Strategy, e.Store)
 }
 
 // ResolveBackendPIN resolves and persists the backend PIN strategy. The
@@ -179,6 +198,10 @@ func ResolveBackendPIN(cfg BackendPINConfig) (BackendPINStrategy, error) {
 
 	if err := checkBackendPINAvailable(cfg, chosen); err != nil {
 		return "", err
+	}
+	// manual is never stored, so no store provides or contradicts it.
+	if cfg.Store != "" && chosen != BackendPINManual && chosen != cfg.Store {
+		return "", &BackendPINStoreError{Strategy: chosen, Store: cfg.Store}
 	}
 	if cfg.Minimum != "" && backendPINRank[chosen] < backendPINRank[cfg.Minimum] {
 		return "", &BackendPINBelowMinimumError{Strategy: chosen, Minimum: cfg.Minimum}
