@@ -69,10 +69,13 @@ func TestGetInfo_PhoneBackendWithoutVerifierAdvertisesNoUv(t *testing.T) {
 		UserPresenceHandler: authenticator.NewAutoGrantHandler(),
 		Storage:             authenticator.NewMemoryStorage(),
 		EnablePIN:           true,
-		PINMinLength:        4,
-		PINMaxRetries:       8,
-		SupportedAlgorithms: []int{authenticator.COSEAlgES256},
-		KeyBackend:          backend,
+		// The pinUvAuthToken surface, where uv=true promises the UV token
+		// path; without it a phone's in-operation UV is the CTAP 2.0 form.
+		EnableCredentialManagement: true,
+		PINMinLength:               4,
+		PINMaxRetries:              8,
+		SupportedAlgorithms:        []int{authenticator.COSEAlgES256},
+		KeyBackend:                 backend,
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = auth.Close() })
