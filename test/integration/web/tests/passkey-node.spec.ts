@@ -15,34 +15,41 @@
 // the public WebAuthn routes looked users up through the qrdb client with the
 // request's anonymous context, and the auth-enforcing embedded node refused
 // them, so registration/begin and login/begin answered 500 once the server
-// had users. auth.spec.ts only registers the first operator, while the server
-// is still in its zero-user anonymous mode, and never saw it. This spec makes
-// the server user-ful first, then registers and signs in another operator.
+// had users. The node refuses anonymous sign-up (403 registration_refused), so
+// each operator is provisioned through an administrator-issued invitation and
+// redeemed with a passkey (support/passkeyAccount.ts, given this suite's origin
+// and state directory); the server is user-ful from `xkmsd init` on. This spec
+// then signs an operator out and back in with the same passkey.
 
 import { test, expect } from '@playwright/test';
 import { installVirtualAuthenticator } from './support/virtualAuthenticator.ts';
-import { loginOperator, registerOperator, uniqueOperator } from './support/operator.ts';
+import { loginOperator, uniqueOperator } from './support/operator.ts';
+import { provisionOperator, type PasskeyServer } from './support/passkeyAccount.ts';
+
+/** The daemon playwright.node.config.ts boots: config-node.yaml, .runtime-node. */
+const NODE_SERVER: PasskeyServer = { origin: 'https://localhost:18464', runtimeDir: '.runtime-node' };
 
 test.describe.serial('Passkeys over an auth-enforcing embedded node', () => {
   const first = uniqueOperator('node-first');
   const second = uniqueOperator('node-second');
 
-  test('the first operator registers, so the server has users', async ({ page }) => {
+  test('the first operator redeems an administrator-issued invitation and signs in', async ({ page }) => {
     await installVirtualAuthenticator(page);
-    await registerOperator(page, first);
+    await provisionOperator(page, first, NODE_SERVER);
   });
 
-  test('another operator registers and signs back in with the same passkey', async ({ page }) => {
+  test('another operator redeems its invitation and signs back in with the same passkey', async ({ page }) => {
     await installVirtualAuthenticator(page);
 
-    const begins: number[] = [];
+    const registrationBegins: number[] = [];
+    const loginBegins: number[] = [];
     page.on('response', (res) => {
-      if (/\/api\/v1\/webauthn\/(registration|login)\/begin$/.test(new URL(res.url()).pathname)) {
-        begins.push(res.status());
-      }
+      const path = new URL(res.url()).pathname;
+      if (path.endsWith('/api/v1/webauthn/registration/begin')) registrationBegins.push(res.status());
+      if (path.endsWith('/api/v1/webauthn/login/begin')) loginBegins.push(res.status());
     });
 
-    await registerOperator(page, second);
+    await provisionOperator(page, second, NODE_SERVER);
 
     await page.getByRole('button', { name: 'Sign out' }).click();
     await expect(page.getByRole('button', { name: 'Sign in with passkey' })).toBeVisible();
@@ -51,7 +58,9 @@ test.describe.serial('Passkeys over an auth-enforcing embedded node', () => {
     await loginOperator(page, second);
     await expect(page.getByText(second.displayName)).toBeVisible({ timeout: 10_000 });
 
-    // Both ceremonies began on the server, neither as a 500.
-    expect(begins).toEqual([200, 200]);
+    // On a user-ful server the public begin routes answer, never 500:
+    // anonymous sign-up is refused and both sign-ins begin.
+    expect(registrationBegins).toEqual([403]);
+    expect(loginBegins).toEqual([200, 200]);
   });
 });
