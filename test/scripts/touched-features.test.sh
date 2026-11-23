@@ -53,6 +53,61 @@ eq "a dep of a nested-module binary the recipe builds prints that feature" "zeta
 # Each explicit suite's graph under its own recipe's tags.
 K=$(commit_file pkg/k/k.go '// k')
 eq "a package a suite imports under its explicit rule's extra tag prints that suite" "$(two alpha kappa)" "$(run "$U" "$K")"
+# A helper inside one feature's directory that another feature imports.
+MH=$(commit_file test/integration/mu/help.go '// help')
+eq "a feature's helper another feature imports prints both" "$(two mu nu)" "$(run "$K" "$MH")"
+# The tags are those of integration-test-<feature> itself, not of a similarly
+# named target that tests the same directory.
+O=$(commit_file pkg/o/o.go '// o')
+eq "a suite's graph uses its own target's tags" "omicron" "$(run "$MH" "$O")"
+# xi's target delegates to Compose, whose Dockerfile builds ./cmd/tool: a
+# suite whose binaries the script cannot resolve is selected (or ALL).
+put test/integration/xi/compose.yml 'services:
+  harness:
+    build:
+      context: ../../..
+      dockerfile: test/integration/xi/Dockerfile.test'
+put test/integration/xi/Dockerfile.test 'FROM golang:1.22
+COPY . /src
+WORKDIR /src
+RUN go build -o /usr/local/bin/tool ./cmd/tool
+CMD ["go", "test", "-tags", "integration", "./test/integration/xi/..."]'
+put test/integration/xi/xi_test.go '//go:build integration
+
+package xi
+
+import (
+	"os/exec"
+	"testing"
+)
+
+func TestXi(t *testing.T) { _ = exec.Command("tool").Run() }'
+XT=$(commit_all xi)
+XC=$(commit_file cmd/tool/main.go '// xi')
+case "$(run "$XT" "$XC")" in
+"$(two delta xi)" | ALL) ok "a suite whose target delegates to Compose is selected with its binary" ;;
+*) no "a suite whose target delegates to Compose is selected with its binary: got [$(run "$XT" "$XC")]" ;;
+esac
+# pi's tests import a package that does not exist: its graph is incomplete,
+# so a change to a package another suite reaches is ALL, not a narrowed list.
+put test/integration/pi/pi_test.go '//go:build integration
+
+package pi
+
+import (
+	"testing"
+
+	"example.com/m/pkg/c"
+	"example.com/m/pkg/nosuch"
+)
+
+func TestPi(t *testing.T) { _ = c.C() + nosuch.N() }'
+PT=$(commit_all pi)
+PC2=$(commit_file pkg/c/c.go '// pi')
+eq "a package-load error in a suite's graph prints ALL" "ALL" "$(run "$PT" "$PC2")"
+g rm -rq test/integration/pi
+PR=$(commit_all "drop pi")
+eq "the load-error case leaves no trace" "beta" "$(run "$PR" "$(commit_file pkg/c/c.go '// pi gone')" | grep -v '^xi$')"
 # lambda's only test file is gated on a tag no recipe passes (last, since
 # from here on every package change prints ALL).
 put test/integration/lambda/lambda_test.go '//go:build integration && neverset

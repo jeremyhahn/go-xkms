@@ -31,6 +31,15 @@ eq "a rename prints both sides and the source's importer" "$(printf 'pkg/a\npkg/
 # test-pkg's tag set, += lines included: pkg/h imports pkg/g only under gamma.
 G=$(commit_file pkg/g/g.go '// g')
 eq "a tag-gated importer prints with the package" "$(printf 'pkg/g\npkg/h')" "$(run "$RN" "$G")"
+# A package that fails to load hides its imports: every package runs.
+put pkg/broken/broken.go 'package broken
+
+import "example.com/m/pkg/nosuch"
+
+func Broken() int { return nosuch.N() }'
+BR=$(commit_all broken)
+PA2=$(commit_file pkg/a/a.go '// broken')
+eq "a package-load error prints ALL" "ALL" "$(run "$BR" "$PA2")"
 
 OUT=$(run "$BASE" no-such-revision 2>&1)
 RC=$?

@@ -58,7 +58,9 @@ put go.mod 'module example.com/m
 go 1.22'
 mkdir -p "$REPO"
 # The tags come from conditional += lines, as in go-xkms; eps and zeta build
-# the binary their tests run in the recipe (zeta from a nested module).
+# the binary their tests run in the recipe (zeta from a nested module);
+# integration-test-xi hands its suite to Compose, whose Dockerfile builds
+# ./cmd/tool (touched-features.test.sh adds the xi directory late).
 cat >"$REPO/Makefile" <<'EOF'
 WITH_GAMMA ?= 1
 BUILD_TAGS := codec_json
@@ -82,6 +84,12 @@ integration-test-zeta:
 
 integration-test-kappa:
 	go test -v -tags "integration simx $(BUILD_TAGS)" ./test/integration/kappa/... -timeout 10m
+
+integration-test-omicron-go:
+	go test -tags "integration codec_only" ./test/integration/omicron/...
+
+integration-test-xi:
+	docker compose -f test/integration/xi/compose.yml run --build harness
 
 integration-test-%:
 	go test -v -tags "integration $(BUILD_TAGS)" ./test/integration/$*/...
@@ -240,5 +248,48 @@ package zeta
 import "testing"
 
 func TestZeta(t *testing.T) {}'
+# mu: a feature whose directory also holds a helper package nu's tests import
+# (the xkmsdtest shape).
+put test/integration/mu/help.go 'package mu
+
+func Help() int { return 13 }'
+put test/integration/mu/mu_test.go '//go:build integration
+
+package mu
+
+import "testing"
+
+func TestMu(t *testing.T) { _ = Help() }'
+put test/integration/nu/nu_test.go '//go:build integration
+
+package nu
+
+import (
+	"testing"
+
+	"example.com/m/test/integration/mu"
+)
+
+func TestNu(t *testing.T) { _ = mu.Help() }'
+# omicron: integration-test-omicron-go tests the directory without gamma, but
+# the emitted omicron runs integration-test-omicron (the pattern, gamma set),
+# and only its gamma-tagged file imports pkg/o.
+put pkg/o/o.go 'package o
+
+func O() int { return 15 }'
+put test/integration/omicron/plain_test.go '//go:build integration
+
+package omicron'
+put test/integration/omicron/omicron_test.go '//go:build integration && gamma
+
+package omicron
+
+import (
+	"testing"
+
+	"example.com/m/pkg/o"
+)
+
+func TestOmicron(t *testing.T) { _ = o.O() }'
 BASE=$(commit_all base)
 export BASE
