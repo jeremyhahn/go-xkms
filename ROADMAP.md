@@ -157,6 +157,8 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 - **hsm-device-protocol** — xkmsd-to-HSM-device wire protocol, FRDM-IMX95-PRO first — [#1521](../../issues/1521) — open
 - **hsm-self-defence** — lockdown or key wipe as predetermined HSM device responses — [SPEC](docs/SPEC.md#features) — open
+- **imx-edgelock** — NXP EdgeLock Enclave (i.MX 95) key backend, moved from go-enclave (ruling 697) — [#2227](../../issues/2227) — open
+- **se051** — NXP EdgeLock SE051 secure element key backend over I2C (ruling 697) — [#2228](../../issues/2228) — open
 - **media-signing** — multi-signer photo and video signing — [xkey/docs/roadmap/media.md](xkey/docs/roadmap/media.md) — open
 - **piv-i** — PIV-I profiles on FIPS-validated hardware — [xkey/docs/roadmap/piv.md](xkey/docs/roadmap/piv.md) — open
 - **browser-mode** — the GUI as a WebAuthn-authenticated web app — [xkey/docs/roadmap/web.md](xkey/docs/roadmap/web.md) — open
