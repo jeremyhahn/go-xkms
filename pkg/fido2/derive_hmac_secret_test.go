@@ -96,6 +96,32 @@ func TestHandler_DeriveHMACSecret(t *testing.T) {
 		})
 		assert.ErrorIs(t, err, ErrInvalidSalt)
 	})
+
+	t.Run("wrong credential", func(t *testing.T) {
+		concrete, sim := simulatedHandler(t, "")
+		var handler Handler = concrete
+		unknown := bytes.Clone(sim.credentialID)
+		unknown[0] ^= 0xff
+
+		result, err := handler.DeriveHMACSecret(&AuthenticationConfig{
+			RelyingPartyID: "kms.example.com", CredentialID: unknown, Salt: salt,
+		})
+		require.ErrorIs(t, err, ErrCredentialNotFound)
+		assert.Nil(t, result)
+	})
+
+	t.Run("no authenticator", func(t *testing.T) {
+		config := DefaultConfig
+		concrete, err := NewHandler(&config, NewMockHIDDeviceEnumerator())
+		require.NoError(t, err)
+		var handler Handler = concrete
+
+		result, err := handler.DeriveHMACSecret(&AuthenticationConfig{
+			RelyingPartyID: "kms.example.com", CredentialID: bytes.Repeat([]byte{0x01}, 32), Salt: salt,
+		})
+		require.ErrorIs(t, err, ErrNoDeviceFound)
+		assert.Nil(t, result)
+	})
 }
 
 // TestDeriveHMACSecret_WithPIN covers a PIN-protected authenticator: the
