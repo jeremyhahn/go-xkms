@@ -185,6 +185,23 @@ func TestEveryIntegrationFeatureDirHasATarget(t *testing.T) {
 	if len(dirs) == 0 {
 		t.Fatal("no directory under test/integration/ holds _test.go files")
 	}
+	delegated := map[string]string{}
+	for _, d := range dirs {
+		if _, explicit := makeRecipe(mk, "integration-test-"+d); explicit {
+			delegated[d] = composeGoTests(t, d)
+		}
+	}
+	for _, d := range featureDirsNotRun(mk, dirs, delegated) {
+		t.Errorf("test/integration/%s holds _test.go files but the explicit integration-test-%s rule shadows the pattern rule and never runs go test on that directory (nor do the Compose files it runs)", d, d)
+	}
+}
+
+// featureDirsNotRun returns the feature dirs whose explicit
+// integration-test-<d> rule shadows the pattern rule without running go test
+// on test/integration/<d> (or, for a rule that hands off to Compose, without
+// the Compose files in delegated[d] running it).
+func featureDirsNotRun(mk string, dirs []string, delegated map[string]string) []string {
+	var missing []string
 	for _, d := range dirs {
 		target := "integration-test-" + d
 		if _, explicit := makeRecipe(mk, target); !explicit {
@@ -193,8 +210,42 @@ func TestEveryIntegrationFeatureDirHasATarget(t *testing.T) {
 		text := expandMakeVars(mk, integrationRuleText(mk, target, map[string]bool{}))
 		if !strings.Contains(text, "test/integration/"+d) &&
 			!strings.Contains(text, "$(call integration_dir,"+d+")") {
-			t.Errorf("test/integration/%s holds _test.go files but the explicit %s rule shadows the pattern rule and never runs that directory", d, target)
+			missing = append(missing, d)
 		}
+	}
+	return missing
+}
+
+// TestFeatureDirGateNeedsARunningCommand proves a directory mention alone
+// (an echo, or a go test on a similarly prefixed directory) does not satisfy
+// the explicit-target gate, while a go test on the suite, or Compose files
+// that run it, do.
+func TestFeatureDirGateNeedsARunningCommand(t *testing.T) {
+	mk := "integration-test-%:\n" +
+		"\tgo test -tags \"integration $*\" ./test/integration/$*\n" +
+		"\n" +
+		"integration-test-signing:\n" +
+		"\techo ./test/integration/signing\n" +
+		"\n" +
+		"integration-test-sign:\n" +
+		"\tgo test -tags integration ./test/integration/signing\n" +
+		"\n" +
+		"integration-test-runs:\n" +
+		"\tgo test -tags integration ./test/integration/runs\n" +
+		"\n" +
+		"integration-test-composed:\n" +
+		"\tdocker compose -f test/integration/composed/docker-compose.yml up --exit-code-from tests\n" +
+		"\n" +
+		"integration-test-echoed:\n" +
+		"\tdocker compose -f test/integration/echoed/docker-compose.yml up --exit-code-from tests\n"
+	delegated := map[string]string{
+		"composed": "      go test -tags integration ./test/integration/composed",
+		"echoed":   "",
+	}
+	got := featureDirsNotRun(mk, []string{"signing", "sign", "runs", "composed", "echoed", "patterned"}, delegated)
+	want := []string{"signing", "sign", "echoed"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("feature dirs not run = %q, want %q", got, want)
 	}
 }
 
