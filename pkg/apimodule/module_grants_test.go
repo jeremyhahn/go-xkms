@@ -18,13 +18,13 @@ import (
 	"strings"
 	"testing"
 
-	qrdbgrpcv1 "github.com/jeremyhahn/go-qrdb/pkg/api/grpc/proto/qrdbv1"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbv1 "github.com/jeremyhahn/go-qrdb/sdk/go/proto/qrdb/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
+	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
@@ -82,8 +82,13 @@ func grpcAndMCPPermissionPairs(t *testing.T) map[string]struct{} {
 	// (pkg/server/qrdb_control_plane.go), and the ACME admin routes gate on
 	// its admin:status pair. qrdb declares its admin:* pairs on
 	// qrdb.v1.QRDBService, which also carries the KV surface xkms does not
-	// expose, so only its admin:* pairs are added.
-	qrdbService := qrdbgrpcv1.File_pkg_api_grpc_proto_qrdbv1_qrdb_proto.Services().ByName("QRDBService")
+	// expose, so only its admin:* pairs are added. The descriptor is read
+	// from the global registry, where linking qrdbsdk registers it, so the
+	// test stays on the sdk/go boundary (docs/18 V40).
+	qrdbDesc, err := protoregistry.GlobalFiles.FindDescriptorByName("qrdb.v1.QRDBService")
+	require.NoError(t, err, "qrdb.v1.QRDBService not registered")
+	qrdbService, ok := qrdbDesc.(protoreflect.ServiceDescriptor)
+	require.True(t, ok, "qrdb.v1.QRDBService is a %T, not a service", qrdbDesc)
 	require.NotNil(t, qrdbService, "qrdb.v1.QRDBService descriptor not found")
 	qrdbPairs := map[string]struct{}{}
 	addMethodPermissions(t, qrdbPairs, qrdbService.Methods())
