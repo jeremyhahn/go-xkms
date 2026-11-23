@@ -379,7 +379,9 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	// independent of the user PIN. Decide before committing anything
 	// whether the barrier is bound to the current PIN: only then is it
 	// resealed with the new one. A barrier that cannot be checked stops
-	// the change here, so PIN and barrier never go out of sync.
+	// the change here, so PIN and barrier never go out of sync. Until
+	// go-qrdb tells a wrong credential apart from a strategy failure, a
+	// barrier the current PIN does not open stops it too (fail closed).
 	bsvc := s.barrierSvc.Load()
 	barrierBound := false
 	if bsvc != nil {

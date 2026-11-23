@@ -96,12 +96,14 @@ func TestBarrierService_PasswordBound_CancelledContextIsReturned(t *testing.T) {
 	assert.False(t, bound)
 }
 
-func TestBarrierService_PasswordBound_MismatchIsNotAnError(t *testing.T) {
+// go-qrdb v0.58.5 cannot tell a wrong credential from a failure inside the
+// strategy, so a mismatch is returned as an error, never as a verdict.
+func TestBarrierService_PasswordBound_MismatchFailsClosed(t *testing.T) {
 	svc := NewBarrierService(t.TempDir(), slog.Default())
 	require.NoError(t, svc.Initialize("barrier-password", "passphrase"))
 
 	bound, err := svc.PasswordBound("old-pin")
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrBarrierCredentialUnverified)
 	assert.False(t, bound)
 
 	bound, err = svc.PasswordBound("barrier-password")

@@ -402,6 +402,13 @@ var (
 	// ErrBarrierResealFailed indicates the barrier root key re-seal failed
 	// during a password change operation.
 	ErrBarrierResealFailed = errors.New("barrier_service: barrier re-seal failed")
+
+	// ErrBarrierCredentialUnverified indicates a credential did not verify
+	// against the live barrier root key. go-qrdb v0.58.5 reports a wrong
+	// credential and a failure inside the sealing strategy alike (both as
+	// ErrCredentialMismatch), so the result is not proof that the barrier
+	// has a password of its own.
+	ErrBarrierCredentialUnverified = errors.New("barrier_service: credential did not verify against the barrier")
 )
 
 // ErrBarrierStrategyUnavailable indicates the selected barrier strategy

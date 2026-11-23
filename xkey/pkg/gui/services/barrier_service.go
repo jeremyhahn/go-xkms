@@ -641,8 +641,11 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 //
 // Returns ErrBarrierNotInitialized when no barrier is open and
 // ErrBarrierResealFailed when the barrier is sealed (there is no live key
-// to compare against). A credential mismatch reports (false, nil); any
-// other verification failure is returned.
+// to compare against). Any verification failure is returned, a credential
+// mismatch included: go-qrdb v0.58.5 reports a failure inside the sealing
+// strategy as the same ErrCredentialMismatch, so a mismatch cannot prove
+// the barrier has a password of its own and fails closed with
+// ErrBarrierCredentialUnverified.
 func (s *BarrierService) PasswordBound(password string) (bound bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -662,16 +665,16 @@ func (s *BarrierService) PasswordBound(password string) (bound bool, err error) 
 	defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
 
 	// go-qrdb v0.58.5: VerifyCredentials unseals a candidate key and
-	// compares it with the live one; it never alters barrier state. Only a
-	// confirmed mismatch means the barrier has a password of its own;
-	// every other failure (storage read, corrupt root key, missing
-	// strategy) is operational and stops the caller.
+	// compares it with the live one; it never alters barrier state. Its
+	// ErrCredentialMismatch also covers failures inside the strategy
+	// (protected memory, a malformed sealed payload), so it is no proof of
+	// an independent barrier password: every failure stops the caller.
 	verr := s.barrier.VerifyCredentials(ctx, creds)
 	switch {
 	case verr == nil:
 		return true, nil
 	case errors.Is(verr, qrdbseal.ErrCredentialMismatch):
-		return false, nil
+		return false, &SentinelCauseError{Sentinel: ErrBarrierCredentialUnverified, Cause: verr}
 	default:
 		return false, verr
 	}

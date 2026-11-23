@@ -692,7 +692,7 @@ func (r *recordingPINBackend) ChangeUserPIN(current, next string) error {
 	return nil
 }
 
-func TestPINService_ChangeUserPIN_IndependentBarrierPassword(t *testing.T) {
+func TestPINService_ChangeUserPIN_IndependentBarrierPasswordFailsClosed(t *testing.T) {
 	backend := &recordingPINBackend{mockPINBackend: &mockPINBackend{
 		strategy:   qrdbsdk.PINStrategySoftware,
 		userPINSet: true,
@@ -704,8 +704,10 @@ func TestPINService_ChangeUserPIN_IndependentBarrierPassword(t *testing.T) {
 	require.NoError(t, barrierSvc.Initialize("barrier-password", "passphrase"))
 	svc.SetBarrierService(barrierSvc)
 
-	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
-	assert.Equal(t, []string{"new-pin"}, backend.changes)
+	// go-qrdb v0.58.5 cannot prove the barrier's password is its own (a
+	// strategy failure reads as the same mismatch): the change fails closed.
+	require.ErrorIs(t, svc.ChangeUserPIN("old-pin", "new-pin"), ErrBarrierResealFailed)
+	assert.Empty(t, backend.changes)
 
 	// The barrier keeps its own password: the PIN change must not touch it.
 	require.NoError(t, barrierSvc.Seal())
