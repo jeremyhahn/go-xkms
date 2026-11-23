@@ -145,7 +145,8 @@ func TestResolveBackendPIN_AutoWithTPMButBarrierSealSelectsSealed(t *testing.T) 
 
 func TestResolveBackendPIN_BelowMinimumFailsClosed(t *testing.T) {
 	s, _, _ := backendPINTestServer(t, "sealed", []byte("backend-pin-1"), false, true)
-	s.config.BackendPIN.Minimum = "manual"
+	// No TPM: sealed sits below a tpm2 minimum (manual is refused outright).
+	s.config.BackendPIN.Minimum = "tpm2"
 
 	err := s.resolveBackendPIN()
 	var below *pinselect.BackendPINBelowMinimumError
@@ -213,7 +214,9 @@ func TestStartPKCS11AfterUnseal_SealedWithoutPINFailsClosed(t *testing.T) {
 
 func TestManualBackendPIN_FromUnsealRequestNeverPersistedStopsAtSeal(t *testing.T) {
 	s, opened, providers := backendPINTestServer(t, "manual", nil, false, true)
-	require.NoError(t, s.resolveBackendPIN())
+	// resolveBackendPIN refuses manual for now (no unseal seam); the holder
+	// lifecycle it would install is still kept correct.
+	s.installBackendPIN(pinselect.BackendPINManual)
 	require.Equal(t, "manual", s.BackendPINStrategy())
 
 	// Manual: the backend does not start at boot.
@@ -232,7 +235,9 @@ func TestManualBackendPIN_FromUnsealRequestNeverPersistedStopsAtSeal(t *testing.
 
 	// Never persisted: the PIN directory holds the strategy record only.
 	entries, err := os.ReadDir(filepath.Join(s.config.Datastore.Path, "pin"))
-	require.NoError(t, err)
+	if !errors.Is(err, os.ErrNotExist) {
+		require.NoError(t, err)
+	}
 	for _, e := range entries {
 		require.Equal(t, filepath.Base(pinselect.BackendPINStrategyPath("")), e.Name())
 		data, readErr := os.ReadFile(filepath.Join(s.config.Datastore.Path, "pin", e.Name()))
@@ -316,7 +321,9 @@ func TestBarrierSeal_ZeroizesBackendPIN(t *testing.T) {
 	t.Run("manual", func(t *testing.T) {
 		s, _, providers := backendPINTestServer(t, "manual", nil, false, true)
 		s.barrier = backendPINUnsealedBarrier(t)
-		require.NoError(t, s.resolveBackendPIN())
+		// resolveBackendPIN refuses manual for now; the holder lifecycle
+		// it would install is still kept correct for when the seam lands.
+		s.installBackendPIN(pinselect.BackendPINManual)
 		require.NoError(t, s.UnsealBackendPIN(context.Background(), []byte("operator-pin-1")))
 
 		require.NoError(t, s.barrier.Seal())
@@ -354,7 +361,12 @@ func TestShutdown_ZeroizesBackendPINClosesProviderOnce(t *testing.T) {
 			s.ctx, s.cancel = ctx, cancel
 			s.logger = slog.New(slog.DiscardHandler)
 			s.shutdownCh = make(chan struct{})
-			require.NoError(t, s.resolveBackendPIN())
+			if strategy == "manual" {
+				// resolveBackendPIN refuses manual for now (no unseal seam).
+				s.installBackendPIN(pinselect.BackendPINManual)
+			} else {
+				require.NoError(t, s.resolveBackendPIN())
+			}
 			require.NoError(t, s.startPKCS11AfterUnseal())
 			if strategy == "manual" {
 				require.NoError(t, s.UnsealBackendPIN(context.Background(), []byte("operator-pin-1")))

@@ -60,6 +60,12 @@ func (s *Server) resolveBackendPIN() error {
 	if !s.pkcs11Enabled() {
 		return nil
 	}
+	// Manual is refused before anything is persisted or released: no
+	// unseal request carries the PIN yet (ErrBackendPINManualUnavailable).
+	if s.config.BackendPIN.Strategy == string(pinselect.BackendPINManual) ||
+		s.config.BackendPIN.Minimum == string(pinselect.BackendPINManual) {
+		return ErrBackendPINManualUnavailable
+	}
 	tpmPresent, barrierAvailable := s.probeBackendPIN()
 	strategy, err := pinselect.ResolveBackendPIN(pinselect.BackendPINConfig{
 		PINDir:   s.backendPINDir(),
@@ -75,6 +81,17 @@ func (s *Server) resolveBackendPIN() error {
 	if err != nil {
 		return err
 	}
+	if strategy == pinselect.BackendPINManual {
+		// A record persisted as manual by an earlier release.
+		return ErrBackendPINManualUnavailable
+	}
+	s.installBackendPIN(strategy)
+	return nil
+}
+
+// installBackendPIN installs the in-memory holder for strategy and ties its
+// zeroization to the running barrier's seal.
+func (s *Server) installBackendPIN(strategy pinselect.BackendPINStrategy) {
 	s.backendPIN = pinselect.NewBackendPIN(strategy, s.backendPINRelease(strategy))
 	// Zeroize at every seal of the running barrier, not only at shutdown:
 	// the barrier runs this before it wipes its own root key.
@@ -83,7 +100,6 @@ func (s *Server) resolveBackendPIN() error {
 			return s.SealBackendPIN()
 		})
 	}
-	return nil
 }
 
 // pinSealedToTPM reports backend credentials sealed to the TPM

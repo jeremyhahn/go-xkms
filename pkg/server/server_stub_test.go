@@ -107,16 +107,15 @@ func TestServer_InitPKCS11Backend_Stub(t *testing.T) {
 		// unconfigured is the correct shape for this test's purpose.
 	}
 	// Seal is off here, so no barrier exists and the default (auto ->
-	// sealed without a TPM) fails closed (#2262). Manual needs no barrier.
+	// sealed without a TPM) fails closed (#2262). Manual, which needs no
+	// barrier, is refused until the unseal request carries a backend PIN.
 	cfg.BackendPIN.Strategy = "manual"
 
 	server, err := New(cfg)
-	require.NoError(t, err)
-	require.NotNil(t, server)
-	defer func() { _ = server.Shutdown() }()
-
-	// PKCS11 stub should be called but not add a backend (since it's a stub)
-	assert.NotNil(t, server.backends)
+	if server != nil {
+		_ = server.Shutdown()
+	}
+	require.ErrorIs(t, err, ErrBackendPINManualUnavailable)
 }
 
 // An explicitly configured sealed backend PIN strategy with no barrier
