@@ -241,7 +241,6 @@ func checkAuditRead(ctx context.Context, authorizer xkmssdk.QRDBAuthorizer) erro
 	if authorizer == nil {
 		return &AuditReadDeniedError{Reason: "no authorizer"}
 	}
-	ctx := s.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -250,7 +249,7 @@ func checkAuditRead(ctx context.Context, authorizer xkmssdk.QRDBAuthorizer) erro
 		return &AuditReadDeniedError{Reason: "no identity"}
 	}
 	perm := xkmssdk.QRDBPermissionAuditRead
-	if err := s.authorizer.Authorize(ctx, identity,
+	if err := authorizer.Authorize(ctx, identity,
 		xkmssdk.QRDBPermissionResource(perm), xkmssdk.QRDBPermissionAction(perm)); err != nil {
 		return &AuditReadDeniedError{Reason: "denied", Err: err}
 	}
