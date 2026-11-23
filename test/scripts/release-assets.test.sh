@@ -257,13 +257,45 @@ if [ -z "$GPORT" ]; then
     cat "$STUB/gh-server.err" >&2
     exit 1
 fi
-GH=(env RELEASE_API="http://127.0.0.1:${GPORT}" RELEASE_FORGE=github RELEASE_UPLOAD_API="http://127.0.0.1:${GPORT}/uploads")
+# The script reads only RELEASE_API, RELEASE_REPO, RELEASE_TAG, RELEASE_TOKEN
+# and DRY_RUN: the forge and the uploads root follow from RELEASE_API alone,
+# so the GitHub runs below use the real https://api.github.com root. A curl
+# shim first on PATH records every URL the script asks for (CURL_LOG) and
+# sends api.github.com to the stub and uploads.github.com to its /uploads.
+REAL_CURL=$(command -v curl)
+CURL_LOG="$STUB/curl-urls.log"; : > "$CURL_LOG"
+mkdir -p "$STUB/bin"
+cat > "$STUB/bin/curl" <<SH
+#!/usr/bin/env bash
+args=()
+for a in "\$@"; do
+	case "\$a" in
+	https://api.github.com/*) echo "\$a" >> "$CURL_LOG"; a="http://127.0.0.1:${GPORT}\${a#https://api.github.com}" ;;
+	https://uploads.github.com/*) echo "\$a" >> "$CURL_LOG"; a="http://127.0.0.1:${GPORT}/uploads\${a#https://uploads.github.com}" ;;
+	http://*|https://*) echo "\$a" >> "$CURL_LOG" ;;
+	esac
+	args+=("\$a")
+done
+exec "$REAL_CURL" "\${args[@]}"
+SH
+chmod +x "$STUB/bin/curl"
+GH=(env PATH="$STUB/bin:$PATH" RELEASE_API="https://api.github.com")
 while read -r n; do printf 'sha256 of %s\n' "$n" > "$GH_ASSETS/$n"; done < <("$SCRIPT" expected "$V")
 
 section "github: list and verify"
 eq "list sees all 20 through the GitHub API root" "20" "$("${GH[@]}" "$SCRIPT" list | wc -l | tr -d ' ')"
 true_ "a complete release passes verify" "${GH[@]}" "$SCRIPT" verify "$V"
-false_ "an unknown RELEASE_FORGE is refused" "${GH[@]}" RELEASE_FORGE=bitbucket "$SCRIPT" list
+
+section "only the contracted environment is read"
+# RELEASE_FORGE and RELEASE_UPLOAD_API are not release settings: set to
+# anything, they change no call. A Gitea root stays Gitea (download from the
+# browser URL under RELEASE_API), a GitHub root stays GitHub.
+true_ "an unknown RELEASE_FORGE is ignored, not refused" "${GH[@]}" RELEASE_FORGE=bitbucket "$SCRIPT" list
+OD="$STUB/override-dl"; : > "$CURL_LOG"
+env PATH="$STUB/bin:$PATH" RELEASE_FORGE=github RELEASE_UPLOAD_API="http://127.0.0.1:1/nowhere" "$SCRIPT" download "$OD" '*.sha256' >/dev/null 2>&1
+eq "a Gitea root with RELEASE_FORGE=github still downloads all ten checksum files" "10" "$(ls "$OD" 2>/dev/null | wc -l | tr -d ' ')"
+eq "every Gitea call stays under RELEASE_API or its browser URLs" "" "$(grep -v "^http://127.0.0.1:${PORT}/" "$CURL_LOG")"
+true_ "a Gitea download reads the browser URL" grep -q "^http://127.0.0.1:${PORT}/dl/" "$CURL_LOG"
 
 section "github: download by asset id"
 GD="$STUB/gh-dl"; : > "$GH_LOG"
@@ -299,6 +331,16 @@ eq "the release now carries 21 assets" "21" "$("${GH[@]}" "$SCRIPT" list | wc -l
 OUT=$("${GH[@]}" "$SCRIPT" upload "$GW/checksums.txt" 2>&1); RC=$?
 eq "a re-run of an uploaded asset succeeds" "0" "$RC"
 eq "a re-run sends nothing: the stored bytes match" "" "$(cat "$GH_LOG")"
+
+section "github: the uploads root follows from RELEASE_API"
+printf 'override\n' > "$GW/override.txt"
+: > "$GH_LOG"; : > "$CURL_LOG"
+OUT=$("${GH[@]}" RELEASE_FORGE=gitea RELEASE_UPLOAD_API="http://127.0.0.1:1/nowhere" "$SCRIPT" upload "$GW/override.txt" 2>&1); RC=$?
+eq "an upload with RELEASE_FORGE=gitea and RELEASE_UPLOAD_API set still succeeds" "0" "$RC"
+eq "it reached the GitHub uploads endpoint" "POST override.txt" "$(cat "$GH_LOG")"
+eq "the upload went to uploads.github.com, nowhere else" \
+	"https://uploads.github.com/repos/o/r/releases/1/assets?name=override.txt" \
+	"$(grep -v '^https://api.github.com/' "$CURL_LOG")"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
