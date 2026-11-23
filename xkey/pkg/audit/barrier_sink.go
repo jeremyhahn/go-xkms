@@ -303,7 +303,10 @@ func (s *BarrierSink) checkCheckpoint(ctx context.Context, repair bool) error {
 		exists, existsErr := s.backend.Exists(ctx, checkpointKey)
 		if existsErr == nil && !exists {
 			if s.seq == 0 {
-				return nil // a fresh chain: nothing written yet
+				// A fresh chain: seal a sequence-zero checkpoint before any
+				// append, so a crash between record 1 and its checkpoint is
+				// the one-behind case the repair below handles.
+				return s.writeCheckpoint(ctx)
 			}
 			return &ChainBrokenError{Key: checkpointKey, Reason: "chain checkpoint is missing"}
 		}

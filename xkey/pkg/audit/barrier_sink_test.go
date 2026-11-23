@@ -179,6 +179,47 @@ func TestBarrierSink_CrashBeforeCheckpointReopens(t *testing.T) {
 	require.ErrorAs(t, err, &broken)
 }
 
+// checkpointFaultBackend fails every checkpoint Put once armed.
+type checkpointFaultBackend struct {
+	xkms.StorageBackend
+	armed bool
+}
+
+func (f *checkpointFaultBackend) Put(ctx context.Context, key string, value []byte) error {
+	if f.armed && key == checkpointKey {
+		return errInjected
+	}
+	return f.StorageBackend.Put(ctx, key, value)
+}
+
+// A fresh sink seals a sequence-zero checkpoint before its first append, so
+// an interruption between record 1 and its checkpoint reopens (repaired)
+// instead of failing as a broken chain.
+func TestBarrierSink_FirstRecordWithoutCheckpointReopens(t *testing.T) {
+	ctx := context.Background()
+	be := newSinkBackend(t)
+	fb := &checkpointFaultBackend{StorageBackend: be}
+	s, err := OpenBarrierSink(ctx, fb, 100)
+	require.NoError(t, err)
+	exists, err := be.Exists(ctx, checkpointKey)
+	require.NoError(t, err)
+	require.True(t, exists, "the open seals a sequence-zero checkpoint")
+
+	fb.armed = true
+	err = s.Emit(ctx, xkms.QRDBNodeAuditEvent{
+		Actor: "xkey", Resource: "xkey", Action: "first", Outcome: "success",
+	})
+	require.ErrorIs(t, err, errInjected, "the checkpoint Put fails after record 1")
+	require.NoError(t, s.Close())
+	_, err = be.Get(ctx, recordKey(1))
+	require.NoError(t, err, "record 1 was written")
+
+	s, err = OpenBarrierSink(ctx, be, 100)
+	require.NoError(t, err, "the reopen repairs the one-behind checkpoint")
+	defer func() { _ = s.Close() }()
+	require.NoError(t, s.VerifyChain(ctx))
+}
+
 func TestBarrierSink_NilBackend(t *testing.T) {
 	_, err := OpenBarrierSink(context.Background(), nil, 1)
 	assert.ErrorIs(t, err, ErrNilBarrierBackend)
@@ -219,7 +260,7 @@ func TestBarrierSink_MigratesLegacyBackendStoreRecords(t *testing.T) {
 
 	keys, err := be.List(ctx, "")
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{recordKey(1), recordKey(2), recordKey(3)}, keys, "legacy keys are gone")
+	assert.ElementsMatch(t, []string{recordKey(1), recordKey(2), recordKey(3), checkpointKey}, keys, "legacy keys are gone")
 
 	first, err := be.Get(ctx, recordKey(1))
 	require.NoError(t, err)
@@ -264,8 +305,8 @@ func TestBarrierSink_SecondWriterOnTheChainIsRefused(t *testing.T) {
 	assert.Len(t, page.Events, 3, "no record was overwritten")
 }
 
-// faultBackend fails the Put or Delete numbered failPut / failDelete
-// (1-based, 0 never).
+// faultBackend fails the record Put or the Delete numbered failPut /
+// failDelete (1-based, 0 never); checkpoint Puts are not counted.
 type faultBackend struct {
 	xkms.StorageBackend
 	puts, deletes       int
@@ -275,6 +316,9 @@ type faultBackend struct {
 var errInjected = errors.New("injected I/O failure")
 
 func (f *faultBackend) Put(ctx context.Context, key string, value []byte) error {
+	if key == checkpointKey {
+		return f.StorageBackend.Put(ctx, key, value)
+	}
 	f.puts++
 	if f.puts == f.failPut {
 		return errInjected
