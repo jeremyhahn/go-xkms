@@ -143,6 +143,51 @@ func TestInitCeremonyStep3NamesWrittenBundle(t *testing.T) {
 	}
 }
 
+var (
+	relConfigPath = regexp.MustCompile(`(?m)^\s*(?:path|socket_path):\s*["']?([^"'\s#]+)`)
+	unitKeyLine   = regexp.MustCompile(`(?m)^(WorkingDirectory|ReadWritePaths|StateDirectory)=(.*)$`)
+)
+
+// TestXkmsdUnitWorkingDirectoryWritable: configs/xkmsd.yaml uses relative
+// paths (xkms-data/...) that config loading does not rebase, so the unit
+// must start in a directory it may write, not in /.
+func TestXkmsdUnitWorkingDirectoryWritable(t *testing.T) {
+	cfg := docsPathsRead(t, "configs/xkmsd.yaml")
+	var rel []string
+	for _, m := range relConfigPath.FindAllStringSubmatch(cfg, -1) {
+		if !strings.HasPrefix(m[1], "/") {
+			rel = append(rel, m[1])
+		}
+	}
+	if len(rel) == 0 {
+		return
+	}
+	unit := docsPathsRead(t, "configs/xkmsd.service")
+	var wd string
+	writable := map[string]bool{}
+	for _, m := range unitKeyLine.FindAllStringSubmatch(unit, -1) {
+		val := strings.TrimSpace(m[2])
+		switch m[1] {
+		case "WorkingDirectory":
+			wd = strings.TrimPrefix(val, "-")
+		case "ReadWritePaths":
+			for _, p := range strings.Fields(val) {
+				writable[strings.TrimPrefix(p, "-")] = true
+			}
+		case "StateDirectory":
+			for _, p := range strings.Fields(val) {
+				writable["/var/lib/"+p] = true
+			}
+		}
+	}
+	if wd == "" {
+		t.Fatalf("configs/xkmsd.service has no WorkingDirectory=, but configs/xkmsd.yaml uses relative paths %v (resolved against /)", rel)
+	}
+	if !writable[filepath.Clean(wd)] {
+		t.Errorf("configs/xkmsd.service WorkingDirectory=%s is not a ReadWritePaths/StateDirectory entry %v", wd, writable)
+	}
+}
+
 // unitFiles returns the base names of every systemd unit under deploy/ and
 // configs/.
 func unitFiles(t *testing.T) map[string]bool {
