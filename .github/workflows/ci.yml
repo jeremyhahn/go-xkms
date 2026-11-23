@@ -298,7 +298,9 @@
 # carries a green or skipped gate into its merge. Marking the PR ready
 # starts no run, and there is no edited or ready_for_review trigger (an
 # edited run would join the PR's group and cancel a run in flight): the
-# PR's own lane pushes an empty commit when the PR leaves draft.
+# PR's own lane pushes an empty commit when the PR leaves draft. Since
+# template v1.35.3 (go-xkms DS-10362) ready_for_review is a trigger again: the
+# draft run it follows has already failed at the gate, so it cancels nothing.
 # >>> CUSTOMIZE (go-xkms)
 # go-xkms: build, nested-module-build, nested-module-test, build-raft, race and
 # tpm2-simulator need no skipped job, so each carries the draft guard itself,
@@ -627,9 +629,10 @@ on:
   pull_request:
     branches: [main]
     # >>> CUSTOMIZE (go-xkms)
-    # Gitea fires label_updated, not labeled; synchronize re-runs on a push.
+    # Gitea fires label_updated, not labeled; synchronize re-runs on a push;
+    # ready_for_review starts the run a draft gate skipped (template v1.35.3).
     # Adding ci:full takes effect on the next push or a workflow_dispatch.
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     # <<< CUSTOMIZE
   workflow_dispatch:                    # re-fire a whole workflow; also the
                                         # only retry when a run was never
