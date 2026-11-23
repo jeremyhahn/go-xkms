@@ -246,6 +246,70 @@ func TestNewHTTPStatusList(t *testing.T) {
 	}
 }
 
+// Status lists carry no signature, so a remote source must be fetched over
+// authenticated HTTPS: over plaintext HTTP a network attacker could answer
+// {"entries":{}} with a long max-age and revoked keys would pass. Plaintext
+// is accepted only to a loopback IP literal, which no network attacker
+// reaches; an offline copy goes through the local-file source.
+func TestNewHTTPStatusList_RemoteSourceRequiresHTTPS(t *testing.T) {
+	for _, plaintext := range []string{
+		"http://android.googleapis.com/attestation/status",
+		"http://mirror.test/status",
+		"http://10.0.0.1/status",
+		"http://localhost/status",
+		"HTTP://mirror.test/status",
+	} {
+		t.Run(plaintext, func(t *testing.T) {
+			_, err := NewHTTPStatusList(HTTPStatusListOptions{URL: plaintext})
+			require.ErrorIs(t, err, ErrInvalidStatusListURL)
+		})
+	}
+	for _, accepted := range []string{
+		"https://mirror.test/status",
+		"http://127.0.0.1:8080/status",
+		"http://[::1]:8080/status",
+	} {
+		t.Run(accepted, func(t *testing.T) {
+			_, err := NewHTTPStatusList(HTTPStatusListOptions{URL: accepted})
+			require.NoError(t, err)
+		})
+	}
+}
+
+// A redirect must not downgrade an HTTPS source to plaintext HTTP, whatever
+// redirect policy the caller's client has.
+func TestHTTPStatusList_RedirectToHTTPIsRefused(t *testing.T) {
+	var followed atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		followed.Add(1)
+		_, _ = w.Write([]byte(`{"entries":{}}`))
+	}))
+	t.Cleanup(target.Close)
+
+	for name, location := range map[string]string{
+		"remote host": "http://mirror.test/status",
+		"loopback":    target.URL,
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				http.Redirect(w, r, location, http.StatusFound)
+			}))
+			t.Cleanup(server.Close)
+
+			client := server.Client()
+			client.CheckRedirect = func(*http.Request, []*http.Request) error { return nil }
+			source, err := NewHTTPStatusList(HTTPStatusListOptions{URL: server.URL, Client: client})
+			require.NoError(t, err)
+
+			list, err := source.Current()
+			require.ErrorIs(t, err, ErrStatusListUnavailable)
+			require.ErrorIs(t, err, ErrInvalidStatusListURL)
+			require.Nil(t, list)
+		})
+	}
+	require.Zero(t, followed.Load(), "the plaintext target is never asked")
+}
+
 func TestFreshUntil_AgeBeyondLifetimeIsStale(t *testing.T) {
 	received := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	for _, age := range []string{"60", "120"} {
