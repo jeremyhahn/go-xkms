@@ -17,7 +17,7 @@ Documentation=https://github.com/jeremyhahn/go-xkms
 After=systemd-udevd.service
 Wants=systemd-udevd.service
 # Start after xKMS server if both are running
-After=xkms.service
+After=xkmsd.service
 
 [Service]
 Type=simple

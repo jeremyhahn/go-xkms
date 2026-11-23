@@ -9,7 +9,7 @@
 name="xkms"
 description="Go xKMS - Cryptographic Key Management Service"
 command="/usr/bin/xkmsd"
-command_args="-config ${XKMS_CONFIG:-/etc/xkms/config.yaml}"
+command_args="--config ${XKMS_CONFIG:-/etc/xkms/xkmsd.yaml}"
 command_user="xkms:xkms"
 command_background="yes"
 pidfile="/run/xkms/xkms.pid"
@@ -35,8 +35,8 @@ start_pre() {
     checkpath --directory --owner xkms:xkms --mode 0750 /var/lib/xkms/certs
 
     # Verify config exists
-    if [ ! -f "${XKMS_CONFIG:-/etc/xkms/config.yaml}" ]; then
-        eerror "Configuration file not found: ${XKMS_CONFIG:-/etc/xkms/config.yaml}"
+    if [ ! -f "${XKMS_CONFIG:-/etc/xkms/xkmsd.yaml}" ]; then
+        eerror "Configuration file not found: ${XKMS_CONFIG:-/etc/xkms/xkmsd.yaml}"
         return 1
     fi
 }
