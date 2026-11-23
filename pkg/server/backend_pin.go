@@ -27,8 +27,8 @@ import (
 var ErrBackendPINNotConfigured = errors.New("server: no backend PIN strategy (PKCS#11 backend not enabled)")
 
 // errBackendPINNoConfiguredPIN reports a sealed/tpm2 release with no
-// resolved backends.pkcs11.pin.
-var errBackendPINNoConfiguredPIN = errors.New("server: backends.pkcs11.pin is not set")
+// resolved backends.pkcs11.pin or active rng.pkcs11.pin.
+var errBackendPINNoConfiguredPIN = errors.New("server: neither backends.pkcs11.pin nor rng.pkcs11.pin is set")
 
 // errBackendPINNotTPMSealed reports a tpm2 release whose PIN is not sealed
 // to the TPM (credentials.seal_strategy is not tpm2).
@@ -51,13 +51,26 @@ func (s *Server) pkcs11Enabled() bool {
 	return s.config.Backends.PKCS11 != nil && s.config.Backends.PKCS11.Enabled
 }
 
+// rngPKCS11PINActive reports an rng.pkcs11.pin the RNG can use: a PIN is
+// configured and the PKCS#11 RNG is selected (mode pkcs11 or auto, or the
+// pkcs11 fallback).
+func (s *Server) rngPKCS11PINActive() bool {
+	rng := s.config.RNG
+	if rng.PKCS11 == nil || rng.PKCS11.PIN == nil {
+		return false
+	}
+	return rng.Mode == "pkcs11" || rng.Mode == "auto" || rng.FallbackMode == "pkcs11"
+}
+
 // resolveBackendPIN resolves the backend PIN strategy through
 // pinselect.ResolveBackendPIN at start-up, beside buildSecretRegistry
 // (owner decision 230, #2262). It persists the strategy and installs the
 // in-memory holder; it starts nothing. A refused resolution is returned
 // unchanged so start-up stops (fail closed, never a silent downgrade).
 func (s *Server) resolveBackendPIN() error {
-	if !s.pkcs11Enabled() {
+	// The policy covers both backends.pkcs11.pin and rng.pkcs11.pin: an
+	// active RNG PIN is resolved and enforced even without the key backend.
+	if !s.pkcs11Enabled() && !s.rngPKCS11PINActive() {
 		return nil
 	}
 	// Manual is refused before anything is persisted or released: no
@@ -144,11 +157,19 @@ func (s *Server) probeBackendPIN() (bool, bool) {
 // backends.pkcs11.pin, readable only after unseal (resolveConfigSecrets
 // runs after the barrier is unsealed). The copy is owned by the holder.
 func (s *Server) releaseConfiguredPKCS11PIN(ctx context.Context) ([]byte, error) {
-	if !s.pkcs11Enabled() || s.config.Backends.PKCS11.Pin == nil {
+	// The key backend's PIN when it is enabled, otherwise the active RNG PIN.
+	var secret *types.SecretValue
+	switch {
+	case s.pkcs11Enabled():
+		secret = s.config.Backends.PKCS11.Pin
+	case s.rngPKCS11PINActive():
+		secret = s.config.RNG.PKCS11.PIN
+	}
+	if secret == nil {
 		return nil, errBackendPINNoConfiguredPIN
 	}
 	var pin []byte
-	err := s.config.Backends.PKCS11.Pin.WithBytes(ctx, func(b []byte) error {
+	err := secret.WithBytes(ctx, func(b []byte) error {
 		pin = append([]byte(nil), b...)
 		return nil
 	})
@@ -167,6 +188,10 @@ func (s *Server) startPKCS11AfterUnseal() error {
 	}
 	if err := s.backendPIN.Unseal(s.ctx, nil); err != nil {
 		return &ErrBackendInit{Backend: "PKCS#11", Err: err}
+	}
+	if !s.pkcs11Enabled() {
+		// Only an RNG PIN is held: released, but no key backend to open.
+		return nil
 	}
 	return s.openPKCS11WithHeldPIN()
 }
