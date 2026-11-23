@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"os"
 	"sort"
@@ -324,8 +325,22 @@ func (f *tenantCAKeyFactory) ReclaimWithdrawnTenants(ctx context.Context) error 
 		}
 	}
 	sort.Strings(ids)
+	f.mu.RLock()
+	lookup := f.tenants
+	f.mu.RUnlock()
 	var errs []error
 	for _, id := range ids {
+		// go-qrdb's ListTenants skips metadata it cannot decode and still
+		// succeeds, so a tenant missing from the listing is only a
+		// candidate: GetTenant must report it as typed not-found before its
+		// CA is destroyed. Any other answer keeps the material.
+		if lookup != nil {
+			if _, getErr := lookup.GetTenant(ctx, id); !errors.Is(getErr, qrdbsdk.ErrTenantMissing) {
+				slog.Default().Warn("tenant login CA reclaim skipped: tenant not confirmed deleted",
+					"tenant", id, "lookup_failed", getErr != nil)
+				continue
+			}
+		}
 		if err := f.RemoveTenant(ctx, id); err != nil {
 			errs = append(errs, err)
 			continue
