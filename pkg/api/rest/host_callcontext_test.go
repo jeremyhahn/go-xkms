@@ -77,9 +77,6 @@ func newEnforcingHostServer(t *testing.T, node *qrdbnode.Node) *Server {
 	svc, err := xkms.Get()
 	require.NoError(t, err)
 
-	// As xkmsd does when it builds WebAuthn over its embedded node: the
-	// principal gains the user store's users grant.
-	serviceprincipal.RegisterWebAuthnGrant()
 	allow := true
 	srv, err := NewHostServer(context.Background(), &HostConfig{
 		XKMSService: svc,

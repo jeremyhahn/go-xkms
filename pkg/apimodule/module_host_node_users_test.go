@@ -97,6 +97,29 @@ func TestModuleHost_NodeUsers_WebAuthnBeginOverAuthNode(t *testing.T) {
 	require.NotContains(t, w.Body.String(), "unauthenticated")
 }
 
+// TestModuleHost_WebAuthnPrincipalGainsNoUserPermission: a self-built module
+// host with WebAuthn over the node leaves the service principal's grant as
+// it was (role grants are process-global, so any node of the principal
+// shows it): its service context still cannot read or update a user.
+func TestModuleHost_WebAuthnPrincipalGainsNoUserPermission(t *testing.T) {
+	_, _, h := nodeHostedModule(t)
+	// The first request builds the module's host.
+	w := serveJSON(t, h, http.MethodPost, "/api/v1/webauthn/registration/begin", map[string]string{
+		"email":        "principal-check@example.com",
+		"display_name": "Principal Check",
+	})
+	require.Equal(t, http.StatusForbidden, w.Code, "registration/begin: %s", w.Body.String())
+
+	node := barriertest.NewPrincipalNode(t)
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	var denied *qrdbsdk.PermissionDeniedError
+	_, err = node.Client().Users().GetUserByEmail(ctx, "system", "nobody@example.com")
+	require.ErrorAs(t, err, &denied, "the service principal reads users")
+	_, err = node.Client().Users().UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: 1, Name: "renamed"})
+	require.ErrorAs(t, err, &denied, "the service principal updates users")
+}
+
 // TestModuleHost_NodeUsers_FreshInviteRedeemsOverAuthNode is ruling 973 on
 // the apimodule host path: without WithNodeUsers a fresh invite's user read
 // ran with the anonymous request context and the invite answered 404.
