@@ -1266,7 +1266,7 @@ jobs:
       packages: write
     outputs:
       toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
-      it_ref: ${{ steps.publish.outputs.it_ref || steps.pool.outputs.it_ref || steps.resolve.outputs.it_ref }}
+      it_ref: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
@@ -1363,28 +1363,24 @@ jobs:
         env:
           CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ steps.resolve.outputs.toolchain_ref }}
-          IT_REF: ${{ steps.resolve.outputs.it_ref }}
         run: |
           if [ -z "$TOOLCHAIN_REF" ]; then
             ref=$(scripts/ci-registry.sh pool toolchain)
             echo "toolchain_ref=$ref" >> "$GITHUB_OUTPUT"
           fi
-          if [ -z "$IT_REF" ]; then
-            ref=$(scripts/ci-registry.sh pool it)
-            echo "it_ref=$ref" >> "$GITHUB_OUTPUT"
-          fi
 
       # A published reference is always a digest; a resolved one is a digest
-      # or "" (never "" on a same-repo pull request: the pool built it).
+      # or "" (the toolchain is never "" on a same-repo pull request: the pool
+      # built it; the integration image may be "", no pool job consumes it).
       - name: Validate the image references
         env:
           TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
-          IT_REF: ${{ steps.publish.outputs.it_ref || steps.pool.outputs.it_ref || steps.resolve.outputs.it_ref }}
+          IT_REF: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
         run: |
           re='^[^@ ]+@sha256:[0-9a-f]{64}$'
           for v in TOOLCHAIN_REF IT_REF; do
             ref=${!v}
-            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ] && [ "$CI_POOL" != true ]; then
+            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ] && { [ "$CI_POOL" != true ] || [ "$v" = IT_REF ]; }; then
               echo "$v is empty: the consumers build the image on their runners"
               continue
             fi
