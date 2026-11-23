@@ -27,6 +27,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/internal/softhsmtest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
+	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -127,8 +128,13 @@ func TestPreNodePKCS11_UnavailableTokenStillRefuses(t *testing.T) {
 // place for that store the open is a typed error, never a fallback to the
 // configured (barrier-held) PIN.
 func TestOpenPreNodePKCS11Backend_SealedPINStoreRequired(t *testing.T) {
+	// Only tpm2 passes the pre-node backend PIN policy; the empty datastore
+	// path makes the backend PIN record relative, so run in a scratch dir.
+	t.Chdir(t.TempDir())
 	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
 	s.config.Datastore.Path = ""
+	s.config.Credentials.SealStrategy = "tpm2"
+	s.backendPINProbe = func() (bool, bool) { return true, false }
 
 	err := s.openPreNodePKCS11Backend()
 	var initErr *ErrBackendInit
@@ -136,6 +142,110 @@ func TestOpenPreNodePKCS11Backend_SealedPINStoreRequired(t *testing.T) {
 	var pathErr *embeddednode.ErrDatastorePathRequired
 	assert.True(t, errors.As(err, &pathErr), "error = %v, want ErrDatastorePathRequired", err)
 	assert.Empty(t, s.keyProviders)
+}
+
+// requirePreNodePolicyRefusal checks a pre-node open refused by the backend
+// PIN policy: the typed error, no token open and no strategy record.
+func requirePreNodePolicyRefusal(t *testing.T, s *Server, err error, strategy pinselect.BackendPINStrategy) {
+	t.Helper()
+	require.ErrorIs(t, err, ErrBackendPINNodeKeyBeforeUnseal)
+	assert.Contains(t, err.Error(), string(strategy))
+	assert.Empty(t, s.keyProviders, "the token must not open below the tpm2 strategy")
+	assert.Nil(t, s.backendPIN)
+}
+
+func requireNoBackendPINRecord(t *testing.T, s *Server) {
+	t.Helper()
+	_, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+	require.ErrorIs(t, err, pinselect.ErrBackendPINStrategyNotPersisted, "a refused pre-node resolution persisted a record")
+}
+
+// Before unseal only tpm2 can supply the PIN: a Raft key on the token with
+// strategy sealed stops start-up before the token opens.
+func TestOpenPreNodePKCS11Backend_SealedStrategyRefusedBeforeOpen(t *testing.T) {
+	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
+	s.config.BackendPIN.Strategy = string(pinselect.BackendPINSealed)
+	s.backendPINProbe = func() (bool, bool) { return false, true }
+
+	err := s.openPreNodePKCS11Backend()
+	requirePreNodePolicyRefusal(t, s, err, pinselect.BackendPINSealed)
+	requireNoBackendPINRecord(t, s)
+}
+
+// auto with no TPM-sealed credentials resolves to sealed: refused the same.
+func TestOpenPreNodePKCS11Backend_AutoToSealedRefusedBeforeOpen(t *testing.T) {
+	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
+	// A TPM is present, but the credentials are not sealed to it.
+	s.backendPINProbe = func() (bool, bool) { return true, false }
+
+	err := s.openPreNodePKCS11Backend()
+	requirePreNodePolicyRefusal(t, s, err, pinselect.BackendPINSealed)
+	requireNoBackendPINRecord(t, s)
+}
+
+// A persisted sealed record governs auto: refused the same, record kept.
+func TestOpenPreNodePKCS11Backend_PersistedSealedRefusedBeforeOpen(t *testing.T) {
+	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
+	require.NoError(t, pinselect.SaveBackendPINStrategy(s.backendPINDir(), pinselect.BackendPINSealed))
+	s.config.Credentials.SealStrategy = "tpm2"
+	s.backendPINProbe = func() (bool, bool) { return true, false }
+
+	err := s.openPreNodePKCS11Backend()
+	requirePreNodePolicyRefusal(t, s, err, pinselect.BackendPINSealed)
+	persisted, loadErr := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+	require.NoError(t, loadErr)
+	assert.Equal(t, pinselect.BackendPINSealed, persisted)
+}
+
+// A minimum above the resolved strategy is refused before the open.
+func TestOpenPreNodePKCS11Backend_MinimumRefusedBeforeOpen(t *testing.T) {
+	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
+	s.config.BackendPIN.Minimum = string(pinselect.BackendPINTPM2)
+	s.backendPINProbe = func() (bool, bool) { return false, true }
+
+	err := s.openPreNodePKCS11Backend()
+	var below *pinselect.BackendPINBelowMinimumError
+	require.True(t, errors.As(err, &below), "error = %v, want BackendPINBelowMinimumError", err)
+	assert.Empty(t, s.keyProviders)
+	assert.Nil(t, s.backendPIN)
+	requireNoBackendPINRecord(t, s)
+}
+
+// tpm2 with TPM-sealed credentials passes the policy and reaches the
+// pre-barrier PIN release (here: no datastore path for its store).
+func TestOpenPreNodePKCS11Backend_TPM2PassesPolicy(t *testing.T) {
+	t.Chdir(t.TempDir())
+	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
+	s.config.Datastore.Path = ""
+	s.config.BackendPIN.Strategy = string(pinselect.BackendPINTPM2)
+	s.config.Credentials.SealStrategy = "tpm2"
+	s.backendPINProbe = func() (bool, bool) { return true, false }
+
+	err := s.openPreNodePKCS11Backend()
+	require.NotErrorIs(t, err, ErrBackendPINNodeKeyBeforeUnseal)
+	var pathErr *embeddednode.ErrDatastorePathRequired
+	require.True(t, errors.As(err, &pathErr), "error = %v, want ErrDatastorePathRequired", err)
+	assert.Empty(t, s.keyProviders)
+
+	// The later start-up step reuses the pre-node resolution.
+	require.NoError(t, s.resolveBackendPIN())
+	require.NotNil(t, s.backendPIN)
+	assert.Equal(t, pinselect.BackendPINTPM2, s.backendPIN.Strategy())
+}
+
+// Without a Raft key on the token nothing opens before the node and the
+// sealed strategy stays allowed.
+func TestOpenPreNodePKCS11Backend_NoNodeKeyKeepsSealed(t *testing.T) {
+	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
+	s.config.Cluster.RaftEnrollment.KeyBackend = ""
+	s.config.BackendPIN.Strategy = string(pinselect.BackendPINSealed)
+	s.backendPINProbe = func() (bool, bool) { return false, true }
+
+	require.NoError(t, s.openPreNodePKCS11Backend())
+	assert.Empty(t, s.keyProviders)
+	require.NoError(t, s.resolveBackendPIN())
+	require.NotNil(t, s.backendPIN)
+	assert.Equal(t, pinselect.BackendPINSealed, s.backendPIN.Strategy())
 }
 
 // TestOpenPreNodePKCS11Backend_OnlyForAPKCS11NodeKey proves nothing opens
