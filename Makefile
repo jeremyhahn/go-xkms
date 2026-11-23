@@ -1867,8 +1867,17 @@ coverage-xkmsctl:
 # integration-test-bootstrap runs first (ruling 981): Make runs prerequisites
 # in order, and a bootstrap image build failure at the end of the list used to
 # cost the whole two-hour suite; first, it costs minutes.
-integration-test: clean-test-containers integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
+#
+# integration-images runs before the first suite (#2266): it builds the
+# softhsm, swtpm and xkms-server compose images once for the run, and the
+# target-specific XKMS_SERVER_UP_BUILD below makes every PKCS#11 suite start
+# those prebuilt tags instead of rebuilding all three (7-14 min each).
+integration-test: clean-test-containers integration-images integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
+
+# The suites of one integration-test run start the images integration-images
+# built; a sub-suite run on its own keeps the default --build (#2266).
+integration-test: XKMS_SERVER_UP_BUILD :=
 
 # run-image-refs sets the shell variable refs to this run's images: each
 # image of a repository on XKMS_IMAGE_REPOS that carries XKMS_IMAGE_TAG. Its
@@ -2738,6 +2747,9 @@ endef
 #   XKMS_COMPOSE_SERVER=1   always start it, building the image if necessary
 #   XKMS_COMPOSE_SERVER=0   never start it; always use the fallback
 XKMS_COMPOSE_SERVER ?= auto
+# The compose build flag compose_up_xkms_server passes to `up`. integration-test
+# sets it empty because integration-images already built the images (#2266).
+XKMS_SERVER_UP_BUILD ?= --build
 
 define compose_up_xkms_server
 	@$(MAKE) --no-print-directory stage-gomodauth
@@ -2746,12 +2758,12 @@ define compose_up_xkms_server
 			echo "$(YELLOW)xkms-server disabled (XKMS_COMPOSE_SERVER=0); the devcontainer serves the socket.$(RESET)" ;; \
 		1|yes|on) \
 			echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
-			$(DOCKER_COMPOSE) up -d --build xkms-server; \
+			$(DOCKER_COMPOSE) up -d $(XKMS_SERVER_UP_BUILD) xkms-server; \
 			$(MAKE) --no-print-directory devcontainer-server-wait ;; \
 		*) \
 			if docker image inspect $(XKMS_SERVER_IMAGE) >/dev/null 2>&1; then \
 				echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
-				$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
+				$(DOCKER_COMPOSE) up -d $(XKMS_SERVER_UP_BUILD) xkms-server || true; \
 				$(MAKE) --no-print-directory devcontainer-server-wait || \
 					$(DOCKER_COMPOSE) stop xkms-server >/dev/null 2>&1 || true; \
 			else \
@@ -2869,6 +2881,16 @@ devcontainer-verify: stage-gomodauth
 ## devcontainer-server-build: Build the compose xkms-server image (go-xkms-server:dev)
 devcontainer-server-build:
 	$(DOCKER_COMPOSE) build xkms-server
+
+# One build of the compose images per Integration run (#2266): every PKCS#11
+# suite of integration-test used to run `up -d --build xkms-server`, which
+# rebuilt softhsm, swtpm and xkms-server each time. The images carry the
+# per-run XKMS_IMAGE_TAG, so clean-run-images removes them after the run.
+.PHONY: integration-images
+## integration-images: Build the softhsm, swtpm and xkms-server compose images once for integration-test
+integration-images:
+	@$(MAKE) --no-print-directory stage-gomodauth
+	$(DOCKER_COMPOSE) build softhsm swtpm xkms-server
 
 .PHONY: devcontainer-server-up
 ## devcontainer-server-up: Start the compose xkms-server service and wait for its Unix socket
