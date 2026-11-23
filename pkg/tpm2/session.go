@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
@@ -1265,12 +1266,23 @@ func isKeyPairRecoveryFence(pub []byte) bool {
 // at any point leaves the fence, never a real public blob beside a foreign
 // private blob: LoadKeyPair reports the fenced key as incomplete, and the
 // next create-only save takes the fence over and finishes the pair.
+// keyPairRecoveryMu serializes recoverKeyPair across every writer of this
+// process, whatever backend it shares.
+var keyPairRecoveryMu sync.Mutex
+
 func (tpm *TPM2) recoverKeyPair(
 	keyAttrs *types.KeyAttributes,
 	outPrivate tpm2.TPM2BPrivate,
 	outPublic tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic],
 	backend store.KeyBackend,
 	exists error) error {
+
+	// The fence alone cannot stop a recovery that lost it from overwriting
+	// the private blob of the one that took it over (the backend has no
+	// compare-and-swap), so every recovery runs the whole pair mutation
+	// alone. Recovery is rare: one lock for all keys costs nothing.
+	keyPairRecoveryMu.Lock()
+	defer keyPairRecoveryMu.Unlock()
 
 	nonce := make([]byte, 16)
 	if _, err := rand.Read(nonce); err != nil {

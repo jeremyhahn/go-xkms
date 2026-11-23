@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
@@ -256,6 +257,81 @@ func TestSaveKeyPair_RecoveryCrashLeavesNoMismatch(t *testing.T) {
 	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	require.NoError(t, err)
 	require.Equal(t, "public-C/private-C", string(gotPub)+"/"+string(gotPriv))
+}
+
+// pausingKeyBackend holds the first private-blob overwrite until release
+// closes, after signalling reached: a recovery paused just before it
+// writes its private blob.
+type pausingKeyBackend struct {
+	store.KeyBackend
+	once    sync.Once
+	reached chan struct{}
+	release chan struct{}
+}
+
+func (b *pausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, fsext types.FSExtension, overwrite bool) error {
+	if fsext == store.FSEXT_PRIVATE_BLOB && overwrite {
+		b.once.Do(func() {
+			close(b.reached)
+			<-b.release
+		})
+	}
+	return b.KeyBackend.Save(attrs, data, fsext, overwrite)
+}
+
+// Two recoveries of one incomplete pair: B pauses before its private
+// overwrite while C runs. Whatever order they finish in, the stored pair
+// must be one recovery's whole pair, never public C with private B.
+func TestSaveKeyPair_ConcurrentRecoveriesLeaveOnePair(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{
+		CN:      "concurrent-recovery-key",
+		KeyType: types.KeyTypeTPM,
+		Parent: &types.KeyAttributes{CN: "parent", KeyType: types.KeyTypeStorage,
+			TPMAttributes: &types.TPMAttributes{
+				Handle: tpm2.TPMHandle(0x81000001),
+				Name:   tpm2.TPM2BName{Buffer: []byte{0x00, 0x0b}},
+			}},
+	}
+	require.NoError(t, shared.Save(attrs, []byte("private-A"), store.FSEXT_PRIVATE_BLOB, false))
+
+	paused := &pausingKeyBackend{KeyBackend: shared, reached: make(chan struct{}), release: make(chan struct{})}
+	bDone := make(chan error, 1)
+	go func() {
+		bDone <- tpmImpl.SaveKeyPair(attrs, tpm2.TPM2BPrivate{Buffer: []byte("private-B")},
+			tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B")), paused, false)
+	}()
+	<-paused.reached
+
+	cDone := make(chan error, 1)
+	go func() {
+		cDone <- tpmImpl.SaveKeyPair(attrs, tpm2.TPM2BPrivate{Buffer: []byte("private-C")},
+			tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-C")), shared, false)
+	}()
+	// C either completes while B is paused (no serialization) or waits
+	// for B; release B in both cases.
+	select {
+	case err := <-cDone:
+		cDone <- err
+	case <-time.After(500 * time.Millisecond):
+	}
+	close(paused.release)
+	errB, errC := <-bDone, <-cDone
+	require.False(t, errB != nil && errC != nil, "one recovery must succeed: B=%v C=%v", errB, errC)
+
+	gotPriv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	require.Contains(t, []string{"public-B/private-B", "public-C/private-C"}, string(gotPub)+"/"+string(gotPriv))
 }
 
 func TestSaveKeyPairWithNilBackend(t *testing.T) {
