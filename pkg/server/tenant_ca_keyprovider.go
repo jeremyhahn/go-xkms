@@ -668,6 +668,7 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 	// over while this pass runs: a backend may ignore the context (PKCS#11
 	// waits on the token's mutex without a deadline), so no lease bounds
 	// when this pass can still make its key.
+	tenantLoginCAGenerateHook(tenantID)
 	_, err = scoped.GenerateECDSA(ctx, attrs)
 	// The generate returned, so it makes no key any more: put back a plain
 	// claim, which teardown may replace and a later pass may take over once
@@ -1385,6 +1386,11 @@ func deleteTenantLoginCAMaterial(ctx context.Context, base xkms.Backend, tenantI
 // certificate missing or invalid and before it publishes one. Tests set it to
 // interleave passes; it is a no-op otherwise.
 var tenantLoginCACertPublishHook = func(string) {}
+
+// tenantLoginCAGenerateHook runs after a pass holds the generating claim and
+// before it generates the key. Tests set it to interleave teardown; it is a
+// no-op otherwise.
+var tenantLoginCAGenerateHook = func(string) {}
 
 func ensureTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBackend, tenantID string, signer crypto.Signer) error {
 	if tenantLoginCACertValid(ctx, scoped, signer.Public()) {
