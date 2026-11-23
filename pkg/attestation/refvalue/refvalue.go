@@ -525,7 +525,8 @@ func checkTag(tag corim.Tag) (err error) {
 
 // checkCoSWID enforces the fields RFC 9393 requires of a concise-swid-tag
 // that the decoder fills with zero values when they are absent: a tag-id
-// (a decoded zero TagID marshals as CBOR null), a software-name, and at
+// (a decoded zero TagID marshals as CBOR null), a tag-version (read from
+// body, the raw tag, since 0 is legal), a software-name, and at
 // least one entity, each named with a valid role, one of them the
 // tag-creator.
 func checkCoSWID(s *swid.SoftwareIdentity, body []byte) error {
@@ -547,7 +548,16 @@ func checkCoSWID(s *swid.SoftwareIdentity, body []byte) error {
 			return fmt.Errorf("coswid: entity %d: %w", i, err)
 		}
 	}
-	tagCreator, err := coswidHasTagCreator(body)
+	var tag map[any]cbor.RawMessage
+	if err := cbor.Unmarshal(body, &tag); err != nil {
+		return fmt.Errorf("coswid: %w", err)
+	}
+	// The decoder fills a missing tag-version with 0, a legal value, so
+	// presence is read from the wire.
+	if _, ok := tag[uint64(coswidKeyTagVersion)]; !ok {
+		return ErrCoSWIDTagVersion
+	}
+	tagCreator, err := coswidHasTagCreator(tag)
 	if err != nil {
 		return fmt.Errorf("coswid: %w", err)
 	}
@@ -559,21 +569,18 @@ func checkCoSWID(s *swid.SoftwareIdentity, body []byte) error {
 
 // CoSWID map keys (RFC 9393) read from the raw tag.
 const (
-	coswidKeyEntity = 2
-	coswidKeyRole   = 33
+	coswidKeyEntity     = 2
+	coswidKeyTagVersion = 12
+	coswidKeyRole       = 33
 )
 
 // coswidHasTagCreator reports whether an entity of the raw concise-swid-tag
-// body holds the registered tag-creator role, code point 1
+// map holds the registered tag-creator role, code point 1
 // (swid.RoleTagCreator). It reads the wire form because the swid decoder
 // turns the text "tagCreator" into code point 1 and swid.Roles.String joins
 // code points and free text alike: only the unsigned integer 1 counts, a
 // text role never does, whatever it spells.
-func coswidHasTagCreator(body []byte) (bool, error) {
-	var tag map[any]cbor.RawMessage
-	if err := cbor.Unmarshal(body, &tag); err != nil {
-		return false, err
-	}
+func coswidHasTagCreator(tag map[any]cbor.RawMessage) (bool, error) {
 	entities, err := cborOneOrMany(tag[uint64(coswidKeyEntity)])
 	if err != nil {
 		return false, fmt.Errorf("entity: %w", err)
