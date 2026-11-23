@@ -35,8 +35,6 @@ import (
 	"github.com/jeremyhahn/go-enclave"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
-	// The SDK facade aliases the handler but not the CTAPHID command bytes.
-	ctaphid "github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -51,6 +49,9 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+// ctaphidCancel is the CTAPHID_CANCEL command byte (CTAP 2.1 section 11.2.9.1.5, same value as pkg/fido2/authenticator CTAPHIDCancel).
+const ctaphidCancel byte = 0x11 | 0x80
 
 // FIDO2 configuration errors.
 var (
@@ -1332,7 +1333,7 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 
 			// CTAPHID_CANCEL must reach the handler while a command is
 			// pending, so it never queues behind that command.
-			if packet[4] == ctaphid.CTAPHIDCancel {
+			if packet[4] == ctaphidCancel {
 				d.hidHandler.HandleMessage(packet)
 				continue
 			}
