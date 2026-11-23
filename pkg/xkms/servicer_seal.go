@@ -125,12 +125,12 @@ func (s *XKMSService) sealingKey(ctx context.Context, b Backend, backendName, te
 	}
 	defaults := defaultSealingKeyAttributes(kp.Type())
 	owner := recordTenant(tenant)
-	k, err := s.resolveKeyOf(ctx, b, backendName, defaults.CN, &owner)
+	k, err := s.resolveKeyOf(ctx, b, backendName, defaults.CN, owner)
 	if errors.Is(err, ErrKeyNotFound) && create {
 		if err := ensureSealingKey(ctx, b, defaults); err != nil {
 			return nil, nil, err
 		}
-		k, err = s.resolveKeyOf(ctx, b, backendName, defaults.CN, &owner)
+		k, err = s.resolveKeyOf(ctx, b, backendName, defaults.CN, owner)
 	}
 	if err != nil {
 		return nil, nil, err

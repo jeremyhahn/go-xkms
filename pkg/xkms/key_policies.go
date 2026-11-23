@@ -167,7 +167,7 @@ func (s *XKMSService) admitKey(ctx context.Context, k *versionedKey, op keypolic
 		// past (keyRotated runs after the new version is recorded), so the
 		// key is resolved again and the operation uses, and is charged to,
 		// the new version.
-		fresh, err := s.resolveKeyOf(ctx, k.backend, k.backendName, k.keyID, &k.tenant)
+		fresh, err := s.resolveKeyOf(ctx, k.backend, k.backendName, k.keyID, k.tenant)
 		if err != nil {
 			return err
 		}

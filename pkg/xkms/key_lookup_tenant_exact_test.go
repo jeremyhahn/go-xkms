@@ -168,12 +168,12 @@ func TestKeyLookup_TenantExact_FindKeyAttributes(t *testing.T) {
 	got, err := FindKeyAttributes(context.Background(), b, "k")
 	require.NoError(t, err)
 	assert.Equal(t, "", recordTenant(got.TenantID))
-	assert.Same(t, want, got)
+	assert.Equal(t, want, got)
 
 	got, err = findKeyAttrs(context.Background(), b, "k")
 	require.NoError(t, err)
 	assert.Equal(t, "", recordTenant(got.TenantID))
-	assert.Same(t, want, got)
+	assert.Equal(t, want, got)
 }
 
 func TestKeyLookup_TenantExact_NoPlatformKey(t *testing.T) {

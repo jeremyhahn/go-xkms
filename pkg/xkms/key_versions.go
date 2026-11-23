@@ -148,19 +148,13 @@ func recordTenant(tenantID string) string {
 	return tenantID
 }
 
-// versionsIn collects the backend keys in keys that are versions of keyID.
-// On an unscoped view the same key ID can belong to more than one tenant;
-// the tenant of the first match is the one resolved, exactly as findKeyAttrs
-// resolves a common name. A non-nil only restricts the match to that tenant
-// ("" is the system tenant).
-func versionsIn(keys []*types.KeyAttributes, keyID string, only *string) (tenant string, present map[uint32]*types.KeyAttributes) {
-	present = make(map[uint32]*types.KeyAttributes)
-	matched := false
-	if only != nil {
-		tenant, matched = *only, true
-	}
+// versionsIn collects the backend keys in keys that are versions of keyID
+// and belong to tenant ("" is the system tenant). The same key ID can belong
+// to more than one tenant on an unscoped view; only tenant's are kept.
+func versionsIn(keys []*types.KeyAttributes, keyID, tenant string) map[uint32]*types.KeyAttributes {
+	present := make(map[uint32]*types.KeyAttributes)
 	for _, attrs := range keys {
-		if attrs == nil {
+		if attrs == nil || recordTenant(attrs.TenantID) != tenant {
 			continue
 		}
 		n := uint32(1)
@@ -171,15 +165,9 @@ func versionsIn(keys []*types.KeyAttributes, keyID string, only *string) (tenant
 			}
 			n = version
 		}
-		t := recordTenant(attrs.TenantID)
-		if !matched {
-			tenant, matched = t, true
-		}
-		if t == tenant {
-			present[n] = attrs
-		}
+		present[n] = attrs
 	}
-	return tenant, present
+	return present
 }
 
 // FindKeyAttributes returns the attributes of a backend key of keyID in b,
@@ -197,7 +185,7 @@ func FindKeyAttributes(ctx context.Context, b Backend, keyID string) (*types.Key
 	if err != nil {
 		return nil, err
 	}
-	_, present := versionsIn(keys, keyID, nil)
+	present := versionsIn(keys, keyID, viewTenant(b))
 	var highest uint32
 	for n := range present {
 		highest = max(highest, n)
@@ -216,14 +204,14 @@ func FindKeyAttributes(ctx context.Context, b Backend, keyID string) (*types.Key
 // has a backend key; its record is read from the version store, or is the
 // implicit one when the key has none or no store is wired.
 func (s *XKMSService) resolveKey(ctx context.Context, b Backend, backendName, keyID string) (*versionedKey, error) {
-	return s.resolveKeyOf(ctx, b, backendName, keyID, nil)
+	return s.resolveKeyOf(ctx, b, backendName, keyID, viewTenant(b))
 }
 
-// resolveKeyOf is resolveKey restricted, when only is non-nil, to the keys
-// of that tenant ("" is the system tenant). A key a caller owns by
-// convention rather than by name -- its default sealing key -- is resolved
-// this way, so an unscoped view never answers with another tenant's.
-func (s *XKMSService) resolveKeyOf(ctx context.Context, b Backend, backendName, keyID string, only *string) (*versionedKey, error) {
+// resolveKeyOf is resolveKey for the keys of tenant ("" is the system
+// tenant) in b. A key a caller owns by convention rather than by name --
+// its default sealing key -- is resolved this way, so an unscoped view
+// never answers with another tenant's.
+func (s *XKMSService) resolveKeyOf(ctx context.Context, b Backend, backendName, keyID, tenant string) (*versionedKey, error) {
 	if _, _, ok := keyversion.Parse(keyID); ok {
 		return nil, &keyversion.ReservedKeyIDError{KeyID: keyID}
 	}
@@ -231,7 +219,7 @@ func (s *XKMSService) resolveKeyOf(ctx context.Context, b Backend, backendName, 
 	if err != nil {
 		return nil, err
 	}
-	tenant, present := versionsIn(keys, keyID, only)
+	present := versionsIn(keys, keyID, tenant)
 	if len(present) == 0 {
 		return nil, ErrKeyNotFound
 	}
@@ -259,7 +247,7 @@ func (s *XKMSService) resolveKeyOf(ctx context.Context, b Backend, backendName, 
 		if err != nil {
 			return nil, err
 		}
-		_, k.present = versionsIn(keys, keyID, &tenant)
+		k.present = versionsIn(keys, keyID, k.tenant)
 	}
 	return k, nil
 }
@@ -276,8 +264,16 @@ func (k *versionedKey) listingMisses() bool {
 }
 
 // resolveKeyIn resolves keyID in the view of backendName for tenantID. An
-// empty backendName is the default backend.
+// empty backendName is the default backend. A named tenant is admitted for
+// the caller on ctx through auth.AdmitTenant first, so a cross-tenant reach
+// is always a named, admitted tenant; the refusal is its
+// *qrdbsdk.CrossTenantDeniedError.
 func (s *XKMSService) resolveKeyIn(ctx context.Context, backendName, tenantID, keyID string) (*versionedKey, error) {
+	if tenantID != "" {
+		if err := auth.AdmitTenant(ctx, "key.resolve", tenantID); err != nil {
+			return nil, err
+		}
+	}
 	b, resolvedName, err := s.resolveTenantBackendWithName(backendName, tenantID)
 	if err != nil {
 		return nil, err

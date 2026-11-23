@@ -145,7 +145,7 @@ func (s *XKMSService) SigningPublicKey(ctx context.Context, tenant string, key *
 	// tenant's backend is unscoped, so the lookup is restricted to the
 	// requested tenant: a key of another tenant is never trusted.
 	owner := recordTenant(tenant)
-	k, err := s.resolveKeyOf(ctx, b, backendName, key.KeyID, &owner)
+	k, err := s.resolveKeyOf(ctx, b, backendName, key.KeyID, owner)
 	if err != nil {
 		return nil, err
 	}

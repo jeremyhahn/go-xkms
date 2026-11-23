@@ -43,6 +43,18 @@ func NewTenantScopedBackend(base Backend, tenantID string) *TenantScopedBackend 
 	return &TenantScopedBackend{base: base, tenantID: tenantID}
 }
 
+// viewTenant is the tenant a backend view resolves keys in: the scoped
+// tenant of a *TenantScopedBackend, else "" -- the system tenant, named.
+// The unscoped view is the system tenant's for every key lookup by name,
+// so a lookup never answers with another tenant's key of the same name;
+// its ListKeys still lists every tenant's keys.
+func viewTenant(b Backend) string {
+	if t, ok := b.(*TenantScopedBackend); ok {
+		return recordTenant(t.tenantID)
+	}
+	return ""
+}
+
 // scopeAttrs returns a copy of attrs with TenantID set to this tenant.
 func (t *TenantScopedBackend) scopeAttrs(attrs *types.KeyAttributes) *types.KeyAttributes {
 	if attrs == nil {
