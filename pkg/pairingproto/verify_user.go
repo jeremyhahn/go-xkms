@@ -29,14 +29,13 @@ import (
 // EC P-256 Android Keystore key generated with
 // setUserAuthenticationRequired(true) and a validity of 0 seconds, so the
 // TEE releases one signature per fresh user authentication and never two. The
-// user authenticates with a strong biometric or the device credential, both
-// of which are user verification under CTAP 2.1 (ruling 180). The UVK is a
+// user authenticates with a strong biometric only. The UVK is a
 // different key from the DAK on purpose: the DAK signs without a prompt,
 // which is what reconnect liveness needs, and a key cannot be both. The phone
-// generates the UVK for AUTH_BIOMETRIC_STRONG | AUTH_DEVICE_CREDENTIAL, and the
-// desktop accepts either from the attested userAuthType
-// (android.RequireAttestedPerUseUserVerification); it does not choose the
-// phone's prompt.
+// generates the UVK for AUTH_BIOMETRIC_STRONG alone, never with
+// AUTH_DEVICE_CREDENTIAL: the desktop requires the attested userAuthType to
+// be 2, the biometric alone, and refuses 1 (the device credential) and 3
+// (either) (android.RequireAttestedPerUseUserVerification).
 //
 // The request names the relying party the verification is for (RPName), and
 // the signed transcript binds it, as WebAuthn L2 §6.1 binds the RP into
@@ -223,7 +222,8 @@ func BuildVerifyUserTranscript(rpName string, nonce, channelBinding, uvkFingerpr
 // ErrorCodeUserCancelled.
 const (
 	// ErrorCodeVerifyUserNotEnrolled means the phone has no strong biometric
-	// and no device credential enrolled, so it cannot verify its user.
+	// enrolled, so it cannot verify its user: a device credential alone does
+	// not count, since the UVK is biometric-only.
 	ErrorCodeVerifyUserNotEnrolled = -32041
 
 	// ErrorCodeVerifyUserLockout means the phone has locked user

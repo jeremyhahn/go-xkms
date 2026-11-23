@@ -48,8 +48,9 @@ var (
 	// ErrBiometricFailed indicates biometric verification failed on the device.
 	ErrBiometricFailed = errors.New("pairing: biometric verification failed")
 
-	// ErrUserVerificationNotEnrolled indicates the device has no biometric or
-	// device credential enrolled to verify its user with.
+	// ErrUserVerificationNotEnrolled indicates the device has no strong
+	// biometric enrolled to verify its user with; the UVK is biometric-only,
+	// so a device credential alone does not count.
 	ErrUserVerificationNotEnrolled = errors.New("pairing: no biometric or device credential enrolled")
 
 	// ErrUserVerificationLockout indicates the device has locked user
