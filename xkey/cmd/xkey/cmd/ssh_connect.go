@@ -238,6 +238,19 @@ func defaultSSHKeyOwner(owner string, local bool) string {
 	return owner
 }
 
+// sshHostPinOwner returns the owner of the host-key pins a connect seeds from
+// and writes back to this machine's own pin store. Only the remote key owner
+// may be omitted (the server resolves it to the caller): the local pin store
+// has no caller to resolve, and an empty owner there lists every owner's pins
+// and refuses to record new ones, so an omitted key owner pins under "local".
+func sshHostPinOwner(keyOwner string) string {
+	return defaultSSHKeyOwner(keyOwner, true)
+}
+
+// sshConnectClient opens the SSH client and the host-key pin store a managed
+// key connect uses; tests replace it to stand in for an xkmsd server.
+var sshConnectClient = sshClientWithHostKeys
+
 // lookupSSHProfile returns the saved profile named name. It reports false
 // when name is empty, names no profile, or the profile store cannot be
 // opened: a target that is not a profile is a plain host. The store is
@@ -284,7 +297,7 @@ func runSSHConnect(cmd *cobra.Command, args []string) error {
 		return ErrSSHConnectTarget
 	}
 
-	client, hostKeys, closer, err := sshClientWithHostKeys(cmd)
+	client, hostKeys, closer, err := sshConnectClient(cmd)
 	if err != nil {
 		return err
 	}
@@ -311,7 +324,7 @@ func runSSHConnect(cmd *cobra.Command, args []string) error {
 		Signer:          signer,
 		HostKeys:        hostKeys,
 		Scope:           r.KeyScope,
-		Owner:           r.KeyOwner,
+		Owner:           sshHostPinOwner(r.KeyOwner),
 		ExtraKnownHosts: extraKnownHosts,
 		SkipStore:       skipStore,
 	})
