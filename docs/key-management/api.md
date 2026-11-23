@@ -971,19 +971,20 @@ Query parameters, all optional:
 
 ## Port conflicts — as-shipped reality
 
-Three independent disagreements exist in the tree. Documented as they ship;
-picking canonical values is a config-contract decision for the owner.
+MCP uses one port, 9444, in the shipped configs, the `pkg/config` default
+(`DefaultMCPPort`, used when `server.mcp_port` is omitted) and the SDK. One
+collision remains in the tree, documented as it ships.
 
 | Surface | Shipped config (`configs/xkmsd*.yaml`) | Library / SDK default |
 |---|---|---|
 | REST | `rest_port: 8443` | `sdk/go/options.go` `DefaultRESTAddress = "http://localhost:8443"` — agrees |
 | gRPC | `grpc_port: 9443` | `DefaultGRPCAddress = "localhost:9443"` — agrees |
 | QUIC | `quic_port: 8444` | `DefaultQUICAddress = "localhost:8444"` — agrees |
-| **MCP** | `mcp_port: 8445` | `DefaultMCPAddress = "localhost:9444"`, and `pkg/api/mcp/server.go:175` defaults to `localhost:9444` — **disagree** |
-| **Noise bootstrap** | `noise_port: 8447` in `configs/xkmsd-local.yaml` only | `pkg/trust/bootstrap/bootstrap.go:98` `DefaultNoisePort = "8445"` — **collides with the shipped MCP port**, which is why the local config moves it to 8447 |
+| MCP | `mcp_port: 9444` | `pkg/config` `DefaultMCPPort = 9444`; `DefaultMCPAddress = "localhost:9444"`, and `pkg/api/mcp/server.go:175` defaults to `localhost:9444` — agrees |
+| Noise bootstrap | `noise_port: 8447` in `configs/xkmsd-local.yaml` only | `pkg/trust/bootstrap/bootstrap.go:98` `DefaultNoisePort = "8445"` — no collision with MCP |
 | **ACME QUIC** | — | `pkg/acme/api/server/server.go:49` `DefaultQUICPort = 9444` — **collides with the SDK's MCP default** |
 
-Use explicit ports in configuration until this is settled.
+Do not enable ACME QUIC on its default port on a node that serves MCP on 9444.
 
 ## Versioning and deprecation
 

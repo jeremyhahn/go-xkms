@@ -42,7 +42,7 @@ Earlier documents in this directory were folded into feature folders
 | REST (HTTP/1.1, HTTP/2) | `server.rest_port` | 8443 | |
 | QUIC (HTTP/3) | — | rest port | HTTP/3 is served on `rest_port` (`pkg/server/server.go:2433`) |
 | gRPC | `server.grpc_port` | 9443 | |
-| MCP | `server.mcp_port` | 8445 | Served by the embedded qrdb node (`pkg/server/qrdb_node.go:85-86`) |
+| MCP | `server.mcp_port` | 9444 (default `DefaultMCPPort`; the SDK dials `localhost:9444`) | Served by the embedded qrdb node (`pkg/server/qrdb_node.go:85-86`) |
 | Metrics | `metrics.port` | 9090 | Path `/metrics` |
 
 Health routes are public on REST: `/health`, `/health/live`,

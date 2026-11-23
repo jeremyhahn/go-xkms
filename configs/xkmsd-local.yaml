@@ -6,7 +6,7 @@ server:
   rest_port: 8443
   grpc_port: 9443
   quic_port: 8444
-  mcp_port: 8445
+  mcp_port: 9444
   noise_port: 8447
 
 protocols:

@@ -102,7 +102,8 @@ func rejectRemovedFields(v *viper.Viper) error {
 func Defaults() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Host: DefaultServerHost,
+			Host:    DefaultServerHost,
+			MCPPort: DefaultMCPPort,
 		},
 		TLS: TLSConfig{
 			IncludeLocalhostSANs: true,

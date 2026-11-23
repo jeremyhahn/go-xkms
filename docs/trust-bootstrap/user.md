@@ -159,10 +159,10 @@ If the server can run **no** suite at all it refuses at startup with
 `bootstrap is enabled but this build can run no handshake suite`, naming why
 each was rejected — rather than binding the port and failing every handshake.
 
-The Noise port defaults to 8445 in the library, which collides with the MCP
-port in the shipped configurations. `configs/xkmsd-local.yaml` moves it to 8447
-for exactly that reason. **Set `noise_port` explicitly** and pass `--noise-addr`
-on the client rather than relying on either default.
+The Noise port defaults to 8445 in the library; MCP is on 9444, so the two do
+not collide. `configs/xkmsd-local.yaml` sets `noise_port: 8447`. When the server
+sets a `noise_port` other than 8445, pass the same port with `--noise-addr` on
+the client.
 
 ## About TOFU
 
@@ -195,7 +195,7 @@ you get a pin-mismatch error and should investigate before clearing the pin
 | DANE fails but the record looks right | no DNSSEC validation, or the resolver does not validate | pass `--dane-dns-server` pointing at a validating resolver |
 | DANE breaks after certificate renewal | you published selector 0 | republish with `--selector 1` |
 | SPKI pin mismatch | the certificate changed, or something is in the middle | do not "fix" it by re-pinning without finding out which |
-| Noise connection refused | port collision with MCP (8445) | set `noise_port` explicitly, pass `--noise-addr` |
+| Noise connection refused | the client dials a different Noise port than the server's `noise_port` | pass `--noise-addr` with the server's `noise_port` |
 | `no bootstrap suite can be offered … suite unavailable in this build` | a FIPS client was given only `--noise-key` | pass `--p256-key` (from `show-p256-key` on the server) |
 | `auto` with only `--p256-key` fails at the handshake | the server has not persisted/sealed a P-256 key yet, or the point is not the one `show-p256-key` prints | start the server so it persists its key (#435) and copy the point verbatim |
 | `suite Noise_NK_25519_ChaChaPoly_SHA256: … suite unavailable` | Noise_NK was pinned on a FIPS client | unpin it, or pin `SuiteP256AESGCM` |

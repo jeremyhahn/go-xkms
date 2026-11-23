@@ -562,11 +562,12 @@ noise:
 Validation requires at least one of the two keys. `xkmsctl bootstrap auto`
 takes the same pair as `--noise-key` and `--p256-key`.
 
-**Known conflict, as shipped:** `DefaultNoisePort` is `"8445"`
-(`pkg/trust/bootstrap/bootstrap.go:98`), which is the same value the shipped
-configs use for `mcp_port`. `configs/xkmsd-local.yaml` sets `noise_port: 8447`
-precisely to avoid the collision, so the library default and the shipped
-configuration disagree. Set the port explicitly on both sides. Full table:
+**Ports:** `DefaultNoisePort` is `"8445"`
+(`pkg/trust/bootstrap/bootstrap.go:98`); MCP uses 9444 in the shipped configs,
+the `pkg/config` default and the SDK, so the two do not collide.
+`configs/xkmsd-local.yaml` sets `noise_port: 8447`; a client that derives the
+Noise address from the server URL dials 8445, so pass `--noise-addr` when the
+server sets another port. Full table:
 [`../key-management/api.md`](../key-management/api.md) §Port conflicts.
 
 **Second known disagreement:** `Config.BundlePath`'s doc comment says empty
