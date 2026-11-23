@@ -31,6 +31,12 @@ eq "a rename prints both sides and the source's importer" "$(printf 'pkg/a\npkg/
 # test-pkg's tag set, += lines included: pkg/h imports pkg/g only under gamma.
 G=$(commit_file pkg/g/g.go '// g')
 eq "a tag-gated importer prints with the package" "$(printf 'pkg/g\npkg/h')" "$(run "$RN" "$G")"
+# Git quotes a non-ASCII path ("pkg/c/testdata/\303\251.json") under the
+# default core.quotePath: the change still counts for its package.
+QE=$(commit_file pkg/c/testdata/é.json '{"q": 1}')
+eq "a file Git quotes prints the package that holds it" "pkg/c" "$(run "$G" "$QE")"
+QR=$(move_file pkg/c/testdata/é.json pkg/g/testdata/ü.json)
+eq "a rename between paths Git quotes prints both sides" "$(printf 'pkg/c\npkg/g\npkg/h')" "$(run "$QE" "$QR")"
 # A package that fails to load hides its imports: every package runs.
 put pkg/broken/broken.go 'package broken
 
