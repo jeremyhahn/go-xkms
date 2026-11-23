@@ -114,6 +114,82 @@ eq "a package-load error in a suite's graph prints ALL" "ALL" "$(run "$PT" "$PC2
 g rm -rq test/integration/pi
 PR=$(commit_all "drop pi")
 eq "the load-error case leaves no trace" "beta" "$(run "$PR" "$(commit_file pkg/c/c.go '// pi gone')" | grep -v '^xi$')"
+# rho's target tests only ./test/integration/rho, not its nested sub suite
+# (the pkcs11/module shape): a change only the nested suite sees is ALL, not
+# rho. sigma's pattern target runs ./test/integration/sigma/..., nested
+# suites included.
+cat >>"$REPO/Makefile" <<'EOF'
+
+integration-test-rho:
+	go test -tags "integration $(BUILD_TAGS)" ./test/integration/rho
+EOF
+put pkg/r/r.go 'package r
+
+func R() int { return 16 }'
+put test/integration/rho/rho_test.go '//go:build integration
+
+package rho
+
+import "testing"
+
+func TestRho(t *testing.T) {}'
+put test/integration/rho/sub/sub_test.go '//go:build integration
+
+package sub
+
+import (
+	"testing"
+
+	"example.com/m/pkg/r"
+)
+
+func TestSub(t *testing.T) { _ = r.R() }'
+put test/integration/sigma/sigma_test.go '//go:build integration
+
+package sigma
+
+import "testing"
+
+func TestSigma(t *testing.T) {}'
+put test/integration/sigma/inner/inner_test.go '//go:build integration
+
+package inner
+
+import "testing"
+
+func TestInner(t *testing.T) {}'
+RT=$(commit_all "rho and sigma")
+RS=$(commit_file test/integration/rho/sub/sub_test.go '// sub')
+eq "a nested suite its feature's target does not run prints ALL" "ALL" "$(run "$RT" "$RS")"
+RP=$(commit_file pkg/r/r.go '// r')
+eq "a package only a nested suite the target skips imports prints ALL" "ALL" "$(run "$RS" "$RP")"
+SI=$(commit_file test/integration/sigma/inner/inner_test.go '// inner')
+eq "a nested suite its feature's target runs prints that feature" "sigma" "$(run "$RP" "$SI")"
+XS=$(commit_file test/integration/xi/sub/sub_test.go '//go:build integration
+
+package sub')
+eq "a nested suite under a Compose-delegated target prints ALL" "ALL" "$(run "$SI" "$XS")"
+# tau's test builds ./cmd/cli with its working directory in the nested module
+# sub (the oidccredentials/xkey shape); the root has no cmd/cli.
+put test/integration/tau/tau_test.go '//go:build integration
+
+package tau
+
+import (
+	"os/exec"
+	"testing"
+)
+
+func TestTau(t *testing.T) {
+	c := exec.Command("go", "build", "-o", t.TempDir()+"/cli", "./cmd/cli")
+	c.Dir = "../../../sub"
+	_ = c.Run()
+}'
+TT=$(commit_all tau)
+TC=$(commit_file sub/cmd/cli/main.go '// tau')
+eq "a nested-module binary a suite builds from its module prints that suite" "$(printf 'tau\nxi\nzeta')" "$(run "$TT" "$TC")"
+TU=$(commit_file pkg/u/u.go '// tau')
+eq "a dep of a nested-module binary a suite builds prints that suite" "$(printf 'tau\nxi\nzeta')" "$(run "$TC" "$TU")"
 # lambda's only test file is gated on a tag no recipe passes (last, since
 # from here on every package change prints ALL).
 put test/integration/lambda/lambda_test.go '//go:build integration && neverset
