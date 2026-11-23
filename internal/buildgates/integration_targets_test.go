@@ -192,6 +192,118 @@ func TestEveryIntegrationFeatureDirHasATarget(t *testing.T) {
 	}
 }
 
+// nestedIntegrationSuites returns the directories below a feature directory
+// (test/integration/<feature>/<dir>, relative to test/integration) that hold
+// _test.go files: nested suites a target has to run on their own.
+func nestedIntegrationSuites(t *testing.T) []string {
+	t.Helper()
+	root := filepath.Join(repoRoot, "test", "integration")
+	seen := map[string]bool{}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && (d.Name() == "testdata" || strings.HasPrefix(d.Name(), "_") || strings.HasPrefix(d.Name(), ".")) {
+			return fs.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), "_test.go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, filepath.Dir(p))
+		if err != nil {
+			return err
+		}
+		if strings.Contains(filepath.ToSlash(rel), "/") {
+			seen[filepath.ToSlash(rel)] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk test/integration: %v", err)
+	}
+	out := make([]string, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	return out
+}
+
+var (
+	goTestCommand = regexp.MustCompile(`(^|[^A-Za-z0-9_])(go|\$\(GO\))\s+test(\s|$)`)
+	goTestPath    = regexp.MustCompile(`test/integration/([A-Za-z0-9_.\-/]*)`)
+	shellCmdSep   = regexp.MustCompile(`&&|;|\|\|`)
+)
+
+// goTestCovers reports whether a go test command in recipe runs the nested
+// suite dir (relative to test/integration): it tests dir itself, or a parent
+// of it with /... (test/integration/pkcs11 alone does not run
+// test/integration/pkcs11/module).
+func goTestCovers(recipe, dir string) bool {
+	recipe = integrationDirCall.ReplaceAllString(recipe, "./test/integration/$1")
+	recipe = strings.ReplaceAll(recipe, "\\\n", " ")
+	for _, line := range strings.Split(recipe, "\n") {
+		for _, seg := range shellCmdSep.Split(line, -1) {
+			if !goTestCommand.MatchString(seg) {
+				continue
+			}
+			for _, m := range goTestPath.FindAllStringSubmatch(seg, -1) {
+				p := strings.TrimSuffix(m[1], "/")
+				if p == "..." {
+					return true
+				}
+				if q, rec := strings.CutSuffix(p, "/..."); rec {
+					if dir == q || strings.HasPrefix(dir, q+"/") {
+						return true
+					}
+				} else if p == dir {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// TestEveryNestedIntegrationSuiteIsRun: a nested suite
+// test/integration/<feature>/<dir> runs under make integration-test-<feature>
+// only when that target (the pattern rule's <feature>/..., or an explicit
+// rule and its prerequisites) runs go test on it or a parent with /...;
+// scripts/touched-features.sh prints ALL for a change to any other nested
+// suite, so some explicit integration-test-* target must run it.
+func TestEveryNestedIntegrationSuiteIsRun(t *testing.T) {
+	mk := readMakefile(t)
+	pattern, ok := makeRecipe(mk, "integration-test-%")
+	if !ok {
+		t.Fatal("Makefile has no integration-test-% pattern rule")
+	}
+	targets := explicitIntegrationTargets(mk)
+	for _, d := range nestedIntegrationSuites(t) {
+		feat := strings.SplitN(d, "/", 2)[0]
+		target := "integration-test-" + feat
+		var own string
+		if _, explicit := makeRecipe(mk, target); explicit {
+			own = expandMakeVars(mk, integrationRuleText(mk, target, map[string]bool{}))
+		} else {
+			own = strings.ReplaceAll(pattern, "$*", feat)
+		}
+		if goTestCovers(own, d) {
+			continue
+		}
+		runner := ""
+		for _, tg := range targets {
+			recipe, _ := makeRecipe(mk, tg)
+			if goTestCovers(expandMakeVars(mk, recipe), d) {
+				runner = tg
+				break
+			}
+		}
+		if runner == "" {
+			t.Errorf("test/integration/%s holds _test.go files but neither %s nor any explicit integration-test-* target runs go test on it (or a parent with /...)", d, target)
+		}
+	}
+}
+
 func TestExplicitIntegrationTargetsNameExistingDirs(t *testing.T) {
 	mk := readMakefile(t)
 	targets := explicitIntegrationTargets(mk)

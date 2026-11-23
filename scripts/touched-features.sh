@@ -25,8 +25,15 @@
 #     is, or depends on, that package: a quoted .../cmd/<name> path in the
 #     suite's own Go files, or a Makefile recipe line that builds
 #     ./cmd/<name> (after any cd, so a nested module's binary counts) and
-#     tests ./test/integration/<feature>. A binary that does not load prints
-#     ALL;
+#     tests ./test/integration/<feature>. A relative quoted path resolves
+#     against the root and every nested module (a suite that builds
+#     ./cmd/xkey with its working directory in xkey); one that resolves
+#     nowhere makes the suite unresolved (below). A binary that does not
+#     load prints ALL;
+#   - a nested suite test/integration/<feature>/<dir> with _test.go files
+#     counts as run by integration-test-<feature> only when a go test line
+#     of that target tests <dir> or a parent with /...; a change in, or a
+#     package reached only through, any other nested suite prints ALL;
 #   - a feature whose explicit integration-test-<feature> recipe runs no go
 #     test of it the script can read (it hands the suite to Compose, whose
 #     Dockerfile builds what it runs) is named by every change that names
@@ -77,6 +84,7 @@ is_feature() { # is_feature <name>: test/integration/<name> holds _test.go files
 
 features=()
 pending=()
+nested=()
 while IFS= read -r f; do
 	[ -n "$f" ] || continue
 	case "$f" in
@@ -90,6 +98,9 @@ while IFS= read -r f; do
 		name=${name%%/*}
 		if is_feature "$name"; then
 			features+=("$name")
+			# A file below the feature's own directory may belong to a
+			# nested suite its target does not run (checked below).
+			case "${f#test/integration/"$name"/}" in */*) nested+=("$f") ;; esac
 			# A helper Go file may be imported by other features' suites:
 			# its package also goes through the dependency analysis.
 			case "$f" in
@@ -158,8 +169,9 @@ module_root() {
 # <binary dir> TAB <tags>" for each Makefile recipe line that builds
 # ./.../cmd/<name> and tests ./test/integration/<feature>; the tags add the
 # build's literal ones. Each go test line that runs ./test/integration/<feature>
-# also appends "<target> TAB <feature> TAB <its -tags as written, or empty>" to
-# <suites file>, for each target of the rule it belongs to; <rules file> gets
+# also appends "<target> TAB <feature> TAB <its -tags as written, or empty> TAB
+# <the path it tests, ending /... when recursive>" to <suites file>, for each
+# target of the rule it belongs to; <rules file> gets
 # "H TAB <target> TAB <prerequisites>" per rule header and "R TAB <target>"
 # per recipe line.
 recipe_binaries() {
@@ -265,7 +277,8 @@ recipe_binaries() {
 					r = resolve(cwd, t)
 					if (r ~ /^test\/integration\/[^\/]+/) {
 						split(r, rp, "/"); feats[++nf] = rp[3]
-						for (k = 1; k <= nct; k++) if (ct[k] != "") print ct[k] "\t" rp[3] "\t" texpr > suites
+						cov = (t ~ /\/\.\.\.$/) ? r "/..." : r
+						for (k = 1; k <= nct; k++) if (ct[k] != "") print ct[k] "\t" rp[3] "\t" texpr "\t" cov > suites
 					}
 				}
 			}
@@ -276,11 +289,12 @@ recipe_binaries() {
 	}' Makefile
 }
 
-if [ "${#pending[@]}" -gt 0 ]; then
+if [ "${#pending[@]}" -gt 0 ] || [ "${#nested[@]}" -gt 0 ]; then
 	# The tags the integration-test-% recipe passes, from make itself, on
 	# the first feature no explicit rule overrides (the recipe needs its
 	# directory to exist).
 	tags=
+	pfeat=
 	for fd in test/integration/*/; do
 		feat=$(basename "$fd")
 		is_feature "$feat" || continue
@@ -288,6 +302,7 @@ if [ "${#pending[@]}" -gt 0 ]; then
 			continue
 		fi
 		tags=$(recipe_tags "integration-test-$feat") || tags=
+		pfeat=$feat
 		break
 	done
 	if [ -z "$tags" ]; then
@@ -324,7 +339,7 @@ if [ "${#pending[@]}" -gt 0 ]; then
 			else if ($1 == "R") rec[$2] = 1
 			next
 		}
-		{ n++; lt[n] = $1; lf[n] = $2; le[n] = $3 }
+		{ n++; lt[n] = $1; lf[n] = $2; le[n] = $3; lc[n] = $4 }
 		END {
 			m = split(feats, fs, " ")
 			for (i = 1; i <= m; i++) {
@@ -337,6 +352,7 @@ if [ "${#pending[@]}" -gt 0 ]; then
 				found = 0; bad = 0
 				for (j = 1; j <= n; j++) if (lf[j] == f && (lt[j] in in_)) {
 					found = 1
+					print f "\tC\t" lc[j]
 					if (le[j] == "") bad = 1; else print f "\tE\t" le[j]
 				}
 				if (found && !bad) continue
@@ -345,6 +361,56 @@ if [ "${#pending[@]}" -gt 0 ]; then
 			}
 		}' "$rules" "$suites")
 	unresolved=$(printf '%s\n' "$plan" | awk -F'\t' '$2 == "U" { print $1 }')
+	# A nested suite (test/integration/<feature>/<dir> with _test.go files)
+	# runs under make integration-test-<feature> only if a go test path of
+	# that target covers it: <dir> itself, or a parent ending in /... (the
+	# integration-test-% recipe when it tests <feature>/...). An unresolved
+	# suite's nested suites are not known to run. A change in, or a package
+	# reached only through, a nested suite the target does not run is ALL.
+	pat_nested=0
+	if [ -n "$pfeat" ] && env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -n -s --no-print-directory \
+		"integration-test-$pfeat" 2>/dev/null | grep -qF -- "test/integration/$pfeat/..."; then
+		pat_nested=1
+	fi
+	uncovered=$(find test/integration -mindepth 3 -name '*_test.go' ! -path '*/testdata/*' 2>/dev/null |
+		awk '{ sub(/\/[^\/]*$/, ""); print }' | LC_ALL=C sort -u |
+		awk -F'\t' -v plan="$plan" -v patn="$pat_nested" '
+		function covers(p, d,   q) {
+			if (p ~ /\/\.\.\.$/) { q = p; sub(/\/\.\.\.$/, "", q); return d == q || index(d, q "/") == 1 }
+			return d == p
+		}
+		BEGIN {
+			n = split(plan, pl, "\n")
+			for (i = 1; i <= n; i++) {
+				split(pl[i], c, "\t")
+				if (c[2] == "U") kind[c[1]] = "U"
+				else if (c[2] == "P") kind[c[1]] = "P"
+				else if (c[2] == "E" && kind[c[1]] != "U") kind[c[1]] = "E"
+				if (c[2] == "C") cov[c[1]] = cov[c[1]] "\n" c[3]
+			}
+		}
+		{
+			d = $0; split(d, p, "/"); f = p[3]; ok = 0
+			if (kind[f] == "P" || kind[f] == "") ok = patn
+			else if (kind[f] == "E") {
+				m = split(cov[f], cs, "\n")
+				for (i = 1; i <= m; i++) if (cs[i] != "" && covers(cs[i], d)) { ok = 1; break }
+			}
+			if (!ok) print d
+		}')
+	for f in ${nested[@]+"${nested[@]}"}; do
+		d=$(dirname "$f")
+		while IFS= read -r u; do
+			[ -n "$u" ] || continue
+			case "$d/" in
+			"$u"/*)
+				echo "$0: $u is a nested suite make integration-test-$(printf '%s\n' "$u" | cut -d/ -f3) does not run; every feature runs" >&2
+				echo ALL
+				exit 0
+				;;
+			esac
+		done <<<"$uncovered"
+	done
 	# suite_tags: "<feature> TAB <tags>", each E suite's tags expanded by make
 	# itself (union over its go test lines); P and U suites run under the
 	# integration-test-% tags.
@@ -424,8 +490,10 @@ if [ "${#pending[@]}" -gt 0 ]; then
 			fi
 		done
 	done <<<"$groups"
-	# reach: lines "<repo-relative dir> TAB <feature>".
-	reach=$(awk -F'\t' -v top="$top/" '
+	# reach: lines "<repo-relative dir> TAB <feature>"; a package of a nested
+	# suite the feature's target does not run reaches "!ALL" instead.
+	reach=$(awk -F'\t' -v top="$top/" -v unc="$uncovered" '
+		BEGIN { nu = split(unc, us, "\n") }
 		$1 == "" { next }
 		{
 			ip = $2; sub(/ \[.*\]$/, "", ip)
@@ -439,6 +507,7 @@ if [ "${#pending[@]}" -gt 0 ]; then
 				rel = substr(c[1], length(top) + 1)
 				if (rel !~ /^test\/integration\/[^\/]+/) continue
 				feat = rel; sub(/^test\/integration\//, "", feat); sub(/\/.*/, "", feat)
+				for (i = 1; i <= nu; i++) if (us[i] != "" && (rel == us[i] || index(rel, us[i] "/") == 1)) { feat = "!ALL"; break }
 				print rel "\t" feat
 				n = split(c[3], d, " ")
 				for (i = 1; i <= n; i++) {
@@ -450,14 +519,44 @@ if [ "${#pending[@]}" -gt 0 ]; then
 
 	# The binaries each feature's suite builds and runs: "<feature> TAB
 	# <binary dir> TAB <tags>", from the suite's own files and the recipes.
+	# A relative path (./cmd/x) the suite may build from inside a nested
+	# module (cmd.Dir = "xkey"): it resolves against the root and against
+	# every nested module; one that resolves nowhere leaves the suite's
+	# binaries unknown, so the suite is unresolved.
+	modules=$(git ls-files -- 'go.mod' '*/go.mod' 2>/dev/null | awk '$0 != "go.mod" && $0 !~ /(^|\/)testdata\// { sub(/\/go\.mod$/, ""); print }')
 	for fd in test/integration/*/; do
 		feat=$(basename "$fd")
 		is_feature "$feat" || continue
 		while IFS= read -r lit; do
 			[ -n "$lit" ] || continue
+			found=0
 			if b=$(bin_dir "$lit"); then
 				printf '%s\t%s\t%s\n' "$feat" "$b" "$tags"
+				found=1
 			fi
+			case "$lit" in
+			./* | ../*)
+				p=$lit
+				while :; do
+					case "$p" in
+					./*) p=${p#./} ;;
+					../*) p=${p#../} ;;
+					*) break ;;
+					esac
+				done
+				while IFS= read -r m; do
+					[ -n "$m" ] || continue
+					if [ -d "$m/${p%/...}" ] && b=$(bin_dir "$m/$p"); then
+						printf '%s\t%s\t%s\n' "$feat" "$b" "$tags"
+						found=1
+					fi
+				done <<<"$modules"
+				if [ "$found" -eq 0 ]; then
+					echo "$0: $fd names $lit, which resolves to no binary; the suite is unresolved" >&2
+					unresolved=$(printf '%s\n%s' "$unresolved" "$feat")
+				fi
+				;;
+			esac
 		done < <(grep -rhoE --include='*.go' '"[^"[:space:]]*cmd/[A-Za-z0-9_.-]+(/\.\.\.)?"' "$fd" 2>/dev/null | tr -d '"' | LC_ALL=C sort -u)
 	done >>"$bins"
 	# Each binary reaches its own directory and its deps' directories; a
@@ -487,11 +586,16 @@ if [ "${#pending[@]}" -gt 0 ]; then
 	done < <(cut -f2,3 "$bins" | LC_ALL=C sort -u)
 	reach=$(printf '%s\n' "$reach" | cat - "$binreach" | LC_ALL=C sort -u)
 
-	for f in "${pending[@]}"; do
+	for f in ${pending[@]+"${pending[@]}"}; do
 		dir=$(dirname "$f")
 		hits=()
 		while :; do
 			while IFS= read -r h; do
+				if [ "$h" = '!ALL' ]; then
+					echo "$0: $f reaches a nested suite its feature's target does not run; every feature runs" >&2
+					echo ALL
+					exit 0
+				fi
 				if [ -n "$h" ] && is_feature "$h"; then
 					hits+=("$h")
 				fi

@@ -57,12 +57,22 @@ feature list.
   those of `integration-test-%` (from `make -n`, so conditional
   `BUILD_TAGS +=` tags count). A suite is also selected by a change to a
   binary it builds and runs, or to one of the binary's deps: a quoted
-  `.../cmd/<name>` path in the suite's Go files, or a recipe line that builds
+  `.../cmd/<name>` path in the suite's Go files (a relative `./cmd/<name>`
+  resolves against the root and every nested module, as
+  `test/integration/oidccredentials` builds `xkey/cmd/xkey`; one that resolves
+  nowhere leaves the suite unresolved, see below), or a recipe line that builds
   `./cmd/<name>` (after any `cd`, so `xkey/cmd/xkey` counts) and tests
   `./test/integration/<feature>`. A suite whose explicit recipe runs no
   `go test` of it the script can read (it hands the suite to Compose, whose
   Dockerfile builds what it runs) is selected by every change that selects
-  any feature.
+  any feature. A nested suite (`test/integration/<feature>/<dir>` with
+  `_test.go` files) counts as run by `integration-test-<feature>` only when a
+  `go test` line of that target tests `<dir>` or a parent with `/...`
+  (`integration-test-pkcs11` runs only `test/integration/pkcs11`, so
+  `pkcs11/module` and `pkcs11/barrier` are not); a change in, or a package
+  reached only through, any other nested suite prints `ALL`.
+  `internal/buildgates` fails when no explicit `integration-test-*` target
+  runs such a suite.
   When the script cannot prove a suite unaffected it prints `ALL`: if none of
   a suite's tests builds under its tags, or a package or binary in the graphs
   does not load (`Error` or `DepsErrors` from `go list -e`), any package
