@@ -13,11 +13,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-qrdb/pkg/vlog"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/vlogwire"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // TestHeadSignerProviderOptions_WiresCAProvider proves the embedded node is
@@ -101,4 +104,57 @@ func TestBindCAProviders_HeadSignerUsesClusterCAIdentity(t *testing.T) {
 	require.True(t, trusted.clusterKey.PublicKey.Equal(clusterSigner.Public()))
 	require.True(t, trusted.clusterKey.PublicKey.Equal(hs.Public()),
 		"checkpoints must be signed with the cluster CA identity, not the selected CA")
+}
+
+// TestEmbeddedNode_LogCheckpointSignedWithCAKey starts the embedded node
+// through initEmbeddedQRDBNode, binds a TrustedCA, and signs a verifiable-log
+// checkpoint through the node: the checkpoint verifies under the cluster CA key
+// and not under the selected CA key, so the node applied the head-signer option.
+func TestEmbeddedNode_LogCheckpointSignedWithCAKey(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+	ctx := context.Background()
+
+	cfg := qrdbBarrierConfig(t)
+	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
+	cfg.Cluster.RaftEnrollment.ClusterCACN = "cluster-ca"
+	s, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = s.Shutdown() }()
+
+	trusted := &twoIdentityCA{clusterCN: "cluster-ca"}
+	trusted.selectedKey, trusted.selectedCert = selfSignedCA(t, "selected-ca")
+	trusted.clusterKey, trusted.clusterCert = selfSignedCA(t, "cluster-ca")
+	require.NoError(t, s.bindCAProviders(trusted))
+
+	// The node's log service authorizes every call: act as the first-boot
+	// owner of the system tenant.
+	svcs := s.qrdbNode.Services()
+	require.NotNil(t, svcs)
+	if svcs.Log == nil {
+		t.Skip("the node's verifiable-log service is compiled in only with the qrdb_vlog build tag")
+	}
+	owner, err := svcs.Role.GetRoleByName(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID),
+		qrdbsdk.SystemTenantID, "owner")
+	require.NoError(t, err)
+	caller := &qrdbsdk.Identity{Subject: "owner", TenantID: qrdbsdk.SystemTenantID, Roles: []string{owner.ID}}
+	ctx = qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(ctx, caller), qrdbsdk.SystemTenantID)
+
+	const origin = "xkms.test/issuance"
+	vl := s.qrdbClient.Vlog()
+	_, err = vl.VlogCreate(ctx, &vlogwire.CreateRequest{
+		Log: "issuance", Origin: origin,
+		SigningKeyType: qrdbsdk.HeadSignatureECDSAP256SHA256,
+	})
+	require.NoError(t, err)
+	_, err = vl.VlogAppend(ctx, &vlogwire.AppendRequest{Log: "issuance", Entries: [][]byte{[]byte("cert-1")}})
+	require.NoError(t, err)
+	signed, err := vl.VlogSignHead(ctx, &vlogwire.LogRequest{Log: "issuance"})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), signed.Head.Size)
+
+	require.NoError(t, vlog.VerifyHead(&trusted.clusterKey.PublicKey, origin, signed.Head),
+		"the checkpoint must verify under the cluster CA key")
+	require.Error(t, vlog.VerifyHead(&trusted.selectedKey.PublicKey, origin, signed.Head),
+		"the checkpoint must not verify under the selected CA key")
 }
