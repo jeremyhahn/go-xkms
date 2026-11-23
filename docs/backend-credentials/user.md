@@ -97,7 +97,7 @@ backend_pin:
 | Strategy | Where the PIN lives | When the backend starts |
 |---|---|---|
 | `auto` | `tpm2` when a TPM 2.0 is present, otherwise `sealed` | as the chosen strategy |
-| `tpm2` | sealed to the TPM; needs `credentials.seal_strategy: tpm2` | at start |
+| `tpm2` | sealed to the TPM, whatever `credentials.seal_strategy` is | at start, or after unseal for a PIN stored elsewhere |
 | `sealed` | sealed under the barrier, released at unseal; needs `credentials.seal_strategy: barrier` | after unseal |
 | `manual` | not available yet: refused at start-up (see below) | — |
 
@@ -106,12 +106,15 @@ backend_pin:
   `sealed` on a TPM host. The i.MX 95 has no TPM and gets `sealed`.
 - **The strategy must match where the PIN is stored.** The PIN is a
   `credential://` reference stored under `credentials.seal_strategy`:
-  `tpm2` needs `tpm2`, and `sealed` needs `barrier`. Any other storage, such
-  as a cloud KMS seal or the unset `manual` default, is refused with
-  `BackendPINStoreError` before a record is written
-  (`Server.backendPINStore`, `pkg/server/backend_pin.go`). So on a TPM host
-  `auto` with `credentials.seal_strategy: barrier` refuses to start. Set
-  `credentials.seal_strategy: tpm2`, or choose `strategy: sealed` explicitly.
+  `sealed` needs `barrier`. Any other storage, such as a cloud KMS seal or
+  the unset `manual` default, is refused with `BackendPINStoreError` before
+  a record is written (`Server.backendPINStore`, `pkg/server/backend_pin.go`).
+  `tpm2` (and `auto` on a TPM host) needs no second setting: a PIN not
+  stored with `credentials.seal_strategy: tpm2` is read once after unseal,
+  sealed to the TPM's Platform SRK, and the plaintext is wiped; every release
+  unseals it from the TPM (`Server.tpmSealedBackendPINRelease`). If the TPM
+  cannot seal it, start-up fails closed with `BackendPINTPMSealerError` and
+  never falls back to `sealed`.
   A persisted record is refused too if the storage has changed since it was
   written. Every release checks the storage again.
 - **Minimum.** `minimum` orders `sealed` < `tpm2` < `manual`. A resolved
