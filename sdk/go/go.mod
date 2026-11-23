@@ -7,7 +7,7 @@ require (
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
 	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: v0.7.1-alpha requires go-enclave v0.10.0-alpha (enclave.ByteAccess, enclave.As); the root module's go-enclave replace pins v0.8.0-alpha
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/mark3labs/mcp-go v1.3.0
 	github.com/quic-go/quic-go v0.64.1
