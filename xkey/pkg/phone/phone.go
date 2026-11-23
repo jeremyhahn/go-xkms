@@ -857,8 +857,6 @@ func (b *PhoneKeyBackend) verifyUserExchange(ctx context.Context, req *pairingpr
 	return resp, nil
 }
 
-// userVerificationUnavailable marks cause as a user verification that
-// reached no decision (keybackend.ErrUserVerificationUnavailable).
 // UserVerificationAvailable reports whether VerifyUser can verify a user: a
 // verifier is configured and the paired phone has not refused local.verifyUser
 // as an unknown method. The authenticator advertises uv only when it is true.
@@ -866,6 +864,8 @@ func (b *PhoneKeyBackend) UserVerificationAvailable() bool {
 	return b.cfg != nil && b.cfg.VerifyUser != nil && !b.verifyUserUnsupported.Load()
 }
 
+// userVerificationUnavailable marks cause as a user verification that
+// reached no decision (keybackend.ErrUserVerificationUnavailable).
 func userVerificationUnavailable(cause error) error {
 	return &keybackend.SentinelCauseError{Sentinel: keybackend.ErrUserVerificationUnavailable, Cause: cause}
 }
