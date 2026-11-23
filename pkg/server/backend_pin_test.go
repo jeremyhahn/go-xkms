@@ -26,6 +26,8 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
+	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -246,6 +248,53 @@ func TestManualBackendPIN_FromUnsealRequestNeverPersistedStopsAtSeal(t *testing.
 	require.False(t, started)
 	_, pinErr := s.backendPIN.PIN()
 	require.Error(t, pinErr)
+}
+
+// backendPINUnsealedBarrier is a real, unsealed system barrier.
+func backendPINUnsealedBarrier(t *testing.T) *seal.Barrier {
+	t.Helper()
+	b, err := seal.NewBarrier(slog.New(slog.DiscardHandler), storage.NewMemory(),
+		seal.BarrierConfig{RootKeyPath: "core/seal", PreferenceOrder: []seal.StrategyID{seal.StrategyPassphrase}},
+		seal.NewSoftwareStrategy())
+	require.NoError(t, err)
+	creds, err := seal.CredentialsFor(t.Context(), []byte("test-system-pw"))
+	require.NoError(t, err)
+	defer creds.Secret.Destroy()
+	require.NoError(t, b.Initialize(context.Background(), creds))
+	return b
+}
+
+// Sealing the running barrier (not shutdown) zeroizes the held PIN under
+// every strategy and stops a manual PKCS#11 provider (docs/SPEC.md:78).
+func TestBarrierSeal_ZeroizesBackendPIN(t *testing.T) {
+	t.Run("sealed", func(t *testing.T) {
+		s, _, providers := backendPINTestServer(t, "sealed", []byte("backend-pin-1"), false, true)
+		s.barrier = backendPINUnsealedBarrier(t)
+		require.NoError(t, s.resolveBackendPIN())
+		require.NoError(t, s.startPKCS11AfterUnseal())
+		_, err := s.backendPIN.PIN()
+		require.NoError(t, err)
+
+		require.NoError(t, s.barrier.Seal())
+		_, err = s.backendPIN.PIN()
+		require.Error(t, err, "held PIN zeroized at barrier seal")
+		require.Len(t, *providers, 1)
+		require.False(t, (*providers)[0].closed, "sealed keeps the backend running")
+	})
+	t.Run("manual", func(t *testing.T) {
+		s, _, providers := backendPINTestServer(t, "manual", nil, false, true)
+		s.barrier = backendPINUnsealedBarrier(t)
+		require.NoError(t, s.resolveBackendPIN())
+		require.NoError(t, s.UnsealBackendPIN(context.Background(), []byte("operator-pin-1")))
+
+		require.NoError(t, s.barrier.Seal())
+		_, err := s.backendPIN.PIN()
+		require.Error(t, err, "held PIN zeroized at barrier seal")
+		require.Len(t, *providers, 1)
+		require.True(t, (*providers)[0].closed, "manual stops the backend at barrier seal")
+		_, started := s.keyProviders["pkcs11"]
+		require.False(t, started)
+	})
 }
 
 func TestSealBackendPIN_SealedKeepsBackendRunning(t *testing.T) {
