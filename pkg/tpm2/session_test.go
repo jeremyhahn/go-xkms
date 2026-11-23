@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/stretchr/testify/assert"
@@ -154,31 +155,115 @@ func TestSaveKeyPair_ConcurrentCreatorsNeverMismatch(t *testing.T) {
 	go func() { aDone <- tpmImpl.SaveKeyPair(attrs, privA, pubA, writerA, false) }()
 	<-aPaused
 
-	// B finds A's private blob without a public blob. Once B's private save
-	// returns, A finishes its pair before B goes on.
-	var aErr error
-	writerB := &hookedKeyBackend{KeyBackend: shared, afterPrivate: func() {
-		close(resumeA)
-		aErr = <-aDone
-	}}
-	bErr := tpmImpl.SaveKeyPair(attrs, privB, pubB, writerB, false)
-	select {
-	case <-resumeA:
-	default:
-		close(resumeA)
-		aErr = <-aDone
+	// B starts while A is between its two writes; A finishes its pair after
+	// B had the chance to run.
+	bDone := make(chan error, 1)
+	go func() { bDone <- tpmImpl.SaveKeyPair(attrs, privB, pubB, shared, false) }()
+	bErr, bFinished := waitPairWriter(bDone)
+	close(resumeA)
+	aErr := <-aDone
+	if !bFinished {
+		bErr = <-bDone
 	}
 
-	gotPriv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
-	require.NoError(t, err)
-	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
-	require.NoError(t, err)
-	pair := string(gotPub) + "/" + string(gotPriv)
+	pair := storedPair(t, shared, attrs)
 	require.Contains(t, []string{"public-A/private-A", "public-B/private-B"}, pair,
 		"mismatched key pair (A err=%v, B err=%v)", aErr, bErr)
 	// Exactly one writer succeeds, and its pair is the stored one.
 	if aErr == nil {
-		require.Error(t, bErr)
+		require.ErrorIs(t, bErr, store.ErrBlobExists)
+		require.Equal(t, "public-A/private-A", pair)
+	} else {
+		require.NoError(t, bErr)
+		require.Equal(t, "public-B/private-B", pair)
+	}
+}
+
+// waitPairWriter gives a concurrent SaveKeyPair a bounded window to finish:
+// it returns the writer's result and true if it finished in the window.
+func waitPairWriter(done <-chan error) (error, bool) {
+	select {
+	case err := <-done:
+		return err, true
+	case <-time.After(200 * time.Millisecond):
+		return nil, false
+	}
+}
+
+// storedPair returns the stored "public/private" blobs of attrs.
+func storedPair(t *testing.T, backend store.KeyBackend, attrs *types.KeyAttributes) string {
+	t.Helper()
+	gotPriv, err := backend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := backend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	return string(gotPub) + "/" + string(gotPriv)
+}
+
+// fencePausingKeyBackend pauses a recovering save once it holds the
+// recovery fence, before it overwrites the private blob.
+type fencePausingKeyBackend struct {
+	store.KeyBackend
+	once       sync.Once
+	afterFence func()
+}
+
+func (b *fencePausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	err := b.KeyBackend.Save(attrs, data, ext, overwrite)
+	if err == nil && ext == store.FSEXT_PUBLIC_BLOB && isKeyPairRecoveryFence(data) {
+		b.once.Do(b.afterFence)
+	}
+	return err
+}
+
+// TestSaveKeyPair_TwoRecoverersNeverMismatch: two create-only saves that
+// both meet an incomplete pair (a private blob without a public blob) never
+// leave the public blob of one beside the private blob of the other. The
+// first holds the recovery fence and stalls before its private overwrite;
+// the second must not complete a pair the stalled one then overwrites.
+func TestSaveKeyPair_TwoRecoverersNeverMismatch(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{CN: "two-recoverers-key", KeyType: types.KeyTypeTPM}
+	// An earlier save stopped between its two writes: private only.
+	require.NoError(t, shared.Save(attrs, []byte("private-0"), store.FSEXT_PRIVATE_BLOB, false))
+
+	privA := tpm2.TPM2BPrivate{Buffer: []byte("private-A")}
+	pubA := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-A"))
+	privB := tpm2.TPM2BPrivate{Buffer: []byte("private-B")}
+	pubB := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B"))
+
+	resumeA := make(chan struct{})
+	aPaused := make(chan struct{})
+	aDone := make(chan error, 1)
+	recovererA := &fencePausingKeyBackend{KeyBackend: shared, afterFence: func() {
+		close(aPaused)
+		<-resumeA
+	}}
+	go func() { aDone <- tpmImpl.SaveKeyPair(attrs, privA, pubA, recovererA, false) }()
+	<-aPaused
+
+	bDone := make(chan error, 1)
+	go func() { bDone <- tpmImpl.SaveKeyPair(attrs, privB, pubB, shared, false) }()
+	bErr, bFinished := waitPairWriter(bDone)
+	close(resumeA)
+	aErr := <-aDone
+	if !bFinished {
+		bErr = <-bDone
+	}
+
+	pair := storedPair(t, shared, attrs)
+	require.Contains(t, []string{"public-A/private-A", "public-B/private-B"}, pair,
+		"mismatched key pair (A err=%v, B err=%v)", aErr, bErr)
+	if aErr == nil {
+		require.ErrorIs(t, bErr, store.ErrBlobExists)
 		require.Equal(t, "public-A/private-A", pair)
 	} else {
 		require.NoError(t, bErr)
