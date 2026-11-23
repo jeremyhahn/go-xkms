@@ -247,7 +247,10 @@ func LoadBackendPINStrategy(pinDir string) (BackendPINStrategy, error) {
 		return "", &StrategyLoadError{Path: path, Cause: err}
 	}
 	if rec.Strategy == "" {
-		return "", ErrBackendPINStrategyNotPersisted
+		// Only a missing file means unpersisted: an existing record with
+		// no strategy ({} or null) fails closed so it is never treated as
+		// a fresh install and overwritten (docs/SPEC.md:78).
+		return "", &StrategyLoadError{Path: path, Cause: errors.New("record has no strategy")}
 	}
 	return rec.Strategy, nil
 }
