@@ -27,6 +27,11 @@ logging:
 tls:
   enabled: true
   server_cn: "localhost"
+  # As config.yaml: request but do not require a client certificate, so the
+  # fixture (tests/support/passkeyAccount.ts) can present the init-ceremony
+  # admin credential (.runtime-node/storage/admin-cert.pem) to provision the
+  # operators while the browser connects without one.
+  client_auth: verify
 
 # Adaptive: anonymous while zero users exist, required auth afterwards.
 auth:
@@ -93,8 +98,9 @@ webauthn:
   authenticator_attachment: ""
   resident_key: "preferred"
   user_verification: "preferred"
-  # The same opt-in as config.yaml: the SPA's /register screen creates the
-  # operators.
+  # The same opt-in as config.yaml. The enforcing node still refuses anonymous
+  # sign-up once it has users (403 registration_refused, which the fixture
+  # asserts); operators are enrolled through administrator invitations.
   allow_public_registration: true
 
 ui:

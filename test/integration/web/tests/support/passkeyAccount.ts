@@ -19,8 +19,10 @@
  * LoginView with that passkey.
  *
  * The administrator is the credential `xkmsd init --admin-factor mtls` wrote
- * under .runtime/storage (run-server.sh); it is presented as a Playwright
- * client certificate, which config.yaml's tls.client_auth "verify" accepts.
+ * under <runtimeDir>/storage (run-server.sh; .runtime by default); it is
+ * presented as a Playwright client certificate, which tls.client_auth
+ * "verify" in config.yaml and config-node.yaml accepts. Every helper takes
+ * the PasskeyServer it provisions against (DEFAULT_SERVER when omitted).
  * The invitation ceremony runs in the page, same-origin with the daemon, so
  * the virtual authenticator installed on `page` creates the credential.
  */
@@ -28,8 +30,15 @@
 import { expect, request, test, type APIRequestContext, type Page } from '@playwright/test';
 import { loginOperator, type Operator } from './operator.ts';
 
-/** API origin of the daemon run-server.sh boots (playwright.config.ts baseURL). */
-const API_ORIGIN = 'https://localhost:18463';
+/**
+ * PasskeyServer names the daemon a suite provisions against: its API origin
+ * and the state directory run-server.sh gave it (XKMS_E2E_RUNTIME), under
+ * which `xkmsd init` wrote the admin credential.
+ */
+export type PasskeyServer = { origin: string; runtimeDir: string };
+
+/** DEFAULT_SERVER is the daemon playwright.config.ts boots (config.yaml). */
+export const DEFAULT_SERVER: PasskeyServer = { origin: 'https://localhost:18463', runtimeDir: '.runtime' };
 
 /**
  * OPERATOR_ROLE is the built-in role each operator is provisioned with. Open
@@ -45,27 +54,27 @@ const OPERATOR_PERMISSIONS = ['keys:create', 'keys:sign', 'keys:delete'];
 
 /**
  * adminCredential locates the init-ceremony admin certificate and key.
- * run-server.sh points `xkmsd init --data-dir` at <suite>/.runtime/storage,
+ * run-server.sh points `xkmsd init --data-dir` at <suite>/<runtimeDir>/storage,
  * and the suite's testDir is <suite>/tests.
  */
-export function adminCredential(): { certPath: string; keyPath: string } {
-  const storage = `${test.info().project.testDir}/../.runtime/storage`;
+export function adminCredential(server: PasskeyServer = DEFAULT_SERVER): { certPath: string; keyPath: string } {
+  const storage = `${test.info().project.testDir}/../${server.runtimeDir}/storage`;
   return { certPath: `${storage}/admin-cert.pem`, keyPath: `${storage}/admin-key.pem` };
 }
 
 /** adminRequest opens an API context that authenticates as the administrator over mTLS. */
-async function adminRequest(): Promise<APIRequestContext> {
-  const { certPath, keyPath } = adminCredential();
+async function adminRequest(server: PasskeyServer): Promise<APIRequestContext> {
+  const { certPath, keyPath } = adminCredential(server);
   return request.newContext({
-    baseURL: API_ORIGIN,
+    baseURL: server.origin,
     ignoreHTTPSErrors: true,
-    clientCertificates: [{ origin: API_ORIGIN, certPath, keyPath }],
+    clientCertificates: [{ origin: server.origin, certPath, keyPath }],
   });
 }
 
 /** expectNoUser asserts the administrator's user list holds no account for email. */
-export async function expectNoUser(email: string): Promise<void> {
-  const admin = await adminRequest();
+export async function expectNoUser(email: string, server: PasskeyServer = DEFAULT_SERVER): Promise<void> {
+  const admin = await adminRequest(server);
   try {
     const resp = await admin.get('/api/v1/users/');
     expect(resp.status(), await resp.text()).toBe(200);
@@ -82,7 +91,7 @@ export async function expectNoUser(email: string): Promise<void> {
  * SPA's /register screen calls answers 403 registration_refused and creates
  * no account.
  */
-export async function expectAnonymousSignUpRefused(page: Page, op: Operator): Promise<void> {
+export async function expectAnonymousSignUpRefused(page: Page, op: Operator, server: PasskeyServer = DEFAULT_SERVER): Promise<void> {
   const refused = await page.evaluate(async ({ email, displayName }) => {
     const resp = await fetch('/api/v1/webauthn/registration/begin', {
       method: 'POST',
@@ -100,15 +109,15 @@ export async function expectAnonymousSignUpRefused(page: Page, op: Operator): Pr
   }, op);
   expect(refused.status, `anonymous registration was not refused: ${JSON.stringify(refused.body)}`).toBe(403);
   expect(refused.body?.error).toBe('registration_refused');
-  await expectNoUser(op.email);
+  await expectNoUser(op.email, server);
 }
 
 /**
  * provisionInvite creates the operator as the administrator and returns the
  * tenant and token of its invitation (<base>/#/invite/<tenant>/<token>).
  */
-export async function provisionInvite(op: Operator): Promise<{ tenant: string; token: string }> {
-  const admin = await adminRequest();
+export async function provisionInvite(op: Operator, server: PasskeyServer = DEFAULT_SERVER): Promise<{ tenant: string; token: string }> {
+  const admin = await adminRequest(server);
   try {
     const resp = await admin.post('/api/v1/users/', {
       data: {
@@ -244,8 +253,8 @@ export async function redeemInvite(page: Page, invite: { tenant: string; token: 
  * expectUserHoldsRole asserts, as the administrator, that the operator's
  * account holds role (GET /api/v1/users/{username}).
  */
-export async function expectUserHoldsRole(op: Operator, role: string): Promise<void> {
-  const admin = await adminRequest();
+export async function expectUserHoldsRole(op: Operator, role: string, server: PasskeyServer = DEFAULT_SERVER): Promise<void> {
+  const admin = await adminRequest(server);
   try {
     const username = op.email.split('@')[0];
     const resp = await admin.get(`/api/v1/users/${encodeURIComponent(username)}`);
@@ -282,11 +291,11 @@ export async function expectSessionPermissions(page: Page, token: string, want: 
  * registerOperator did. The session that sign-in minted must hold
  * keys:create, keys:sign and keys:delete before any key lifecycle runs.
  */
-export async function provisionOperator(page: Page, op: Operator): Promise<void> {
+export async function provisionOperator(page: Page, op: Operator, server: PasskeyServer = DEFAULT_SERVER): Promise<void> {
   await page.goto('/ui/#/login');
-  await expectAnonymousSignUpRefused(page, op);
-  await redeemInvite(page, await provisionInvite(op));
-  await expectUserHoldsRole(op, OPERATOR_ROLE);
+  await expectAnonymousSignUpRefused(page, op, server);
+  await redeemInvite(page, await provisionInvite(op, server));
+  await expectUserHoldsRole(op, OPERATOR_ROLE, server);
 
   const loginFinish = page.waitForResponse(
     (r) => r.request().method() === 'POST' && r.url().includes('/api/v1/webauthn/login/finish'),
