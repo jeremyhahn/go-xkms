@@ -844,6 +844,15 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "key policy store", Err: err}
 	}
 
+	// Build the attestation Verifier's tenant-scoped store and Appraiser;
+	// the XKMSService composition below wires it.
+	attestationAppraiser, err := s.buildAttestationAppraiser()
+	if err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "attestation appraiser", Err: err}
+	}
+
 	// Initialize the TPM policy service
 	if err := s.initTPMPolicyService(); err != nil {
 		cancel()
@@ -970,6 +979,10 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 			}
 			svc.SetInviteConfig(inviteCfg)
 		}
+		// The attestation Verifier (endorsements, reference values,
+		// appraise), built with the other record stores above, so a
+		// normally started xkmsd serves it.
+		svc.SetAttestationAppraiser(attestationAppraiser)
 		// Wire the hardware-attestation trust anchors. Without them,
 		// attestation-gated CSR signing fails closed, so a broken anchor
 		// configuration is fatal at startup rather than silently permissive.
