@@ -80,3 +80,15 @@ func TestSignCoSWIDTagCreatorRole(t *testing.T) {
 		})
 	}
 }
+
+func TestSignCoSWIDTagVersion(t *testing.T) {
+	absent := coswidTag(1)
+	delete(absent, 12)
+	err := signCoSWID(t, coswidCoRIM(t, absent))
+	if !errors.Is(err, ErrMalformed) || !errors.Is(err, ErrCoSWIDTagVersion) {
+		t.Fatalf("Sign without tag-version: error = %v, want ErrMalformed and ErrCoSWIDTagVersion", err)
+	}
+	if err := signCoSWID(t, coswidCoRIM(t, coswidTag(1))); err != nil {
+		t.Fatalf("Sign with tag-version 0: error = %v, want nil", err)
+	}
+}
