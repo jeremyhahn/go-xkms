@@ -55,6 +55,7 @@ func newInviteGRPCService(t *testing.T) (*Service, string) {
 	xkmsSvc := &xkms.XKMSService{}
 	xkmsSvc.SetUserClients(users, &grpcFakeRoleClient{})
 	xkmsSvc.SetInviteStore(invites)
+	xkmsSvc.SetInviteUserClient(grpcInviteUsers{users})
 	return NewService(nil, nil, xkmsSvc), token
 }
 
@@ -172,16 +173,16 @@ func TestInvitationErrorStatus(t *testing.T) {
 // enrolment through an invitation whose account is outside the tenant the
 // relying party serves answers PermissionDenied on both registration RPCs,
 // as REST answers 403, never Internal.
-// unservedTenantInviteUsers gives the fake user client the conditional
-// activations xkms.InviteUserClient requires; the tenant refusal answers
-// before either is reached.
-type unservedTenantInviteUsers struct{ *grpcFakeUserClient }
+// grpcInviteUsers gives the fake user client the conditional activations
+// xkms.InviteUserClient requires, without which every invite RPC answers
+// not configured; the tests here never reach an activation.
+type grpcInviteUsers struct{ *grpcFakeUserClient }
 
-func (unservedTenantInviteUsers) ActivatePendingUser(context.Context, uint64) (*qrdbtransport.User, error) {
+func (grpcInviteUsers) ActivatePendingUser(context.Context, uint64) (*qrdbtransport.User, error) {
 	return nil, errors.New("activation must not be reached")
 }
 
-func (unservedTenantInviteUsers) ActivateWithCertBinding(context.Context, uint64, string, int64) (*qrdbtransport.User, error) {
+func (grpcInviteUsers) ActivateWithCertBinding(context.Context, uint64, string, int64) (*qrdbtransport.User, error) {
 	return nil, errors.New("activation must not be reached")
 }
 
@@ -215,7 +216,7 @@ func TestInviteRegistration_TenantNotServedIsPermissionDenied(t *testing.T) {
 	xkmsSvc.SetUserClients(users, &grpcFakeRoleClient{})
 	xkmsSvc.SetInviteStore(invites)
 	xkmsSvc.SetWebAuthn(rp)
-	xkmsSvc.SetInviteUserClient(unservedTenantInviteUsers{users})
+	xkmsSvc.SetInviteUserClient(grpcInviteUsers{users})
 	s := NewService(nil, nil, xkmsSvc)
 
 	rpcs := map[string]func() error{
