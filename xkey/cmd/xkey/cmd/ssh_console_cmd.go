@@ -25,6 +25,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 
 	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -179,15 +180,25 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 }
 
 // openSSHConsole opens the console for a managed (xkey-held) key r names.
+// The PTY session runs in this process: the key signs through the
+// client's Keys().Signer (an xkmsd server signs remotely; no owner is sent
+// unless --key-owner gave one) and the host is verified against this
+// machine's pin store under sshHostPinOwner, like `xkey ssh connect`.
 // The returned session releases the client when it is closed.
 func openSSHConsole(cmd *cobra.Command, r sshConsoleResolved, cfg sshsdk.ConsoleConfig) (sshsdk.ConsoleSession, error) {
-	client, closer, err := sshClient(cmd)
+	client, hostKeys, closer, err := sshConnectClient(cmd)
 	if err != nil {
 		return nil, err
 	}
-	cons, err := client.Console(context.Background(), sshsdk.ConsoleConnectRequest{
-		KeyScope: r.keyScope, KeyOwner: r.keyOwner, KeyName: r.keyName,
+	ctx := context.Background()
+	signer, err := client.Keys().Signer(ctx, sshsdk.GetKeyRequest{Scope: r.keyScope, Owner: r.keyOwner, Name: r.keyName})
+	if err != nil {
+		closer()
+		return nil, err
+	}
+	cons, err := sshsdk.OpenConsoleWithSigners(ctx, []gossh.Signer{signer}, sshsdk.ConsoleRequest{
 		Host: r.host, Port: r.port, User: r.user,
+		HostKeys: hostKeys, Scope: r.keyScope, Owner: sshHostPinOwner(r.keyOwner),
 	}, cfg)
 	if err != nil {
 		closer()

@@ -89,15 +89,15 @@ func serveConsoleTestConn(nc net.Conn, cfg *gossh.ServerConfig) {
 	}
 }
 
-// pinConsoleHost pins key for [127.0.0.1]:port in the local pin store under
-// user/owner, the store listPins reads.
-func pinConsoleHost(t *testing.T, port int, owner string, key gossh.PublicKey) {
+// pinConsoleHost pins key for 127.0.0.1 (the console's pin host carries no
+// port) in the local pin store under user/owner, the store listPins reads.
+func pinConsoleHost(t *testing.T, owner string, key gossh.PublicKey) {
 	t.Helper()
 	hostKeys, closeHostKeys, err := xkeyHostKeyStore()
 	require.NoError(t, err)
 	defer closeHostKeys()
 	require.NoError(t, hostKeys.Add(context.Background(), &pkgknownhosts.Pin{
-		Host:        "[127.0.0.1]:" + strconv.Itoa(port),
+		Host:        "127.0.0.1",
 		Fingerprint: gossh.FingerprintSHA256(key),
 		Algorithm:   key.Type(),
 		Scope:       "user",
@@ -148,8 +148,10 @@ func TestSSHConsole_ServerBackedSignsThroughServerAndVerifiesLocalPins(t *testin
 	clientKey := standInSignerKey(t, owners)
 	h1 := startConsoleTestServer(t, clientKey)
 	h2 := startConsoleTestServer(t, clientKey)
-	pinConsoleHost(t, h1.port, "local", h1.hostKey)
-	pinConsoleHost(t, h2.port, "alice", h2.hostKey)
+	// 127.0.0.1 is pinned to H1 for "local" and to H2 for "alice" only, so
+	// the server on h2.port fails the local pin check.
+	pinConsoleHost(t, "local", h1.hostKey)
+	pinConsoleHost(t, "alice", h2.hostKey)
 
 	t.Run("omitted owner opens against the local pin", func(t *testing.T) {
 		*owners = (*owners)[:0]
