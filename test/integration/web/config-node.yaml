@@ -32,6 +32,11 @@ tls:
 auth:
   enabled: true
   type: "composite"
+  # The suite runs every ceremony from one address in seconds; the login
+  # limiter's production default (10/min per client) would throttle it, as
+  # in test/integration/webauthn-browser. The limiter stays on.
+  session:
+    login_rate_per_min: 6000
 
 # Initialized by run-server.sh (`xkmsd init`, SO PIN in the environment) and
 # unsealed through the sealed window; the config never carries the secret.
