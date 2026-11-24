@@ -104,6 +104,17 @@ than a pre-computed digest must hash (or not, matching what `xkmsctl ssh
 keys sign --data` does — it passes the raw string through unhashed) before
 calling.
 
+The sign request also takes an optional `algorithm` field (REST and MCP
+`{"digest": "...", "algorithm": "rsa-sha2-512"}`; gRPC
+`SSHSignRequest.algorithm = 3`). Empty, or equal to the key type, signs in
+the key's default format. For an RSA key `rsa-sha2-256` or `rsa-sha2-512`
+signs with SHA-256 or SHA-512, so server-held RSA keys authenticate to
+targets that refuse legacy `ssh-rsa`. Any other value is
+`UnsupportedSignatureAlgorithmError`: REST 400, gRPC `InvalidArgument`,
+MCP invalid params (`sdk/go/client/ssh/common.go` `SignWithAlgorithm`).
+The SDK remote signers (REST, gRPC, MCP) implement `ssh.AlgorithmSigner`
+and send the requested algorithm.
+
 ### `Pin` (known-hosts)
 
 ```jsonc
