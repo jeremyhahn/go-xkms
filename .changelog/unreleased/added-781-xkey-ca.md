@@ -1,1 +1,2 @@
 - xkey GUI: the CA service follows the connected xkms server
+- xkey CLI: `xkey ca --local` runs the CA on xkey's local store, without xkmsd.
