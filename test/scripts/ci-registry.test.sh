@@ -798,6 +798,25 @@ else
   fail "printed '$(cat "$WORK_DIR/stdout")'"
 fi
 
+POOL_REF="go-xkms-ci-toolchain@$DIGEST"
+POOL_ENV=(CI_POOL=true CI_IMAGE_REGISTRY=reg.example:5000/ci)
+
+start_case "use: a pool reference on a GitHub-hosted runner fails with a clear message, with no pull and no build (#2302 Codex round 3)"
+run_script 1 use toolchain "$POOL_REF" -- "${RUN_TOKEN[@]}" "${POOL_ENV[@]}" RUNNER_ENVIRONMENT=github-hosted
+stderr_has "pool image reference on a GitHub-hosted runner"
+not_called "docker pull"
+not_called "make "
+
+start_case "use: no reference on a same-repo pull request on a GitHub-hosted runner builds locally (the pool step did not run)"
+run_script 0 use toolchain "" -- "${RUN_TOKEN[@]}" "${POOL_ENV[@]}" RUNNER_ENVIRONMENT=github-hosted
+called "docker-build-toolchain"
+not_called "docker push"
+
+start_case "use: no reference on a same-repo pull request on a pool runner still fails rather than rebuild"
+run_script 1 use toolchain "" -- "${RUN_TOKEN[@]}" "${POOL_ENV[@]}" RUNNER_ENVIRONMENT=self-hosted
+stderr_has "same-repo pull request"
+not_called "make "
+
 start_case "use: no reference on a push to main fails rather than rebuild"
 run_script 1 use toolchain "" -- CI_PUBLISH=true
 stderr_has "a consumer runs the image ci-images published and never builds its own"

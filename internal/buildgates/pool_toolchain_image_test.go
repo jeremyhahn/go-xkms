@@ -352,6 +352,97 @@ func TestCIImagesBuildsOnceOnThePoolForSameRepoPRs(t *testing.T) {
 	}
 }
 
+// poolSelected is the test a ci-images step makes that preflight's scheduler
+// put a consumer of the given runner output on the self-hosted pool; a hosted
+// pick is the JSON string "ubuntu-latest" and names no self-hosted label.
+func poolSelected(output string) string {
+	return "contains(needs.preflight.outputs." + output + ", 'self-hosted')"
+}
+
+// TestPoolToolchainHandoffReachesOnlyPoolConsumers: the pool registry is on
+// the LAN, so a pool reference handed to a GitHub-hosted consumer fails its
+// pull (#2302 Codex round 3 P1). The pool step runs only when preflight put
+// every consumer on the pool; otherwise toolchain_ref falls through to the
+// resolved reference (a digest or "", the consumer-local build).
+func TestPoolToolchainHandoffReachesOnlyPoolConsumers(t *testing.T) {
+	src := readWorkflow(t)
+	job := jobBlock(src, "ci-images")
+	if job == "" {
+		t.Fatal("no ci-images job")
+	}
+	if !slices.Contains(jobNeeds(job), "preflight") {
+		t.Errorf("ci-images does not need preflight, so it cannot see the runner selection (needs %v)", jobNeeds(job))
+	}
+	pool := stepBlocks(job, "- name: Build the CI images on the pool")
+	if len(pool) != 1 {
+		t.Fatalf("ci-images has %d pool build steps, want 1", len(pool))
+	}
+	var poolIf string
+	for _, line := range strings.Split(pool[0], "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "if:"); ok {
+			poolIf = strings.TrimSpace(rest)
+		}
+	}
+	if poolIf == "" {
+		t.Fatal("the pool build step has no if:")
+	}
+	// The outputs every consumer of the ref takes runs-on from; runner and
+	// runner_docker always, as image and lint-gates take the docker one.
+	outputs := map[string]bool{"runner": true, "runner_docker": true}
+	runsOnOutput := regexp.MustCompile(`needs\.preflight\.outputs\.([A-Za-z0-9_]+)`)
+	consumers := 0
+	for _, name := range workflowJobs(src) {
+		block := jobBlock(src, name)
+		if !strings.Contains(block, "needs.ci-images.outputs.toolchain_ref") {
+			continue
+		}
+		consumers++
+		for _, line := range strings.Split(block, "\n") {
+			trim := strings.TrimSpace(line)
+			if !strings.HasPrefix(trim, "runs-on:") {
+				continue
+			}
+			for _, m := range runsOnOutput.FindAllStringSubmatch(trim, -1) {
+				outputs[m[1]] = true
+			}
+		}
+	}
+	if consumers < 5 {
+		t.Fatalf("found %d consumers of needs.ci-images.outputs.toolchain_ref", consumers)
+	}
+	for out := range outputs {
+		if !strings.Contains(poolIf, poolSelected(out)) {
+			t.Errorf("the pool build step runs although preflight may put a consumer on a hosted runner: its if: %s lacks %s", poolIf, poolSelected(out))
+		}
+	}
+	if !strings.Contains(poolIf, "env.CI_POOL == 'true'") || !strings.Contains(poolIf, "&&") {
+		t.Errorf("the pool build step's if: %s must require CI_POOL and the pool selection together", poolIf)
+	}
+	// Hosted consumers: the resolve step still runs on a pull request and
+	// the output falls through to it.
+	resolve := stepBlocks(job, "- name: Resolve main's CI images")
+	if len(resolve) != 1 || !strings.Contains(resolve[0], "env.CI_PUBLISH != 'true'") {
+		t.Errorf("ci-images has no resolve step for pull requests")
+	}
+	if !regexp.MustCompile(`toolchain_ref: \$\{\{[^\n]*steps\.pool\.outputs\.toolchain_ref \|\| steps\.resolve\.outputs\.toolchain_ref`).MatchString(job) {
+		t.Errorf("ci-images' toolchain_ref does not fall through from the pool step to the resolved reference")
+	}
+	// Validate stays strict on the pool path only: it allows an empty
+	// TOOLCHAIN_REF when the pool step did not run, by the same gate.
+	validate := stepBlocks(job, "- name: Validate the image references")
+	if len(validate) != 1 {
+		t.Fatalf("ci-images has %d validate steps, want 1", len(validate))
+	}
+	for out := range outputs {
+		if !strings.Contains(validate[0], poolSelected(out)) {
+			t.Errorf("the validate step does not apply the pool gate %s to TOOLCHAIN_REF", poolSelected(out))
+		}
+	}
+	if !strings.Contains(validate[0], `"$POOL_HANDOFF" != true`) {
+		t.Errorf("the validate step does not allow an empty TOOLCHAIN_REF by POOL_HANDOFF")
+	}
+}
+
 // poolStubDocker records every call; `pull` of a pool tag fails (not pushed
 // yet), image inspect answers an ID or a RepoDigest.
 const poolStubDocker = `#!/bin/sh
@@ -401,7 +492,9 @@ func runPoolRegistry(t *testing.T, extraEnv []string, args ...string) (stdout, s
 		"CI_PUBLISH=false", "CI_REGISTRY_BACKOFF=0", "RUNNER_TEMP="+stub,
 		// The lint-gates job sets CI_POOL=true on same-repo PRs; a test
 		// opts in through extraEnv (the last value of a key wins).
-		"CI_POOL=false")
+		"CI_POOL=false",
+		// A pool consumer by default; the GitHub-hosted tests opt out.
+		"RUNNER_ENVIRONMENT=self-hosted")
 	cmd.Env = append(cmd.Env, extraEnv...)
 	var out, errb strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -439,6 +532,43 @@ func TestCIRegistryPoolUsePullsThePoolDigest(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "TOOLCHAIN_IMAGE=reg.example:5000/ci/"+ref) {
 		t.Errorf("use did not export the pool image: %s", stdout)
+	}
+}
+
+// TestCIRegistryPoolUseRefusesAPoolRefOnAHostedRunner: a GitHub-hosted
+// runner cannot reach the LAN pool registry, so a pool reference there is a
+// workflow fault named at once, never a pull that times out or a build
+// (#2302 Codex round 3 P1).
+func TestCIRegistryPoolUseRefusesAPoolRefOnAHostedRunner(t *testing.T) {
+	ref := "go-xkms-ci-toolchain@sha256:" + strings.Repeat("a", 64)
+	_, stderr, calls, err := runPoolRegistry(t,
+		[]string{"CI_POOL=true", "CI_IMAGE_REGISTRY=reg.example:5000/ci", "RUNNER_ENVIRONMENT=github-hosted"}, "use", "toolchain", ref)
+	if err == nil {
+		t.Errorf("use of a pool reference on a GitHub-hosted runner succeeded; it must fail")
+	}
+	if strings.Contains(calls, "docker pull") || strings.Contains(calls, "docker-build-toolchain") {
+		t.Errorf("use pulled or built on a GitHub-hosted runner:\n%s", calls)
+	}
+	if !strings.Contains(stderr, "pool image reference on a GitHub-hosted runner") {
+		t.Errorf("use did not say why it failed: %s", stderr)
+	}
+}
+
+// TestCIRegistryPoolUseBuildsLocallyOnAHostedRunner: when preflight puts the
+// consumers on GitHub-hosted runners, ci-images skips the pool step and hands
+// "" for content main has not published; the consumer builds it as before
+// the pool existed.
+func TestCIRegistryPoolUseBuildsLocallyOnAHostedRunner(t *testing.T) {
+	_, stderr, calls, err := runPoolRegistry(t,
+		[]string{"CI_POOL=true", "CI_IMAGE_REGISTRY=reg.example:5000/ci", "RUNNER_ENVIRONMENT=github-hosted"}, "use", "toolchain", "")
+	if err != nil {
+		t.Fatalf("use with no reference on a GitHub-hosted runner failed: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(calls, "docker-build-toolchain") {
+		t.Errorf("use did not build the toolchain image on the hosted runner:\n%s", calls)
+	}
+	if strings.Contains(calls, "docker push") {
+		t.Errorf("use pushed from a consumer:\n%s", calls)
 	}
 }
 
