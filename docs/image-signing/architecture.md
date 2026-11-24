@@ -20,10 +20,11 @@ the certificate's first OU (`RequestCodeSigningCertificate`,
 
 1. Resolves the reference to its manifest digest (`pkg/image/registry.go:215`).
 2. Writes an in-toto statement with that digest as its subject
-   (`pkg/image/dsse.go:79`).
+   (`pkg/image/dsse.go:81`).
 3. Wraps the statement in a DSSE envelope signed over the PAE
-   (`pkg/image/dsse.go:111`, `:139`). RSA and ECDSA keys sign SHA-256(PAE);
-   Ed25519 signs the PAE itself (`pkg/image/dsse.go:128`).
+   (`pkg/image/dsse.go:113`, `:158`). RSA and P-256 keys sign SHA-256(PAE),
+   P-384 and P-521 keys sign SHA-384(PAE) and SHA-512(PAE), and other curves
+   are refused; Ed25519 signs the PAE itself (`pkg/image/dsse.go:132`).
 4. Optionally gets an RFC 3161 timestamp over the envelope bytes
    (`pkg/image/timestamp.go:247`).
 5. Pushes the attestation twice (`pkg/image/registry.go:271`):
@@ -46,7 +47,7 @@ passes every check wins; when none passes, the error joins every failure.
 | Push only the OCI 1.1 referrer | cosign and registries without the referrers API read the tag. |
 | Trust the certificate chain stored in the attestation | Anyone who can push can write the annotation. The chain is used only as intermediates; trust comes from the root store alone (`pkg/image/verifier.go:224`, `:164`). |
 | Verify the certificate at the current time when a timestamp is present | A signing certificate expires long before the image stops running. A verified timestamp's `genTime` is used instead (`pkg/image/verifier.go:164`). |
-| A new RSA verify in `pkg/signing` | `types.SimpleVerifier` is the one RSA verify. Both `pkg/signing.Verify` (`pkg/signing/verify.go:37`) and the DSSE check (`pkg/image/dsse.go:157`) call it. |
+| A new RSA verify in `pkg/signing` | `types.SimpleVerifier` is the one RSA verify. Both `pkg/signing.Verify` (`pkg/signing/verify.go:37`) and the DSSE check (`pkg/image/dsse.go:176`) call it. |
 
 ## Component boundaries
 
