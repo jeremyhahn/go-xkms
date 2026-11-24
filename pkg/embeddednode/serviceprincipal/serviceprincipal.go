@@ -117,31 +117,3 @@ func RegisterCeremonyGrant() {
 		qrdbsdk.RegisterPermissionRoleGrant(Name, ceremonyGrant...)
 	})
 }
-
-// tokenResolverGrant is what the principal additionally holds when xkmsd
-// builds its session token issuer over the embedded node: the issuer's user
-// resolver (pkg/auth QRDBUserResolver) re-reads the current account on every
-// refresh as the principal, since POST /api/v1/auth/refresh is anonymous.
-// It is read-only (users:read) and independent of WebAuthn, so a PIV/mTLS-
-// only deployment can refresh its sessions without the WebAuthn grant.
-var tokenResolverGrant = []qrdbsdk.Permission{
-	"users:read",
-}
-
-var registerTokenResolverOnce sync.Once
-
-// TokenResolverGrant returns a copy of the permissions
-// RegisterTokenResolverGrant adds.
-func TokenResolverGrant() []qrdbsdk.Permission {
-	return append([]qrdbsdk.Permission(nil), tokenResolverGrant...)
-}
-
-// RegisterTokenResolverGrant adds the token issuer's user-resolver
-// permission to the principal, once per process. The server calls it when
-// it builds the token issuer over the embedded node; go-qrdb honours the
-// grant from the next Node.ServiceContext on.
-func RegisterTokenResolverGrant() {
-	registerTokenResolverOnce.Do(func() {
-		qrdbsdk.RegisterPermissionRoleGrant(Name, tokenResolverGrant...)
-	})
-}

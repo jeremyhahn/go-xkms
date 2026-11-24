@@ -183,9 +183,8 @@ func TestCeremonyGrant_IsLeastPrivilegeCopy(t *testing.T) {
 // reaches users through the node's user service instead.
 func TestPrincipal_HoldsNoUserWritePermission(t *testing.T) {
 	grants := map[string][]qrdbsdk.Permission{
-		"base":           Grant(),
-		"ceremony":       CeremonyGrant(),
-		"token resolver": TokenResolverGrant(),
+		"base":     Grant(),
+		"ceremony": CeremonyGrant(),
 	}
 	for name, grant := range grants {
 		for _, p := range []qrdbsdk.Permission{"users:create", "users:update", "users:delete", "users:*"} {
@@ -194,15 +193,18 @@ func TestPrincipal_HoldsNoUserWritePermission(t *testing.T) {
 	}
 }
 
-func TestTokenResolverGrant_IsUsersReadCopy(t *testing.T) {
-	base := Grant()
-	RegisterTokenResolverGrant()
+// TestPrincipal_NoUserReadGrantForRefresh is owner ruling 1243: the refresh
+// user re-check runs as the refresh token's own user, so the principal holds
+// no users:read (nor any other users-management permission) once everything
+// xkmsd registers for it is registered: the base grant (Option) and the init
+// ceremony's admin lookup grant (RegisterCeremonyGrant).
+func TestPrincipal_NoUserReadGrantForRefresh(t *testing.T) {
+	_ = Option()
+	RegisterCeremonyGrant()
 
-	got := TokenResolverGrant()
-	assert.Equal(t, []qrdbsdk.Permission{"users:read"}, got)
-	assert.Equal(t, base, Grant(), "registering the resolver grant leaves the base grant unchanged")
-	assert.NotContains(t, Grant(), qrdbsdk.Permission("users:read"), "the base grant never holds users:read")
-
-	got[0] = "users:*"
-	assert.Equal(t, qrdbsdk.Permission("users:read"), TokenResolverGrant()[0], "TokenResolverGrant returns a copy")
+	for _, p := range []qrdbsdk.Permission{
+		"users:read", "users:list", "users:create", "users:update", "users:delete", "users:*",
+	} {
+		assert.False(t, qrdbsdk.HasPermissionRoleGrant(Name, p), "the service principal must not hold %s", p)
+	}
 }
