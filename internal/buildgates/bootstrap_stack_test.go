@@ -112,12 +112,44 @@ func TestBootstrapTestRunnerGetsTheAdminCredential(t *testing.T) {
 		t.Fatalf("xkms-server does not mount xkms-data at %s: %q", bootstrapDataMount, server.Volumes)
 	}
 
-	runner, ok := cf.Services["test"]
-	if !ok {
-		t.Fatal("docker-compose.yml has no test service")
+	assertServiceGetsAdminCredential(t, cf, "test", credDir)
+	assertServiceGetsAdminCredential(t, cf, "xkey-truststrap-test", credDir)
+
+	// Codex P1 #2 on #2377: the xkey runner discovers the server keys over
+	// the admin API, so its show-keys call must present the admin pair.
+	script, err := os.ReadFile(filepath.Join(bootstrapStackDir, "scripts", "run-xkey-truststrap-tests.sh"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !hasVolume(runner.Volumes, "xkms-data:"+bootstrapDataMount) {
-		t.Fatalf("test service does not mount xkms-data at %s, so it cannot read the admin credential: %q", bootstrapDataMount, runner.Volumes)
+	text := strings.ReplaceAll(string(script), "\\\n", " ")
+	start := strings.Index(text, "bootstrap show-keys")
+	if start < 0 {
+		t.Fatal("run-xkey-truststrap-tests.sh has no bootstrap show-keys call")
+	}
+	call := text[start:]
+	if end := strings.Index(call, ")\""); end >= 0 {
+		call = call[:end]
+	}
+	for _, flag := range []string{
+		`--tls-cert "${BOOTSTRAP_ADMIN_CERT}"`,
+		`--tls-key "${BOOTSTRAP_ADMIN_KEY}"`,
+	} {
+		if !strings.Contains(call, flag) {
+			t.Errorf("run-xkey-truststrap-tests.sh show-keys call lacks %s: %q", flag, call)
+		}
+	}
+}
+
+// assertServiceGetsAdminCredential fails unless the compose service name
+// mounts xkms-data and names the admin mTLS pair under credDir.
+func assertServiceGetsAdminCredential(t *testing.T, cf bootstrapCompose, name, credDir string) {
+	t.Helper()
+	svc, ok := cf.Services[name]
+	if !ok {
+		t.Fatalf("docker-compose.yml has no %s service", name)
+	}
+	if !hasVolume(svc.Volumes, "xkms-data:"+bootstrapDataMount) {
+		t.Errorf("%s service does not mount xkms-data at %s, so it cannot read the admin credential: %q", name, bootstrapDataMount, svc.Volumes)
 	}
 	for key, file := range map[string]string{
 		"BOOTSTRAP_ADMIN_CERT": "admin-cert.pem",
@@ -125,13 +157,13 @@ func TestBootstrapTestRunnerGetsTheAdminCredential(t *testing.T) {
 	} {
 		want := key + "=" + credDir + "/" + file
 		found := false
-		for _, e := range runner.Environment {
+		for _, e := range svc.Environment {
 			if e == want {
 				found = true
 			}
 		}
 		if !found {
-			t.Errorf("test service environment lacks %s", want)
+			t.Errorf("%s service environment lacks %s", name, want)
 		}
 	}
 }
