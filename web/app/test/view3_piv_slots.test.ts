@@ -79,6 +79,14 @@ function pemText(): string | null | undefined {
   return screen.getByTestId("pem").textContent;
 }
 
+// The slot list needs a backend (ListPIVSlotsHandler answers 400 without
+// one), so each case types it and loads before it looks at the slots.
+async function loadBackend(name = "yubikey"): Promise<void> {
+  await fireEvent.input(screen.getByRole("textbox", { name: "Backend" }), { target: { value: name } });
+  await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+  await waitFor(() => expect(listSlots).toHaveBeenCalledWith(name));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   toasts.length = 0;
@@ -89,6 +97,7 @@ describe("PivSlotsView", () => {
     listSlots.mockResolvedValue(slots(full, empty));
 
     render(PivSlotsView);
+    await loadBackend();
 
     expect(await screen.findByText("9a")).toBeInTheDocument();
     expect(listSlots).toHaveBeenCalledOnce();
@@ -110,6 +119,7 @@ describe("PivSlotsView", () => {
     exportCertificate.mockResolvedValue({ slot: "9a", certificate: btoa(CERT_PEM), format: "pem" });
 
     render(PivSlotsView);
+    await loadBackend();
     await screen.findByText("9a");
 
     expect(screen.queryByRole("button", { name: "View 9c" })).toBeNull();
@@ -133,6 +143,7 @@ describe("PivSlotsView", () => {
     storeCertificate.mockResolvedValue({ message: "" });
 
     render(PivSlotsView);
+    await loadBackend();
     await screen.findByText("9c");
 
     await fireEvent.click(screen.getByRole("button", { name: "Install 9c" }));
@@ -155,6 +166,7 @@ describe("PivSlotsView", () => {
     deleteCertificate.mockResolvedValue({ message: "" });
 
     render(PivSlotsView);
+    await loadBackend();
     await screen.findByText("9a");
 
     await fireEvent.click(screen.getByRole("button", { name: "Delete 9a" }));
@@ -175,6 +187,7 @@ describe("PivSlotsView", () => {
     generateCSR.mockResolvedValue({ slot: "9d", csr: btoa(CSR_PEM) });
 
     render(PivSlotsView);
+    await loadBackend();
     await screen.findByText("9d");
 
     expect(screen.queryByRole("button", { name: "CSR 9c" })).toBeNull();
@@ -198,6 +211,7 @@ describe("PivSlotsView", () => {
     listSlots.mockRejectedValue(new Error("no PIV card"));
 
     render(PivSlotsView);
+    await loadBackend();
 
     expect(await screen.findByText("no PIV card")).toBeInTheDocument();
   });
@@ -207,6 +221,7 @@ describe("PivSlotsView", () => {
     storeCertificate.mockRejectedValue(new Error("bad certificate"));
 
     render(PivSlotsView);
+    await loadBackend();
     await screen.findByText("9c");
 
     await fireEvent.click(screen.getByRole("button", { name: "Install 9c" }));
@@ -217,5 +232,35 @@ describe("PivSlotsView", () => {
     await waitFor(() => expect(toasts).toContainEqual({ kind: "error", message: "bad certificate" }));
     expect((screen.getByPlaceholderText("-----BEGIN CERTIFICATE-----") as HTMLTextAreaElement).value).toBe(CERT_PEM);
     expect(listSlots).toHaveBeenCalledOnce();
+  });
+
+  it("does not list slots until a backend is typed, then passes it", async () => {
+    listSlots.mockResolvedValue(slots(full));
+
+    render(PivSlotsView);
+
+    const field = screen.getByRole("textbox", { name: "Backend" });
+    const load = screen.getByRole("button", { name: "Load" });
+    expect(load).toBeDisabled();
+    expect(listSlots).not.toHaveBeenCalled();
+
+    await fireEvent.input(field, { target: { value: "yubikey" } });
+    expect(load).not.toBeDisabled();
+    await fireEvent.click(load);
+
+    expect(await screen.findByText("9a")).toBeInTheDocument();
+    expect(listSlots).toHaveBeenCalledOnce();
+    expect(listSlots).toHaveBeenCalledWith("yubikey");
+  });
+
+  it("keeps the backend field after a failed load", async () => {
+    listSlots.mockRejectedValue(new Error("no PIV card"));
+
+    render(PivSlotsView);
+    await fireEvent.input(screen.getByRole("textbox", { name: "Backend" }), { target: { value: "yubikey" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+
+    expect(await screen.findByText("no PIV card")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Backend" })).toBeInTheDocument();
   });
 });
