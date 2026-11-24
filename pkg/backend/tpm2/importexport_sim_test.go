@@ -464,6 +464,14 @@ func (f *failPublicBlobOnce) Save(attrs *types.KeyAttributes, data []byte, ext t
 	return f.KeyBackend.Save(attrs, data, ext, overwrite)
 }
 
+// CompareAndSwap forwards to the wrapped store's conditional write, so key
+// pair recovery sees the blob store it arbitrates through.
+func (f *failPublicBlobOnce) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	return f.KeyBackend.(store.ConditionalKeyBackend).CompareAndSwap(attrs, ext, expected, next)
+}
+
+var _ store.ConditionalKeyBackend = (*failPublicBlobOnce)(nil)
+
 // TestImportKey_RetryRepairsIncompletePair proves a create-only import whose
 // public-blob write failed after the private blob was stored is an
 // incomplete import a retry repairs: the retry succeeds and the key loads.
