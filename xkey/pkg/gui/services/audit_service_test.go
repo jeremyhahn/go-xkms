@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -144,6 +145,42 @@ func TestAuditService_GetEntries_ErrorField(t *testing.T) {
 	require.Len(t, entries, 1)
 	assert.False(t, entries[0].Success)
 	assert.Equal(t, "operation failed", entries[0].Error)
+}
+
+// A read the store cannot complete fails GetEntries and ExportEntries
+// instead of reporting a partial (here empty) result as complete: more
+// entries share one supplied timestamp than a go-qrdb page holds.
+func TestAuditService_ReadFailurePropagates(t *testing.T) {
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(2000))
+	require.NoError(t, storeErr)
+	tie := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 1002; i++ {
+		require.NoError(t, store.Log(audit.Entry{Timestamp: tie, Operation: audit.OpKeyCreated, KeyID: fmt.Sprintf("k%d", i), Success: true}))
+	}
+	_, err := store.Count()
+	require.ErrorIs(t, err, audit.ErrAuditTimestampOverflow)
+
+	svc := newAuditReaderService(store)
+	entries, err := svc.GetEntries(nil)
+	require.ErrorIs(t, err, audit.ErrAuditTimestampOverflow)
+	assert.Nil(t, entries)
+	data, err := svc.ExportEntries("json", nil)
+	require.ErrorIs(t, err, audit.ErrAuditTimestampOverflow)
+	assert.Nil(t, data)
+}
+
+func mustQuery(t testing.TB, s audit.Store, f audit.QueryFilter) []audit.Entry {
+	t.Helper()
+	entries, err := s.Query(f)
+	require.NoError(t, err)
+	return entries
+}
+
+func mustCount(t testing.TB, s audit.Store) int {
+	t.Helper()
+	n, err := s.Count()
+	require.NoError(t, err)
+	return n
 }
 
 func TestAuditService_ExportEntries_InvalidFormat(t *testing.T) {
@@ -315,7 +352,7 @@ func TestAuditService_GetEntries_PolicyGate(t *testing.T) {
 			svc := newAuditReaderService(store)
 			svc.SetPolicy(tt.policy)
 
-			countBefore := store.Count()
+			countBefore := mustCount(t, store)
 			entries, err := svc.GetEntries(nil)
 
 			if tt.wantErr {
@@ -324,7 +361,7 @@ func TestAuditService_GetEntries_PolicyGate(t *testing.T) {
 				require.ErrorAs(t, err, &denied)
 				assert.Equal(t, "user_can_view_audit_log", denied.Field)
 				assert.Nil(t, entries)
-				assert.Greater(t, store.Count(), countBefore, "denial must be audited")
+				assert.Greater(t, mustCount(t, store), countBefore, "denial must be audited")
 			} else {
 				require.NoError(t, err)
 				assert.Len(t, entries, 1)

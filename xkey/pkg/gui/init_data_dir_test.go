@@ -239,7 +239,7 @@ func TestInitializeDataDir_AuditMigratesLegacyBackendStoreRecords(t *testing.T) 
 
 	require.NoError(t, app.initializeDataDir())
 	require.True(t, app.auditStore.SealedAtRest(), "the durable sink opened over the legacy records")
-	entries := app.auditStore.Query(audit.QueryFilter{})
+	entries := mustQuery(t, app.auditStore, audit.QueryFilter{})
 	var keyIDs []string
 	for _, e := range entries {
 		keyIDs = append(keyIDs, e.KeyID)
@@ -329,7 +329,7 @@ func TestInitializeDataDir_NoBarrierPersistsNoAudit(t *testing.T) {
 	require.NoError(t, app.initializeDataDir())
 	require.False(t, app.auditStore.SealedAtRest())
 	require.NoError(t, app.auditStore.LogKeyOperation(audit.OpKeyCreated, "software", "k1", true, nil, 1))
-	assert.Equal(t, 1, app.auditStore.Count(), "the event is held in memory")
+	assert.Equal(t, 1, mustCount(t, app.auditStore), "the event is held in memory")
 	assert.ErrorIs(t, app.auditStore.VerifyChain(context.Background()), audit.ErrChainUnsupported)
 	_, statErr := os.Stat(filepath.Join(app.dataDir, "audit.log"))
 	assert.True(t, os.IsNotExist(statErr), "no plaintext audit file without a barrier")

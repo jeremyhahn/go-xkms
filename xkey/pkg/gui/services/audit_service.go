@@ -17,6 +17,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -169,7 +170,10 @@ func (s *AuditService) GetEntries(filter *AuditFilter) ([]AuditEntry, error) {
 		}
 	}
 
-	entries := s.store.Query(qf)
+	entries, err := s.store.Query(qf)
+	if err != nil {
+		return nil, fmt.Errorf("read audit log: %w", err)
+	}
 	result := make([]AuditEntry, len(entries))
 	for i, e := range entries {
 		result[i] = AuditEntry{

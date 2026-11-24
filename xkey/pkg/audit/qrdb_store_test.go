@@ -65,11 +65,11 @@ func TestQRDBStore_WritesToGoQRDBSink(t *testing.T) {
 				t.Fatalf("sink record = %+v", ev)
 			}
 
-			if got := store.Count(); got != 2 {
+			if got := mustCount(t, store); got != 2 {
 				t.Fatalf("Count = %d, want 2", got)
 			}
 			failed := false
-			got := store.Query(QueryFilter{Success: &failed})
+			got := mustQuery(t, store, QueryFilter{Success: &failed})
 			if len(got) != 1 {
 				t.Fatalf("Query(failed) = %+v, want one entry", got)
 			}
@@ -78,14 +78,14 @@ func TestQRDBStore_WritesToGoQRDBSink(t *testing.T) {
 				e.DeviceName != "Phone" || e.Error != "denied" || e.DurationMs != 7 || e.Success {
 				t.Fatalf("round-tripped entry = %+v", e)
 			}
-			pw := store.Query(QueryFilter{Operation: OpPasswordAccessed})
+			pw := mustQuery(t, store, QueryFilter{Operation: OpPasswordAccessed})
 			if len(pw) != 1 || !pw[0].Success || pw[0].Details["source"] != "gui" {
 				t.Fatalf("Query(password) = %+v", pw)
 			}
-			if n := len(store.Query(QueryFilter{Until: time.Now().Add(-time.Hour)})); n != 0 {
+			if n := len(mustQuery(t, store, QueryFilter{Until: time.Now().Add(-time.Hour)})); n != 0 {
 				t.Fatalf("Query(until an hour ago) = %d entries, want 0", n)
 			}
-			if n := len(store.Query(QueryFilter{Offset: 1, Limit: 5})); n != 1 {
+			if n := len(mustQuery(t, store, QueryFilter{Offset: 1, Limit: 5})); n != 1 {
 				t.Fatalf("Query(offset 1) = %d entries, want 1", n)
 			}
 		})
@@ -152,6 +152,24 @@ func tiedStore(t *testing.T, distinct, tied int) (*QRDBStore, xkms.QRDBNodeAudit
 	return store, sink
 }
 
+func mustQuery(t testing.TB, s Store, f QueryFilter) []Entry {
+	t.Helper()
+	entries, err := s.Query(f)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	return entries
+}
+
+func mustCount(t testing.TB, s Store) int {
+	t.Helper()
+	n, err := s.Count()
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	return n
+}
+
 func uniqueKeys(t *testing.T, entries []Entry) map[string]bool {
 	t.Helper()
 	seen := map[string]bool{}
@@ -169,17 +187,17 @@ func uniqueKeys(t *testing.T, entries []Entry) map[string]bool {
 // repeats; the timestamp-window walk returns each event once and ends.
 func TestQRDBStore_QueryPagesAcrossEqualTimestamps(t *testing.T) {
 	store, _ := tiedStore(t, qrdbQueryPageSize-2, 4)
-	got := store.Query(QueryFilter{})
+	got := mustQuery(t, store, QueryFilter{})
 	if len(got) != qrdbQueryPageSize+2 {
 		t.Fatalf("Query returned %d entries, want %d", len(got), qrdbQueryPageSize+2)
 	}
 	if seen := uniqueKeys(t, got); !seen["t0"] || !seen["t3"] || !seen["d0"] {
 		t.Fatalf("Query missed entries")
 	}
-	if n := store.Count(); n != qrdbQueryPageSize+2 {
+	if n := mustCount(t, store); n != qrdbQueryPageSize+2 {
 		t.Fatalf("Count = %d, want %d", n, qrdbQueryPageSize+2)
 	}
-	if got := store.Query(QueryFilter{Offset: qrdbQueryPageSize - 1, Limit: 2}); len(got) != 2 {
+	if got := mustQuery(t, store, QueryFilter{Offset: qrdbQueryPageSize - 1, Limit: 2}); len(got) != 2 {
 		t.Fatalf("Query offset/limit returned %d entries, want 2", len(got))
 	}
 }
@@ -190,7 +208,7 @@ func TestQRDBStore_MoveToPagesAcrossEqualTimestamps(t *testing.T) {
 	if err := store.MoveTo(next); err != nil {
 		t.Fatalf("MoveTo: %v", err)
 	}
-	got := store.Query(QueryFilter{})
+	got := mustQuery(t, store, QueryFilter{})
 	if len(got) != qrdbQueryPageSize+2 {
 		t.Fatalf("after MoveTo %d entries, want %d", len(got), qrdbQueryPageSize+2)
 	}
@@ -209,8 +227,13 @@ func TestQRDBStore_TimestampOverflowEndsTheWalk(t *testing.T) {
 	if store.sink != sink {
 		t.Fatalf("MoveTo swapped the sink after a failed replay")
 	}
-	if n := store.Count(); n > qrdbQueryPageSize+2 {
-		t.Fatalf("Count = %d: the walk repeated events", n)
+	// Query and Count report the incomplete read instead of a partial
+	// (here empty) result.
+	if got, err := store.Query(QueryFilter{}); !errors.Is(err, ErrAuditTimestampOverflow) || got != nil {
+		t.Fatalf("Query = %d entries, %v; want none and ErrAuditTimestampOverflow", len(got), err)
+	}
+	if n, err := store.Count(); !errors.Is(err, ErrAuditTimestampOverflow) || n != 0 {
+		t.Fatalf("Count = %d, %v; want 0 and ErrAuditTimestampOverflow", n, err)
 	}
 }
 
@@ -226,7 +249,7 @@ func TestQRDBStore_ClockStampedWritesAreUnique(t *testing.T) {
 			t.Fatalf("LogKeyOperation: %v", err)
 		}
 	}
-	got := store.Query(QueryFilter{})
+	got := mustQuery(t, store, QueryFilter{})
 	if len(got) != n {
 		t.Fatalf("Query returned %d entries, want %d", len(got), n)
 	}

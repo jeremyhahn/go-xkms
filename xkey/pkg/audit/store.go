@@ -19,8 +19,11 @@ import "time"
 // QRDBStore, over go-qrdb's audit store.
 type Store interface {
 	Logger
-	Query(filter QueryFilter) []Entry
-	Count() int
+	// Query returns the entries matching filter, oldest first. A read that
+	// cannot return every match fails instead of returning a partial result.
+	Query(filter QueryFilter) ([]Entry, error)
+	// Count returns the number of entries, or the error of a failed read.
+	Count() (int, error)
 }
 
 // QueryFilter selects audit entries. Zero fields match everything; Until is

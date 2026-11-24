@@ -126,8 +126,8 @@ func (m *fcpMockAuditStore) LogPasswordStoreOperation(_ audit.OperationType, _ s
 func (m *fcpMockAuditStore) LogUserPresenceEvent(_ audit.OperationType, _ string, _ bool, _ map[string]any) error {
 	return nil
 }
-func (m *fcpMockAuditStore) Count() int                              { return len(m.entries) }
-func (m *fcpMockAuditStore) Query(_ audit.QueryFilter) []audit.Entry { return m.entries }
+func (m *fcpMockAuditStore) Count() (int, error) { return len(m.entries), nil }
+func (m *fcpMockAuditStore) Query(_ audit.QueryFilter) ([]audit.Entry, error) { return m.entries, nil }
 
 var _ audit.Store = (*fcpMockAuditStore)(nil)
 

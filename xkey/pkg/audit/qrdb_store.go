@@ -257,8 +257,10 @@ func (s *QRDBStore) LogUserPresenceEvent(op OperationType, source string, succes
 }
 
 // Query returns the entries matching filter, oldest first, read from the
-// go-qrdb sink. A sink query error ends the read with what was matched.
-func (s *QRDBStore) Query(filter QueryFilter) []Entry {
+// go-qrdb sink. A read the sink cannot complete (a query error, or more
+// events at one timestamp than a page holds) returns the error and no
+// entries, so a partial read is never reported as complete.
+func (s *QRDBStore) Query(filter QueryFilter) ([]Entry, error) {
 	qf := xkms.QRDBNodeAuditFilter{
 		From:   filter.Since,
 		Action: string(filter.Operation),
@@ -271,9 +273,7 @@ func (s *QRDBStore) Query(filter QueryFilter) []Entry {
 	skipped := 0
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// A read error ends the walk with what matched so far: Query has no
-	// error return, and a partial page is what the old store returned too.
-	_ = walkSink(context.Background(), s.sink, qf, func(ev xkms.QRDBNodeAuditEvent) (bool, error) {
+	err := walkSink(context.Background(), s.sink, qf, func(ev xkms.QRDBNodeAuditEvent) (bool, error) {
 		e := qrdbEventToEntry(ev)
 		if !filter.matches(e) {
 			return true, nil
@@ -285,11 +285,18 @@ func (s *QRDBStore) Query(filter QueryFilter) []Entry {
 		matched = append(matched, e)
 		return filter.Limit <= 0 || len(matched) < filter.Limit, nil
 	})
-	return matched
+	if err != nil {
+		return nil, err
+	}
+	return matched, nil
 }
 
-// Count returns the number of entries in the go-qrdb sink.
-func (s *QRDBStore) Count() int { return len(s.Query(QueryFilter{})) }
+// Count returns the number of entries in the go-qrdb sink, or the error of
+// a read that cannot see them all.
+func (s *QRDBStore) Count() (int, error) {
+	entries, err := s.Query(QueryFilter{})
+	return len(entries), err
+}
 
 // matches reports whether e passes the filter fields the go-qrdb query does
 // not apply itself.

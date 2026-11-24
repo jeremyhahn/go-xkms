@@ -39,7 +39,7 @@ func TestFIDO2Logger_LogCredentialCreated(t *testing.T) {
 
 	require.NoError(t, logger.LogCredentialCreated("c0ffee"))
 
-	results := store.Query(QueryFilter{})
+	results := mustQuery(t, store, QueryFilter{})
 	require.Len(t, results, 1)
 	assert.Equal(t, OpFIDO2CredentialCreated, results[0].Operation)
 	assert.Equal(t, "fido2", results[0].Backend)
@@ -52,7 +52,7 @@ func TestFIDO2Logger_LogPINSeeded(t *testing.T) {
 
 	require.NoError(t, logger.LogPINSeeded())
 
-	results := store.Query(QueryFilter{})
+	results := mustQuery(t, store, QueryFilter{})
 	require.Len(t, results, 1)
 	assert.Equal(t, OpPINSeeded, results[0].Operation)
 	assert.Equal(t, "fido2", results[0].Backend)

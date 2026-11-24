@@ -53,9 +53,27 @@ func TestInitializeDataDir_AuditAtRestIsSealedUnderTheBarrier(t *testing.T) {
 	}))
 	require.Positive(t, files)
 
-	got := app.auditStore.Query(audit.QueryFilter{Operation: op})
+	got := mustQuery(t, app.auditStore, audit.QueryFilter{Operation: op})
 	require.Len(t, got, 2)
 	assert.Equal(t, keyID, got[0].KeyID)
 	assert.Equal(t, detail, got[1].Details["note"])
 	require.NoError(t, app.auditStore.VerifyChain(context.Background()))
+}
+
+func mustQuery(t testing.TB, s audit.Store, f audit.QueryFilter) []audit.Entry {
+	t.Helper()
+	entries, err := s.Query(f)
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	return entries
+}
+
+func mustCount(t testing.TB, s audit.Store) int {
+	t.Helper()
+	n, err := s.Count()
+	if err != nil {
+		t.Fatalf("Count: %v", err)
+	}
+	return n
 }
