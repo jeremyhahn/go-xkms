@@ -36,6 +36,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 // stubConnectMessage is the error text emitted by the removed platform-store
@@ -62,7 +64,7 @@ func isolatePlatformStoreEnv(t *testing.T) string {
 // exist, so connecting fails immediately without any server.
 func unreachableSocketURL(t *testing.T) string {
 	t.Helper()
-	return "unix://" + filepath.Join(t.TempDir(), "absent-xkmsd.sock")
+	return "unix://" + filepath.Join(testsupport.SocketDir(t), "absent-xkmsd.sock")
 }
 
 // assertUnreachableServer asserts that output reports a real transport

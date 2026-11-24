@@ -237,6 +237,25 @@ func (a *JWTAuthenticator) validateToken(tokenString string) (*Identity, error) 
 		identity.Metadata["username"] = username
 	}
 
+	// A passkey login mints its subject as the account's base64 WebAuthn
+	// handle (sub_kind=user_handle). The identity is bound to the account
+	// through UserID and Username, so the RBAC layer finds the account's
+	// grants. Key policies, the password store and every other persisted
+	// principal reference name the caller by the handle, and go-qrdb's
+	// AuthMiddleware rewrites Subject to the account id when it binds the
+	// request, so the handle is also kept under PasskeyHandleMetadataKey,
+	// which binding leaves alone; PolicySubject reads it. A handle that
+	// encodes no account id stays unbound: it names no account, so it holds
+	// no account's grants.
+	if kind, _ := claims[SubjectKindMetadataKey].(string); kind == SubjectKindUserHandle {
+		identity.Metadata[SubjectKindMetadataKey] = kind
+		identity.Metadata[PasskeyHandleMetadataKey] = sub
+		if userID, ok := decodeWebAuthnHandle(sub); ok {
+			identity.UserID = userID
+			identity.Username = identity.Metadata["username"]
+		}
+	}
+
 	// Extract name if present
 	if name, ok := claims["name"].(string); ok {
 		identity.Metadata["display_name"] = name

@@ -242,7 +242,7 @@ func TestStart_AgentSessionFailureIsALaunchError(t *testing.T) {
 // requires an existing directory because it would not own, and so would not
 // clean up, one it created.
 func TestStart_CreatesASuppliedWorkDir(t *testing.T) {
-	fresh := filepath.Join(t.TempDir(), "not-created-yet")
+	fresh := filepath.Join(privateDir(t), "not-created-yet")
 	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 
 	sess, err := Start(context.Background(), Request{
@@ -277,7 +277,7 @@ func TestStart_CreatesASuppliedWorkDir(t *testing.T) {
 // verification into first contact, which is the failure this whole package
 // exists to prevent.
 func TestStart_RelativeWorkDirYieldsAbsoluteArtifactPaths(t *testing.T) {
-	base := t.TempDir()
+	base := privateDir(t)
 	t.Chdir(base)
 	store, _ := known_hosts.NewDAOStore(testutil.NewMemoryDAOFactory())
 

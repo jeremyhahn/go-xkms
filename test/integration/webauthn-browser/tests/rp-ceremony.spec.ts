@@ -30,6 +30,7 @@
 // different page origin to exercise the cross-origin CORS policy.
 
 import { test, expect, type CDPSession, type Page } from '@playwright/test';
+import { provisionPasskeyAccount } from './support/passkeyAccount';
 
 // The RP API origin.
 const API_BASE = 'https://localhost:18443';
@@ -314,12 +315,25 @@ async function runAuthentication(page: Page, opts: AuthOpts): Promise<CeremonyRe
   );
 }
 
+// registerAccount creates an account with a passkey the way ruling 602
+// allows: the fixture asserts the public route refuses anonymous sign-up
+// (403 registration_refused, no user created), provisions the account as
+// admin, and redeems its invitation with the page's virtual authenticator.
+// The account then signs in with that passkey; the result carries the
+// sign-in's status and session token and the new credential's id, which is
+// what the tests' registration assertions check.
+async function registerAccount(page: Page, opts: RegOpts): Promise<CeremonyResult> {
+  const redeemed = await provisionPasskeyAccount(page, opts.apiBase, API_BASE, opts.email, opts.displayName);
+  const signIn = await runAuthentication(page, { apiBase: opts.apiBase, email: opts.email });
+  return { ...signIn, credentialId: redeemed.credentialId };
+}
+
 test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)', () => {
   test('registers and authenticates end-to-end against the real RP', async ({ page }) => {
     const email = `roundtrip-${Date.now()}@example.com`;
     await prepare(page, SAME_ORIGIN_URL);
 
-    const reg = await runRegistration(page, { apiBase: '', email, displayName: 'Round Trip' });
+    const reg = await registerAccount(page, { apiBase: '', email, displayName: 'Round Trip' });
     expect(reg.ok, `registration finish failed: ${JSON.stringify(reg.body ?? reg.clientError)}`).toBeTruthy();
     expect(reg.status).toBe(200);
     expect(reg.body).toHaveProperty('token');
@@ -339,7 +353,7 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)',
     const email = `tamper-${Date.now()}@example.com`;
     await prepare(page, SAME_ORIGIN_URL);
 
-    const reg = await runRegistration(page, { apiBase: '', email, displayName: 'Tamper Test' });
+    const reg = await registerAccount(page, { apiBase: '', email, displayName: 'Tamper Test' });
     expect(reg.ok, `registration finish failed: ${JSON.stringify(reg.body ?? reg.clientError)}`).toBeTruthy();
 
     const auth = await runAuthentication(page, { apiBase: '', email, tamperSignature: true });
@@ -355,7 +369,7 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)',
     const email = `exclude-${Date.now()}@example.com`;
     await prepare(page, SAME_ORIGIN_URL);
 
-    const first = await runRegistration(page, { apiBase: '', email, displayName: 'Exclude Test' });
+    const first = await registerAccount(page, { apiBase: '', email, displayName: 'Exclude Test' });
     expect(first.ok, `first registration failed: ${JSON.stringify(first.body ?? first.clientError)}`).toBeTruthy();
 
     // The public route refuses an account that already has a passkey
@@ -381,7 +395,7 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)',
     const email = `discoverable-${Date.now()}@example.com`;
     await prepare(page, SAME_ORIGIN_URL);
 
-    const reg = await runRegistration(page, { apiBase: '', email, displayName: 'Discoverable' });
+    const reg = await registerAccount(page, { apiBase: '', email, displayName: 'Discoverable' });
     expect(reg.ok, `registration failed: ${JSON.stringify(reg.body ?? reg.clientError)}`).toBeTruthy();
 
     // No email supplied: the RP issues a discoverable-login challenge and the
@@ -397,7 +411,7 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)',
     const nobody = `nobody-${Date.now()}@example.com`;
     await prepare(page, SAME_ORIGIN_URL);
 
-    const reg = await runRegistration(page, { apiBase: '', email, displayName: 'Decoy Control' });
+    const reg = await registerAccount(page, { apiBase: '', email, displayName: 'Decoy Control' });
     expect(reg.ok, `registration failed: ${JSON.stringify(reg.body ?? reg.clientError)}`).toBeTruthy();
 
     // Begin does not reveal whether an account exists (go-xkms#1296): an
@@ -432,7 +446,7 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (same-origin)',
     const email = `badsession-${Date.now()}@example.com`;
     await prepare(page, SAME_ORIGIN_URL);
 
-    const reg = await runRegistration(page, { apiBase: '', email, displayName: 'Bad Session' });
+    const reg = await registerAccount(page, { apiBase: '', email, displayName: 'Bad Session' });
     expect(reg.ok, `registration failed: ${JSON.stringify(reg.body ?? reg.clientError)}`).toBeTruthy();
 
     // A well-formed assertion submitted with an unknown session id must be
@@ -458,7 +472,7 @@ test.describe('xkms WebAuthn RP — Chrome virtual authenticator (cross-origin)'
     const email = `xorigin-${Date.now()}@example.com`;
     await prepare(page, CROSS_ORIGIN_URL);
 
-    const reg = await runRegistration(page, { apiBase: API_BASE, email, displayName: 'Cross Origin' });
+    const reg = await registerAccount(page, { apiBase: API_BASE, email, displayName: 'Cross Origin' });
     expect(reg.ok, `cross-origin registration failed: ${JSON.stringify(reg.body ?? reg.clientError)}`).toBeTruthy();
     expect(reg.status).toBe(200);
     expect(reg.body).toHaveProperty('token');

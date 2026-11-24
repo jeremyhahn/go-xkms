@@ -23,7 +23,6 @@ import (
 	"crypto/ecdh"
 	"crypto/rand"
 	"crypto/x509"
-	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -34,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	pkcs11svc "github.com/jeremyhahn/go-xkms/xkey/pkg/pkcs11"
 )
@@ -77,9 +77,7 @@ func newIPCRoundTrip(t *testing.T) *ipcRoundTrip {
 	embedded, err := pkcs11svc.NewEmbeddedTransport()
 	require.NoError(t, err)
 
-	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0o700))
-	socketPath := filepath.Join(dir, "xkey.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "xkey.sock")
 
 	sealed := &atomic.Bool{}
 	handler := NewPKCS11IPCHandler(embedded, testLogger(), sealed.Load)
@@ -391,7 +389,7 @@ func TestPKCS11IPCRoundTrip_CanceledContext_NeverDispatched(t *testing.T) {
 func TestPKCS11IPCRoundTrip_EveryOperation_CanceledContextNeverDials(t *testing.T) {
 	// Nothing listens on the socket, so any dial would fail as a connection
 	// error: a cancellation error proves the request never left the caller.
-	client := pkcs11svc.NewIPCTransport(filepath.Join(t.TempDir(), "absent.sock"))
+	client := pkcs11svc.NewIPCTransport(filepath.Join(testsupport.SocketDir(t), "absent.sock"))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
@@ -661,7 +659,7 @@ func TestPKCS11IPCRoundTrip_EveryOperation_BarrierSealed(t *testing.T) {
 }
 
 func TestPKCS11IPCRoundTrip_EveryOperation_NoGUIAnswering(t *testing.T) {
-	client := pkcs11svc.NewIPCTransport(filepath.Join(t.TempDir(), "absent.sock"))
+	client := pkcs11svc.NewIPCTransport(filepath.Join(testsupport.SocketDir(t), "absent.sock"))
 
 	for action, op := range clientOps() {
 		assert.ErrorIs(t, op(context.Background(), client), pkcs11svc.ErrIPCConnectionFailed, action)

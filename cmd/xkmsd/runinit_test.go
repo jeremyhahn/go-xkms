@@ -31,6 +31,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // runInitArgs returns the minimal flag set a compliant `xkmsd init` run
@@ -165,7 +167,7 @@ func TestRunInit_LoadsConfigFile(t *testing.T) {
 	content := "server:\n  host: \"init-config.example.com\"\n" +
 		"protocols:\n  unix: true\n" +
 		"tls:\n  enabled: true\n" +
-		"unix:\n  enabled: true\n  socket_path: \"" + filepath.Join(dir, "xkms.sock") + "\"\n  protocol: \"grpc\"\n" +
+		"unix:\n  enabled: true\n  socket_path: \"" + filepath.Join(testsupport.SocketDir(t), "xkms.sock") + "\"\n  protocol: \"grpc\"\n" +
 		"datastore:\n  engine: \"pebble\"\n  mode: \"standalone\"\n  path: \"" + filepath.Join(dir, "storage") + "\"\n" +
 		"barrier:\n  enabled: true\n  strategy: \"none\"\n" +
 		"logging:\n  level: \"error\"\n  format: \"json\"\n" +

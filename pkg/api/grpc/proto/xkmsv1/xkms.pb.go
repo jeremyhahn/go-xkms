@@ -25558,13 +25558,16 @@ func (x *BeginInviteRegistrationRequest) GetToken() string {
 	return ""
 }
 
-// BeginInviteRegistrationResponse carries the begun ceremony: the session ID
-// and JSON-marshaled WebAuthn registration options
-// (PublicKeyCredentialCreationOptions).
+// BeginInviteRegistrationResponse carries the begun ceremony: the session ID,
+// the JSON-marshaled WebAuthn options and the ceremony they are for:
+// "create" (CredentialCreation, a new credential) or "get"
+// (CredentialAssertion for the credential already enrolled under this
+// invitation, resuming a failed activation).
 type BeginInviteRegistrationResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	OptionsJson   string                 `protobuf:"bytes,2,opt,name=options_json,json=optionsJson,proto3" json:"options_json,omitempty"`
+	Ceremony      string                 `protobuf:"bytes,3,opt,name=ceremony,proto3" json:"ceremony,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -25609,6 +25612,13 @@ func (x *BeginInviteRegistrationResponse) GetSessionId() string {
 func (x *BeginInviteRegistrationResponse) GetOptionsJson() string {
 	if x != nil {
 		return x.OptionsJson
+	}
+	return ""
+}
+
+func (x *BeginInviteRegistrationResponse) GetCeremony() string {
+	if x != nil {
+		return x.Ceremony
 	}
 	return ""
 }
@@ -29128,11 +29138,12 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\amethods\x18\x04 \x03(\tR\amethods\"S\n" +
 	"\x1eBeginInviteRegistrationRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
-	"\x05token\x18\x02 \x01(\tR\x05token\"c\n" +
+	"\x05token\x18\x02 \x01(\tR\x05token\"\x7f\n" +
 	"\x1fBeginInviteRegistrationResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
-	"\foptions_json\x18\x02 \x01(\tR\voptionsJson\"\x9e\x01\n" +
+	"\foptions_json\x18\x02 \x01(\tR\voptionsJson\x12\x1a\n" +
+	"\bceremony\x18\x03 \x01(\tR\bceremony\"\x9e\x01\n" +
 	"\x1fFinishInviteRegistrationRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x1d\n" +

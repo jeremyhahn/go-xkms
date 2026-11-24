@@ -43,7 +43,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 		// Step 1: Generate key via REST
 		if hasREST {
 			t.Log("Step 1: Generating key via REST API...")
-			restClient := NewRESTClient(cfg.RESTBaseURL)
+			restClient := NewRESTClient(t, cfg.RESTBaseURL)
 
 			reqBody := map[string]interface{}{
 				"key_id":   keyID,
@@ -83,7 +83,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 		// Step 3: List keys and verify our key is in the list
 		if hasREST {
 			t.Log("Step 3: Listing keys via REST...")
-			restClient := NewRESTClient(cfg.RESTBaseURL)
+			restClient := NewRESTClient(t, cfg.RESTBaseURL)
 
 			resp, err := restClient.doRequest("GET", "/api/v1/keys?backend=software", nil)
 			assertNoError(t, err, "Failed to list keys")
@@ -141,7 +141,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 		// Step 5: Verify signature via REST
 		if hasREST && len(signature) > 0 {
 			t.Log("Step 5: Verifying signature via REST...")
-			restClient := NewRESTClient(cfg.RESTBaseURL)
+			restClient := NewRESTClient(t, cfg.RESTBaseURL)
 
 			verifyReq := map[string]interface{}{
 				"data":      []byte("e2e test data"),
@@ -171,7 +171,7 @@ func TestE2ECompleteWorkflow(t *testing.T) {
 		// Step 6: Delete key via REST
 		if hasREST {
 			t.Log("Step 6: Deleting key via REST...")
-			restClient := NewRESTClient(cfg.RESTBaseURL)
+			restClient := NewRESTClient(t, cfg.RESTBaseURL)
 
 			resp, err := restClient.doRequest("DELETE", fmt.Sprintf("/api/v1/keys/%s?backend=software", keyID), nil)
 			assertNoError(t, err, "Failed to delete key via REST")
@@ -221,7 +221,7 @@ func TestE2ERESTToGRPC(t *testing.T) {
 
 	// Create key via REST
 	t.Log("Creating key via REST...")
-	restClient := NewRESTClient(cfg.RESTBaseURL)
+	restClient := NewRESTClient(t, cfg.RESTBaseURL)
 
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
@@ -303,7 +303,7 @@ func TestE2EGRPCToREST(t *testing.T) {
 
 	// Use key via REST for signing
 	t.Log("Using key via REST for signing...")
-	restClient := NewRESTClient(cfg.RESTBaseURL)
+	restClient := NewRESTClient(t, cfg.RESTBaseURL)
 
 	signReq := map[string]interface{}{
 		"data": []byte("test data"),
@@ -340,7 +340,7 @@ func TestE2EConcurrentAccess(t *testing.T) {
 	keyID := generateUniqueID("e2e-concurrent")
 
 	// Create key
-	restClient := NewRESTClient(cfg.RESTBaseURL)
+	restClient := NewRESTClient(t, cfg.RESTBaseURL)
 	reqBody := map[string]interface{}{
 		"key_id":   keyID,
 		"backend":  "software",
@@ -441,7 +441,7 @@ func TestE2EMultipleKeyTypes(t *testing.T) {
 		{"ed25519", 0, ""},
 	}
 
-	restClient := NewRESTClient(cfg.RESTBaseURL)
+	restClient := NewRESTClient(t, cfg.RESTBaseURL)
 	grpcClient, err := NewGRPCClient(cfg.GRPCAddr)
 	assertNoError(t, err, "Failed to create gRPC client")
 	defer grpcClient.Close()

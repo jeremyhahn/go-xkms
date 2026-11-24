@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -72,7 +73,7 @@ func findLog(records []capturedLog, substr string) (capturedLog, bool) {
 func listeningSocket(t *testing.T) string {
 	t.Helper()
 
-	path := filepath.Join(t.TempDir(), "swtpm.sock")
+	path := filepath.Join(testsupport.SocketDir(t), "swtpm.sock")
 	listener, err := net.Listen("unix", path)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })

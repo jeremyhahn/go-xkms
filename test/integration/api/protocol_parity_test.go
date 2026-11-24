@@ -19,17 +19,15 @@
 package integration
 
 import (
-	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 	"github.com/jeremyhahn/go-xkms/test/integration/api/commands"
 )
 
@@ -301,22 +299,10 @@ func checkUnixSocketExists(socketPath string) bool {
 }
 
 func checkHTTPEndpoint(url string) bool {
-	caFile := os.Getenv("KEYSTORE_TLS_CA")
-	if caFile == "" {
-		caFile = "/etc/xkms/certs/ca.crt"
-	}
-	pool := x509.NewCertPool()
-	if caPEM, err := os.ReadFile(caFile); err == nil {
-		pool.AppendCertsFromPEM(caPEM)
-	}
-	client := &http.Client{
-		Timeout: 3 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs: pool,
-			},
-		},
-	}
+	// The trust bundle is re-read on every dial: the server switches from
+	// the bootstrap certificate (KEYSTORE_TLS_CA) to the one its serving CA
+	// issued when it unseals.
+	client := apiharness.TrustedHTTPClient(3 * time.Second)
 	resp, err := client.Get(url) //nolint:noctx // simple health check
 	if err != nil {
 		return false
@@ -334,12 +320,15 @@ func checkQUICEndpoint(baseURL string) bool {
 	if _, err := os.Stat(binPath); os.IsNotExist(err) {
 		return false
 	}
-	caFile := os.Getenv("KEYSTORE_TLS_CA")
-	if caFile == "" {
-		caFile = "/etc/xkms/certs/ca.crt"
+	// The server requires the admin mTLS credential on QUIC as on every
+	// TLS transport.
+	tlsArgs, err := apiharness.ClientTLSArgs()
+	if err != nil {
+		return false
 	}
 	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
-	cmd := exec.Command(binPath, "--server", "quic://"+host, "--tls-ca", caFile, "backends", "list")
+	args := append([]string{"--server", "quic://" + host}, tlsArgs...)
+	cmd := exec.Command(binPath, append(args, "backends", "list")...)
 	return cmd.Run() == nil
 }
 

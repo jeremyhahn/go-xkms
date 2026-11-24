@@ -14,7 +14,7 @@
 FROM golang:1.27.4-bookworm AS libfido2-builder
 
 # Build libfido2 v1.17.0 from source for HID_NAME fallback support
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     git build-essential cmake pkg-config \
     libssl-dev libcbor-dev libudev-dev libpcsclite-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -33,7 +33,7 @@ FROM golang:1.27.4-bookworm
 ENV GOTOOLCHAIN=auto
 
 # Install FIDO2 runtime dependencies and development headers
-RUN apt-get update && apt-get install -y \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y \
     libcbor-dev \
     libhidapi-dev \
     libudev-dev \

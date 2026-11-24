@@ -27,6 +27,7 @@ import (
 	gossh "golang.org/x/crypto/ssh"
 
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-xkms/sdk/go/internal/testsupport"
 )
 
 // generateLocalIdentityFiles generates a fresh, unencrypted ed25519 keypair
@@ -173,7 +174,7 @@ func TestDialLocalAgent_EmptySockPathIsUnavailable(t *testing.T) {
 // TestDialLocalAgent_UnreachableSocketIsUnavailable pins the same error type
 // for a socket path that cannot be dialed (nothing is listening).
 func TestDialLocalAgent_UnreachableSocketIsUnavailable(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "no-agent.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "no-agent.sock")
 	_, err := sdkssh.DialLocalAgent(sockPath)
 	var uae *sdkssh.LocalAgentUnavailableError
 	if !errors.As(err, &uae) {
@@ -184,7 +185,7 @@ func TestDialLocalAgent_UnreachableSocketIsUnavailable(t *testing.T) {
 // TestLocalAgentSignerForFingerprint_UnreachableSocketIsUnavailable pins the
 // same deterministic failure through the fingerprint-lookup entry point.
 func TestLocalAgentSignerForFingerprint_UnreachableSocketIsUnavailable(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "no-agent.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "no-agent.sock")
 	_, err := sdkssh.LocalAgentSignerForFingerprint(sockPath, "SHA256:deadbeef")
 	var uae *sdkssh.LocalAgentUnavailableError
 	if !errors.As(err, &uae) {
@@ -235,7 +236,7 @@ func TestNoUsableLocalIdentityError_MessageAndUnwrap(t *testing.T) {
 // on-disk identities.
 func TestResolveLocalSigners_AgentPrefixPropagatesAgentError(t *testing.T) {
 	sel := sdkssh.LocalKeySelector{Identity: sdkssh.LocalIdentityAgentPrefix + "SHA256:deadbeef"}
-	sockPath := filepath.Join(t.TempDir(), "no-agent.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "no-agent.sock")
 
 	_, err := sdkssh.ResolveLocalSigners(context.Background(), sel, sockPath)
 	var uae *sdkssh.LocalAgentUnavailableError

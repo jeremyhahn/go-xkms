@@ -33,6 +33,8 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 func TestConfig_backendConfig_MapsCredentialFlags(t *testing.T) {
@@ -166,7 +168,7 @@ func startTLSUnixServer(t *testing.T, opts ...grpc.ServerOption) (string, string
 		t.Fatalf("write CA file: %v", err)
 	}
 
-	socketPath := filepath.Join(dir, "xkms.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "xkms.sock")
 	lis, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

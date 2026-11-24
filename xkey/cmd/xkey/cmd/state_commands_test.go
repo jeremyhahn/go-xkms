@@ -16,13 +16,13 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
-	"os"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 )
 
@@ -357,26 +357,11 @@ func noDaemonSocket(t *testing.T) string {
 	return privateTempDir(t) + "/absent.sock"
 }
 
-// privateTempDir returns a fresh temporary directory with mode 0700, for
-// tests that bind or dial an xkey IPC socket inside it. The IPC server and
-// client refuse a socket directory with group or other permission bits, and
-// t.TempDir creates its directory 0777 &^ umask.
+// privateTempDir returns a fresh short mode-0700 directory for tests that
+// bind or dial an xkey IPC socket inside it (testsupport.SocketDir: the IPC
+// server and client refuse a group- or world-accessible socket directory, and
+// a socket under t.TempDir passes sun_path under a long TMPDIR).
 func privateTempDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	if len(dir)+len("/test-barrier-serve.sock") > maxTestSocketPathLen {
-		// A long TMPDIR (CI runner pools nest it under the job's work dir)
-		// would push sockets under t.TempDir() past AF_UNIX's sun_path, so
-		// bind/dial fail with EINVAL instead of the error under test.
-		short, err := os.MkdirTemp("/tmp", "xk-")
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = os.RemoveAll(short) })
-		dir = short
-	}
-	require.NoError(t, os.Chmod(dir, 0o700))
-	return dir
+	return testsupport.SocketDir(t)
 }
-
-// maxTestSocketPathLen keeps test socket paths within AF_UNIX's sun_path:
-// 108 bytes on Linux and 104 on macOS, each including the trailing NUL.
-const maxTestSocketPathLen = 103

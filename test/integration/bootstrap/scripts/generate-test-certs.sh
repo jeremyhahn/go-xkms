@@ -237,11 +237,9 @@ health:
   enabled: true
   path: /health
 
-storage:
-  backend: file
-  path: ${DATA_DIR}
-
 datastore:
+  engine: pebble
+  mode: standalone
   path: ${DATA_DIR}/datastore
 
 rng:

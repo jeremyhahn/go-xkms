@@ -21,6 +21,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // TestGRPCServer_Start_MkdirAllError tests the error path when the socket
@@ -54,7 +56,7 @@ func TestGRPCServer_Start_RemoveExistingSocketError(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	// Create a directory at the socket path that contains files,
 	// so os.Remove will fail with "directory not empty"
@@ -85,7 +87,7 @@ func TestGRPCServer_Stop_ContextAlreadyCancelled(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath: socketPath,

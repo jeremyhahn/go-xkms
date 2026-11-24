@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -161,7 +162,7 @@ func TestWrapKey_IsNonDeterministic(t *testing.T) {
 
 // TestGetImportParameters_ReturnsSRKWrappingKey verifies the returned wrapping
 // key really is the TPM's Storage Root Key public area and that ImportToken
-// carries the SRK Name. Wrapping to the wrong key would produce blobs the TPM
+// carries the SRK's marshaled TPMTPublic. Wrapping to the wrong key would produce blobs the TPM
 // silently refuses to import later, far from the point of failure.
 func TestGetImportParameters_ReturnsSRKWrappingKey(t *testing.T) {
 	b := newSimBackend(t)
@@ -177,12 +178,12 @@ func TestGetImportParameters_ReturnsSRKWrappingKey(t *testing.T) {
 		t.Errorf("KeySpec = %q, want TPM2_KEYEDHASH", params.KeySpec)
 	}
 
-	srkName, srkPub, err := b.srkPublicContents()
+	_, srkPub, err := b.srkPublicContents()
 	if err != nil {
 		t.Fatalf("srkPublicContents: %v", err)
 	}
-	if !bytes.Equal(params.ImportToken, srkName.Buffer) {
-		t.Errorf("ImportToken does not match the SRK Name\n got %x\nwant %x", params.ImportToken, srkName.Buffer)
+	if want := gotpm2.Marshal(srkPub); !bytes.Equal(params.ImportToken, want) {
+		t.Errorf("ImportToken is not the marshaled SRK TPMTPublic\n got %x\nwant %x", params.ImportToken, want)
 	}
 
 	// The default SRK in this config is RSA-2048; the wrapping public key must
@@ -402,6 +403,105 @@ func TestImportKey_PersistsUnderCN(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("imported key not enumerated by ListKeys: %+v", after)
+	}
+}
+
+// TestImportKey_NeverOverwritesExistingKey proves an import into the TPM
+// persists with a conditional create: a second, different key imported
+// under the same attributes is refused and the stored public key is still
+// the original one (Codex round-4 P1 on #2183, Tenant Agent ruling 952).
+func TestImportKey_NeverOverwritesExistingKey(t *testing.T) {
+	b := newSimBackend(t)
+	ctx := context.Background()
+
+	_, first := wrapMaterial(t, b, bytes.Repeat([]byte{0x11}, 32))
+	attrs := &types.KeyAttributes{CN: "import-no-overwrite", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, attrs, first); err != nil {
+		t.Fatalf("ImportKey (first): %v", err)
+	}
+	original := storedPublicBlob(t, b, attrs)
+
+	_, second := wrapMaterial(t, b, bytes.Repeat([]byte{0x22}, 32))
+	conflict := &types.KeyAttributes{CN: "import-no-overwrite", KeyType: types.KeyTypeStorage}
+	err := b.ImportKey(ctx, conflict, second)
+	if err == nil {
+		t.Fatal("ImportKey over an existing key succeeded; it must refuse (already exists)")
+	}
+	if !errors.Is(err, backend.ErrKeyAlreadyExists) {
+		t.Errorf("ImportKey conflict error = %v, want backend.ErrKeyAlreadyExists", err)
+	}
+
+	if got := storedPublicBlob(t, b, attrs); !bytes.Equal(got, original) {
+		t.Fatal("stored public key changed: the conflicting import overwrote the original key")
+	}
+}
+
+// storedPublicBlob returns the public area the backend's key store holds for attrs.
+func storedPublicBlob(t *testing.T, b *Backend, attrs *types.KeyAttributes) []byte {
+	t.Helper()
+	pub, err := b.keyBackend.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		t.Fatalf("read stored public blob: %v", err)
+	}
+	if len(pub) == 0 {
+		t.Fatal("stored public blob is empty")
+	}
+	return bytes.Clone(pub)
+}
+
+// failPublicBlobOnce is a key store that fails the next public-blob write,
+// the storage fault (or crash) between the two writes of a key pair.
+type failPublicBlobOnce struct {
+	store.KeyBackend
+	fail bool
+}
+
+func (f *failPublicBlobOnce) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	if f.fail && ext == store.FSEXT_PUBLIC_BLOB {
+		f.fail = false
+		return errors.New("injected public blob write fault")
+	}
+	return f.KeyBackend.Save(attrs, data, ext, overwrite)
+}
+
+// TestImportKey_RetryRepairsIncompletePair proves a create-only import whose
+// public-blob write failed after the private blob was stored is an
+// incomplete import a retry repairs: the retry succeeds and the key loads.
+// A complete key under the same attributes still refuses a different import
+// (Codex round-5 P1 on #2183, Tenant Agent ruling 968).
+func TestImportKey_RetryRepairsIncompletePair(t *testing.T) {
+	b := newSimBackend(t)
+	ctx := context.Background()
+	faulty := &failPublicBlobOnce{KeyBackend: b.keyBackend, fail: true}
+	b.keyBackend = faulty
+
+	_, wrapped := wrapMaterial(t, b, bytes.Repeat([]byte{0x44}, 32))
+	attrs := &types.KeyAttributes{CN: "import-incomplete-pair", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, attrs, wrapped); err == nil {
+		t.Fatal("ImportKey succeeded although the public blob write failed")
+	}
+	if _, err := faulty.Get(attrs, store.FSEXT_PRIVATE_BLOB); err != nil {
+		t.Fatalf("fault did not leave the private blob behind (test precondition): %v", err)
+	}
+
+	retry := &types.KeyAttributes{CN: "import-incomplete-pair", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, retry, wrapped); err != nil {
+		t.Fatalf("retry of the incomplete import: %v", err)
+	}
+	loaded, err := b.tpm.LoadKeyPair(retry, nil, b.keyBackend)
+	if err != nil {
+		t.Fatalf("load the repaired key pair: %v", err)
+	}
+	b.tpm.Flush(loaded.ObjectHandle)
+	original := storedPublicBlob(t, b, retry)
+
+	_, other := wrapMaterial(t, b, bytes.Repeat([]byte{0x55}, 32))
+	conflict := &types.KeyAttributes{CN: "import-incomplete-pair", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, conflict, other); !errors.Is(err, backend.ErrKeyAlreadyExists) {
+		t.Fatalf("import over the complete key error = %v, want backend.ErrKeyAlreadyExists", err)
+	}
+	if got := storedPublicBlob(t, b, retry); !bytes.Equal(got, original) {
+		t.Fatal("stored public key changed: the conflicting import overwrote the complete key")
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -63,7 +64,7 @@ func reproCA793Config(t *testing.T, dataDir string) *config.Config {
 		},
 		Protocols: config.ProtocolsConfig{Unix: true},
 		Unix: config.UnixConfig{
-			SocketPath: filepath.Join(dataDir, "xkms.sock"),
+			SocketPath: filepath.Join(testsupport.SocketDir(t), "xkms.sock"),
 		},
 		Logging:   config.LoggingConfig{Level: "info", Format: "json"},
 		TLS:       config.TLSConfig{Enabled: true},

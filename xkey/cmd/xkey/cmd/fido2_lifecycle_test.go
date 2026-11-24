@@ -69,7 +69,8 @@ func TestFido2DeviceClose_ReleasesSubsystems(t *testing.T) {
 		pwStore:  store,
 		notifier: notify.NewLogNotifier(discardLogger()),
 	}
-	server, err := ipc.NewServer(filepath.Join(privateTempDir(t), "fido2.sock"), device, discardLogger())
+	socketDir := privateTempDir(t)
+	server, err := ipc.NewServer(filepath.Join(socketDir, "fido2.sock"), device, discardLogger())
 	require.NoError(t, err)
 	device.ipcServer = server
 

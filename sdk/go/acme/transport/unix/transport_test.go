@@ -26,13 +26,14 @@ import (
 
 	caerrors "github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/transport"
+	"github.com/jeremyhahn/go-xkms/sdk/go/internal/testsupport"
 )
 
 // TestNewTransport_Success tests successful transport creation.
 func TestNewTransport_Success(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -63,7 +64,7 @@ func TestNewTransport_Success(t *testing.T) {
 func TestNewTransport_UnixScheme(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: "unix://" + socketPath,
@@ -170,7 +171,7 @@ func TestNewTransport_NonUnixAddress(t *testing.T) {
 func TestNewTransport_DefaultTimeout(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -193,7 +194,7 @@ func TestNewTransport_DefaultTimeout(t *testing.T) {
 func TestTransport_Close(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -226,7 +227,7 @@ func TestTransport_Close(t *testing.T) {
 func TestTransport_Conn(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -257,7 +258,7 @@ func TestTransport_Conn(t *testing.T) {
 func TestTransport_Request_ClosedTransport(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -286,7 +287,7 @@ func TestTransport_Request_ClosedTransport(t *testing.T) {
 func TestTransport_Request_EmptyService(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -312,7 +313,7 @@ func TestTransport_Request_EmptyService(t *testing.T) {
 func TestTransport_Request_EmptyMethod(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -338,7 +339,7 @@ func TestTransport_Request_EmptyMethod(t *testing.T) {
 func TestTransport_Request_UnknownEndpoint(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -364,7 +365,7 @@ func TestTransport_Request_UnknownEndpoint(t *testing.T) {
 func TestFactory_Create(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	factory := NewFactory()
 
@@ -633,7 +634,7 @@ func setupTestServer(t *testing.T, socketPath string, handler http.Handler) (*ht
 func TestTransport_Request_Success(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	// Create test handler
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -697,7 +698,7 @@ func TestTransport_Request_Success(t *testing.T) {
 func TestTransport_Request_WithBody(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	var receivedBody map[string]interface{}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -762,7 +763,7 @@ func TestTransport_Request_WithBody(t *testing.T) {
 func TestTransport_Request_WithPathParameter(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/acme/acct/test-id-123" && r.Method == http.MethodPost {
@@ -812,7 +813,7 @@ func TestTransport_Request_WithPathParameter(t *testing.T) {
 func TestTransport_Request_ErrorResponse(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/problem+json")
@@ -858,7 +859,7 @@ func TestTransport_Request_ErrorResponse(t *testing.T) {
 func TestTransport_Request_NonACMEError(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -893,7 +894,7 @@ func TestTransport_Request_NonACMEError(t *testing.T) {
 func TestTransport_Request_ContextCanceled(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	// Handler that delays response
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -932,7 +933,7 @@ func TestTransport_Request_ContextCanceled(t *testing.T) {
 func TestTransport_Request_ContextTimeout(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	// Handler that delays response longer than timeout
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -972,7 +973,7 @@ func TestTransport_Request_ConnectionError(t *testing.T) {
 	t.Parallel()
 
 	// Use a socket path that doesn't exist
-	socketPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "nonexistent.sock")
 
 	cfg := &transport.Config{
 		Address: socketPath,
@@ -1005,7 +1006,7 @@ func TestTransport_Request_ConnectionError(t *testing.T) {
 func TestTransport_Healthy(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -1038,7 +1039,7 @@ func TestTransport_Healthy(t *testing.T) {
 func TestTransport_Request_HeadMethod(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/acme/new-nonce" && r.Method == http.MethodHead {
@@ -1082,7 +1083,7 @@ func TestTransport_Request_HeadMethod(t *testing.T) {
 func TestNewTransport_WithTLSConfig(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address:   socketPath,
@@ -1112,7 +1113,7 @@ func TestNewTransport_WithTLSConfig(t *testing.T) {
 func TestNewTransport_WithKeepalive(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	cfg := &transport.Config{
 		Address:          socketPath,
@@ -1137,7 +1138,7 @@ func TestNewTransport_WithKeepalive(t *testing.T) {
 func TestTransport_Request_AllEndpoints(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	// Handler that responds to all paths
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1188,7 +1189,7 @@ func TestTransport_Request_AllEndpoints(t *testing.T) {
 func TestTransport_Request_TenantListQuery(t *testing.T) {
 	t.Parallel()
 
-	socketPath := filepath.Join(t.TempDir(), "test.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 	got := make(chan string, 1)
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v1/tenants/" {

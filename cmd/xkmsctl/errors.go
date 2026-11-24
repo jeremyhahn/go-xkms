@@ -1477,6 +1477,10 @@ var (
 	// ErrFinishInviteRegistrationFailed is the sentinel error "failed to finish invitation registration".
 	ErrFinishInviteRegistrationFailed = errors.New("failed to finish invitation registration")
 
+	// ErrUnknownInviteCeremony is returned when an invitation begin names
+	// a WebAuthn ceremony other than create or get.
+	ErrUnknownInviteCeremony = errors.New("invitation begin named an unknown WebAuthn ceremony")
+
 	// ErrActivateInvitePIVFailed is the sentinel error "failed to activate invitation with PIV credential".
 	ErrActivateInvitePIVFailed = errors.New("failed to activate invitation with PIV credential")
 )

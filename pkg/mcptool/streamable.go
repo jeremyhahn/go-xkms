@@ -21,9 +21,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	mcptransport "github.com/mark3labs/mcp-go/client/transport"
@@ -65,23 +68,12 @@ type streamableHTTP struct {
 	protocolVersion string
 	onNotification  func(mcp.JSONRPCNotification)
 	closed          bool
-	// inflight holds the cancel function of every POST whose response body
-	// is still open, so Close interrupts requests a server holds open.
-	inflight map[uint64]context.CancelFunc
-	nextReq  uint64
-}
 
-// releasingBody closes the response body and then releases the request's
-// registration and context in Close.
-type releasingBody struct {
-	io.ReadCloser
-	release func()
-}
-
-func (b *releasingBody) Close() error {
-	err := b.ReadCloser.Close()
-	b.release()
-	return err
+	// life is the transport's lifetime: every request runs under a context
+	// derived from it, and Close cancels it, so Close ends a request whose
+	// response is blocked instead of leaving it to the caller's deadline.
+	life context.Context
+	stop context.CancelFunc
 }
 
 var _ mcptransport.HTTPConnection = (*streamableHTTP)(nil)
@@ -93,7 +85,10 @@ func newStreamableHTTP(endpoint string, rt http.RoundTripper, headers map[string
 	for k, v := range headers {
 		copied[k] = v
 	}
+	life, stop := context.WithCancel(context.Background())
 	return &streamableHTTP{
+		life:     life,
+		stop:     stop,
 		endpoint: endpoint,
 		http: &http.Client{
 			Transport: rt,
@@ -111,8 +106,35 @@ func (s *streamableHTTP) Start(context.Context) error {
 	return nil
 }
 
+// requestContext derives a request's context from ctx and the transport's
+// lifetime: it ends when either does. The returned cancel releases it.
+func (s *streamableHTTP) requestContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	reqCtx, cancel := context.WithCancel(ctx)
+	unhook := context.AfterFunc(s.life, cancel)
+	return reqCtx, func() {
+		unhook()
+		cancel()
+	}
+}
+
+// closedErr marks err as errTransportClosed when Close ended the request.
+func (s *streamableHTTP) closedErr(err error) error {
+	if err == nil || s.life.Err() == nil || errors.Is(err, errTransportClosed) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", errTransportClosed, err)
+}
+
 // SendRequest posts one JSON-RPC request and returns the server's response.
+// Close ends it with errTransportClosed, even while the response is blocked.
 func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
+	ctx, cancel := s.requestContext(ctx)
+	defer cancel()
+	resp, err := s.sendRequest(ctx, request)
+	return resp, s.closedErr(err)
+}
+
+func (s *streamableHTTP) sendRequest(ctx context.Context, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
 	resp, err := s.post(ctx, request, request.Header)
 	if err != nil {
 		return nil, err
@@ -120,7 +142,9 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusBadRequest {
-		return badRequest(resp, request)
+		if rpcErr := jsonRPCErrorResponse(resp, request.ID); rpcErr != nil {
+			return rpcErr, nil
+		}
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("mcp request %s: unexpected HTTP status %d", request.Method, resp.StatusCode)
@@ -134,7 +158,13 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 	}
 
 	body := io.LimitReader(resp.Body, maxResponseBytes)
-	mediaType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
+	// Media types compare case-insensitively and parameters such as
+	// charset do not change them (RFC 9110 section 8.3.1); ParseMediaType
+	// drops the parameters and returns the type in lower case.
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil {
+		return nil, fmt.Errorf("mcp request %s: parse content type: %w", request.Method, err)
+	}
 	switch mediaType {
 	case contentTypeJSON:
 		var msg wireMessage
@@ -144,24 +174,49 @@ func (s *streamableHTTP) SendRequest(ctx context.Context, request mcptransport.J
 		if !msg.isResponse() {
 			return nil, fmt.Errorf("mcp request %s: server body is not a JSON-RPC response", request.Method)
 		}
-		resp, err := msg.response(request.ID)
-		if err != nil {
-			return nil, fmt.Errorf("mcp request %s: %w", request.Method, err)
+		if !msg.answers(request.ID) {
+			return nil, fmt.Errorf("mcp request %s: response id %s does not match request id %s", request.Method, msg.ID, request.ID.String())
 		}
-		return resp, nil
+		return msg.response()
 	case contentTypeEventFeed:
-		return s.readEventStream(body, request)
+		return s.readEventStream(ctx, body, request)
 	default:
 		return nil, fmt.Errorf("mcp request %s: unexpected content type %q", request.Method, mediaType)
 	}
 }
 
+// jsonRPCErrorResponse returns the JSON-RPC error response an HTTP 400 answer
+// carries for the request id (jsonrpc "2.0", an error and no result), or nil
+// when the answer is anything else. A server rejecting the protocol version
+// answers so (UNSUPPORTED_PROTOCOL_VERSION with its supported versions), and
+// the caller must see that error, not a bare HTTP status (#2081).
+func jsonRPCErrorResponse(resp *http.Response, id mcp.RequestId) *mcptransport.JSONRPCResponse {
+	mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+	if err != nil || mediaType != contentTypeJSON {
+		return nil
+	}
+	var msg wireMessage
+	if json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&msg) != nil {
+		return nil
+	}
+	if msg.Error == nil || msg.Result != nil || !msg.isResponse() || !msg.answers(id) {
+		return nil
+	}
+	out, err := msg.response()
+	if err != nil {
+		return nil
+	}
+	return out
+}
+
 // SendNotification posts one JSON-RPC notification; the server accepts it
 // without a response body.
 func (s *streamableHTTP) SendNotification(ctx context.Context, notification mcp.JSONRPCNotification) error {
+	ctx, cancel := s.requestContext(ctx)
+	defer cancel()
 	resp, err := s.post(ctx, notification, nil)
 	if err != nil {
-		return err
+		return s.closedErr(err)
 	}
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 	_ = resp.Body.Close()
@@ -193,8 +248,8 @@ func (s *streamableHTTP) GetSessionId() string {
 	return s.sessionID
 }
 
-// Close ends the server session, when there is one, and refuses later sends.
-// It is safe to call more than once.
+// Close cancels every request in flight, ends the server session, when there
+// is one, and refuses later sends. It is safe to call more than once.
 func (s *streamableHTTP) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -203,18 +258,8 @@ func (s *streamableHTTP) Close() error {
 	}
 	s.closed = true
 	sessionID := s.sessionID
-	cancels := make([]context.CancelFunc, 0, len(s.inflight))
-	for _, cancel := range s.inflight {
-		cancels = append(cancels, cancel)
-	}
 	s.mu.Unlock()
-
-	// Interrupt every request whose response is still open: a stalled
-	// response or an unfinished event stream must not keep its goroutine
-	// and connection after the client is closed.
-	for _, cancel := range cancels {
-		cancel()
-	}
+	s.stop()
 
 	if sessionID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
@@ -232,41 +277,19 @@ func (s *streamableHTTP) Close() error {
 
 // post sends one JSON-RPC message to the endpoint. A redirect is an error.
 func (s *streamableHTTP) post(ctx context.Context, message any, extra http.Header) (*http.Response, error) {
+	s.mu.RLock()
+	closed := s.closed
+	s.mu.RUnlock()
+	if closed {
+		return nil, errTransportClosed
+	}
+
 	data, err := json.Marshal(message)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: encode message: %w", err)
 	}
-
-	// Register the request's cancel function under the same lock that Close
-	// takes to mark the transport closed: a request either sees closed and
-	// never starts, or is registered and cancelled by Close.
-	reqCtx, cancel := context.WithCancel(ctx)
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		cancel()
-		return nil, errTransportClosed
-	}
-	if s.inflight == nil {
-		s.inflight = make(map[uint64]context.CancelFunc)
-	}
-	s.nextReq++
-	key := s.nextReq
-	s.inflight[key] = cancel
-	s.mu.Unlock()
-	var once sync.Once
-	release := func() {
-		once.Do(func() {
-			s.mu.Lock()
-			delete(s.inflight, key)
-			s.mu.Unlock()
-			cancel()
-		})
-	}
-
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, s.endpoint, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.endpoint, bytes.NewReader(data))
 	if err != nil {
-		release()
 		return nil, fmt.Errorf("mcp: build request: %w", err)
 	}
 	s.setHeaders(req, extra)
@@ -275,15 +298,12 @@ func (s *streamableHTTP) post(ctx context.Context, message any, extra http.Heade
 
 	resp, err := s.http.Do(req)
 	if err != nil {
-		release()
 		return nil, fmt.Errorf("mcp: send request: %w", err)
 	}
 	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 		_ = resp.Body.Close()
-		release()
 		return nil, fmt.Errorf("%w (HTTP %d)", ErrRedirectRefused, resp.StatusCode)
 	}
-	resp.Body = &releasingBody{ReadCloser: resp.Body, release: release}
 	return resp, nil
 }
 
@@ -310,8 +330,8 @@ func (s *streamableHTTP) setHeaders(req *http.Request, extra http.Header) {
 
 // readEventStream reads server-sent events until the response to request
 // arrives. Notifications on the way go to the notification handler; requests
-// from the server are not supported by this client and are dropped.
-func (s *streamableHTTP) readEventStream(body io.Reader, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
+// from the server are answered on the same session (answerServerRequest).
+func (s *streamableHTTP) readEventStream(ctx context.Context, body io.Reader, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64<<10), maxResponseBytes)
 	var data strings.Builder
@@ -320,11 +340,11 @@ func (s *streamableHTTP) readEventStream(body io.Reader, request mcptransport.JS
 		line := scanner.Text()
 		if !more || line == "" {
 			if data.Len() > 0 {
-				resp, err := s.dispatchEvent(data.String(), request.ID)
+				resp, done, err := s.dispatchEvent(ctx, data.String(), request.ID)
 				if err != nil {
 					return nil, fmt.Errorf("mcp request %s: %w", request.Method, err)
 				}
-				if resp != nil {
+				if done {
 					return resp, nil
 				}
 				data.Reset()
@@ -349,18 +369,29 @@ func (s *streamableHTTP) readEventStream(body io.Reader, request mcptransport.JS
 
 // dispatchEvent handles one event's data. It returns the response when the
 // event carries one, and nil otherwise.
-func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) (*mcptransport.JSONRPCResponse, error) {
+func (s *streamableHTTP) dispatchEvent(ctx context.Context, data string, id mcp.RequestId) (resp *mcptransport.JSONRPCResponse, done bool, err error) {
 	var msg wireMessage
-	if err := json.Unmarshal([]byte(data), &msg); err != nil {
-		return nil, nil
+	if json.Unmarshal([]byte(data), &msg) != nil {
+		return nil, false, nil
 	}
 	if msg.isResponse() {
-		return msg.response(id)
+		if !msg.answers(id) {
+			// A response to another request: not this request's result.
+			return nil, false, nil
+		}
+		// The response to this request ends the stream, as a failure when
+		// it is not a JSON-RPC 2.0 response.
+		resp, err = msg.response()
+		return resp, true, err
 	}
-	if msg.Method != "" && msg.ID == nil {
+	if msg.Method != "" && msg.ID != nil && string(msg.ID) != "null" {
+		s.answerServerRequest(ctx, msg)
+		return nil, false, nil
+	}
+	if msg.Method != "" {
 		var notification mcp.JSONRPCNotification
-		if err := json.Unmarshal([]byte(data), &notification); err != nil {
-			return nil, nil
+		if json.Unmarshal([]byte(data), &notification) != nil {
+			return nil, false, nil
 		}
 		s.mu.RLock()
 		handler := s.onNotification
@@ -369,35 +400,41 @@ func (s *streamableHTTP) dispatchEvent(data string, id mcp.RequestId) (*mcptrans
 			handler(notification)
 		}
 	}
-	return nil, nil
+	return nil, false, nil
+}
+
+// serverRequestReply is the client's answer to a request the server sent on
+// an event stream. ID stays raw so the server gets its own id back exactly.
+type serverRequestReply struct {
+	JSONRPC string                   `json:"jsonrpc"`
+	ID      json.RawMessage          `json:"id"`
+	Result  *struct{}                `json:"result,omitempty"`
+	Error   *mcp.JSONRPCErrorDetails `json:"error,omitempty"`
+}
+
+// answerServerRequest answers a server-initiated request on the same
+// session: ping gets an empty result, every other method a JSON-RPC
+// method-not-found error. The client offers no sampling, roots or
+// elicitation, so no other request has a meaningful answer; leaving one
+// unanswered would stall a server that waits for it before completing the
+// call. A failed reply is dropped: the call's own response, or its absence,
+// reports the outcome.
+func (s *streamableHTTP) answerServerRequest(ctx context.Context, msg wireMessage) {
+	reply := serverRequestReply{JSONRPC: mcp.JSONRPC_VERSION, ID: msg.ID}
+	if msg.Method == string(mcp.MethodPing) {
+		reply.Result = &struct{}{}
+	} else {
+		reply.Error = &mcp.JSONRPCErrorDetails{Code: mcp.METHOD_NOT_FOUND, Message: "Method not found"}
+	}
+	resp, err := s.post(ctx, reply, nil)
+	if err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
+	_ = resp.Body.Close()
 }
 
 // wireMessage is the part of a JSON-RPC message the transport inspects.
-// badRequest handles an HTTP 400 answer to request. A server that rejects
-// the request at the protocol level, such as an unsupported protocol
-// version, says why in a JSON-RPC error response for the request's id: that
-// response is returned so the client sees the error's code and data. Any
-// other HTTP 400 is an HTTP error.
-func badRequest(resp *http.Response, request mcptransport.JSONRPCRequest) (*mcptransport.JSONRPCResponse, error) {
-	statusErr := fmt.Errorf("mcp request %s: unexpected HTTP status %d", request.Method, resp.StatusCode)
-	mediaType := strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0])
-	if mediaType != contentTypeJSON {
-		return nil, statusErr
-	}
-	var msg wireMessage
-	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&msg); err != nil {
-		return nil, statusErr
-	}
-	if msg.Method != "" || msg.Error == nil || msg.Result != nil {
-		return nil, statusErr
-	}
-	rpcResp, err := msg.response(request.ID)
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", statusErr, err)
-	}
-	return rpcResp, nil
-}
-
 type wireMessage struct {
 	JSONRPC string                   `json:"jsonrpc"`
 	ID      json.RawMessage          `json:"id,omitempty"`
@@ -406,31 +443,40 @@ type wireMessage struct {
 	Error   *mcp.JSONRPCErrorDetails `json:"error,omitempty"`
 }
 
-// isResponse reports whether the message is a result or an error.
+// isResponse reports whether the message is a result or an error with an ID;
+// a response with a missing or null ID answers no request.
 func (m *wireMessage) isResponse() bool {
-	return m.Method == "" && (m.Result != nil || m.Error != nil)
+	id := bytes.TrimSpace(m.ID)
+	hasID := len(id) > 0 && !bytes.Equal(id, []byte("null"))
+	return m.Method == "" && hasID && (m.Result != nil || m.Error != nil)
 }
 
-// response converts the message to mcp-go's response type. One POST carries
-// one request, so the response takes that request's id.
-func (m *wireMessage) response(id mcp.RequestId) (*mcptransport.JSONRPCResponse, error) {
+// answers reports whether the message's wire ID is the request's ID. IDs
+// compare by JSON value: 1, 1.0 and 1e0 match, the string "1" does not.
+func (m *wireMessage) answers(id mcp.RequestId) bool {
+	if len(m.ID) == 0 || id.IsNil() {
+		return false
+	}
+	// Compare by value, not by spelling: mcp-go's RequestId canonicalises an
+	// integral number however it is written (1, 1.0, 1e0), and keeps a string
+	// id distinct from a number with the same digits.
+	var got mcp.RequestId
+	if err := json.Unmarshal(m.ID, &got); err != nil || got.IsNil() {
+		return false
+	}
+	return got.String() == id.String()
+}
+
+// response converts the message to mcp-go's response type, keeping the wire
+// ID it arrived with. Callers check answers first.
+func (m *wireMessage) response() (*mcptransport.JSONRPCResponse, error) {
+	// A response answers a request only in JSON-RPC 2.0 (#2081).
 	if m.JSONRPC != mcp.JSONRPC_VERSION {
-		return nil, fmt.Errorf("response has JSON-RPC version %q, want %q", m.JSONRPC, mcp.JSONRPC_VERSION)
+		return nil, fmt.Errorf("response JSON-RPC version %q is not %q", m.JSONRPC, mcp.JSONRPC_VERSION)
 	}
-	want, err := id.MarshalJSON()
-	if err != nil {
-		return nil, fmt.Errorf("encode request id: %w", err)
-	}
-	if len(m.ID) == 0 || string(m.ID) == "null" {
-		return nil, fmt.Errorf("response has no id, want %s", want)
-	}
-	var received mcp.RequestId
-	if err := received.UnmarshalJSON(m.ID); err != nil {
+	var id mcp.RequestId
+	if err := json.Unmarshal(m.ID, &id); err != nil {
 		return nil, fmt.Errorf("decode response id: %w", err)
-	}
-	got, err := received.MarshalJSON()
-	if err != nil || received.IsNil() || !bytes.Equal(got, want) {
-		return nil, fmt.Errorf("response id %s does not match request id %s", m.ID, want)
 	}
 	return &mcptransport.JSONRPCResponse{
 		JSONRPC: mcp.JSONRPC_VERSION,
@@ -438,4 +484,78 @@ func (m *wireMessage) response(id mcp.RequestId) (*mcptransport.JSONRPCResponse,
 		Result:  m.Result,
 		Error:   m.Error,
 	}, nil
+}
+
+// methodNotificationInitialized is the notification a client sends once the
+// initialize exchange has succeeded.
+const methodNotificationInitialized = "notifications/initialized"
+
+// streamSession is an MCP client session over streamableHTTP: the initialize
+// handshake and tools/call. It replaces mcp-go's client.Client, whose calls
+// reach mcp-go's transport.StreamableHTTP (GO-2026-6911), and implements
+// Session.
+type streamSession struct {
+	transport *streamableHTTP
+	nextID    atomic.Int64
+}
+
+var _ Session = (*streamSession)(nil)
+
+// request sends one JSON-RPC request and returns its result, or the
+// server's JSON-RPC error as a Go error.
+func (s *streamSession) request(ctx context.Context, method string, params any) (json.RawMessage, error) {
+	resp, err := s.transport.SendRequest(ctx, mcptransport.JSONRPCRequest{
+		JSONRPC: mcp.JSONRPC_VERSION,
+		ID:      mcp.NewRequestId(s.nextID.Add(1)),
+		Method:  method,
+		Params:  params,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if resp.Error != nil {
+		return nil, resp.Error.AsError()
+	}
+	return resp.Result, nil
+}
+
+// initialize runs the MCP handshake: the initialize request, a check that
+// the server chose a protocol version this client knows, and the
+// initialized notification. The negotiated version goes on every later
+// request.
+func (s *streamSession) initialize(ctx context.Context, info mcp.Implementation) error {
+	raw, err := s.request(ctx, string(mcp.MethodInitialize), mcp.InitializeParams{
+		ProtocolVersion: mcp.LATEST_PROTOCOL_VERSION,
+		ClientInfo:      info,
+		Capabilities:    mcp.ClientCapabilities{},
+	})
+	if err != nil {
+		return err
+	}
+	var result mcp.InitializeResult
+	if err := json.Unmarshal(raw, &result); err != nil {
+		return fmt.Errorf("mcp initialize: decode result: %w", err)
+	}
+	if !slices.Contains(mcp.ValidProtocolVersions, result.ProtocolVersion) {
+		return fmt.Errorf("mcp initialize: unsupported protocol version %q", result.ProtocolVersion)
+	}
+	s.transport.SetProtocolVersion(result.ProtocolVersion)
+	return s.transport.SendNotification(ctx, mcp.JSONRPCNotification{
+		JSONRPC:      mcp.JSONRPC_VERSION,
+		Notification: mcp.Notification{Method: methodNotificationInitialized},
+	})
+}
+
+// CallTool implements Session: one tools/call request.
+func (s *streamSession) CallTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	raw, err := s.request(ctx, string(mcp.MethodToolsCall), request.Params)
+	if err != nil {
+		return nil, err
+	}
+	return mcp.ParseCallToolResult(&raw)
+}
+
+// Close implements Session: it ends the server session.
+func (s *streamSession) Close() error {
+	return s.transport.Close()
 }

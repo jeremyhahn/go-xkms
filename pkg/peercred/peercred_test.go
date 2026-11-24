@@ -18,10 +18,13 @@ package peercred
 import (
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // realUnixConnPair returns a connected pair of *net.UnixConn backed by a
@@ -35,7 +38,7 @@ func realUnixConnPair(t *testing.T) (client, server *net.UnixConn) {
 		// Fall back to a named socket in a temp directory: not every
 		// platform in this build set supports the abstract namespace
 		// "@name" address (Linux does; Darwin does not).
-		sockPath := t.TempDir() + "/peercred-test.sock"
+		sockPath := filepath.Join(testsupport.SocketDir(t), "peercred-test.sock")
 		conns, err = net.ListenUnix("unix", &net.UnixAddr{Name: sockPath, Net: "unix"})
 		require.NoError(t, err)
 	}

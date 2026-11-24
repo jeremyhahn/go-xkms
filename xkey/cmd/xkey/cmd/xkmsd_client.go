@@ -74,6 +74,14 @@ const cfgKeyXKMSdURL = "xkmsd_url"
 // through to the environment and config sources.
 const tlsCAFlagName = "tls-ca"
 
+// tlsCertFlagName and tlsKeyFlagName are the per-command flags naming an mTLS
+// client certificate and key (as xkmsctl's --tls-cert/--tls-key). Commands
+// that do not declare them fall through to XKMSD_TLS_CERT/XKMSD_TLS_KEY.
+const (
+	tlsCertFlagName = "tls-cert"
+	tlsKeyFlagName  = "tls-key"
+)
+
 // xkmsd client errors.
 var (
 	// ErrXKMSdURLRequired indicates no xkmsd server URL was configured by any
@@ -192,11 +200,12 @@ func resolveXKMSdEndpoint(cmd *cobra.Command) (XKMSdEndpoint, error) {
 		return XKMSdEndpoint{}, ErrXKMSdURLRequired
 	}
 
+	certFile, keyFile := resolveXKMSdTLSClientFiles(cmd)
 	return withXKMSdToken(XKMSdEndpoint{
 		URL:         serverURL,
 		TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
-		TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
-		TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
+		TLSCertFile: certFile,
+		TLSKeyFile:  keyFile,
 	})
 }
 
@@ -328,6 +337,15 @@ func resolveXKMSdTLSCAFile(cmd *cobra.Command) string {
 		sources = append(sources, cfg.XKMSD.TLSCAFile)
 	}
 	return strings.TrimSpace(firstNonEmpty(sources...))
+}
+
+// resolveXKMSdTLSClientFiles returns the mTLS client certificate and key
+// files: --tls-cert/--tls-key when the command declares and sets them, else
+// XKMSD_TLS_CERT/XKMSD_TLS_KEY.
+func resolveXKMSdTLSClientFiles(cmd *cobra.Command) (certFile, keyFile string) {
+	certFile = strings.TrimSpace(firstNonEmpty(commandFlagString(cmd, tlsCertFlagName), os.Getenv(envXKMSdTLSCert)))
+	keyFile = strings.TrimSpace(firstNonEmpty(commandFlagString(cmd, tlsKeyFlagName), os.Getenv(envXKMSdTLSKey)))
+	return certFile, keyFile
 }
 
 // commandFlagString reads a flag value when the command declares one,

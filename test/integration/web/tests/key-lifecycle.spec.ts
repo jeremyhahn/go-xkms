@@ -16,24 +16,24 @@
  * through the browser against the live server — the software backend does
  * real ECDSA P-256 key generation and signing, not a stub.
  *
- * NOTE: this assumes a freshly self-registered operator (see
- * support/operator.ts) holds keys:create / keys:sign / keys:delete. That is
- * the expected default for the first-boot-adjacent RBAC role, but has not
- * been verified against a running daemon from this sandbox (which cannot
- * bind listening ports) — if the operator's default role turns out to be
- * read-only, the "Generate" / "Sign" / "Delete" controls this spec clicks
- * simply will not be in the DOM (they are can()-gated in KeysView.svelte /
- * KeyDetail.svelte) and this spec fails fast at the first missing control
- * rather than hanging.
+ * The operator is admin-provisioned (support/passkeyAccount.ts; anonymous
+ * sign-up is refused under ruling 602) with the built-in admin role, and
+ * provisionOperator asserts, before any control here is clicked, that the
+ * administrator sees the role on the account and that the signed-in session
+ * holds keys:create, keys:sign and keys:delete. The "Generate" / "Sign" /
+ * "Delete" controls are can()-gated in KeysView.svelte / KeyDetail.svelte,
+ * so a missing permission fails there with its name rather than at the
+ * first absent control.
  */
 
 import { test, expect } from '@playwright/test';
 import { installVirtualAuthenticator } from './support/virtualAuthenticator.ts';
-import { registerOperator, uniqueOperator } from './support/operator.ts';
+import { uniqueOperator } from './support/operator.ts';
+import { provisionOperator } from './support/passkeyAccount.ts';
 
 test('generates, signs, and deletes a key through the console', async ({ page }) => {
   await installVirtualAuthenticator(page);
-  await registerOperator(page, uniqueOperator('keys'));
+  await provisionOperator(page, uniqueOperator('keys'));
 
   const keyId = `e2e-key-${Date.now()}`;
 
