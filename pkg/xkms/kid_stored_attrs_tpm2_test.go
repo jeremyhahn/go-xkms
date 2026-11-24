@@ -57,6 +57,16 @@ func setupRealTPM2KID(t *testing.T) {
 	Reset()
 	t.Cleanup(Reset)
 
+	require.NoError(t, Initialize(&ServiceConfig{
+		Backends:       map[string]Backend{"tpm2": newRealTPM2Backend(t)},
+		DefaultBackend: "tpm2",
+	}))
+}
+
+// newRealTPM2Backend returns an xkms Backend over a TPM2 backend on the
+// simulator, closed when the test ends.
+func newRealTPM2Backend(t *testing.T) Backend {
+	t.Helper()
 	tpmBackend, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator: true,
 		Keys:         tpmblobtest.New(t),
@@ -71,11 +81,7 @@ func setupRealTPM2KID(t *testing.T) {
 
 	b, err := New(&BackendConfig{Backend: tpmBackend, CertStorage: storage.New()})
 	require.NoError(t, err)
-
-	require.NoError(t, Initialize(&ServiceConfig{
-		Backends:       map[string]Backend{"tpm2": b},
-		DefaultBackend: "tpm2",
-	}))
+	return b
 }
 
 // TestExportKeyByKID_TPM2_ExistingKey_IsFoundNotMissing proves the fix's
