@@ -159,6 +159,50 @@ describe("TenantEntitlementsView", () => {
     expect(toasts).toEqual([]);
   });
 
+  it("saves to a typed tenant ID when tenants.list() is refused", async () => {
+    list.mockRejectedValue(Object.assign(new Error("403 Forbidden: tenants:list"), { status: 403 }));
+    updateEntitlements.mockResolvedValue(tenantInfo());
+
+    render(TenantEntitlementsView);
+
+    expect(await screen.findByText("403 Forbidden: tenants:list")).toBeInTheDocument();
+    const typed = screen.getByRole("textbox", { name: "Tenant ID" });
+    await fireEvent.input(typed, { target: { value: "t-known" } });
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeEnabled();
+    await fireEvent.click(save);
+
+    await waitFor(() => expect(updateEntitlements).toHaveBeenCalledOnce());
+    expect(updateEntitlements).toHaveBeenCalledWith("t-known", {
+      tenant_id: "t-known",
+      entitlements: {
+        allowed_isolation_modes: [],
+        allow_dedicated_raft: false,
+        allow_volume_storage: false,
+        allow_system_managed_barrier: false,
+        allowed_barrier_modes: [],
+        allow_dedicated_wal: false,
+      },
+    });
+    await waitFor(() =>
+      expect(toasts).toEqual([{ kind: "success", message: 'Entitlements saved for "t-known".' }]),
+    );
+  });
+
+  it("a typed tenant ID wins over the selected one", async () => {
+    list.mockResolvedValue(tenants);
+    updateEntitlements.mockResolvedValue(tenantInfo());
+
+    render(TenantEntitlementsView);
+    await chooseTenant("t-acme");
+    await fireEvent.input(screen.getByRole("textbox", { name: "Tenant ID" }), { target: { value: "t-other" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateEntitlements).toHaveBeenCalledOnce());
+    expect(updateEntitlements.mock.calls[0]?.[0]).toBe("t-other");
+    expect(updateEntitlements.mock.calls[0]?.[1].tenant_id).toBe("t-other");
+  });
+
   it("shows an error alert and no success toast when the save fails", async () => {
     list.mockResolvedValue(tenants);
     updateEntitlements.mockRejectedValue(new Error("permission denied"));

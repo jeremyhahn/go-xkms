@@ -165,6 +165,37 @@ describe("TenantQuotasView", () => {
     expect(await screen.findByText("tenants unavailable")).toBeInTheDocument();
   });
 
+  it("saves to a typed tenant ID when tenants.list() is refused", async () => {
+    list.mockRejectedValue(Object.assign(new Error("403 Forbidden: tenants:list"), { status: 403 }));
+    updateQuotas.mockResolvedValue({ tenant: { id: "t-known", name: "", created_at: "", updated_at: "" } });
+
+    render(TenantQuotasView);
+
+    expect(await screen.findByText("403 Forbidden: tenants:list")).toBeInTheDocument();
+    const typed = screen.getByRole("textbox", { name: "Tenant ID" });
+    await fireEvent.input(typed, { target: { value: "t-known" } });
+    const save = screen.getByRole("button", { name: "Save" });
+    expect(save).toBeEnabled();
+    await fireEvent.click(save);
+
+    await waitFor(() => expect(updateQuotas).toHaveBeenCalledOnce());
+    expect(updateQuotas).toHaveBeenCalledWith("t-known", { tenant_id: "t-known", quotas: zeroQuotas() });
+    await waitFor(() => expect(toasts).toContainEqual({ kind: "success", message: 'Quotas for "t-known" saved.' }));
+  });
+
+  it("a typed tenant ID wins over the selected one", async () => {
+    list.mockResolvedValue(tenantsReply);
+    updateQuotas.mockResolvedValue({ tenant: { id: "t-other", name: "", created_at: "", updated_at: "" } });
+
+    render(TenantQuotasView);
+    await chooseTenant("t-acme");
+    await fireEvent.input(screen.getByRole("textbox", { name: "Tenant ID" }), { target: { value: "t-other" } });
+    await fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateQuotas).toHaveBeenCalledOnce());
+    expect(updateQuotas).toHaveBeenCalledWith("t-other", { tenant_id: "t-other", quotas: zeroQuotas() });
+  });
+
   it("shows an error when the quota update fails", async () => {
     list.mockResolvedValue(tenantsReply);
     updateQuotas.mockRejectedValue(new Error("permission denied"));
