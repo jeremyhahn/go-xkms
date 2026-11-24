@@ -191,6 +191,9 @@ tls:
   cert_file: ${CERT_DIR}/fullchain.crt
   key_file: ${CERT_DIR}/server.key
   ca_file: ${CERT_DIR}/ca.crt
+  # The admin API authenticates the first-boot administrator's mTLS pair;
+  # clients without a certificate (health check, bootstrap discovery) must still complete the handshake.
+  client_auth: verify
 
 # cmd/xkmsd refuses to start on any config.ComplianceGaps finding, so the
 # test config names an authenticator and a CA the way the web and
