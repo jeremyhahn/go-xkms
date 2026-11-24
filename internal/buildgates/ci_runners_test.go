@@ -33,9 +33,18 @@ var forgeSplit = regexp.MustCompile(`^\$\{\{ github\.server_url == 'https://gith
 // selfHostedReason finds the waiver and its reason in a line comment.
 var selfHostedReason = regexp.MustCompile(`(^|\s)# self-hosted: *\S`)
 
-// forgeSplitJobs keep a runs-on that is hostedRunner on github.com.
+// preflightOverflow is a v1.48 runs-on (ruling 1024): on github.com the job
+// reads the preflight's `runner` or `runner_docker` output, which is
+// hostedRunner unless the hosted pool is full (never for a fork), and on the
+// forge a label (group 3). Ruling 1037: the runners test accepts it.
+var preflightOverflow = regexp.MustCompile(`^\$\{\{ github\.server_url == 'https://github\.com' && fromJSON\(needs\.preflight\.outputs\.(runner|runner_docker)( \|\| '"` + hostedRunner + `"')?\) \|\| '([a-z0-9-]+)' \}\}$`)
+
+// forgeSplitJobs keep, in exactly this form, a runs-on that is hostedRunner
+// on github.com unless the Infra Department's CI_PREFLIGHT_RUNS_ON says
+// otherwise for a same-repository run (ci-template v1.52, ruling 999).
 var forgeSplitJobs = map[string]string{
 	"ci-images": `${{ github.server_url == 'https://github.com' && '` + hostedRunner + `' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}`,
+	"preflight": `${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || '` + hostedRunner + `' }}`,
 }
 
 // runnerProblems lists each ci.yml job that is neither on hostedRunner, nor
@@ -67,7 +76,7 @@ func runnerProblems(body []byte) []string {
 		switch {
 		case runsOn == nil:
 			problems = append(problems, "job "+name+" has no runs-on")
-		case runsOn.Kind == yaml.ScalarNode && (runsOn.Value == hostedRunner || forgeSplit.MatchString(runsOn.Value)):
+		case runsOn.Kind == yaml.ScalarNode && (runsOn.Value == hostedRunner || forgeSplit.MatchString(runsOn.Value) || preflightOverflow.MatchString(runsOn.Value)):
 		case forgeSplitJobs[name] != "":
 			if runsOn.Value != forgeSplitJobs[name] {
 				problems = append(problems, "job "+name+" runs on "+strconv.Quote(runsOn.Value)+"; want "+strconv.Quote(forgeSplitJobs[name]))
@@ -133,7 +142,10 @@ func TestCIJobsRunHostedFirst(t *testing.T) {
 	good := wf(job("preflight", hostedRunner), job("ci-images", forgeSplitJobs["ci-images"]),
 		job("image", "[self-hosted, linux, x64, bigdisk]  "+selfHostedWaiver+"a stated reason"),
 		job("scope", "${{ github.server_url == 'https://github.com' && '"+hostedRunner+"' || 'bigdisk' }}"),
-		job("review", "codex  # lab-string-ok: a label waiver "+selfHostedWaiver+"a stated reason"))
+		job("review", "codex  # lab-string-ok: a label waiver "+selfHostedWaiver+"a stated reason"),
+		job("build", "${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner) || 'bigdisk' }}"),
+		job("integration", "${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}"),
+		job("ci-gate", `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`))
 	if p := runnerProblems(good); len(p) != 0 {
 		t.Fatalf("a hosted-first workflow fails: %v", p)
 	}
@@ -145,6 +157,9 @@ func TestCIJobsRunHostedFirst(t *testing.T) {
 		"ci-images in another form":              wf(job("ci-images", "bigdisk")),
 		"no runs-on":                             []byte("jobs:\n  build:\n    steps: []\n"),
 		"a review runner with no reason":         wf(job("review", "codex  # lab-string-ok: a label waiver")),
+		"an overflow from another output":        wf(job("build", "${{ github.server_url == 'https://github.com' && fromJSON(needs.other.outputs.runner) || 'bigdisk' }}")),
+		"an overflow with a pool fallback":       wf(job("build", `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"bigdisk"') || 'bigdisk' }}`)),
+		"preflight in another form":              wf(job("preflight", "${{ vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}")),
 		"a split that is the pool on github.com": wf(job("scope", "${{ github.server_url == 'https://github.com' && 'bigdisk' || 'ubuntu-latest' }}")),
 	} {
 		if len(runnerProblems(bad)) == 0 {
