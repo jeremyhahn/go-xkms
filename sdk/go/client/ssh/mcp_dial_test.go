@@ -36,9 +36,9 @@ import (
 // mcpSignResult, mcpKnownHostVerifyParams) — the JSON tags must match
 // exactly since this file decodes what that client sends.
 type mcpTestSignParams struct {
-	Scope  string `json:"scope"`
-	Owner  string `json:"owner"`
-	Name   string `json:"name"`
+	Scope     string `json:"scope"`
+	Owner     string `json:"owner"`
+	Name      string `json:"name"`
 	Digest    []byte `json:"digest"`
 	Algorithm string `json:"algorithm,omitempty"`
 }

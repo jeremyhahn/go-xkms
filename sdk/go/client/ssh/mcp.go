@@ -637,10 +637,10 @@ func (s *mcpSessionClient) Dial(ctx context.Context, req SessionDialRequest) (Se
 // ----------------------------------------------------------------------------
 
 var (
-	_ Client               = (*mcpClient)(nil)
-	_ KeysClient           = (*mcpKeysClient)(nil)
-	_ KnownHostsClient     = (*mcpKnownHostsClient)(nil)
-	_ AuthorizedKeysClient = (*mcpAuthorizedKeysClient)(nil)
-	_ SessionClient        = (*mcpSessionClient)(nil)
+	_ Client                = (*mcpClient)(nil)
+	_ KeysClient            = (*mcpKeysClient)(nil)
+	_ KnownHostsClient      = (*mcpKnownHostsClient)(nil)
+	_ AuthorizedKeysClient  = (*mcpAuthorizedKeysClient)(nil)
+	_ SessionClient         = (*mcpSessionClient)(nil)
 	_ gossh.AlgorithmSigner = (*mcpSigner)(nil)
 )

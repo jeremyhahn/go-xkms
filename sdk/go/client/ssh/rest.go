@@ -593,11 +593,11 @@ func (s *restSessionClient) Dial(ctx context.Context, req SessionDialRequest) (S
 
 // Ensure the interface wiring is compile-time checked.
 var (
-	_ Client               = (*restClient)(nil)
-	_ KeysClient           = (*restKeysClient)(nil)
-	_ KnownHostsClient     = (*restKnownHostsClient)(nil)
-	_ AuthorizedKeysClient = (*restAuthorizedKeysClient)(nil)
-	_ SessionClient        = (*restSessionClient)(nil)
+	_ Client                = (*restClient)(nil)
+	_ KeysClient            = (*restKeysClient)(nil)
+	_ KnownHostsClient      = (*restKnownHostsClient)(nil)
+	_ AuthorizedKeysClient  = (*restAuthorizedKeysClient)(nil)
+	_ SessionClient         = (*restSessionClient)(nil)
 	_ gossh.AlgorithmSigner = (*restSigner)(nil)
 )
 
