@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -160,4 +161,48 @@ func TestEmbeddedNode_LogCheckpointSignedWithCAKey(t *testing.T) {
 		"the checkpoint must verify under the cluster CA key")
 	require.Error(t, vlog.VerifyHead(&trusted.selectedKey.PublicKey, origin, signed.Head),
 		"the checkpoint must not verify under the selected CA key")
+}
+
+// TestEmbeddedNode_TransparencyLogAppendsToNodeLog proves the appender the
+// server hands the CA (compose.CAParams.TransparencyLog) writes to the
+// node's own issuance log: created on first use, signed by the cluster CA
+// key, and authorized without a caller identity of its own.
+func TestEmbeddedNode_TransparencyLogAppendsToNodeLog(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+	ctx := context.Background()
+
+	cfg := qrdbBarrierConfig(t)
+	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
+	cfg.Cluster.RaftEnrollment.ClusterCACN = "cluster-ca"
+	s, err := New(cfg)
+	require.NoError(t, err)
+	defer func() { _ = s.Shutdown() }()
+
+	trusted := &twoIdentityCA{clusterCN: "cluster-ca"}
+	trusted.selectedKey, trusted.selectedCert = selfSignedCA(t, "selected-ca")
+	trusted.clusterKey, trusted.clusterCert = selfSignedCA(t, "cluster-ca")
+	require.NoError(t, s.bindCAProviders(trusted))
+
+	appender := s.transparencyLog()
+	if s.qrdbNode.Services().Log == nil {
+		if vlogBuiltIn {
+			t.Fatalf("built with qrdb_vlog, but the embedded node exposes no verifiable-log service")
+		}
+		require.Nil(t, appender, "without a log service the CA gets no appender")
+		t.Skip("the node's verifiable-log service is compiled in only with the qrdb_vlog build tag")
+	}
+	require.NotNil(t, appender, "a server with a qrdb client hands the CA an appender")
+
+	require.NoError(t, tlog.AppendEntry(ctx, appender, tlog.CertIssued{SHA256: "00", Serial: "1"}))
+	require.NoError(t, tlog.AppendEntry(ctx, appender, tlog.CertIssued{SHA256: "01", Serial: "2"}))
+
+	owner := &qrdbsdk.Identity{Subject: "owner", TenantID: qrdbsdk.SystemTenantID,
+		Roles: []string{qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, "owner")}}
+	ctx = qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(ctx, owner), qrdbsdk.SystemTenantID)
+	signed, err := s.qrdbClient.Vlog().VlogSignHead(ctx, &vlogwire.LogRequest{Log: tlog.LogIssuance})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), signed.Head.Size)
+	require.NoError(t, vlog.VerifyHead(&trusted.clusterKey.PublicKey,
+		qrdbsdk.SystemTenantID+"/"+tlog.LogIssuance, signed.Head))
 }
