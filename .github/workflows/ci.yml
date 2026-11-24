@@ -1357,9 +1357,13 @@ jobs:
       # is built here once, on the pool, and pushed to the pool registry;
       # the reference names no registry (a job output holding a secret is
       # dropped), and each consumer's `use` adds it back from the secret.
+      # Codex round 3 on #2302: only when preflight put every consumer (runs-on
+      # from `runner` or `runner_docker`) on the self-hosted pool; a hosted
+      # consumer cannot reach the LAN registry, so it gets the resolved
+      # reference, or "" and builds the image itself, as before #2299.
       - name: Build the CI images on the pool
         id: pool
-        if: ${{ env.CI_POOL == 'true' }}
+        if: ${{ env.CI_POOL == 'true' && contains(needs.preflight.outputs.runner, 'self-hosted') && contains(needs.preflight.outputs.runner_docker, 'self-hosted') }}
         env:
           CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ steps.resolve.outputs.toolchain_ref }}
@@ -1370,17 +1374,18 @@ jobs:
           fi
 
       # A published reference is always a digest; a resolved one is a digest
-      # or "" (the toolchain is never "" on a same-repo pull request: the pool
+      # or "" (the toolchain is never "" when the pool step ran: the pool
       # built it; the integration image may be "", no pool job consumes it).
       - name: Validate the image references
         env:
+          POOL_HANDOFF: ${{ env.CI_POOL == 'true' && contains(needs.preflight.outputs.runner, 'self-hosted') && contains(needs.preflight.outputs.runner_docker, 'self-hosted') }}
           TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
           IT_REF: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
         run: |
           re='^[^@ ]+@sha256:[0-9a-f]{64}$'
           for v in TOOLCHAIN_REF IT_REF; do
             ref=${!v}
-            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ] && { [ "$CI_POOL" != true ] || [ "$v" = IT_REF ]; }; then
+            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ] && { [ "$POOL_HANDOFF" != true ] || [ "$v" = IT_REF ]; }; then
               echo "$v is empty: the consumers build the image on their runners"
               continue
             fi

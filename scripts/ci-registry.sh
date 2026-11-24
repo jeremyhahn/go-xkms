@@ -727,6 +727,10 @@ use() {
     # #2299: ci-images outputs a pool image with no registry in it (a job
     # output that holds a secret is dropped); the secret supplies it here.
     if [ "${CI_POOL:-}" = true ] && [[ $ref == "go-xkms-ci-$family@"* ]]; then
+      # Codex round 3 on #2302: the pool registry is on the LAN; a hosted
+      # runner's pull would time out, so name the workflow fault at once.
+      [ "${RUNNER_ENVIRONMENT:-}" != github-hosted ] ||
+        die "a pool image reference on a GitHub-hosted runner, which cannot reach the pool registry: ci-images hands one only when preflight puts every consumer on the pool"
       ref=$(pool_registry)/$ref
       pull_pool "$ref" "$hold"
     else
@@ -735,7 +739,7 @@ use() {
     image=$ref
   elif [ "${CI_PUBLISH:-}" = true ]; then
     die "no $family image reference on a push to main: a consumer runs the image ci-images published and never builds its own"
-  elif [ "${CI_POOL:-}" = true ]; then
+  elif [ "${CI_POOL:-}" = true ] && [ "${RUNNER_ENVIRONMENT:-}" != github-hosted ]; then
     die "no $family image reference on a same-repo pull request: ci-images builds it once on the pool, and a consumer never builds its own"
   else
     echo "==> no $family image of main's for this content; building it on this runner, with no push" >&2
