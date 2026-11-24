@@ -14,8 +14,11 @@
 package server
 
 import (
+	"context"
 	"errors"
 	"strings"
+
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -68,7 +71,7 @@ func (s *Server) initializeQRDBStorage() error {
 		// Feature DAOs are xkms's own persistence, as the storage backend
 		// is (storageCallContext): they run as the node's service principal.
 		ds, err := datastore.New(s.qrdbClient, s.config.Datastore,
-			datastore.WithCallContext(s.qrdbNode.ServiceContext))
+			datastore.WithCallContext(s.systemServiceContext()))
 		if err != nil {
 			return &ErrStorageCreate{Resource: "standalone datastore", Err: err}
 		}
@@ -106,7 +109,22 @@ func (s *Server) storageCallContext() []qrdbstorage.Option {
 	if s.qrdbNode == nil {
 		return nil
 	}
-	return []qrdbstorage.Option{qrdbstorage.WithCallContext(s.qrdbNode.ServiceContext)}
+	return []qrdbstorage.Option{qrdbstorage.WithCallContext(s.systemServiceContext())}
+}
+
+// systemServiceContext binds the node's service principal to the system
+// tenant. xkms's storage is xkms's own persistence in the system tenant,
+// where the principal lives; a request context can carry another tenant
+// (a tenant administrator inviting a user into tenant-b), and the node
+// refuses the principal any write that targets a tenant other than its
+// own (go-xkms#2319). The node is captured when the binder is built, as the
+// method value s.qrdbNode.ServiceContext was, so a call in flight never
+// reads the field Shutdown clears.
+func (s *Server) systemServiceContext() func(context.Context) (context.Context, error) {
+	bind := s.qrdbNode.ServiceContext
+	return func(ctx context.Context) (context.Context, error) {
+		return bind(qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID))
+	}
 }
 
 // closeQRDBStorage tears down the in-process qrdb node when xkms hosts it
