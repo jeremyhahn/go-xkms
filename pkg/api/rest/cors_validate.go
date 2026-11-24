@@ -77,9 +77,10 @@ func validateCORSOrigin(origin string) error {
 	}
 	if strings.HasPrefix(u.Host, "[") {
 		// A bracketed host is an IPv6 literal: url.Parse does not check it.
-		// Browsers send no zone and no IPv4 in brackets.
-		ip := net.ParseIP(u.Hostname())
-		if ip == nil || ip.To4() != nil || strings.Contains(u.Host, "%") {
+		// Browsers send no zone and no dotted IPv4 in brackets, but do send
+		// IPv4-mapped IPv6 literals such as [::ffff:c000:201].
+		h := u.Hostname()
+		if net.ParseIP(h) == nil || !strings.Contains(h, ":") || strings.Contains(u.Host, "%") {
 			return refuse("bracketed host must be an IPv6 literal")
 		}
 	} else if strings.Contains(u.Hostname(), ":") {
