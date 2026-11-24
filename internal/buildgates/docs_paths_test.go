@@ -188,6 +188,46 @@ func TestInitCeremonyDistributesServerTrust(t *testing.T) {
 		"(xkmsctl bootstrap spki show-pin --cert-file) and fetches /v1/ca/bootstrap with bootstrap auto --spki-pin", start)
 }
 
+// TestInitCeremonyPinFromServerHost guards Codex round 5 on #2263: the pin the
+// operator distributes must come from an authenticated source. A certificate
+// fetched over the network from another machine lets an interceptor choose the
+// pin, so the step takes it on the server host, from loopback or tls.cert_file.
+func TestInitCeremonyPinFromServerHost(t *testing.T) {
+	doc := docsPathsRead(t, "docs/init-ceremony/user.md")
+	_, sec, ok := strings.Cut(doc, "## Bootstrap a new server")
+	if !ok {
+		t.Fatal("user.md has no \"Bootstrap a new server\" section")
+	}
+	sec, _, _ = strings.Cut(sec, "\n## ")
+	n := len(regexp.MustCompile(`(?m)^\d+\. `).FindAllString(sec, -1))
+
+	step := ""
+	for i := 1; i <= n; i++ {
+		if s := docsPathsStep(t, doc, strconv.Itoa(i)); strings.Contains(s, "xkmsctl bootstrap spki show-pin --cert-file") {
+			step = s
+			break
+		}
+	}
+	if step == "" {
+		t.Fatal("user.md has no step that computes the pin (xkmsctl bootstrap spki show-pin --cert-file)")
+	}
+
+	for _, m := range regexp.MustCompile(`openssl s_client[^\n]*-connect\s+(\S+)`).FindAllStringSubmatch(step, -1) {
+		target := m[1]
+		if !strings.HasPrefix(target, "127.0.0.1:") && !strings.HasPrefix(target, "localhost:") &&
+			!strings.HasPrefix(target, "[::1]:") {
+			t.Errorf("user.md pin step fetches the certificate it pins from %q over the network; "+
+				"take it on the server host from a loopback address (127.0.0.1, localhost, [::1])", target)
+		}
+	}
+	if !strings.Contains(step, "on the server host") {
+		t.Errorf("user.md pin step must say it runs on the server host, got:\n%s", step)
+	}
+	if !strings.Contains(step, "tls.cert_file") {
+		t.Errorf("user.md pin step must name tls.cert_file as the alternative certificate source, got:\n%s", step)
+	}
+}
+
 var (
 	relConfigPath = regexp.MustCompile(`(?m)^\s*(?:path|socket_path):\s*["']?([^"'\s#]+)`)
 	unitKeyLine   = regexp.MustCompile(`(?m)^(WorkingDirectory|ReadWritePaths|StateDirectory)=(.*)$`)
