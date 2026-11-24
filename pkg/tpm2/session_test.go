@@ -200,22 +200,6 @@ func storedPair(t *testing.T, backend store.KeyBackend, attrs *types.KeyAttribut
 	return string(gotPub) + "/" + string(gotPriv)
 }
 
-// fencePausingKeyBackend pauses a recovering save once it holds the
-// recovery fence, before it overwrites the private blob.
-type fencePausingKeyBackend struct {
-	store.KeyBackend
-	once       sync.Once
-	afterFence func()
-}
-
-func (b *fencePausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
-	err := b.KeyBackend.Save(attrs, data, ext, overwrite)
-	if err == nil && ext == store.FSEXT_PUBLIC_BLOB && isKeyPairRecoveryFence(data) {
-		b.once.Do(b.afterFence)
-	}
-	return err
-}
-
 // TestSaveKeyPair_TwoRecoverersNeverMismatch: two create-only saves that
 // both meet an incomplete pair (a private blob without a public blob) never
 // leave the public blob of one beside the private blob of the other. The
