@@ -15,6 +15,7 @@ package token
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -83,6 +84,46 @@ func TestRefresh_RefusesRecordOwnedByAnotherSubjectOrTenant(t *testing.T) {
 
 				_, _, rec := refreshRecordOf(t, issuer, store, pair.RefreshToken)
 				require.False(t, rec.Rotated, "a refused refresh leaves the record unrotated")
+			})
+		}
+	}
+}
+
+// TestRefresh_ForeignOwnerReuseDoesNotRevokeFamily pins the order of the owner
+// and reuse checks: a token that names a rotated record of another owner gets
+// the generic revocation and cannot revoke that owner's family through reuse
+// handling, so the live successor still refreshes.
+func TestRefresh_ForeignOwnerReuseDoesNotRevokeFamily(t *testing.T) {
+	cases := map[string]func(*Record){
+		"other subject": func(r *Record) { r.Subject = "bob" },
+		"other tenant":  func(r *Record) { r.TenantID = "tenant-b" },
+		"system tenant": func(r *Record) { r.TenantID = qrdbsdk.SystemTenantID },
+	}
+	for storeName, newStore := range refreshOwnerStores() {
+		for caseName, mutate := range cases {
+			t.Run(storeName+"/"+caseName, func(t *testing.T) {
+				store := newStore(t)
+				issuer := newIssuerWithStore(t, store)
+
+				a, err := issuer.Mint(context.Background(), testIdentity())
+				require.NoError(t, err)
+				b, err := issuer.Refresh(context.Background(), a.RefreshToken)
+				require.NoError(t, err)
+
+				rewriteRefreshRecord(t, issuer, store, a.RefreshToken, mutate)
+				_, _, rec := refreshRecordOf(t, issuer, store, a.RefreshToken)
+				require.True(t, rec.Rotated, "the foreign record is a rotated one")
+
+				next, err := issuer.Refresh(context.Background(), a.RefreshToken)
+				var revokedErr *RefreshRevokedError
+				require.ErrorAs(t, err, &revokedErr)
+				var reuseErr *RefreshReuseError
+				require.False(t, errors.As(err, &reuseErr), "a foreign token is not handled as reuse")
+				require.Nil(t, next, "a refused refresh mints nothing")
+
+				succ, err := issuer.Refresh(context.Background(), b.RefreshToken)
+				require.NoError(t, err, "the family is not revoked and its successor still refreshes")
+				require.NotEmpty(t, succ.RefreshToken)
 			})
 		}
 	}
