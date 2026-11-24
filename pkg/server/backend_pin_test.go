@@ -23,6 +23,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	qrdbsecret "github.com/jeremyhahn/go-qrdb/pkg/secret"
 	"github.com/stretchr/testify/require"
@@ -32,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // fakePKCS11Provider stands in for the PKCS#11 backend: only Close is used.
@@ -414,6 +416,52 @@ func TestResolveBackendPIN_AutoSelectsTPM2OnTPMPresenceWithTPM2BackendDisabled(t
 	require.Empty(t, *opened)
 	_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s2.backendPINDir()))
 	require.ErrorIs(t, statErr, os.ErrNotExist, "nothing persisted")
+}
+
+// The backend PIN policy refuses before config secret resolution: a
+// manual strategy, or a strategy its credential storage does not provide,
+// never waits on a credential:// PIN reference that cannot resolve.
+func TestNew_BackendPINPolicyRefusesBeforeResolvingCredentialReference(t *testing.T) {
+	for _, tc := range []struct {
+		strategy string
+		check    func(t *testing.T, err error)
+	}{
+		{"manual", func(t *testing.T, err error) {
+			require.ErrorIs(t, err, ErrBackendPINManualUnavailable)
+		}},
+		{"sealed", func(t *testing.T, err error) {
+			var storeErr *pinselect.BackendPINStoreError
+			require.ErrorAs(t, err, &storeErr)
+		}},
+	} {
+		t.Run(tc.strategy, func(t *testing.T) {
+			xkms.Reset()
+			defer xkms.Reset()
+			cfg := createMinimalConfig(t)
+			cfg.Backends.PKCS11 = &config.PKCS11Config{
+				Enabled: true,
+				Library: "/usr/lib/softhsm/libsofthsm2.so",
+				Token:   "test",
+				Pin:     &types.SecretValue{Raw: "credential://pkcs11-pin"},
+			}
+			cfg.BackendPIN.Strategy = tc.strategy
+
+			done := make(chan error, 1)
+			go func() {
+				srv, err := New(cfg)
+				if srv != nil {
+					_ = srv.Shutdown()
+				}
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				tc.check(t, err)
+			case <-time.After(20 * time.Second):
+				t.Fatal("New waited on the credential reference before the backend PIN policy refused")
+			}
+		})
+	}
 }
 
 // TestResolveBackendPIN_AutoWithTPMWithoutTPMSealerFailsClosed proves a TPM
