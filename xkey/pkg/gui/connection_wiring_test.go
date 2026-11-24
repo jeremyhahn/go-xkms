@@ -181,6 +181,15 @@ func TestInitLocalCA_ServesCAWithNoServer(t *testing.T) {
 	assert.Contains(t, info.Subject, "Root CA", "a disconnect falls back to the local CA")
 }
 
+// TestInitLocalCA_WithoutCAServiceIsANoOp proves an App with no CA service
+// (the headless minimal App) neither panics nor opens a local CA.
+func TestInitLocalCA_WithoutCAServiceIsANoOp(t *testing.T) {
+	a := newMinimalApp(t)
+	require.NotPanics(t, func() { a.initLocalCA(t.TempDir(), nil) })
+	t.Cleanup(a.closeLocalCA)
+	assert.Nil(t, a.localCAClient, "with no CA service there is nothing to serve the local CA")
+}
+
 func TestApplyConnectionEvent_ConnectPutsTPMPoliciesInServerMode(t *testing.T) {
 	a := newConnectionWiringApp()
 	assert.Equal(t, services.TPMPolicyModeUnavailable, a.tpmPolicyService.GetStatus().Mode)
