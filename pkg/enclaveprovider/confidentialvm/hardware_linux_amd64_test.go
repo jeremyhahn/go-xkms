@@ -58,22 +58,40 @@ func TestHardware_KeyProtectorRoundTripsAndRefusesATamperedBlob(t *testing.T) {
 }
 
 func TestHardware_AttesterReturnsAnSNPReport(t *testing.T) {
+	// REPORT_DATA sits at 0x50 in the SEV-SNP ATTESTATION_REPORT (SEV-SNP ABI
+	// table 22): the guest's 64 bytes, the nonce followed by zero padding.
+	const offReportData = 0x50
 	a, err := NewAttester()
 	if err != nil {
 		t.Fatalf("NewAttester: %v", err)
 	}
-	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
-		t.Fatal(err)
-	}
-	ev, err := a.Attest(context.Background(), nonce)
-	if err != nil {
-		t.Fatalf("Attest: %v", err)
-	}
-	if ev.Format != "sev-snp-report" {
-		t.Fatalf("Format = %q, want sev-snp-report", ev.Format)
-	}
-	if len(ev.Data) == 0 {
-		t.Fatal("Attest returned empty Data")
+	var seen [][]byte
+	for _, n := range []int{32, 48} {
+		nonce := make([]byte, n)
+		if _, err := rand.Read(nonce); err != nil {
+			t.Fatal(err)
+		}
+		ev, err := a.Attest(context.Background(), nonce)
+		if err != nil {
+			t.Fatalf("Attest(%d-byte nonce): %v", n, err)
+		}
+		if ev.Format != FormatSEVSNPReport {
+			t.Fatalf("Format = %q, want %q", ev.Format, FormatSEVSNPReport)
+		}
+		if len(ev.Data) != snpReportSize {
+			t.Fatalf("report of %d bytes, want %d", len(ev.Data), snpReportSize)
+		}
+		want := make([]byte, reportDataSize)
+		copy(want, nonce)
+		got := ev.Data[offReportData : offReportData+reportDataSize]
+		if !bytes.Equal(got, want) {
+			t.Fatalf("REPORT_DATA = %x, want the %d-byte nonce plus zero padding %x", got, n, want)
+		}
+		for _, prev := range seen {
+			if bytes.Equal(prev, got) {
+				t.Fatal("two distinct nonces gave the same REPORT_DATA")
+			}
+		}
+		seen = append(seen, bytes.Clone(got))
 	}
 }
