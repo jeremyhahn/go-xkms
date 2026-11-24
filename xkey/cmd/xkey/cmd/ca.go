@@ -19,12 +19,11 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
 	"strings"
 
-	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/localca"
 	"github.com/spf13/cobra"
 )
 
@@ -124,10 +123,7 @@ func newLocalCAClient() (transport.Client, error) {
 	if barrierRootKeyExists(dataDir) {
 		return nil, ErrCALocalStoreBarrierEncrypted
 	}
-	return xkmssdk.NewEmbeddedClient(xkmssdk.EmbeddedServiceConfig{
-		KeyDir: filepath.Join(dataDir, "ca"),
-		CA:     xkmssdk.DefaultMultiIdentityCAConfig(),
-	})
+	return localca.NewClient(dataDir, nil)
 }
 
 // caCmd is the parent command for CA operations.

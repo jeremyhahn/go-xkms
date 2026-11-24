@@ -68,12 +68,22 @@ type IssuedCertInfo struct {
 	PrivateKeyPEM  string `json:"private_key_pem,omitempty"`
 }
 
-// CAService provides CA operations for the GUI frontend. Its client follows
-// the server connection: the App sets it on connect and clears it on
-// disconnect or error.
+// CAService provides CA operations for the GUI frontend. It is served by the
+// connected server's CA when there is one, else by xkey's local embedded CA:
+// the App sets the server client on connect and clears it on disconnect or
+// error, so a connected server replaces the local CA and a disconnect falls
+// back to it.
 type CAService struct {
 	client atomic.Pointer[transport.Client]
+	local  atomic.Pointer[transport.Client]
 }
+
+// CA modes reported by GetCAMode.
+const (
+	CAModeRemote = "remote"
+	CAModeLocal  = "local"
+	CAModeNone   = "none"
+)
 
 // NewCAService creates a new CAService. A nil client means not connected.
 func NewCAService(client transport.Client) *CAService {
@@ -88,17 +98,47 @@ func (s *CAService) SetClient(c transport.Client) {
 	s.client.Store(&c)
 }
 
-// getClient returns the current transport client or ErrCAServiceNilClient.
-// A typed-nil client counts as no client.
+// SetLocalClient sets the client of the local embedded CA that serves while
+// no server client is set; nil removes it.
+func (s *CAService) SetLocalClient(c transport.Client) {
+	s.local.Store(&c)
+}
+
+// GetCAMode reports which CA serves: "remote" for the connected server,
+// "local" for the local embedded CA, "none" when there is neither.
+func (s *CAService) GetCAMode() string {
+	if loadClient(&s.client) != nil {
+		return CAModeRemote
+	}
+	if loadClient(&s.local) != nil {
+		return CAModeLocal
+	}
+	return CAModeNone
+}
+
+// getClient returns the server client if set, else the local client, else
+// ErrCAServiceNilClient. A typed-nil client counts as no client.
 func (s *CAService) getClient() (transport.Client, error) {
-	ptr := s.client.Load()
+	if c := loadClient(&s.client); c != nil {
+		return c, nil
+	}
+	if c := loadClient(&s.local); c != nil {
+		return c, nil
+	}
+	return nil, ErrCAServiceNilClient
+}
+
+// loadClient returns the stored client, or nil when it is unset, nil or a
+// typed nil.
+func loadClient(p *atomic.Pointer[transport.Client]) transport.Client {
+	ptr := p.Load()
 	if ptr == nil || *ptr == nil {
-		return nil, ErrCAServiceNilClient
+		return nil
 	}
 	if v := reflect.ValueOf(*ptr); v.Kind() == reflect.Pointer && v.IsNil() {
-		return nil, ErrCAServiceNilClient
+		return nil
 	}
-	return *ptr, nil
+	return *ptr
 }
 
 // GetCAInfo retrieves the CA certificate and returns its parsed fields.

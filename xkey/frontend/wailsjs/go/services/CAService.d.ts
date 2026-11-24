@@ -9,6 +9,8 @@ export function GetCABundle(arg1:string,arg2:string):Promise<string>;
 
 export function GetCAInfo():Promise<services.CACertInfo>;
 
+export function GetCAMode():Promise<string>;
+
 export function IsRevoked(arg1:string):Promise<boolean>;
 
 export function IssueCertificate(arg1:string,arg2:string,arg3:string,arg4:string,arg5:number,arg6:string):Promise<services.IssuedCertInfo>;
@@ -16,5 +18,7 @@ export function IssueCertificate(arg1:string,arg2:string,arg3:string,arg4:string
 export function RevokeCertificate(arg1:string,arg2:number):Promise<void>;
 
 export function SetClient(arg1:transport.Client):Promise<void>;
+
+export function SetLocalClient(arg1:transport.Client):Promise<void>;
 
 export function SignCSR(arg1:string,arg2:string):Promise<services.IssuedCertInfo>;

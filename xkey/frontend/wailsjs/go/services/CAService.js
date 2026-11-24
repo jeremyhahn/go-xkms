@@ -14,6 +14,10 @@ export function GetCAInfo() {
   return window['go']['services']['CAService']['GetCAInfo']();
 }
 
+export function GetCAMode() {
+  return window['go']['services']['CAService']['GetCAMode']();
+}
+
 export function IsRevoked(arg1) {
   return window['go']['services']['CAService']['IsRevoked'](arg1);
 }
@@ -28,6 +32,10 @@ export function RevokeCertificate(arg1, arg2) {
 
 export function SetClient(arg1) {
   return window['go']['services']['CAService']['SetClient'](arg1);
+}
+
+export function SetLocalClient(arg1) {
+  return window['go']['services']['CAService']['SetLocalClient'](arg1);
 }
 
 export function SignCSR(arg1, arg2) {

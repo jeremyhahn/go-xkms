@@ -49,6 +49,12 @@ type EmbeddedServiceConfig struct {
 	// the default config's software keys need the default BackendName. Nil
 	// leaves the service without a CA.
 	CA *TrustedCAMultiIdentityConfig
+
+	// Isolated builds the service with pkgxkms.NewService and leaves the
+	// process-wide singleton (Initialize/Get) untouched. It is for an
+	// embedder that already composed that singleton for its own key
+	// services, such as the xkey GUI, and runs this service beside it.
+	Isolated bool
 }
 
 // NewEmbeddedService builds and initializes the in-process XKMS service with a
@@ -91,18 +97,27 @@ func NewEmbeddedService(cfg EmbeddedServiceConfig) (XKMSServicer, error) {
 		name = string(ServiceBackendSoftware)
 	}
 
-	// Reset any prior singleton, then initialize with the embedded backend.
-	pkgxkms.Reset()
-	if err := pkgxkms.Initialize(&pkgxkms.ServiceConfig{
+	serviceConfig := &pkgxkms.ServiceConfig{
 		Backends:       map[string]pkgxkms.Backend{name: keystore},
 		DefaultBackend: name,
-	}); err != nil {
-		return nil, err
 	}
-
-	svc, err := pkgxkms.Get()
-	if err != nil {
-		return nil, err
+	var svc *pkgxkms.XKMSService
+	if cfg.Isolated {
+		// A separately scoped service: the process-wide singleton stays as is.
+		svc, err = pkgxkms.NewService(serviceConfig)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Reset any prior singleton, then initialize with the embedded backend.
+		pkgxkms.Reset()
+		if err := pkgxkms.Initialize(serviceConfig); err != nil {
+			return nil, err
+		}
+		svc, err = pkgxkms.Get()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if cfg.CA != nil {
 		if err := wireEmbeddedCA(svc, cfg.KeyDir, cfg.CA); err != nil {
