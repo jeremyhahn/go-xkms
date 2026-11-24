@@ -455,3 +455,21 @@ func TestModule_SelfBuiltSurfaceFailsClosedOnDefaultRegistration(t *testing.T) {
 	assert.Equal(t, "registration_refused", resp["error"],
 		"the refusal must carry the documented error code")
 }
+
+// TestModule_NodeCORSCarriesWithCORSWithoutRESTServer: a module that builds
+// its own REST surface reports the WithCORS policy to the node's outer CORS
+// layer, so refusals before the REST wrappers still carry it.
+func TestModule_NodeCORSCarriesWithCORSWithoutRESTServer(t *testing.T) {
+	opts := &rest.CORSOptions{AllowedOrigins: []string{"https://rp.example"}, AllowCredentials: true}
+	m, err := NewModule(func() *xkms.XKMSService { return nil }, WithCORS(opts))
+	require.NoError(t, err)
+
+	got, err := m.NodeCORS()
+	require.NoError(t, err)
+	assert.Equal(t, DaemonCORS(&rest.CORSOptions{
+		AllowedOrigins:   []string{"https://rp.example"},
+		AllowCredentials: true,
+	}), got)
+	assert.Equal(t, []string{"https://rp.example"}, got.AllowedOrigins)
+	assert.True(t, got.AllowCredentials)
+}
