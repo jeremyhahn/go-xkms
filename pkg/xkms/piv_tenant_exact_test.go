@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -158,4 +159,61 @@ func TestPIVTenantExact_OnlyTenantKey(t *testing.T) {
 
 	_, err = SelfSignExistingPIVKey(context.Background(), "software", string(slot), "", 30)
 	assert.ErrorIs(t, err, ErrPIVNotInitialized)
+}
+
+// TestPIVTenantExact_ListPIVSlots covers the slot status scan: a tenant's
+// same-CN key never marks the slot as holding a key, nor sets its algorithm.
+func TestPIVTenantExact_ListPIVSlots(t *testing.T) {
+	slotStatus := func(t *testing.T, slot pivcert.PIVSlot) transport.PIVSlotStatus {
+		t.Helper()
+		resp, err := ListPIVSlots(context.Background(), &transport.ListPIVSlotsRequest{Backend: "software"})
+		require.NoError(t, err)
+		for _, st := range resp.Slots {
+			if st.Slot == slot.String() {
+				return st
+			}
+		}
+		t.Fatalf("slot %s not listed", slot)
+		return transport.PIVSlotStatus{}
+	}
+
+	t.Run("only a tenant holds the slot key", func(t *testing.T) {
+		_, _, slot, _ := pivTenantSetup(t)
+		st := slotStatus(t, slot)
+		assert.False(t, st.HasKey, "a tenant's key is not the slot's key")
+		assert.Empty(t, st.Algorithm)
+	})
+
+	t.Run("system and tenant hold the slot key", func(t *testing.T) {
+		svc := setupDeriveService(t)
+		ResetPIV()
+		t.Cleanup(ResetPIV)
+		require.NoError(t, InitializePIV(&PIVManagerConfig{
+			Stores: map[string]pivcert.PIVCertificateStorage{"software": newMockPIVCertStorage()},
+		}))
+		slot := pivcert.PIVSlotAuthentication
+		cn := PivSlotCN(slot)
+		genKey(t, svc, "aaa", cn, "ecdsa", 0)
+		genKey(t, svc, "", cn, "rsa", 2048)
+
+		keys, err := unscopedSoftware(t, svc).ListKeys(context.Background())
+		require.NoError(t, err)
+		want, tenantAlgo := "", ""
+		for _, ka := range keys {
+			if ka == nil || ka.CN != cn {
+				continue
+			}
+			if isSystemTenantKey(ka) {
+				want = ka.KeyAlgorithm.String()
+			} else {
+				tenantAlgo = ka.KeyAlgorithm.String()
+			}
+		}
+		require.NotEmpty(t, want)
+		require.NotEqual(t, tenantAlgo, want)
+
+		st := slotStatus(t, slot)
+		assert.True(t, st.HasKey)
+		assert.Equal(t, want, st.Algorithm, "the slot reports the system key's algorithm")
+	})
 }
