@@ -534,17 +534,6 @@ func defaultTPMDevicePresent(cfg *config.TPM2Config) bool {
 	return false
 }
 
-// releaseConfiguredPKCS11PIN releases the sealed/tpm2 PIN: the resolved
-// backends.pkcs11.pin, readable only after unseal (resolveConfigSecrets
-// runs after the barrier is unsealed). The copy is owned by the holder.
-func (s *Server) releaseConfiguredPKCS11PIN(ctx context.Context) ([]byte, error) {
-	p := s.primaryBackendPINSecret()
-	if p.secret == nil {
-		return nil, errBackendPINNoConfiguredPIN
-	}
-	return secretPIN(ctx, p.secret)
-}
-
 // primaryBackendPINSecret is the key backend's PIN when it is enabled,
 // otherwise the active RNG PIN.
 func (s *Server) primaryBackendPINSecret() backendPINSecret {
