@@ -562,14 +562,17 @@ func (s *Server) recoverBackendPINCustody(ctx context.Context) error {
 	}
 	var names []string
 	listed := false
+	// The key backend and RNG PINs may share one credential: recover it once.
+	seen := map[string]bool{}
 	for _, p := range s.activeBackendPINSecrets() {
 		if p.secret == nil {
 			continue
 		}
 		name, ok := backendPINCredentialName(p.secret.Raw)
-		if !ok {
+		if !ok || seen[name] {
 			continue
 		}
+		seen[name] = true
 		if credentialspkg.Internal(name) {
 			return &BackendPINTPMCustodyError{Field: p.field, Reason: "the PIN references a reserved internal credential"}
 		}
