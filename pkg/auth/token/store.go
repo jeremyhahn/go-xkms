@@ -63,6 +63,8 @@ type Record struct {
 	// revocation matches tenant and subject together. A record saved before
 	// this field existed carries none; its tenant is unknown, so it fails
 	// closed and is revoked by its subject's revocation in any tenant.
+	// Refresh refuses such a record unless the token's tenant is the system
+	// tenant.
 	TenantID string `json:"tenant_id,omitempty"`
 
 	// ExpiresAt is the refresh token's absolute expiry (Unix seconds).

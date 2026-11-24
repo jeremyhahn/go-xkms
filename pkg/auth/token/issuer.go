@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	xkmsjwt "github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
@@ -221,6 +222,8 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 	}
 
 	identity := identityFromClaims(claims)
+	// The token's own tenant, captured before the resolver replaces identity.
+	claimTenant := identity.TenantID
 	if i.resolver != nil {
 		fresh, resolveErr := i.resolver.ResolveUser(ctx, identity)
 		if resolveErr != nil {
@@ -234,6 +237,15 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 		return nil, err
 	}
 	if rec == nil {
+		return nil, &RefreshRevokedError{}
+	}
+	if rec.TenantID == "" && canonicalTenant(claimTenant) != qrdbsdk.SystemTenantID {
+		// A record saved before Record carried a tenant: only a system-tenant
+		// token may rotate it. Anyone else signs in again (no migration), so
+		// the lineage cannot launder itself into a tenant-scoped successor.
+		if revokeErr := i.store.RevokeFamily(ctx, family); revokeErr != nil {
+			return nil, revokeErr
+		}
 		return nil, &RefreshRevokedError{}
 	}
 	if rec.Rotated {
