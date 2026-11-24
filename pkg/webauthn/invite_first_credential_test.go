@@ -327,3 +327,159 @@ func TestFinishInviteRegistration_StaleClaimerCrashLeavesNoDecoratorFactor(t *te
 	assert.Panics(t, func() { _ = slowFinish() }, "the stale ceremony crashes before commit")
 	r.assertOnlyStoredFactors(t)
 }
+
+// crashAfterCommitClaim simulates a ceremony that dies after its claim
+// commits and before the decorated Save of its first credential runs.
+type crashAfterCommitClaim struct {
+	FirstCredentialClaim
+}
+
+func (c *crashAfterCommitClaim) Commit(ctx context.Context, cred *Credential) error {
+	if err := c.FirstCredentialClaim.Commit(ctx, cred); err != nil {
+		return err
+	}
+	panic("ceremony crashed after commit")
+}
+
+// countingDecorator counts the Saves that reach the recording decorator's
+// effect (a factor added).
+type countingDecorator struct {
+	*recordingDecorator
+	effects *atomic.Int32
+}
+
+func (d *countingDecorator) Save(ctx context.Context, cred *Credential) error {
+	if err := d.recordingDecorator.Save(ctx, cred); err != nil {
+		return err
+	}
+	d.effects.Add(1)
+	return nil
+}
+
+// repairRig is one invite ceremony for a pending account behind a counting
+// recording decorator over a hooked store, and a second replica of the
+// credential store (one shared factory) whose clock is past the claim lease.
+type repairRig struct {
+	f       *enrollFixture
+	hook    *claimHookStore
+	svc     *Service
+	other   *daoCredentialStore
+	rec     *factorRecorder
+	effects *atomic.Int32
+	user    User
+}
+
+func newRepairRig(t *testing.T) *repairRig {
+	t.Helper()
+	factory := newTestDAOFactory()
+	users, creds, accounts := newTestAdapterWith(t, factory)
+	f := newEnrollFixture(t, false)
+	f.users, f.creds, f.accounts = users, creds, accounts
+	other := newTestCredentialStore(t, factory)
+	other.now = pastClaimLease()
+
+	rec := &factorRecorder{factors: map[string]bool{}}
+	effects := &atomic.Int32{}
+	hook := &claimHookStore{CredentialStore: creds}
+	svc, err := NewService(ServiceParams{
+		Config:       validTestConfig(),
+		UserStore:    users,
+		SessionStore: NewMemorySessionStore(),
+		CredentialStore: &countingDecorator{
+			recordingDecorator: &recordingDecorator{CredentialStore: hook, rec: rec},
+			effects:            effects,
+		},
+	})
+	require.NoError(t, err)
+	return &repairRig{
+		f: f, hook: hook, svc: svc, other: other, rec: rec, effects: effects,
+		user: f.mustCreatePending(t, "repair@example.com"),
+	}
+}
+
+// begin opens an invite ceremony and returns its finish and a resume that
+// proves possession of the enrolled credential.
+func (r *repairRig) begin(t *testing.T) (finish func() error, resume func(t *testing.T)) {
+	t.Helper()
+	ctx := context.Background()
+	options, sessionID, err := r.svc.BeginInviteRegistration(ctx, r.user.WebAuthnID())
+	require.NoError(t, err)
+	credential := newEC2Credential(t)
+	parsed, err := parseAttestationResponse(r.f.inviteAttestation(t, options, credential))
+	require.NoError(t, err)
+	finish = func() error {
+		_, err := r.svc.FinishInviteRegistration(ctx, sessionID, r.user.WebAuthnID(), parsed)
+		return err
+	}
+	resume = func(t *testing.T) {
+		t.Helper()
+		issuedAt := time.Now().Add(-time.Minute)
+		opts, resumeID, err := r.svc.BeginInviteResume(ctx, r.user.WebAuthnID(), issuedAt)
+		require.NoError(t, err)
+		_, err = r.svc.FinishInviteResume(ctx, resumeID, r.user.WebAuthnID(), issuedAt, r.f.assert(t, opts, credential, nil))
+		require.NoError(t, err)
+	}
+	return finish, resume
+}
+
+// storedID returns the ID of the account's one readable credential.
+func (r *repairRig) storedID(t *testing.T) string {
+	t.Helper()
+	stored, err := r.f.creds.GetByUserID(context.Background(), r.user.WebAuthnID())
+	require.NoError(t, err)
+	require.Len(t, stored, 1, "the account keeps its first credential")
+	return string(stored[0].ID)
+}
+
+// TestInviteResume_RepairsDecoratorFactorAfterCrashAfterCommit: the ceremony
+// dies after its claim commits and before the decorated Save. The credential
+// is the account's but has no factor; the invite resume adds it.
+func TestInviteResume_RepairsDecoratorFactorAfterCrashAfterCommit(t *testing.T) {
+	r := newRepairRig(t)
+	finish, resume := r.begin(t)
+	r.hook.wrap = func(c FirstCredentialClaim) FirstCredentialClaim {
+		return &crashAfterCommitClaim{FirstCredentialClaim: c}
+	}
+
+	assert.Panics(t, func() { _ = finish() }, "the ceremony crashes after commit")
+	id := r.storedID(t)
+	require.Empty(t, r.rec.ids(), "the crash left the credential undecorated")
+
+	resume(t)
+	assert.ElementsMatch(t, []string{id}, r.rec.ids(), "the resume repairs the missing factor")
+}
+
+// TestInviteResume_RepairsDecoratorFactorAfterRollForward: the ceremony saves
+// under its claim and dies before Commit; a later claimer rolls the claim
+// forward. The credential is the account's but has no factor; the invite
+// resume adds it.
+func TestInviteResume_RepairsDecoratorFactorAfterRollForward(t *testing.T) {
+	r := newRepairRig(t)
+	finish, resume := r.begin(t)
+	r.hook.wrap = func(c FirstCredentialClaim) FirstCredentialClaim { return &crashingClaim{FirstCredentialClaim: c} }
+
+	assert.Panics(t, func() { _ = finish() }, "the ceremony crashes before commit")
+	_, err := r.other.ClaimFirstCredential(context.Background(), r.user.WebAuthnID())
+	require.ErrorIs(t, err, ErrFirstCredentialClaimed, "the later claimer rolls the crashed claim forward")
+	id := r.storedID(t)
+	require.Empty(t, r.rec.ids(), "the roll-forward left the credential undecorated")
+
+	resume(t)
+	assert.ElementsMatch(t, []string{id}, r.rec.ids(), "the resume repairs the missing factor")
+}
+
+// TestInviteResume_SettledFirstCredentialIsNotDecoratedAgain: after a finish
+// that completed its decorated Save, a resume adds no second factor.
+func TestInviteResume_SettledFirstCredentialIsNotDecoratedAgain(t *testing.T) {
+	r := newRepairRig(t)
+	finish, resume := r.begin(t)
+
+	require.NoError(t, finish())
+	id := r.storedID(t)
+	require.Equal(t, int32(1), r.effects.Load(), "the finish decorates its credential once")
+	require.ElementsMatch(t, []string{id}, r.rec.ids())
+
+	resume(t)
+	assert.Equal(t, int32(1), r.effects.Load(), "a settled credential is not decorated again")
+	assert.ElementsMatch(t, []string{id}, r.rec.ids())
+}
