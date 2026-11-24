@@ -92,7 +92,7 @@ func TestEnclaveProvider_NoHandleResidue_Simulator(t *testing.T) {
 	ctx := context.Background()
 
 	// Warm up the caches (SRK name, salt key) the first call fills.
-	key, blob := protectKey(t, p)
+	key, _ := protectKey(t, p)
 	baseline := countHandles(t, h)
 
 	blob, err := p.Protect(ctx, key)
