@@ -39,7 +39,10 @@ import (
 func newQRDBTestServer(t *testing.T) *Server {
 	t.Helper()
 
+	// go-qrdb v0.58.5 seals the barrier under the node context, so the
+	// literal needs the context New would give it.
 	s := &Server{
+		ctx: context.Background(),
 		config: &config.Config{
 			Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		},
