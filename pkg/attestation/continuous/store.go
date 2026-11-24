@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -34,17 +33,19 @@ type StoreConfig struct {
 
 // Store persists verdicts per tenant and device.
 type Store struct {
+	// records holds every verdict and each device's head. SaveVerdict
+	// claims a sequence with SaveIfAbsent and advances the head by
+	// CompareAndSwap, so stores in any number of processes over one
+	// datastore keep every verdict without a lock of their own.
 	records verdictRecords
-	// mu serialises SaveVerdict so the head's sequence and the verdict
-	// key it names advance together.
-	mu sync.Mutex
 }
 
 // verdictRecords is the narrow DAO seam the store reads and writes
 // through: every read is one record by its natural key, so a read's cost
 // is bounded by the number of keys it names, never by a device's history.
 type verdictRecords interface {
-	Save(ctx context.Context, e *verdictEntity) error
+	SaveIfAbsent(ctx context.Context, e *verdictEntity) (bool, error)
+	CompareAndSwap(ctx context.Context, expected, next *verdictEntity) (bool, error)
 	GetByNaturalKey(ctx context.Context, key string) (*verdictEntity, error)
 }
 
@@ -107,39 +108,103 @@ func (s *Store) SaveVerdict(ctx context.Context, v Verdict) error {
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	head, err := s.head(ctx, prefix)
 	if err != nil {
 		return err
 	}
-	seq := head.Count + 1
-	// The verdict is written before the head that names it, so a reader
-	// never follows the head to a missing verdict; a head write that fails
-	// leaves seq free, and the next save overwrites it.
-	key := verdictKey(prefix, seq)
-	if err := s.records.Save(ctx, &verdictEntity{Key: key, Device: prefix, Verdict: v, Seq: seq}); err != nil {
-		return &StoreError{Op: "save", Key: key, Err: err}
+	seq, err := s.claimSequence(ctx, prefix, head.Count+1, v)
+	if err != nil {
+		return err
 	}
-	head.Count, head.Seq = seq, seq
-	if err := s.records.Save(ctx, head); err != nil {
-		return &StoreError{Op: "save", Key: head.Key, Err: err}
+	return s.advanceHead(ctx, prefix, seq)
+}
+
+// maxSequenceAttempts bounds the probe for a free verdict sequence and the
+// retries of the head's compare-and-swap; each lost attempt means another
+// writer stored a verdict or moved the head, so only that many concurrent
+// writers on one device can exhaust it.
+const maxSequenceAttempts = 64
+
+// claimSequence stores v under a free sequence from seq on and returns
+// it, re-reading the head after each lost claim. The verdict write
+// is the claim: SaveIfAbsent stores it only
+// when no verdict holds the sequence, so two stores over one datastore
+// never overwrite each other's verdict. The verdict is written before the
+// head that names it, so a reader never follows the head to a missing
+// verdict; a claim whose head write was lost is skipped by the next probe.
+func (s *Store) claimSequence(ctx context.Context, prefix string, seq uint64, v Verdict) (uint64, error) {
+	for range maxSequenceAttempts {
+		key := verdictKey(prefix, seq)
+		stored, err := s.records.SaveIfAbsent(ctx, &verdictEntity{Key: key, Device: prefix, Verdict: v, Seq: seq})
+		if err != nil {
+			return 0, &StoreError{Op: "save", Key: key, Err: err}
+		}
+		if stored {
+			return seq, nil
+		}
+		// Another writer holds seq; the head may have moved past it since
+		// it was read, so probe from the head again rather than one by one.
+		head, err := s.head(ctx, prefix)
+		if err != nil {
+			return 0, err
+		}
+		seq = max(seq+1, head.Count+1)
 	}
-	return nil
+	return 0, &StoreError{Op: "save", Key: verdictKey(prefix, seq),
+		Err: fmt.Errorf("no free verdict sequence in %d attempts", maxSequenceAttempts)}
+}
+
+// advanceHead moves the device's head to seq unless it is already at or
+// past it, by compare-and-swap, so the head never goes backwards and every
+// sequence at or below it names a stored verdict.
+func (s *Store) advanceHead(ctx context.Context, prefix string, seq uint64) error {
+	key := headKey(prefix)
+	for range maxSequenceAttempts {
+		old, found, err := s.readHead(ctx, prefix)
+		if err != nil {
+			return err
+		}
+		if old.Count >= seq {
+			return nil
+		}
+		next := *old
+		next.Count, next.Seq = seq, seq
+		var swapped bool
+		if found {
+			swapped, err = s.records.CompareAndSwap(ctx, old, &next)
+		} else {
+			swapped, err = s.records.SaveIfAbsent(ctx, &next)
+		}
+		if err != nil {
+			return &StoreError{Op: "save", Key: key, Err: err}
+		}
+		if swapped {
+			return nil
+		}
+	}
+	return &StoreError{Op: "save", Key: key,
+		Err: fmt.Errorf("head not advanced in %d attempts", maxSequenceAttempts)}
 }
 
 // head reads the device's head record; a device with no verdicts yields a
 // new head with a zero count.
 func (s *Store) head(ctx context.Context, prefix string) (*verdictEntity, error) {
+	head, _, err := s.readHead(ctx, prefix)
+	return head, err
+}
+
+// readHead returns the device's head record and whether it is stored; an
+// absent head is a zero-count record under the head key.
+func (s *Store) readHead(ctx context.Context, prefix string) (*verdictEntity, bool, error) {
 	key := headKey(prefix)
 	head, err := s.records.GetByNaturalKey(ctx, key)
 	if err != nil {
 		if isNotFound(err) {
-			return &verdictEntity{Key: key}, nil
+			return &verdictEntity{Key: key}, false, nil
 		}
-		return nil, &StoreError{Op: "read", Key: key, Err: err}
+		return nil, false, &StoreError{Op: "read", Key: key, Err: err}
 	}
-	return head, nil
+	return head, true, nil
 }
 
 // readRange reads the verdicts with sequences first..last inclusive, one
