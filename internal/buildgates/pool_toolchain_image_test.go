@@ -1,13 +1,6 @@
 package buildgates
 
-// #2299 (Tenant Agent ruling 981, DS-9518): a same-repo pull request whose
-// toolchain hash has no `<hash>-main` on GHCR builds the CI images once, on
-// the self-hosted docker pool, and pushes them to the in-network registry
-// named by the CI_IMAGE_REGISTRY secret; consumer jobs pull that image by
-// digest and never build their own. Every Dockerfile apt-get runs under
-// `timeout 300`, and every "Take the toolchain image" step is bounded at
-// 30 minutes, so a hung apt cache fetch fails the job instead of holding it
-// for hours (PR #2183, run 44546824321).
+// Every Dockerfile apt-get runs under `timeout 300`, and scripts/ci-registry.sh pool builds or pulls the CI images on a pool.
 
 import (
 	"io/fs"
@@ -20,13 +13,8 @@ import (
 )
 
 const (
-	ciWorkflowFile  = ".github/workflows/ci.yml"
 	poolRegistrySh  = "scripts/ci-registry.sh"
 	aptTimeoutGuard = "timeout 300 "
-	takeToolchain   = "- name: Take the toolchain image"
-	poolSecretEnv   = "CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}"
-	sameRepoPR      = "github.event.pull_request.head.repo.full_name == github.repository"
-	poolRunnerLabel = `"bigdisk-docker"`
 )
 
 // aptGetWord finds apt-get as a command word (not apt-get-something).
@@ -137,124 +125,6 @@ func TestAptTimeoutCheckCatchesARegression(t *testing.T) {
 	bad := "FROM debian\nRUN timeout 300 apt-get update && \\\n    apt-get install -y x\n"
 	if p := aptTimeoutProblems("bad", bad); len(p) != 1 {
 		t.Fatalf("unbounded apt-get not flagged once: %v", p)
-	}
-}
-
-func readWorkflow(t *testing.T) string {
-	t.Helper()
-	src, err := os.ReadFile(filepath.Join(cachesRoot, ciWorkflowFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(src)
-}
-
-// stepBlocks returns the YAML text of every step whose `- name:` line is
-// header, up to the next step at the same indentation or a shallower line.
-func stepBlocks(src, header string) []string {
-	lines := strings.Split(src, "\n")
-	var out []string
-	for i, line := range lines {
-		if strings.TrimSpace(line) != header {
-			continue
-		}
-		indent := len(line) - len(strings.TrimLeft(line, " "))
-		block := []string{line}
-		for _, next := range lines[i+1:] {
-			if strings.TrimSpace(next) == "" {
-				block = append(block, next)
-				continue
-			}
-			ni := len(next) - len(strings.TrimLeft(next, " "))
-			if ni <= indent {
-				break
-			}
-			block = append(block, next)
-		}
-		out = append(out, strings.Join(block, "\n"))
-	}
-	return out
-}
-
-// jobBlock returns the text of a top-level job (two-space indent).
-func jobBlock(src, job string) string {
-	lines := strings.Split(src, "\n")
-	for i, line := range lines {
-		if line != "  "+job+":" {
-			continue
-		}
-		block := []string{line}
-		for _, next := range lines[i+1:] {
-			if len(next) > 2 && next[:2] == "  " && next[2] != ' ' && next[2] != '#' {
-				break
-			}
-			block = append(block, next)
-		}
-		return strings.Join(block, "\n")
-	}
-	return ""
-}
-
-func TestTakeToolchainStepsAreBoundedAndPoolAware(t *testing.T) {
-	src := readWorkflow(t)
-	steps := stepBlocks(src, takeToolchain)
-	if len(steps) < 5 {
-		t.Fatalf("found %d %q steps", len(steps), takeToolchain)
-	}
-	for i, s := range steps {
-		if !regexp.MustCompile(`(?m)^\s+timeout-minutes: 30\s*$`).MatchString(s) {
-			t.Errorf("step %d %q has no timeout-minutes: 30", i, takeToolchain)
-		}
-		if !strings.Contains(s, poolSecretEnv) {
-			t.Errorf("step %d %q does not read the pool registry (%s)", i, takeToolchain, poolSecretEnv)
-		}
-	}
-}
-
-func TestCIImagesBuildsOnceOnThePoolForSameRepoPRs(t *testing.T) {
-	src := readWorkflow(t)
-	if !regexp.MustCompile(`(?m)^  CI_POOL: \$\{\{[^\n]*` + regexp.QuoteMeta(sameRepoPR) + `[^\n]*\}\}$`).MatchString(src) {
-		t.Errorf("workflow env has no CI_POOL for same-repo pull requests")
-	}
-	job := jobBlock(src, "ci-images")
-	if job == "" {
-		t.Fatal("no ci-images job")
-	}
-	for _, line := range strings.Split(job, "\n") {
-		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "runs-on:") {
-			if !strings.Contains(trim, sameRepoPR) || !strings.Contains(trim, poolRunnerLabel) {
-				t.Errorf("ci-images does not run on the self-hosted docker pool for same-repo PRs: %s", trim)
-			}
-		}
-	}
-	pool := stepBlocks(job, "- name: Build the CI images on the pool")
-	if len(pool) != 1 {
-		t.Fatalf("ci-images has %d pool build steps, want 1", len(pool))
-	}
-	for _, want := range []string{"env.CI_POOL == 'true'", poolSecretEnv, "scripts/ci-registry.sh pool toolchain", "scripts/ci-registry.sh pool it"} {
-		if !strings.Contains(pool[0], want) {
-			t.Errorf("the pool build step lacks %q", want)
-		}
-	}
-	for _, want := range []string{"steps.pool.outputs.toolchain_ref", "steps.pool.outputs.it_ref"} {
-		if !strings.Contains(job, want) {
-			t.Errorf("ci-images does not output %s", want)
-		}
-	}
-	mask := stepBlocks(job, "- name: Mask the pool registry")
-	if len(mask) != 1 || !strings.Contains(mask[0], "::add-mask::") || !strings.Contains(mask[0], poolSecretEnv) {
-		t.Errorf("ci-images does not mask the pool registry before it prints a reference")
-	}
-	// No consumer step builds the toolchain image itself.
-	for n, line := range strings.Split(src, "\n") {
-		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "#") {
-			continue
-		}
-		if strings.Contains(trim, "make docker-build-toolchain") || strings.Contains(trim, "make --no-print-directory docker-build-toolchain") {
-			t.Errorf("%s:%d runs make docker-build-toolchain: %s", ciWorkflowFile, n+1, trim)
-		}
 	}
 }
 

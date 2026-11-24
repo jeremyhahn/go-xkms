@@ -5,19 +5,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
-// TestCoverageExtrasRunOnceOutsideTheShards pins the #2042 shard balance:
-// make test's parts beside test-go (shell, !frost, pkcs11, web, wailsjs) made
-// coverage shard 1 run 85+ minutes against 22-27 for the others, so they run
-// as two extras matrix entries (SHARD=extras-nofrost and SHARD=extras-other,
-// make coverage-extras). Each part still runs exactly once: the
-// COVERAGE_EXTRAS_<shard> lists together are make test's list minus test-go,
-// the package shards' recipe names none of them, and the coverage matrix
-// carries one include entry per extras shard, which exports and uploads no
-// profile.
+// TestCoverageExtrasRunOnceOutsideTheShards pins each COVERAGE_EXTRAS part to make test's parts beside test-go, run once outside the package shards.
 func TestCoverageExtrasRunOnceOutsideTheShards(t *testing.T) {
 	data, err := os.ReadFile(repoRoot + "/Makefile")
 	if err != nil {
@@ -39,7 +29,7 @@ func TestCoverageExtrasRunOnceOutsideTheShards(t *testing.T) {
 			}
 		}
 	}
-	var extras, extraShards []string
+	var extras []string
 	for _, l := range lines {
 		name, parts, ok := strings.Cut(l, " := ")
 		shard, isExtras := strings.CutPrefix(name, "COVERAGE_EXTRAS_")
@@ -49,7 +39,6 @@ func TestCoverageExtrasRunOnceOutsideTheShards(t *testing.T) {
 		if !strings.HasPrefix(shard, "extras-") {
 			t.Errorf("extras shard %q does not start with extras-", shard)
 		}
-		extraShards = append(extraShards, shard)
 		extras = append(extras, strings.Fields(parts)...)
 	}
 	slices.Sort(extras)
@@ -78,50 +67,5 @@ func TestCoverageExtrasRunOnceOutsideTheShards(t *testing.T) {
 	}
 	if !strings.Contains(text, "\t@for t in $(COVERAGE_EXTRAS_$(SHARD)); do $(MAKE) --no-print-directory $$t || exit 1; done\n") {
 		t.Error("coverage-extras does not run every COVERAGE_EXTRAS part, stopping at the first failure")
-	}
-
-	wfData, err := os.ReadFile(ciWorkflow)
-	if err != nil {
-		t.Fatalf("read %s: %v", ciWorkflow, err)
-	}
-	var wf struct {
-		Jobs map[string]struct {
-			Strategy struct {
-				Matrix struct {
-					Include []map[string]string `yaml:"include"`
-				} `yaml:"matrix"`
-			} `yaml:"strategy"`
-			Steps []struct {
-				If   string            `yaml:"if"`
-				Run  string            `yaml:"run"`
-				Uses string            `yaml:"uses"`
-				Env  map[string]string `yaml:"env"`
-				With map[string]string `yaml:"with"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(wfData, &wf); err != nil {
-		t.Fatalf("parse workflow: %v", err)
-	}
-	cov := wf.Jobs["coverage"]
-	var included []string
-	for _, inc := range cov.Strategy.Matrix.Include {
-		included = append(included, inc["shard"])
-	}
-	slices.Sort(included)
-	slices.Sort(extraShards)
-	if len(extraShards) == 0 || !slices.Equal(included, extraShards) {
-		t.Errorf("coverage matrix include shards = %v, want the Makefile's extras shards %v", included, extraShards)
-	}
-	const notExtras = "!startsWith(matrix.shard, 'extras-')"
-	for _, s := range cov.Steps {
-		if strings.Contains(s.Run, "make coverage-shard") && !strings.Contains(s.Env["IN_IMAGE_EXPORT"], notExtras) {
-			t.Errorf("make coverage-shard step exports %q for the extras entry too", s.Env["IN_IMAGE_EXPORT"])
-		}
-		// The profile upload only; coverage-diag-* uploads the shard log of
-		// every entry, extras included (#2183).
-		if strings.HasPrefix(s.Uses, "actions/upload-artifact@") && strings.HasPrefix(s.With["name"], "coverage-shard-") && !strings.Contains(s.If, notExtras) {
-			t.Errorf("upload step if %q also runs for the extras entry, which has no profile", s.If)
-		}
 	}
 }

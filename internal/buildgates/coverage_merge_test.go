@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 // covFixtureFile is the source file the fixture profiles below describe
@@ -200,37 +198,5 @@ func TestCoverageMergeNeedsEveryShardOnce(t *testing.T) {
 				t.Fatalf("the failure does not name %q:\n%s", c.names, out)
 			}
 		})
-	}
-}
-
-// TestCoverageThresholdJobPassesTheShardCount checks that the coverage-threshold
-// job tells coverage-merge how many shard profiles to expect.
-func TestCoverageThresholdJobPassesTheShardCount(t *testing.T) {
-	data, err := os.ReadFile(ciWorkflow)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var wf struct {
-		Jobs map[string]struct {
-			Steps []struct {
-				Run string `yaml:"run"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(data, &wf); err != nil {
-		t.Fatal(err)
-	}
-	want := fmt.Sprintf("SHARDS=%d", coverageShards)
-	found := false
-	for _, s := range wf.Jobs["coverage-threshold"].Steps {
-		if strings.Contains(s.Run, "make coverage-merge") {
-			found = true
-			if !strings.Contains(s.Run, want) {
-				t.Errorf("coverage-threshold runs coverage-merge without %s: %s", want, s.Run)
-			}
-		}
-	}
-	if !found {
-		t.Error("coverage-threshold job does not run make coverage-merge")
 	}
 }

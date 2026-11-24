@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// DS-8215 (Company Agent m2460, InfoSec W-1): the coverage shards and
+// DS-8215 (Company Agent m2460, InfoSec W-1): the image job and
 // Integration run Docker, so on github.com they run on GitHub-hosted runners,
 // for every event: a push to main and a pull request from this repository
 // included. The tests below evaluate each job's runs-on expression for each
@@ -32,7 +32,7 @@ const preflightRunnerDocker = "needs.preflight.outputs.runner_docker"
 
 var (
 	// dockerJobs are the jobs that run Docker.
-	dockerJobs = []string{"coverage", "integration"}
+	dockerJobs = []string{"image", "integration"}
 	// Ruling 442 (#2050) sent integration to bigdisk-docker for same-repository
 	// events; main's ci-template v1.48 (ruling 1024) replaced it: every Docker
 	// job reads preflightRunnerDocker on github.com, ubuntu-latest while the
