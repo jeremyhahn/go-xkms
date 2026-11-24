@@ -783,6 +783,9 @@ func (b *SoftwareBackend) ExportKey(ctx context.Context, attrs *types.KeyAttribu
 // backend's own self-minted one. That is what makes a real cross-backend
 // copy possible: the material this method returns can only be unwrapped by
 // whichever backend produced dstParams (go-xkms#154).
+//
+// A symmetric key is refused for a TPM 2.0 destination with
+// backend.ErrExportToUnsupported (tpm2SymmetricCopyUnsupported).
 func (b *SoftwareBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttributes, dstParams *backend.ImportParameters) (*backend.WrappedKeyMaterial, error) {
 	if attrs == nil {
 		return nil, backend.ErrInvalidAttributes
@@ -816,6 +819,9 @@ func (b *SoftwareBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttri
 	// is all tpmdup needs; this backend never mints such parameters itself,
 	// so isValidWrappingAlgorithm keeps refusing the algorithm elsewhere.
 	if dstParams.Algorithm == tpmdup.Algorithm {
+		if attrs.SymmetricAlgorithm != "" {
+			return nil, &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: tpm2SymmetricCopyUnsupported}
+		}
 		keyMaterial, err := b.exportableKeyMaterial(ctx, attrs)
 		if err != nil {
 			return nil, err
@@ -843,6 +849,11 @@ func (b *SoftwareBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttri
 
 	return wrapped, nil
 }
+
+// tpm2SymmetricCopyUnsupported is the refusal detail for a symmetric key
+// wrapped for a TPM 2.0 destination: the TPM2 backend keeps an imported key
+// as a sealed object only and cannot yet encrypt or decrypt with it.
+const tpm2SymmetricCopyUnsupported = "a TPM2 copy of a symmetric key is not usable by the service yet"
 
 // exportableKeyMaterial reads attrs' private key material in the shape
 // WrapKey expects: raw bytes for a symmetric key, PKCS#8 DER for an

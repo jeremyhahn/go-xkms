@@ -17,6 +17,8 @@ package software
 
 import (
 	"context"
+	"crypto/x509"
+	"errors"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
@@ -43,17 +45,33 @@ func TestExportKeyTo_WrapsForTPM2DuplicationParameters(t *testing.T) {
 	}
 	defer func() { _ = dst.Close() }()
 
-	// A TPM sealed object holds at most 128 bytes, so the key is symmetric.
-	attrs := createAESAttrs("export-to-tpm2.example", 256, types.SymmetricAES256GCM)
-	attrs.Exportable = true
-	if _, err := src.GenerateSymmetricKey(ctx, attrs); err != nil {
-		t.Fatalf("GenerateSymmetricKey: %v", err)
-	}
-
 	dstAttrs := &types.KeyAttributes{CN: "export-to-tpm2-copy", KeyType: types.KeyTypeStorage, StoreType: types.StoreTPM2}
 	params, err := dst.GetImportParameters(ctx, dstAttrs, backend.WrappingAlgorithmTPM2Duplicate)
 	if err != nil {
 		t.Fatalf("tpm2 GetImportParameters: %v", err)
+	}
+
+	// A symmetric key is refused: the TPM2 backend cannot yet encrypt or
+	// decrypt with an imported sealed object.
+	symAttrs := createAESAttrs("export-to-tpm2-sym.example", 256, types.SymmetricAES256GCM)
+	symAttrs.Exportable = true
+	if _, err := src.GenerateSymmetricKey(ctx, symAttrs); err != nil {
+		t.Fatalf("GenerateSymmetricKey: %v", err)
+	}
+	if _, err := src.(backend.ImportExportBackend).ExportKeyTo(ctx, symAttrs, params); !errors.Is(err, backend.ErrExportToUnsupported) {
+		t.Fatalf("ExportKeyTo of a symmetric key with TPM2_DUPLICATE parameters: err = %v, want backend.ErrExportToUnsupported", err)
+	}
+
+	// A TPM sealed object holds at most 128 bytes; an Ed25519 PKCS#8 key fits.
+	attrs := &types.KeyAttributes{
+		CN:           "export-to-tpm2.example",
+		KeyType:      types.KeyTypeSigning,
+		StoreType:    types.StoreSoftware,
+		KeyAlgorithm: x509.Ed25519,
+		Exportable:   true,
+	}
+	if _, err := src.GenerateKey(ctx, attrs); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
 	}
 
 	wrapped, err := src.(backend.ImportExportBackend).ExportKeyTo(ctx, attrs, params)

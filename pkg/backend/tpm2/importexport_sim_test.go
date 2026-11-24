@@ -403,6 +403,22 @@ func TestImportKey_RefusesExistingKey(t *testing.T) {
 	}
 }
 
+// TestImportKey_RefusesSymmetricKey pins the fail-closed refusal of a
+// symmetric key: an imported sealed object is not usable by the symmetric
+// encrypt and decrypt paths, so nothing is stored.
+func TestImportKey_RefusesSymmetricKey(t *testing.T) {
+	b := newSimBackend(t)
+	_, wrapped := wrapMaterial(t, b, bytes.Repeat([]byte{0x33}, 32))
+	attrs := &types.KeyAttributes{CN: "imported-aes", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM}
+	if err := b.ImportKey(context.Background(), attrs, wrapped); !errors.Is(err, backend.ErrExportToUnsupported) {
+		t.Fatalf("ImportKey of a symmetric key: err = %v, want backend.ErrExportToUnsupported", err)
+	}
+	probe := &types.KeyAttributes{CN: "imported-aes", StoreType: types.StoreTPM2, Parent: b.srkAttrs}
+	if _, err := b.keyBackend.Get(probe, store.FSEXT_PRIVATE_BLOB); !errors.Is(err, store.ErrBlobNotFound) {
+		t.Fatalf("refused import left a private blob: err = %v", err)
+	}
+}
+
 func TestImportKey_PersistsUnderCN(t *testing.T) {
 	b := newSimBackend(t)
 	ctx := context.Background()

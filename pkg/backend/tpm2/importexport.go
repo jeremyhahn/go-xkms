@@ -202,6 +202,11 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	if err := b.refuseReserved(attrs); err != nil {
 		return err
 	}
+	// An imported key is kept as a sealed object only; the symmetric
+	// encrypt and decrypt paths cannot use it yet, so refuse it fail-closed.
+	if attrs.SymmetricAlgorithm != "" {
+		return &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: "a TPM2 copy of a symmetric key is not usable by the service yet"}
+	}
 
 	if attrs.Parent == nil {
 		attrs.Parent = b.srkAttrs
