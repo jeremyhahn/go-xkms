@@ -35,9 +35,9 @@ import (
 
 var (
 	// Version information (set during build)
-	version = "dev"
-	commit  = "none"
-	date    = "unknown"
+	Version   = "dev"
+	GitCommit = "none"
+	BuildDate = "unknown"
 )
 
 // subcommands maps subcommand names to their handler functions. A handler
@@ -132,9 +132,9 @@ func run() int {
 	// Show version if requested.
 	if *showVersion {
 		fmt.Printf("xkmsd - xKMS Daemon\n")
-		fmt.Printf("  Version:    %s\n", version)
-		fmt.Printf("  Git Commit: %s\n", commit)
-		fmt.Printf("  Built:      %s\n", date)
+		fmt.Printf("  Version:    %s\n", Version)
+		fmt.Printf("  Git Commit: %s\n", GitCommit)
+		fmt.Printf("  Built:      %s\n", BuildDate)
 		return 0
 	}
 
@@ -150,7 +150,7 @@ func run() int {
 
 	logger.Info("Starting xkms daemon",
 		slog.String("config", *configPath),
-		slog.String("version", version),
+		slog.String("version", Version),
 		slog.Bool("daemon_mode", *daemonMode))
 
 	// Load configuration
