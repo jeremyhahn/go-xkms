@@ -26,6 +26,10 @@
   let error = $state<string | null>(null);
   let busy = $state(false);
   let tenantId = $state("");
+  // A caller may hold tenants:set_entitlements without tenants:list, so a
+  // typed tenant ID is accepted and wins over the selected one.
+  let typed = $state("");
+  const target = $derived(typed.trim() !== "" ? typed.trim() : tenantId);
   let checked = $state<Record<Flag, boolean>>({
     allow_dedicated_raft: false,
     allow_volume_storage: false,
@@ -61,6 +65,8 @@
   }
 
   async function save(): Promise<void> {
+    const id = target;
+    if (id === "") return;
     busy = true;
     error = null;
     returned = undefined;
@@ -73,10 +79,10 @@
       allow_dedicated_wal: checked.allow_dedicated_wal,
     };
     try {
-      const res = await getSDKClient().tenants.updateEntitlements(tenantId, { tenant_id: tenantId, entitlements });
+      const res = await getSDKClient().tenants.updateEntitlements(id, { tenant_id: id, entitlements });
       returned = res.tenant.entitlements ?? null;
-      const t = tenants.find((x) => x.id === tenantId);
-      showToast("success", `Entitlements saved for "${t ? tenantLabel(t) : tenantId}".`);
+      const t = tenants.find((x) => x.id === id);
+      showToast("success", `Entitlements saved for "${t ? tenantLabel(t) : id}".`);
     } catch (e) {
       error = message(e);
     } finally {
@@ -118,6 +124,12 @@
           {/each}
         </select>
       </label>
+      <input
+        class="input input-bordered w-full max-w-md"
+        aria-label="Tenant ID"
+        placeholder="or type a tenant ID"
+        bind:value={typed}
+      />
 
       <p class="text-sm text-base-content/70">
         Save sends the whole entitlement set: an unchecked box sends false and an empty list sends none.
@@ -138,7 +150,7 @@
       {/each}
 
       <div>
-        <button class="btn btn-primary" onclick={save} disabled={busy || tenantId === ""}>
+        <button class="btn btn-primary" onclick={save} disabled={busy || target === ""}>
           {#if busy}<span class="loading loading-spinner loading-xs"></span>{/if}
           Save
         </button>

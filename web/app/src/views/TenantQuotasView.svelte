@@ -28,6 +28,10 @@
 
   let tenants = $state<TenantInfoResponse[]>([]);
   let tenantId = $state("");
+  // A caller may hold tenants:set_quotas without tenants:list, so a typed
+  // tenant ID is accepted and wins over the selected one.
+  let typed = $state("");
+  const target = $derived(typed.trim() !== "" ? typed.trim() : tenantId);
   let values = $state<Record<string, string>>({});
   let fieldErrors = $state<Record<string, string>>({});
   let error = $state<string | null>(null);
@@ -67,13 +71,14 @@
 
   async function save(): Promise<void> {
     const quotas = collect();
-    if (quotas === null || tenantId === "") return;
+    const id = target;
+    if (quotas === null || id === "") return;
     busy = true;
     error = null;
     try {
-      const reply = await getSDKClient().tenants.updateQuotas(tenantId, { tenant_id: tenantId, quotas });
+      const reply = await getSDKClient().tenants.updateQuotas(id, { tenant_id: id, quotas });
       result = reply.tenant;
-      showToast("success", `Quotas for "${reply.tenant.name || tenantId}" saved.`);
+      showToast("success", `Quotas for "${reply.tenant.name || id}" saved.`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -102,6 +107,12 @@
         {/each}
       </select>
     </label>
+    <input
+      class="input input-bordered w-full max-w-md"
+      aria-label="Tenant ID"
+      placeholder="or type a tenant ID"
+      bind:value={typed}
+    />
     <p class="text-sm text-base-content/70">
       Save sends the whole quota set and replaces the stored one; an empty field is sent as 0.
     </p>
@@ -123,7 +134,7 @@
         </label>
       {/each}
     </div>
-    <button class="btn btn-primary btn-sm" onclick={save} disabled={busy || tenantId === ""}>
+    <button class="btn btn-primary btn-sm" onclick={save} disabled={busy || target === ""}>
       {#if busy}<span class="loading loading-spinner loading-xs"></span>{/if}
       Save
     </button>
