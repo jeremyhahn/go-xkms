@@ -19,12 +19,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -468,8 +470,40 @@ func (s *Server) probeBackendPIN() (bool, bool) {
 	if s.backendPINProbe != nil {
 		return s.backendPINProbe()
 	}
-	tpm := s.config.Backends.TPM2 != nil && s.config.Backends.TPM2.Enabled
-	return tpm, s.barrier != nil
+	return s.tpmPresent(), s.barrier != nil
+}
+
+// tpmPresent reports TPM 2.0 availability on the host, independently of
+// the tpm2 key backend (backends.tpm2.enabled): a TPM the server already
+// opened, else the device probe.
+func (s *Server) tpmPresent() bool {
+	if s.platformStoreTPM != nil || s.nodeSealTPM != nil {
+		return true
+	}
+	if s.tpmDeviceProbe != nil {
+		return s.tpmDeviceProbe()
+	}
+	return defaultTPMDevicePresent(s.config.Backends.TPM2)
+}
+
+// defaultTPMDevicePresent probes for a TPM 2.0 device: the configured
+// device or simulator, else the kernel's resource manager or raw device.
+func defaultTPMDevicePresent(cfg *config.TPM2Config) bool {
+	paths := []string{"/dev/tpmrm0", "/dev/tpm0"}
+	if cfg != nil {
+		if cfg.UseSimulator {
+			return true
+		}
+		if cfg.DevicePath != "" {
+			paths = append([]string{cfg.DevicePath}, paths...)
+		}
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // releaseConfiguredPKCS11PIN releases the sealed/tpm2 PIN: the resolved

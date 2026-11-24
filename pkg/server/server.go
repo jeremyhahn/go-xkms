@@ -145,6 +145,9 @@ type Server struct {
 	// backendPINProbe reports (TPM present, barrier available) for the
 	// backend PIN resolution; nil uses the configured backends and barrier.
 	backendPINProbe func() (tpmPresent, barrierAvailable bool)
+	// tpmDeviceProbe reports a TPM 2.0 device on the host whatever
+	// backends.tpm2 says; nil probes the configured and default devices.
+	tpmDeviceProbe func() bool
 	// pkcs11PINOpener opens the PKCS#11 backend with a released PIN; nil
 	// uses the build's PKCS#11 opener.
 	pkcs11PINOpener func(pin []byte) (types.KeyProvider, error)
