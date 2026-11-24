@@ -28,6 +28,9 @@ Full verb and flag detail: [`../fido2-ctap2/cli.md`](../fido2-ctap2/cli.md).
 `xkey auth register` / `xkey auth login` run the same ceremonies with no browser
 and no human, which is how agents and CI authenticate. See
 [`../../xkey/docs/headless-webauthn/cli.md`](../../xkey/docs/headless-webauthn/cli.md).
+`xkey auth login --tenant <id>` scopes the login to that tenant's accounts and
+relying party; without it the server's system tenant (or the host's
+`tenant_hosts` entry) applies.
 
 ## Logging in from `xkmsctl`
 

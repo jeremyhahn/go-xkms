@@ -1,0 +1,1 @@
+- **Login tenant in xkey and the client SDKs (#2319, ruling 1234)** — `xkey auth login --tenant` sets `tenant_id` on `BeginAuthenticationRequest` and `FinishAuthenticationRequest`, so a tenant's account can log in through xkey; the TypeScript `WebAuthnBeginLoginRequest` carries a typed `tenant_id`. Empty means the server's system tenant.
