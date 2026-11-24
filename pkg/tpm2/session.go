@@ -1247,6 +1247,9 @@ func (tpm *TPM2) SaveKeyPair(
 // algorithm ID), so no reader takes it for a public area.
 var keyPairRecoveryFence = []byte("xkms-tpm2-key-pair-recovery\x00")
 
+// keyPairRecoveryPrivateAttempts bounds the private-blob swaps of one recovery.
+const keyPairRecoveryPrivateAttempts = 8
+
 // isKeyPairRecoveryFence reports whether a public-blob record is a recovery
 // fence rather than a public area.
 func isKeyPairRecoveryFence(pub []byte) bool {
@@ -1271,10 +1274,11 @@ func isKeyPairRecoveryFence(pub []byte) bool {
 // the create-only fence is a store.KeyBlobSwapper compare-and-swap: the
 // takeover swaps the observed fence for this recovery's, the private write
 // swaps the private blob read before this recovery confirmed it still held
-// the fence (a recovery that takes the fence over afterwards writes the
-// private blob only after that confirmation, so a stale recovery's swap
-// misses), and the publish swaps this recovery's fence for the public blob.
-// A swap that misses returns exists. A backend without the capability
+// the fence, and the publish swaps this recovery's fence for the public blob.
+// A stale recovery can swap the private blob at most once, so the fence owner
+// re-reads and swaps again while it still holds the fence, up to
+// keyPairRecoveryPrivateAttempts times. Any other swap that misses returns
+// exists. A backend without the capability
 // cannot replace the pair safely: nothing is written and the error matches
 // both exists and store.ErrKeyPairRecoveryUnguarded.
 func (tpm *TPM2) recoverKeyPair(
@@ -1319,29 +1323,34 @@ func (tpm *TPM2) recoverKeyPair(
 		slog.String("cn", keyAttrs.CN))
 
 	// Read the private blob, then confirm the fence is still this
-	// recovery's: a recovery that takes the fence over later writes the
-	// private blob only after its takeover, so this swap then misses.
-	priv, err := backend.Get(keyAttrs, store.FSEXT_PRIVATE_BLOB)
-	if err != nil {
-		return errors.Join(exists, err)
-	}
-	if cur, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB); err != nil || !bytes.Equal(cur, fence) {
+	// recovery's before swapping it. A stale recovery that confirmed its
+	// own fence earlier can swap the private blob once after that, so the
+	// fence owner re-reads and swaps again while it still holds the fence.
+	swapped := false
+	for attempt := 0; attempt < keyPairRecoveryPrivateAttempts && !swapped; attempt++ {
+		priv, err := backend.Get(keyAttrs, store.FSEXT_PRIVATE_BLOB)
 		if err != nil {
 			return errors.Join(exists, err)
 		}
-		return exists
-	}
-	swapped, err := swapper.CompareAndSwap(keyAttrs, store.FSEXT_PRIVATE_BLOB, priv, outPrivate.Buffer)
-	if err != nil {
-		// The fence stays: the next create-only save takes the pair over.
-		return errors.Join(exists, err)
+		if cur, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB); err != nil || !bytes.Equal(cur, fence) {
+			if err != nil {
+				return errors.Join(exists, err)
+			}
+			return exists
+		}
+		swapped, err = swapper.CompareAndSwap(keyAttrs, store.FSEXT_PRIVATE_BLOB, priv, outPrivate.Buffer)
+		if err != nil {
+			// The fence stays: the next create-only save takes the pair over.
+			return errors.Join(exists, err)
+		}
 	}
 	if !swapped {
+		// The fence stays: the next create-only save takes the pair over.
 		return exists
 	}
 	// Publish only while this recovery still holds the fence: a later save
 	// that took a stalled recovery over owns the pair now.
-	swapped, err = swapper.CompareAndSwap(keyAttrs, store.FSEXT_PUBLIC_BLOB, fence, outPublic.Bytes())
+	swapped, err := swapper.CompareAndSwap(keyAttrs, store.FSEXT_PUBLIC_BLOB, fence, outPublic.Bytes())
 	if err != nil {
 		return errors.Join(exists, err)
 	}
