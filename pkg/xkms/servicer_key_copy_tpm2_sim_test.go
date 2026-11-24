@@ -65,6 +65,12 @@ func TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithm(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	plaintext := []byte("copied to the TPM2 and still usable")
+	fromSource, err := svc.Encrypt(ctx, &transport.EncryptRequest{
+		Backend: "software", KeyID: "sw-to-tpm2-kek", Plaintext: plaintext,
+	})
+	require.NoError(t, err)
+
 	resp, err := svc.CopyKey(ctx, &transport.CopyKeyRequest{
 		SourceBackend: "software",
 		SourceKeyID:   "sw-to-tpm2-kek",
@@ -85,6 +91,28 @@ func TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithm(t *testing.T) {
 		}
 	}
 	require.True(t, found, "the simulated TPM2 destination must hold the copied key")
+
+	// The copy must be the same key: it decrypts what the source encrypted,
+	// and the source decrypts what the copy encrypts.
+	dec, err := svc.Decrypt(ctx, &transport.DecryptRequest{
+		Backend: "tpm2", KeyID: "sw-to-tpm2-kek-copy",
+		Ciphertext: fromSource.Ciphertext, Nonce: fromSource.Nonce, Tag: fromSource.Tag,
+		GCMNonceMode: fromSource.GCMNonceMode,
+	})
+	require.NoError(t, err, "the TPM2 copy must decrypt the source's ciphertext")
+	require.Equal(t, plaintext, dec.Plaintext)
+
+	fromCopy, err := svc.Encrypt(ctx, &transport.EncryptRequest{
+		Backend: "tpm2", KeyID: "sw-to-tpm2-kek-copy", Plaintext: plaintext,
+	})
+	require.NoError(t, err, "the TPM2 copy must encrypt")
+	dec, err = svc.Decrypt(ctx, &transport.DecryptRequest{
+		Backend: "software", KeyID: "sw-to-tpm2-kek",
+		Ciphertext: fromCopy.Ciphertext, Nonce: fromCopy.Nonce, Tag: fromCopy.Tag,
+		GCMNonceMode: fromCopy.GCMNonceMode,
+	})
+	require.NoError(t, err, "the source must decrypt the TPM2 copy's ciphertext")
+	require.Equal(t, plaintext, dec.Plaintext)
 }
 
 // TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest pins that a copy onto
