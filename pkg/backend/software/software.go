@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/importtoken"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/tpmdup"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/kdf"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/wrapping"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/pkcs8"
@@ -808,6 +809,22 @@ func (b *SoftwareBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttri
 
 	if b.closed {
 		return nil, ErrStorageClosed
+	}
+
+	// A TPM 2.0 destination imports only TCG duplication blobs. Its import
+	// parameters carry the SRK's marshaled TPMT_PUBLIC in ImportToken, which
+	// is all tpmdup needs; this backend never mints such parameters itself,
+	// so isValidWrappingAlgorithm keeps refusing the algorithm elsewhere.
+	if dstParams.Algorithm == tpmdup.Algorithm {
+		keyMaterial, err := b.exportableKeyMaterial(ctx, attrs)
+		if err != nil {
+			return nil, err
+		}
+		wrapped, err := tpmdup.Wrap(rand.Reader, dstParams.ImportToken, keyMaterial)
+		if err != nil {
+			return nil, &errs.Wrapped{Msg: "failed to wrap key for TPM 2.0 destination", Err: err}
+		}
+		return wrapped, nil
 	}
 
 	if !isValidWrappingAlgorithm(dstParams.Algorithm) {

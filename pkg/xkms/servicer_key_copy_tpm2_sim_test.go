@@ -1,10 +1,22 @@
 //go:build tpm_simulator
 
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
 package xkms
 
 import (
 	"context"
-	"crypto/x509"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -41,13 +53,13 @@ func TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithm(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 
-	_, err = srcBackend.GenerateRSA(ctx, &types.KeyAttributes{
-		CN:            "sw-to-tpm2-kek",
-		KeyType:       types.KeyTypeEncryption,
-		StoreType:     types.StoreSoftware,
-		KeyAlgorithm:  x509.RSA,
-		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
-		Exportable:    true,
+	// A TPM sealed object holds at most 128 bytes, so the key is symmetric.
+	_, err = srcProvider.GenerateSymmetricKey(ctx, &types.KeyAttributes{
+		CN:                 "sw-to-tpm2-kek",
+		KeyType:            types.KeyTypeSecret,
+		StoreType:          types.StoreSoftware,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
 	})
 	require.NoError(t, err)
 

@@ -161,7 +161,7 @@ func TestWrapKey_IsNonDeterministic(t *testing.T) {
 
 // TestGetImportParameters_ReturnsSRKWrappingKey verifies the returned wrapping
 // key really is the TPM's Storage Root Key public area and that ImportToken
-// carries the SRK Name. Wrapping to the wrong key would produce blobs the TPM
+// carries the marshaled SRK TPMTPublic. Wrapping to the wrong key would produce blobs the TPM
 // silently refuses to import later, far from the point of failure.
 func TestGetImportParameters_ReturnsSRKWrappingKey(t *testing.T) {
 	b := newSimBackend(t)
@@ -177,12 +177,12 @@ func TestGetImportParameters_ReturnsSRKWrappingKey(t *testing.T) {
 		t.Errorf("KeySpec = %q, want TPM2_KEYEDHASH", params.KeySpec)
 	}
 
-	srkName, srkPub, err := b.srkPublicContents()
+	_, srkPub, err := b.srkPublicContents()
 	if err != nil {
 		t.Fatalf("srkPublicContents: %v", err)
 	}
-	if !bytes.Equal(params.ImportToken, srkName.Buffer) {
-		t.Errorf("ImportToken does not match the SRK Name\n got %x\nwant %x", params.ImportToken, srkName.Buffer)
+	if !bytes.Equal(params.ImportToken, gotpm2.Marshal(srkPub)) {
+		t.Errorf("ImportToken does not carry the marshaled SRK public area\n got %x\nwant %x", params.ImportToken, gotpm2.Marshal(srkPub))
 	}
 
 	// The default SRK in this config is RSA-2048; the wrapping public key must

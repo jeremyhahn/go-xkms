@@ -1,5 +1,18 @@
 //go:build tpm_simulator
 
+// Copyright (c) 2025 Jeremy Hahn
+// Copyright (c) 2025 Automate The Things, LLC
+//
+// This file is part of go-xkms.
+//
+// go-xkms is dual-licensed:
+//
+// 1. GNU Affero General Public License v3.0 (AGPL-3.0)
+//    See LICENSE file or visit https://www.gnu.org/licenses/agpl-3.0.html
+//
+// 2. Commercial License
+//    Contact licensing@automatethethings.com for commercial licensing options.
+
 package software
 
 import (
@@ -30,10 +43,11 @@ func TestExportKeyTo_WrapsForTPM2DuplicationParameters(t *testing.T) {
 	}
 	defer func() { _ = dst.Close() }()
 
-	attrs := createRSAAttrs("export-to-tpm2.example", 2048)
+	// A TPM sealed object holds at most 128 bytes, so the key is symmetric.
+	attrs := createAESAttrs("export-to-tpm2.example", 256, types.SymmetricAES256GCM)
 	attrs.Exportable = true
-	if _, err := src.GenerateKey(ctx, attrs); err != nil {
-		t.Fatalf("GenerateKey: %v", err)
+	if _, err := src.GenerateSymmetricKey(ctx, attrs); err != nil {
+		t.Fatalf("GenerateSymmetricKey: %v", err)
 	}
 
 	dstAttrs := &types.KeyAttributes{CN: "export-to-tpm2-copy", KeyType: types.KeyTypeStorage, StoreType: types.StoreTPM2}
