@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -141,6 +142,50 @@ func TestInitCeremonyStep3NamesWrittenBundle(t *testing.T) {
 	if step3 := docsPathsStep(t, doc, "3"); !strings.Contains(step3, want) {
 		t.Errorf("user.md step 3 must name %s (persistCABundle under --data-dir), got:\n%s", want, step3)
 	}
+}
+
+// TestInitCeremonyDistributesServerTrust pins the trust split of the init
+// ceremony guide: the ceremony CA (ca-bundle.pem, spki-pin.txt) is the root
+// the administrator's client certificate chains to, while first-contact
+// clients pin the running server's TLS certificate and fetch its bundle from
+// /v1/ca/bootstrap (docs/trust-bootstrap/user.md).
+func TestInitCeremonyDistributesServerTrust(t *testing.T) {
+	doc := docsPathsRead(t, "docs/init-ceremony/user.md")
+	_, sec, ok := strings.Cut(doc, "## Bootstrap a new server")
+	if !ok {
+		t.Fatal("user.md has no \"Bootstrap a new server\" section")
+	}
+	sec, _, _ = strings.Cut(sec, "\n## ")
+	n := len(regexp.MustCompile(`(?m)^\d+\. `).FindAllString(sec, -1))
+
+	if step1 := docsPathsStep(t, doc, "1"); strings.Contains(step1, "advertises the CA bundle init wrote") {
+		t.Errorf("user.md step 1 must not say xkmsd run serves the ceremony bundle as server trust, got:\n%s", step1)
+	}
+	if step3 := docsPathsStep(t, doc, "3"); !strings.Contains(step3, "ca-bundle.pem") ||
+		!strings.Contains(step3, "client") || strings.Contains(step3, "first-contact") {
+		t.Errorf("user.md step 3 must call ca-bundle.pem the client-authentication root, not first-contact trust, got:\n%s", step3)
+	}
+
+	start := 0
+	for i := 1; i <= n; i++ {
+		s := docsPathsStep(t, doc, strconv.Itoa(i))
+		if start == 0 {
+			if strings.Contains(s, "xkmsd --config") {
+				start = i
+			}
+			continue
+		}
+		if strings.Contains(s, "xkmsctl bootstrap spki show-pin --cert-file") &&
+			strings.Contains(s, "bootstrap auto") && strings.Contains(s, "--spki-pin") &&
+			strings.Contains(s, "--bundle-path /v1/ca/bootstrap") {
+			return
+		}
+	}
+	if start == 0 {
+		t.Fatal("user.md has no step that starts the daemon (xkmsd --config)")
+	}
+	t.Errorf("user.md has no step after the daemon start (step %d) that pins the server's TLS certificate "+
+		"(xkmsctl bootstrap spki show-pin --cert-file) and fetches /v1/ca/bootstrap with bootstrap auto --spki-pin", start)
 }
 
 var (
