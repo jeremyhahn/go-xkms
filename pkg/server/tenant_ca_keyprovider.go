@@ -219,11 +219,12 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		// A key without its provenance or its certificate is an earlier
 		// pass that stopped after the key: EnsureTenant finishes it over the
 		// same key, or refuses a key this path did not make.
-		_, certErr := scoped.GetCert(context.Background(), tenantLoginCAKeyCN)
-		if certErr != nil || !tenantLoginCAKeyProvisionedAttrs(context.Background(), scoped, attrs) {
+		if !tenantLoginCAKeyProvisionedAttrs(context.Background(), scoped, attrs) {
 			if err := f.EnsureTenant(context.Background(), tenantID); err != nil {
 				return nil, err
 			}
+		} else if err := f.repairServedTenantLoginCACert(context.Background(), scoped, attrs, tenantID); err != nil {
+			return nil, err
 		}
 	} else {
 		// go-qrdb's native onboarding creates a tenant through the node's own
@@ -668,6 +669,35 @@ func (f *tenantCAKeyFactory) publishedTenantLoginCACert(ctx context.Context, ten
 		return nil, fmt.Errorf("tenant login CA key factory: published certificate of tenant %q is not over its stored key", tenantID)
 	}
 	return cert, nil
+}
+
+// repairServedTenantLoginCACert makes sure the saved login CA certificate of
+// a provisioned tenant is valid over its live key before it is served. A
+// stale pass whose late SaveCert landed after its fence check but stopped
+// before its compensating repair leaves a cert over its old key beside the
+// live key's provenance: the published certificate, which is over the live
+// key, is restored byte for byte, as repairRevivedTenantLoginCA does. Only
+// when nothing valid is published does EnsureTenant finish the tenant; a cert
+// still not valid after that fails closed.
+func (f *tenantCAKeyFactory) repairServedTenantLoginCACert(ctx context.Context, scoped *xkms.TenantScopedBackend, attrs *types.KeyAttributes, tenantID string) error {
+	signer, err := scoped.Signer(ctx, attrs)
+	if err != nil {
+		return fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)
+	}
+	if tenantLoginCACertValid(ctx, scoped, signer.Public()) {
+		return nil
+	}
+	if published, pubErr := f.publishedTenantLoginCACert(ctx, tenantID, signer); pubErr == nil {
+		if err := scoped.SaveCert(ctx, tenantLoginCAKeyCN, published); err != nil {
+			return fmt.Errorf("tenant login CA key factory: restore published certificate of tenant %q: %w", tenantID, err)
+		}
+	} else if err := f.EnsureTenant(ctx, tenantID); err != nil {
+		return err
+	}
+	if !tenantLoginCACertValid(ctx, scoped, signer.Public()) {
+		return fmt.Errorf("tenant login CA key factory: saved certificate of tenant %q is not valid over its live key", tenantID)
+	}
+	return nil
 }
 
 // ensureTenant is one provisioning pass of EnsureTenant.
