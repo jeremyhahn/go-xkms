@@ -14,6 +14,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"sort"
@@ -162,6 +163,40 @@ func (s *BlobStore) Save(attrs *types.KeyAttributes, data []byte, ext types.FSEx
 		return err
 	}
 	return s.write(context.Background(), name, string(ext), data, overwrite)
+}
+
+// CompareAndSwap implements KeyBlobSwapper over the DAO's guarded
+// CompareAndSwap: next is stored only while the stored blob is still
+// expected, compared and written as one store operation. An absent blob,
+// or one whose data is no longer expected, reports swapped=false.
+func (s *BlobStore) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	name, err := attrsName(attrs)
+	if err != nil {
+		return false, err
+	}
+	key, err := s.blobKey(name, string(ext))
+	if err != nil {
+		return false, err
+	}
+	ctx := context.Background()
+	stored, err := s.blobs.GetByNaturalKey(ctx, key)
+	if qrdbsdk.IsDAONotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, &BlobReadError{Name: key, Cause: err}
+	}
+	// Only an early exit: the DAO compares the whole stored record again
+	// inside the guarded write.
+	if !bytes.Equal(stored.Data, expected) {
+		return false, nil
+	}
+	blob := &TPMBlob{ID: stored.ID, Key: key, Tenant: s.tenant, Name: name, Ext: string(ext), Data: next}
+	swapped, err := s.blobs.CompareAndSwap(ctx, stored, blob)
+	if err != nil {
+		return false, &BlobWriteError{Name: key, Cause: err}
+	}
+	return swapped, nil
 }
 
 // Delete removes every blob of the key attrs names. Blobs the key never had

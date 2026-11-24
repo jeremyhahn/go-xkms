@@ -117,6 +117,16 @@ type hookedKeyBackend struct {
 	afterPrivate func()
 }
 
+// CompareAndSwap runs afterPrivate once a private-blob swap succeeds, as
+// Save does after a private write.
+func (b *hookedKeyBackend) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	swapped, err := b.KeyBackend.(store.KeyBlobSwapper).CompareAndSwap(attrs, ext, expected, next)
+	if err == nil && swapped && ext == store.FSEXT_PRIVATE_BLOB && b.afterPrivate != nil {
+		b.once.Do(b.afterPrivate)
+	}
+	return swapped, err
+}
+
 func (b *hookedKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
 	err := b.KeyBackend.Save(attrs, data, ext, overwrite)
 	if err == nil && ext == store.FSEXT_PRIVATE_BLOB && b.afterPrivate != nil {
@@ -197,6 +207,15 @@ type crashingKeyBackend struct {
 	store.KeyBackend
 }
 
+// CompareAndSwap crashes on the private-blob swap the way Save crashes on
+// the private overwrite.
+func (b *crashingKeyBackend) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	if ext == store.FSEXT_PRIVATE_BLOB {
+		panic(errPairCrash)
+	}
+	return b.KeyBackend.(store.KeyBlobSwapper).CompareAndSwap(attrs, ext, expected, next)
+}
+
 func (b *crashingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
 	if ext == store.FSEXT_PRIVATE_BLOB && overwrite {
 		panic(errPairCrash)
@@ -267,6 +286,18 @@ type pausingKeyBackend struct {
 	once    sync.Once
 	reached chan struct{}
 	release chan struct{}
+}
+
+// CompareAndSwap pauses on the private-blob swap the way Save pauses on the
+// private overwrite.
+func (b *pausingKeyBackend) CompareAndSwap(attrs *types.KeyAttributes, fsext types.FSExtension, expected, next []byte) (bool, error) {
+	if fsext == store.FSEXT_PRIVATE_BLOB {
+		b.once.Do(func() {
+			close(b.reached)
+			<-b.release
+		})
+	}
+	return b.KeyBackend.(store.KeyBlobSwapper).CompareAndSwap(attrs, fsext, expected, next)
 }
 
 func (b *pausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, fsext types.FSExtension, overwrite bool) error {
