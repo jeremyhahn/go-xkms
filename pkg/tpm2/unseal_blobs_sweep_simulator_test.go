@@ -3,6 +3,7 @@
 package tpm2
 
 import (
+	"context"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2/transport"
@@ -47,7 +48,7 @@ func TestUnsealFromBlobs_EveryCommandFailurePropagates(t *testing.T) {
 
 				return h.TPM.transport, func(tr transport.TPM) error {
 					h.TPM.transport = tr
-					_, err := h.TPM.unsealFromBlobs(keyAttrs, nil, resp.OutPublic.Bytes(), resp.OutPrivate.Buffer)
+					_, err := h.TPM.unsealFromBlobs(context.Background(), keyAttrs, nil, resp.OutPublic.Bytes(), resp.OutPrivate.Buffer)
 					return err
 				}
 			}, tt.flushes...)

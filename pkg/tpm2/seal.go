@@ -1,6 +1,7 @@
 package tpm2
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 
@@ -21,6 +22,7 @@ import (
 //
 // This is an internal method. Use Seal() for the public types.Sealer interface.
 func (tpm *TPM2) sealKeyInternal(
+	ctx context.Context,
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend,
 	overwrite bool) (*tpm2.CreateResponse, error) {
@@ -37,6 +39,9 @@ func (tpm *TPM2) sealKeyInternal(
 	srkHandle := keyAttrs.Parent.TPMAttributes.Handle
 	srkName, _, err := tpm.ReadHandle(srkHandle)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -95,12 +100,21 @@ func (tpm *TPM2) sealKeyInternal(
 		tpm.logger.Error("failed to create session for seal", slog.String("error", err.Error()))
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		tpm.closeSession(closer, "seal parent")
+		return nil, err
+	}
 
 	// The sealed secret and the object's authValue are encrypted on their
 	// way into the TPM by a salted session of their own: the parent's
 	// authorization may be a policy session, which cannot carry them.
 	encSession, closeEncSession, err := tpm.encryptionSession(encryptIn)
 	if err != nil {
+		tpm.closeSession(closer, "seal parent")
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		tpm.closeSession(closeEncSession, "seal encryption")
 		tpm.closeSession(closer, "seal parent")
 		return nil, err
 	}
@@ -135,6 +149,9 @@ func (tpm *TPM2) sealKeyInternal(
 	if err := closer(); err != nil {
 		tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 	} // tpm2.Create CreateSession
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Create a new tpm2.Load session
 	session, closer, err = tpm.CreateSession(keyAttrs)
@@ -142,11 +159,22 @@ func (tpm *TPM2) sealKeyInternal(
 		tpm.logger.Error("failed to create load session", slog.String("error", err.Error()))
 		return nil, err
 	}
-	defer func() {
+	// The load session is closed, and the loaded object flushed, before the
+	// key pair is saved, so a context that ends during either is seen
+	// before anything is persisted.
+	closeLoad := func() {
+		if closer == nil {
+			return
+		}
 		if err := closer(); err != nil {
 			tpm.logger.Error("failed to close load session", slog.String("error", err.Error()))
 		}
-	}()
+		closer = nil
+	}
+	defer closeLoad()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	var loadResponse *tpm2.LoadResponse
 	loadResponse, err = tpm2.Load{
@@ -162,7 +190,11 @@ func (tpm *TPM2) sealKeyInternal(
 		tpm.logger.Error("failed to load sealed key", slog.String("error", err.Error()))
 		return nil, err
 	}
-	defer tpm.Flush(loadResponse.ObjectHandle)
+	tpm.Flush(loadResponse.ObjectHandle)
+	closeLoad()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	tpm.logger.Debug("tpm: key loaded to transient handle",
 		slog.String("cn", keyAttrs.CN),
@@ -342,6 +374,7 @@ func (tpm *TPM2) unsealKeyInternal(
 // This follows the same workflow as unsealKeyInternal but uses LoadKeyPairFromBlobs
 // instead of LoadKeyPair.
 func (tpm *TPM2) unsealFromBlobs(
+	ctx context.Context,
 	keyAttrs *types.KeyAttributes,
 	backend store.KeyBackend,
 	tpmPublic, tpmPrivate []byte) ([]byte, error) {
@@ -365,6 +398,10 @@ func (tpm *TPM2) unsealFromBlobs(
 		tpm.logger.Error("failed to create session for unseal from blobs", slog.String("error", err.Error()))
 		return nil, err
 	}
+	if err := ctx.Err(); err != nil {
+		tpm.closeSession(closer, "unseal parent")
+		return nil, err
+	}
 
 	// Not using defer closer() here because the session needs
 	// to be flushed as soon as possible to prevent too many
@@ -385,6 +422,9 @@ func (tpm *TPM2) unsealFromBlobs(
 		tpm.logger.Error("failed to close session", slog.String("error", err.Error()))
 	}
 	defer tpm.Flush(sealKey.ObjectHandle)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Create key session
 	tpm.logger.Info("tpm: unsealFromBlobs - creating key session",
@@ -400,6 +440,9 @@ func (tpm *TPM2) unsealFromBlobs(
 		tpm.logger.Error("failed to create key session for unseal from blobs", slog.String("error", err2.Error()))
 		return nil, err2
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// The sealed secret leaves the TPM encrypted under a salted session of
 	// its own: the key session may answer the PCR branch of the platform
@@ -409,6 +452,9 @@ func (tpm *TPM2) unsealFromBlobs(
 		return nil, err
 	}
 	defer tpm.closeSession(closeEncSession, "unseal encryption")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	// Unseal the data using the key session
 	unseal, err := tpm2.Unseal{
@@ -421,6 +467,10 @@ func (tpm *TPM2) unsealFromBlobs(
 	if err != nil {
 		tpm.logger.Error("failed to unseal data from blobs", slog.String("error", err.Error()))
 		return nil, classifyUnsealError(err)
+	}
+	if err := ctx.Err(); err != nil {
+		enclave.Wipe(unseal.OutData.Buffer)
+		return nil, err
 	}
 
 	// Set TPM attributes

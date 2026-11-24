@@ -167,7 +167,7 @@ func (tpm *TPM2) GenerateSymmetricKeyIn(attrs *types.KeyAttributes, keys store.K
 	sealAttrs.SealData = types.NewSealData(keyMaterial)
 	defer sealAttrs.SealData.Clear()
 
-	if _, err := tpm.sealKeyInternal(sealAttrs, keys, false); err != nil {
+	if _, err := tpm.sealKeyInternal(context.Background(), sealAttrs, keys, false); err != nil {
 		return nil, &errs.Wrapped{Msg: "tpm2: failed to create symmetric key", Err: err}
 	}
 
