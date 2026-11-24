@@ -480,12 +480,9 @@ func TestBackendPIN_ManualFromUnsealRequestZeroizedAtSeal(t *testing.T) {
 	if err != nil || string(pin) != "4321" {
 		t.Fatal("manual PIN not held after unseal")
 	}
-	held := h.pin
 	h.Seal()
-	for i, b := range held {
-		if b != 0 {
-			t.Fatalf("byte %d not zeroized at seal", i)
-		}
+	if h.pin != nil {
+		t.Fatal("the held PIN buffer is not destroyed at seal")
 	}
 	if _, err := h.PIN(); !errors.Is(err, ErrBackendPINSealed) {
 		t.Fatalf("PIN after seal: err = %v, want ErrBackendPINSealed", err)
@@ -532,19 +529,28 @@ func TestBackendPIN_PINReturnsCopy(t *testing.T) {
 
 func TestBackendPIN_SealedSealZeroizesAndRequiresUnsealAgain(t *testing.T) {
 	calls := 0
-	h := NewBackendPIN(BackendPINSealed, fixedRelease("1234", &calls))
+	var released []byte
+	release := fixedRelease("1234", &calls)
+	h := NewBackendPIN(BackendPINSealed, func(ctx context.Context) ([]byte, error) {
+		p, err := release(ctx)
+		released = p
+		return p, err
+	})
 	if h.StopsAtSeal() {
 		t.Fatal("sealed PIN backend keeps its session at seal; only manual stops")
 	}
 	if err := h.Unseal(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
-	held := h.pin
-	h.Seal()
-	for i, b := range held {
+	// The released slice is consumed into protected memory and wiped.
+	for i, b := range released {
 		if b != 0 {
-			t.Fatalf("byte %d not zeroized at seal", i)
+			t.Fatalf("released byte %d not wiped at unseal", i)
 		}
+	}
+	h.Seal()
+	if h.pin != nil {
+		t.Fatal("the held PIN buffer is not destroyed at seal")
 	}
 	if _, err := h.PIN(); !errors.Is(err, ErrBackendPINSealed) {
 		t.Fatalf("PIN after seal: err = %v", err)

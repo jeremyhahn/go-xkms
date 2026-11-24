@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // BackendPINStrategy names how xkmsd obtains the PIN of a PIN-protected
@@ -335,7 +336,7 @@ type BackendPIN struct {
 	release  BackendPINRelease
 
 	mu  sync.Mutex
-	pin []byte
+	pin *secure.Buffer
 }
 
 // NewBackendPIN returns a sealed holder. release is unused for manual.
@@ -378,33 +379,39 @@ func (b *BackendPIN) Unseal(ctx context.Context, supplied []byte) error {
 		}
 		pin = got
 	}
+	// NewBufferFromBytes consumes pin: it wipes the released or copied
+	// slice once the PIN is in protected memory.
+	buf, err := secure.NewBufferFromBytes(pin)
+	if err != nil {
+		secure.Wipe(pin)
+		return err
+	}
 	b.mu.Lock()
-	zeroize(b.pin)
-	b.pin = pin
+	if b.pin != nil {
+		b.pin.Destroy()
+	}
+	b.pin = buf
 	b.mu.Unlock()
 	return nil
 }
 
-// PIN returns a copy of the released PIN, or ErrBackendPINSealed.
+// PIN returns a copy of the released PIN, or ErrBackendPINSealed. The
+// caller owns the copy and wipes it.
 func (b *BackendPIN) PIN() ([]byte, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.pin == nil {
 		return nil, ErrBackendPINSealed
 	}
-	return append([]byte(nil), b.pin...), nil
+	return secure.CopyOut(b.pin)
 }
 
-// Seal zeroizes the held PIN.
+// Seal destroys the held PIN.
 func (b *BackendPIN) Seal() {
 	b.mu.Lock()
-	zeroize(b.pin)
+	if b.pin != nil {
+		b.pin.Destroy()
+	}
 	b.pin = nil
 	b.mu.Unlock()
-}
-
-func zeroize(p []byte) {
-	for i := range p {
-		p[i] = 0
-	}
 }
