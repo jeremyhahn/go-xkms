@@ -154,7 +154,7 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 	m, err := NewModule(func() *xkms.XKMSService { return nil },
 		WithRESTServer(func() *rest.Server { return srv }))
 	require.NoError(t, err)
-	assertNodeRefusalsCarryCORS(t, m, allowed)
+	assertNodeRefusalsCarryCORS(t, m, allowed, http.StatusForbidden)
 }
 
 // TestUnifiedServer_CORSOnAuthRefusalsWithoutRESTResolver: a module given
@@ -178,13 +178,14 @@ func TestUnifiedServer_CORSOnAuthRefusalsWithoutRESTResolver(t *testing.T) {
 	got, err := m.NodeCORS()
 	require.NoError(t, err)
 	require.Equal(t, []string{allowed}, got.AllowedOrigins, "NodeCORS must keep the WithCORS policy")
-	assertNodeRefusalsCarryCORS(t, m, allowed)
+	// The module's own REST surface answers an unbound certificate 401.
+	assertNodeRefusalsCarryCORS(t, m, allowed, http.StatusUnauthorized)
 }
 
 // assertNodeRefusalsCarryCORS mounts m on a real go-qrdb node configured with
 // m.NodeCORS() and checks that the node's auth refusals and preflights carry
 // the allowed origin's credentialed policy.
-func assertNodeRefusalsCarryCORS(t *testing.T, m *Module, allowed string) {
+func assertNodeRefusalsCarryCORS(t *testing.T, m *Module, allowed string, strangerStatus int) {
 	t.Helper()
 	certDir := t.TempDir()
 	ca, err := qrdbdharness.NewCA(certDir)
@@ -265,7 +266,7 @@ func assertNodeRefusalsCarryCORS(t *testing.T, m *Module, allowed string) {
 
 	// An authenticated caller without keys:read: 403 with the policy.
 	resp := send(client(strangerCert), "")
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Equal(t, strangerStatus, resp.StatusCode)
 	assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "403")
 	assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"), "credentialed 403")
 

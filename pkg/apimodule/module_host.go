@@ -183,12 +183,14 @@ func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
 // published, would cache stores without persistence and a server without
 // WebAuthn or the session store.
 func (m *Module) NodeCORS() (qrdbsdk.DaemonCORSConfig, error) {
+	// Without a host REST server the module's own WithCORS policy (the SDK's
+	// WithServiceModuleCORS) is the policy; it needs no lazy REST surface.
 	if m.resolveREST == nil {
-		return qrdbsdk.DaemonCORSConfig{}, nil
+		return DaemonCORS(m.cors), nil
 	}
 	srv := m.resolveREST()
 	if srv == nil {
-		return qrdbsdk.DaemonCORSConfig{}, nil
+		return DaemonCORS(m.cors), nil
 	}
 	return DaemonCORS(srv.CORSOptions()), nil
 }
