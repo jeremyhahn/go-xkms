@@ -16,8 +16,8 @@ package http
 // HeaderSessionID is the header name for the session ID.
 const HeaderSessionID = "X-Session-Id"
 
-// HeaderTenantID names the tenant of a login ceremony when the body does
-// not (go-xkms#2319); FinishLogin reads only this header.
+// HeaderTenantID names the tenant of a login or add-passkey ceremony; login
+// finish and registration finish read it to reach the tenant's session store.
 const HeaderTenantID = "X-Tenant-Id"
 
 // BeginRegistrationRequest is the request body for starting registration.

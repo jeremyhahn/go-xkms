@@ -53,17 +53,23 @@ func (h *Handler) loginService(r *http.Request, tenantID string) (*webauthn.Serv
 	return h.tenants.ForRequest(r.Context(), r.Host, tenantID)
 }
 
-// enrolService returns the relying party that enrols a credential for the
-// identity on r: that identity's tenant when tenants are routed, otherwise
-// (or for public registration with no identity) the system RP.
-// Codex round 2 on #2387: a tenant user adding a passkey must reach its own
-// tenant's RP; the system RP's GetByID isolation check still refuses it.
+// enrolService returns the relying party that enrols a credential on r: the
+// identity's tenant when tenants are routed and r carries an identity; with
+// no identity, the tenant the X-Tenant-Id header names (the add-passkey
+// finish on the public route); otherwise the system RP. The host rule is not
+// applied, so a public first-passkey registration finishes where it began.
+// A tenant user adding a passkey reaches its own tenant's RP.
 func (h *Handler) enrolService(r *http.Request) (*webauthn.Service, error) {
-	identity := auth.GetIdentity(r.Context())
-	if h.tenants == nil || identity == nil {
+	if h.tenants == nil {
 		return h.service, nil
 	}
-	return h.tenants.For(r.Context(), identity.TenantID)
+	if identity := auth.GetIdentity(r.Context()); identity != nil {
+		return h.tenants.For(r.Context(), identity.TenantID)
+	}
+	if tenantID := r.Header.Get(HeaderTenantID); tenantID != "" {
+		return h.tenants.For(r.Context(), tenantID)
+	}
+	return h.service, nil
 }
 
 // NewHandler creates a new WebAuthn HTTP handler.
@@ -144,6 +150,7 @@ func (h *Handler) BeginRegistration(w http.ResponseWriter, r *http.Request) {
 //
 // Response: WebAuthn PublicKeyCredentialCreationOptions
 // Header: X-Session-Id (session identifier for FinishRegistration)
+// Header: X-Tenant-Id (the identity's tenant, when tenants are routed)
 func (h *Handler) BeginAddCredential(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, ErrorCodeInvalidRequest, "method not allowed")
@@ -174,12 +181,16 @@ func (h *Handler) BeginAddCredential(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set(HeaderSessionID, sessionID)
+	if h.tenants != nil && identity.TenantID != "" {
+		w.Header().Set(HeaderTenantID, identity.TenantID)
+	}
 	h.writeJSON(w, http.StatusOK, options)
 }
 
 // FinishRegistration handles POST /registration/finish
 //
 // Header: X-Session-Id (from BeginRegistration)
+// Header: X-Tenant-Id (from BeginAddCredential, optional)
 // Request body: Attestation response from authenticator
 // Response: AuthResponse with token and user ID
 func (h *Handler) FinishRegistration(w http.ResponseWriter, r *http.Request) {
