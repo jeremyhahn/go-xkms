@@ -14,6 +14,8 @@
 package xkms
 
 import (
+	"crypto/x509"
+
 	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 	trustbootstrap "github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
@@ -100,8 +102,14 @@ const TrustFetcherDefaultTimeout = trustfetcher.DefaultTimeout
 // TrustFetcherFetch fetches a CA bundle from a URL with the given options.
 var TrustFetcherFetch = trustfetcher.Fetch
 
-// TrustFetcherSPKIHash computes the SPKI SHA-256 pin for a certificate.
-var TrustFetcherSPKIHash = spkipin.ComputeSPKIPin
+// TrustFetcherSPKIHash computes the SPKI SHA-256 pin for a certificate. A
+// nil certificate yields an empty pin, never a panic.
+var TrustFetcherSPKIHash = func(cert *x509.Certificate) string {
+	if cert == nil {
+		return ""
+	}
+	return spkipin.ComputeSPKIPin(cert)
+}
 
 // --- Trust resolver (pkg/trust/resolver) ---
 
