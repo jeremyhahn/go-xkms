@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -421,6 +422,14 @@ func TestResolveBackendPIN_AutoSelectsTPM2OnTPMPresenceWithTPM2BackendDisabled(t
 // The backend PIN policy refuses before config secret resolution: a
 // manual strategy, or a strategy its credential storage does not provide,
 // never waits on a credential:// PIN reference that cannot resolve.
+func requireAutoPreflightRefusal(t *testing.T, err error) {
+	t.Helper()
+	var unavailable *pinselect.BackendPINUnavailableError
+	var custody *BackendPINTPMCustodyError
+	require.True(t, errors.As(err, &unavailable) || errors.As(err, &custody),
+		"error = %v, want BackendPINUnavailableError or BackendPINTPMCustodyError", err)
+}
+
 func TestNew_BackendPINPolicyRefusesBeforeResolvingCredentialReference(t *testing.T) {
 	for _, tc := range []struct {
 		strategy string
@@ -441,6 +450,10 @@ func TestNew_BackendPINPolicyRefusesBeforeResolvingCredentialReference(t *testin
 			var custody *BackendPINTPMCustodyError
 			require.ErrorAs(t, err, &custody)
 		}},
+		// Default and auto: sealed without a barrier, or tpm2 with the PIN
+		// outside TPM custody, depending on a host TPM; nothing else.
+		{"", requireAutoPreflightRefusal},
+		{"auto", requireAutoPreflightRefusal},
 	} {
 		t.Run(tc.strategy, func(t *testing.T) {
 			xkms.Reset()
@@ -468,6 +481,72 @@ func TestNew_BackendPINPolicyRefusesBeforeResolvingCredentialReference(t *testin
 			case <-time.After(20 * time.Second):
 				t.Fatal("New waited on the credential reference before the backend PIN policy refused")
 			}
+		})
+	}
+}
+
+// The preflight derives what auto (or a persisted record) selects, so a
+// default or auto configuration that resolveBackendPIN would refuse is
+// refused before config secret resolution waits on a credential:// PIN.
+// It persists nothing and never refuses an accepted configuration.
+func TestBackendPINPolicyPreflight_DefaultAndAutoUseTheEffectiveStrategy(t *testing.T) {
+	unresolved := func(s *Server) {
+		s.config.Credentials.SealStrategy = ""
+		s.config.Backends.PKCS11.Pin = &types.SecretValue{Raw: "credential://pkcs11-pin"}
+	}
+	requireNotPersisted := func(t *testing.T, s *Server) {
+		t.Helper()
+		_, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+		require.ErrorIs(t, err, pinselect.ErrBackendPINStrategyNotPersisted)
+	}
+	for _, strategy := range []string{"", "auto"} {
+		t.Run("strategy="+strategy, func(t *testing.T) {
+			t.Run("tpm", func(t *testing.T) {
+				s, _, _ := backendPINTestServer(t, strategy, nil, true, true)
+				unresolved(s)
+				err := s.backendPINPolicyPreflight()
+				var custody *BackendPINTPMCustodyError
+				require.ErrorAs(t, err, &custody)
+				requireNotPersisted(t, s)
+			})
+			t.Run("barrier", func(t *testing.T) {
+				s, _, _ := backendPINTestServer(t, strategy, nil, false, true)
+				unresolved(s)
+				err := s.backendPINPolicyPreflight()
+				var storeErr *pinselect.BackendPINStoreError
+				require.ErrorAs(t, err, &storeErr)
+				require.Equal(t, pinselect.BackendPINSealed, storeErr.Strategy)
+				require.Equal(t, pinselect.BackendPINManual, storeErr.Store)
+				requireNotPersisted(t, s)
+			})
+			t.Run("neither", func(t *testing.T) {
+				s, _, _ := backendPINTestServer(t, strategy, nil, false, false)
+				unresolved(s)
+				err := s.backendPINPolicyPreflight()
+				var unavailable *pinselect.BackendPINUnavailableError
+				require.ErrorAs(t, err, &unavailable)
+				requireNotPersisted(t, s)
+			})
+		})
+	}
+
+	t.Run("persisted tpm2 record", func(t *testing.T) {
+		s, _, _ := backendPINTestServer(t, "auto", nil, true, true)
+		unresolved(s)
+		require.NoError(t, pinselect.SaveBackendPINStrategy(s.backendPINDir(), pinselect.BackendPINTPM2))
+		err := s.backendPINPolicyPreflight()
+		var custody *BackendPINTPMCustodyError
+		require.ErrorAs(t, err, &custody)
+	})
+
+	// No false refusal: configurations resolveBackendPIN accepts pass.
+	for _, tpm := range []bool{false, true} {
+		t.Run("accepted tpm="+strconv.FormatBool(tpm), func(t *testing.T) {
+			s, _, _ := backendPINTestServer(t, "auto", nil, tpm, true)
+			s.config.Backends.PKCS11.Pin = &types.SecretValue{Raw: "credential://pkcs11-pin"}
+			s.backendPINCredentials = newFakeBackendPINCredentials(map[string][]byte{"pkcs11-pin": []byte("backend-pin-1")})
+			require.NoError(t, s.backendPINPolicyPreflight())
+			requireNotPersisted(t, s)
 		})
 	}
 }
