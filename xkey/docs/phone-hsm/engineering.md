@@ -346,8 +346,8 @@ defect and the shape of the fix is what the current design is for.
    anchors AND the device signs this pairing's challenge with the key that
    chain certifies.
 
-   **What happens on a refusal is policy; what is recorded is not.** By the
-   owner ruling of 2026-08-23 on #95, whether pairing *aborts* on an
+   **What happens on a refusal is policy; what is recorded is not.** Whether
+   pairing *aborts* on an
    unattestable device is a setting, defaulting to abort. Whether an
    **unverified claim may be written down** is not a setting and never becomes
    one: that was the #95 defect itself. When policy allows an unattestable
@@ -962,7 +962,7 @@ static public key, so an unrelated initiator's handshake fails
 (`ErrStaticKeyMismatch`) before the connection reaches the live-attestation
 step at all.
 
-## On-demand user verification (ruling 167)
+## On-demand user verification
 
 `local.verifyUser` is the desktop asking the phone to verify its user **now**
 and prove it did, so the FIDO2 authenticator can mint a `pinUvAuthToken`
@@ -1175,7 +1175,7 @@ barrier state. The unsealed material never exists as a Go string:
 `MemoryEnclave`, valid only for that borrow) and `UnsealLocalNoiseKey`
 returns an `sdk/go/secure.Buffer`, mlocked and wiped on `Destroy`.
 
-#### The barrier-absent case degrades, it does not refuse (owner ruling, recorded on #42)
+#### The barrier-absent case degrades, it does not refuse
 
 `SealLocalNoiseKey`/`UnsealLocalNoiseKey` above are about one *value*: given a
 barrier or not, seal or read accordingly, refuse a sealed value with no

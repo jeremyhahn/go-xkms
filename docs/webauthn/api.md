@@ -28,9 +28,8 @@ account (go-xkms#1294).
 | SDK begin authentication | `POST /api/v1/webauthn/sdk/authentication/begin` | — | same as REST | — | — | public |
 | SDK finish authentication | `POST /api/v1/webauthn/sdk/authentication/finish` | — | same as REST | — | — | public |
 
-**MCP carries none of the WebAuthn ceremony, and it never will.** Owner
-ruling 2026-09-21 (issue #193, option C) settled this as a named exclusion,
-not the transport gap this table used to record it as: an MCP tool-call
+**MCP carries none of the WebAuthn ceremony, and it never will.** This is a
+named exclusion, not a transport gap: an MCP tool-call
 surface is agent-facing, and it must not mint sessions or enrol credentials
 — WebAuthn registration and authentication do both, and MCP holds no
 identity-ceremony state to correlate a Begin call with its matching Finish

@@ -255,7 +255,7 @@ The flags are defined at `key_ota_image.go:184-188`.
   not-found reason (`errors.go:846`).
 - `sign` signs the file with the current version and prints the base64
   ES256 signature and the version. The signature is the RFC 9053 §2.1
-  fixed-width `r || s`, 64 bytes (ruling 136); `key sign` and every other
+  fixed-width `r || s`, 64 bytes; `key sign` and every other
   verb still print ASN.1 DER. With `--digest`, the file holds the
   image's SHA-256 digest, not the image (`key_ota_image.go:92-119`).
 

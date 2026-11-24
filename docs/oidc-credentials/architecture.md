@@ -148,7 +148,7 @@ format knowledge; the host only writes the bytes.
 ## Rejected alternatives
 
 - **Container write-back** (workloads refreshing and writing tokens back):
-  removed by owner ruling. Every refresh happens in the server.
+  not supported. Every refresh happens in the server.
 - **A per-user key for personal credentials**: the scheduler could not
   refresh them unattended.
 - **CAS-emulated leases on a standalone node**: inventing a lock primitive;

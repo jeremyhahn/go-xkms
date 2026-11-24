@@ -48,7 +48,7 @@ implementation work does not depend on the publisher's site staying up.
   Initial Algorithms", copied verbatim from
   https://www.rfc-editor.org/rfc/rfc9053.txt. §2.1 fixes the ECDSA signature
   encoding `I2OSP(R, n) | I2OSP(S, n)` that `XKMSService.SignOTAImage` returns
-  for the OTA_AUTH image signature (ruling 136); every other signature stays
+  for the OTA_AUTH image signature; every other signature stays
   ASN.1 DER.
 - `NIST.SP.800-76-2.pdf` — NIST SP 800-76-2, "Biometric Specifications for
   Personal Identity Verification".

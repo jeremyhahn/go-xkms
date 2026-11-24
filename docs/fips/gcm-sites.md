@@ -3,7 +3,7 @@
 Under `GODEBUG=fips140=only` the Go Cryptographic Module refuses
 `cipher.NewGCM` because it seals with a caller-chosen IV. It allows only GCM
 whose nonce is generated inside the module. go-xkms refuses exactly what the
-stdlib refuses (owner ruling 116) and keeps no allowlist of its own. This page
+stdlib refuses and keeps no allowlist of its own. This page
 lists every GCM site and how each one behaves in that mode (#23).
 
 ## Shared helpers

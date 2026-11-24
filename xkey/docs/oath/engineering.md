@@ -129,7 +129,7 @@ func ScanScreenForOTP() (string, error)
   (14 bytes) are refused with a typed error, not a stdlib panic.**
   `fipsMode` (`xkey/pkg/oath/fips.go:22`) is `crypto/fips140.Enforced`, the
   flag `crypto/hmac` itself checks, so the package refuses exactly what the
-  stdlib refuses (owner ruling 116). Under `fips140=on` the stdlib still
+  stdlib refuses. Under `fips140=on` the stdlib still
   computes both, so they are accepted there. See `ErrAlgorithmNotFIPSApproved` and
   `ErrSecretTooShortForFIPS` below. SHA-1 stays the non-FIPS default: RFC
   6238 and every mainstream authenticator (Google Authenticator, Authy,

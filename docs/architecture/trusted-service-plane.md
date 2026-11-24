@@ -1,9 +1,9 @@
 # Trusted service plane
 
-> **Status: DESIGN** · Approved with corrections 2026-10-15 (DS-1746)
+> **Status: DESIGN**
 > go-xkms's part of the trusted service plane: rows, seams, moves and lane order. The SPEC rows it names are normative once they land in [SPEC.md](../SPEC.md).
 
-Design page. Approved with corrections by the Company Agent at 00:25Z on 2026-10-15 (DS-1746); this version carries the corrections.
+Design page.
 Facts are from go-xkms c9a1cdb25, go-qrdb b65df70 and #722, go-quicbaas 0f45b54 and go-trusted-platform (gtp) a124fe9.
 
 ## Rows
@@ -64,7 +64,7 @@ Facts are from go-xkms c9a1cdb25, go-qrdb b65df70 and #722, go-quicbaas 0f45b54 
 
 ## 3. Workload identity (`workload-identity`)
 
-**Owner ruling (00:32Z, 2026-10-15): the tenant is the SPIFFE trust domain** (`spiffe://<tenant>/<kind>/<name>`). go-qrdb has been ordered to accept the form.
+**The tenant is the SPIFFE trust domain** (`spiffe://<tenant>/<kind>/<name>`); go-qrdb accepts the form.
 
 **Today.**
 - `x509-svid` profile: `profile_ipsec_svid.go:38` (one URI SAN, 1h default, 24h max).
@@ -78,11 +78,11 @@ Facts are from go-xkms c9a1cdb25, go-qrdb b65df70 and #722, go-quicbaas 0f45b54 
 - go-quicbaas verifies against the tenant's bundle. Cross-tenant calls need explicit SPIFFE federation.
 - Tenant IDs must be valid trust-domain names (lowercase letters, digits, `.`, `-`, `_`), as go-qrdb's tenant-ID rules guarantee.
 - No migration is needed in alpha.
-- The tenant key is `Subject.OrganizationalUnit[0]` (DS-1736):
+- The tenant key is `Subject.OrganizationalUnit[0]`:
   - go-qrdb sets it at `pkg/cert/default_provider.go:472,574` and reads it at `pkg/auth/mtls.go:233`;
   - go-xkms reads it at `pkg/auth/mtls.go:282`;
   - permanentIdentifier is untouched;
-  - the owner confirmed it on 2026-10-15 15:50Z (DS-1898): the X.509 subject OU carries the tenant on every layer.
+  - the X.509 subject OU carries the tenant on every layer.
 
 **Seams.** Consumes go-qrdb's per-tenant trust-domain verification (ordered). Provides go-quicbaas with SVIDs.
 
@@ -101,7 +101,7 @@ Facts are from go-xkms c9a1cdb25, go-qrdb b65df70 and #722, go-quicbaas 0f45b54 
 - Verbs: append; read the signed tree head; inclusion proof; consistency proof.
 - New permissions follow go-qrdb's built-in role placement.
 
-**Head signing (correction 5, owner ruling 122).** Normative in the `transparency-log` row of [SPEC.md](../SPEC.md). The checkpoint format and its algorithm registry are implemented in `pkg/ca/checkpoint` ([engineering contract](../transparency-log/engineering.md)); the `HeadSignerProvider` waits on go-qrdb's verifiable log.
+**Head signing.** Normative in the `transparency-log` row of [SPEC.md](../SPEC.md). The checkpoint format and its algorithm registry are implemented in `pkg/ca/checkpoint` ([engineering contract](../transparency-log/engineering.md)); the `HeadSignerProvider` waits on go-qrdb's verifiable log.
 - go-xkms implements go-qrdb's `HeadSignerProvider` (#722 §6). For the transparency log it returns a signer over the CA key, the `crypto.Signer` the SPEC row names.
 - The checkpoint body is a C2SP tlog-checkpoint ([c2sp-tlog-checkpoint.md](../references/c2sp-tlog-checkpoint.md) §Note text), carried in a C2SP signed note ([c2sp-signed-note.md](../references/c2sp-signed-note.md) §Format, §Signatures). Both are pinned at C2SP commit `e5746a0b`.
 - The signing algorithm is never hardcoded:
@@ -129,7 +129,7 @@ Each move is made with history and tests, wired at the destination, and the copy
 | go-quicbaas `ca_service_adapter*.go`, `fleet_cert_issuer.go`, `acme_service.go`, `server_cert_sans.go` | pkg/ca, pkg/acme | `CrossSignRoot`, `IssuerChainPEM`, device-identity dispatcher (EK/AK/IDevID), by-serial get/revoke/list, fleet-node issuer and bundle, ACME order facade, server-TLS cert reissue | the rest already re-exports go-xkms |
 | go-quicbaas `pkg/certstore` `KVStoreCertStorage` | nothing kept, reasoned below | — | `storage.CertAdapter` |
 
-**Ruling (Company Agent 00:25Z): root stops importing xkey.**
+**Root stops importing xkey.**
 - Today root requires xkey at `go.mod:46` (`replace ./xkey`).
 - The pairing wire protocol moves to root and the virtual FIDO2 authenticator to `pkg/fido2`, then the require is dropped.
 

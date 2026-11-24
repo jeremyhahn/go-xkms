@@ -415,7 +415,7 @@ A standard form was considered first. None fits:
 |---|---|
 | SPIFFE ID URI SAN | An X.509-SVID carries exactly one URI SAN (X.509-SVID §2), already used for the workload's identity. The SPIFFE kind is chosen by the caller and CSR URIs are copied, so it cannot be issuer-only. |
 | Extended key usage (RFC 5280 §4.2.1.12) | An EKU states what the key may be used for, and the issuance profile owns the EKU extension. Being a fleet agent is a role of the subject, not a purpose of the key. |
-| Subject OU | OU[0] is the tenant (ruling 62(a)), and the other OUs come from the CSR. |
+| Subject OU | OU[0] is the tenant, and the other OUs come from the CSR. |
 | subjectDirectoryAttributes (RFC 5280 §4.2.1.8) | RFC 5280 says it is not recommended as an essential part of the profile, so relying parties need not process it. |
 
 | Symbol | Purpose |

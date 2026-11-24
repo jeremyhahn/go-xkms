@@ -153,8 +153,7 @@ stored directly in the qrdb barrier, not here).
 
 - **`tpm2`** reuses a shared TPM open (the node-seal flip's, or the general
   tpm2 backend's — never opens the device/simulator a second time) and
-  seals under the Platform SRK only, never the Shared SRK (owner ruling;
-  matches PR #681). It requires `TPM.PlatformSRKAttributes()` to succeed and
+  seals under the Platform SRK only, never the Shared SRK. It requires `TPM.PlatformSRKAttributes()` to succeed and
   fails closed with a typed error naming
   `PlatformKeyStore.EnrollPlatformSRK` when the Platform SRK is not yet
   enrolled. When `Backends.TPM2.PlatformPolicy` is set, `platformPolicySealer`
@@ -167,7 +166,7 @@ stored directly in the qrdb barrier, not here).
   `sealed.Backend` cannot carry `opts.KeyAttributes` through to `Unseal`.
 - **`pkcs11`/`vault`** fail closed: their secret is only resolvable through
   the credential service this call builds the storage for (go-xkms#677).
-- **`passphrase`** fails closed pending an owner ruling on where the
+- **`passphrase`** fails closed pending a decision on where the
   operator passphrase comes from — `CredentialsConfig` has no field for one
   today, and the qrdb secret-value contract refuses an inline/literal secret
   in a protected field.

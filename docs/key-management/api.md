@@ -174,7 +174,7 @@ the board's key ID, `ota-image-<board-id>`.
   `certificate_reissue_required` (`:121-129`).
 - Sign returns `signature`, `algorithm` and the `key_version` that signed
   (`:153-157`). `signature` is the RFC 9053 §2.1 fixed-width `r || s`
-  (64 bytes for ES256), the OTA_AUTH encoding of ruling 136, not ASN.1 DER.
+  (64 bytes for ES256), the OTA_AUTH encoding, not ASN.1 DER.
   Every transport carries those bytes unchanged. Every other signature,
   including the generic sign on the same key, stays DER.
 
