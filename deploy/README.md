@@ -24,13 +24,11 @@ This directory contains service configuration files for deploying go-xkms as a s
 
 ## Configuration
 
-Create the configuration directory and file:
-
-```bash
-sudo mkdir -p /etc/xkms
-sudo cp configs/xkmsd.yaml /etc/xkms/xkmsd.yaml
-sudo chmod 640 /etc/xkms/xkmsd.yaml
-```
+The service runs as the `xkms` user, which must be able to read
+`/etc/xkms/xkmsd.yaml`, so the configuration is installed as
+`root:xkms` mode `0640` once that user exists (step 1 of the systemd or
+OpenRC installation below installs the directory `0750 root:xkms` and the
+file from `configs/xkmsd.yaml`).
 
 Edit `/etc/xkms/xkmsd.yaml` to match your environment. See the main documentation for configuration options.
 
@@ -57,6 +55,12 @@ Edit `/etc/xkms/xkmsd.yaml` to match your environment. See the main documentatio
    sudo chown -R xkms:xkms /var/lib/xkms /var/log/xkms
    sudo chmod 750 /var/lib/xkms /var/log/xkms
    sudo chmod 700 /var/lib/xkms/keys
+   ```
+
+   Then install the configuration, readable by the xkms group:
+   ```bash
+   sudo install -d -m 0750 -o root -g xkms /etc/xkms
+   sudo install -m 0640 -o root -g xkms configs/xkmsd.yaml /etc/xkms/xkmsd.yaml
    ```
 
 2. Install the service file (`configs/xkmsd.service` is the one xkmsd unit;
@@ -101,9 +105,9 @@ sudo systemctl stop xkmsd
 
 1. Create the xkms user and directories:
    ```bash
-   # Create user
-   sudo adduser -S -D -H -h /var/lib/xkms -s /sbin/nologin -G xkms xkms
+   # Create group and user
    sudo addgroup -S xkms
+   sudo adduser -S -D -H -h /var/lib/xkms -s /sbin/nologin -G xkms xkms
 
    # Create directories
    sudo mkdir -p /var/lib/xkms/{keys,certs}
@@ -112,6 +116,10 @@ sudo systemctl stop xkmsd
    sudo chown -R xkms:xkms /var/lib/xkms /var/log/xkms /run/xkms
    sudo chmod 750 /var/lib/xkms /var/log/xkms
    sudo chmod 700 /var/lib/xkms/keys
+
+   # Install the configuration, readable by the xkms group
+   sudo install -d -m 0750 -o root -g xkms /etc/xkms
+   sudo install -m 0640 -o root -g xkms configs/xkmsd.yaml /etc/xkms/xkmsd.yaml
    ```
 
 2. Install the init script:
