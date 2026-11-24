@@ -229,7 +229,18 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		// go-qrdb's native onboarding creates a tenant through the node's own
 		// tenant service, which go-xkms cannot wrap, and then asks for its
 		// login CA: provision a tenant the node knows on that first request.
+		// The tenant is new, so a tombstone an earlier tenant under this ID
+		// left (a wrapped create that was undone) is cleared first, as the
+		// wrapped CreateTenant does. ReviveTenant bumps the generation before
+		// it clears the tombstone and refuses a live cleanup lease, so a
+		// stale pass stays fenced. knownTenant is checked right before the
+		// revive, so an in-flight undo's tombstone is not revived on a stale
+		// lookup; material a revive leaves for a tenant undone right after
+		// has a key for ReclaimWithdrawnTenants to find.
 		if !f.knownTenant(context.Background(), tenantID) {
+			return nil, err
+		}
+		if err := f.ReviveTenant(context.Background(), tenantID); err != nil {
 			return nil, err
 		}
 		if err := f.EnsureTenant(context.Background(), tenantID); err != nil {
