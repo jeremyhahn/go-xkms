@@ -152,3 +152,37 @@ func TestAttestationConfigVerifiers_RejectsUnanchorableFormats(t *testing.T) {
 		})
 	}
 }
+
+func TestAttestationConfigValidateAndroidApplications(t *testing.T) {
+	const digest = "a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0"
+	tests := []struct {
+		name string
+		apps map[string]map[string][]string
+		want error
+	}{
+		{name: "absent", apps: nil},
+		{name: "valid", apps: map[string]map[string][]string{"acme": {"com.example.app": {digest}}}},
+		{name: "empty tenant", apps: map[string]map[string][]string{" ": {"com.example.app": {digest}}}, want: ErrAndroidApplicationTenantEmpty},
+		{name: "empty package", apps: map[string]map[string][]string{"acme": {"": {digest}}}, want: ErrAndroidApplicationPackageEmpty},
+		{name: "short digest", apps: map[string]map[string][]string{"acme": {"com.example.app": {"a1a2"}}}, want: ErrAndroidApplicationDigestInvalid},
+		{name: "non-hex digest", apps: map[string]map[string][]string{"acme": {"com.example.app": {"zz" + digest[2:]}}}, want: ErrAndroidApplicationDigestInvalid},
+		{name: "no digests", apps: map[string]map[string][]string{"acme": {"com.example.app": nil}}, want: ErrAndroidApplicationDigestInvalid},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := (&AttestationConfig{AndroidApplications: tt.apps}).ValidateAndroidApplications()
+			if tt.want == nil {
+				if err != nil {
+					t.Fatalf("ValidateAndroidApplications: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("ValidateAndroidApplications = %v, want %v", err, tt.want)
+			}
+		})
+	}
+	if err := (*AttestationConfig)(nil).ValidateAndroidApplications(); err != nil {
+		t.Fatalf("nil config: %v", err)
+	}
+}

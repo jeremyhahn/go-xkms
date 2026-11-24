@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"io"
 	"testing"
 
@@ -17,6 +18,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/scope"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -87,4 +90,56 @@ func TestServer_StoresARepositorySignedCoRIM(t *testing.T) {
 	require.ErrorIs(t, err, appraisal.ErrSigningKeyRefused)
 	var cfgErr *appraisal.ConfigError
 	assert.NotErrorAs(t, err, &cfgErr)
+}
+
+// TestServer_AppraisesAnAllowedAndroidApplication drives server.New's
+// composed Appraiser: the configured per-tenant Android application
+// allow-list admits the fixture application, and a server without one
+// refuses the same evidence.
+func TestServer_AppraisesAnAllowedAndroidApplication(t *testing.T) {
+	appraiseWith := func(t *testing.T, attestationCfg *config.AttestationConfig) error {
+		t.Helper()
+		cfg := createMinimalConfig(t)
+		cfg.CA = testFirstBootCAConfig()
+		cfg.Attestation = attestationCfg
+		srv, err := New(cfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, srv.Shutdown()) })
+		svc := srv.XKMSService()
+		require.NotNil(t, svc)
+		ctx := context.Background()
+
+		root, err := appraisaltest.NewAuthority("android root")
+		require.NoError(t, err)
+		_, err = svc.PutAttestationEndorsement(ctx, &appraisal.PutEndorsementRequest{
+			Name: "android-root", Kind: appraisal.EndorsementAndroidRoot, CertificatePEM: root.CertificatePEM(),
+		})
+		require.NoError(t, err)
+		chain, err := appraisaltest.AndroidKeyAttestation(root, appraisaltest.LockedVerifiedBoot())
+		require.NoError(t, err)
+		result, err := svc.AppraiseAndroidKeyAttestation(ctx, &appraisal.AppraiseAndroidKeyAttestationRequest{ChainDER: chain})
+		if err != nil {
+			return err
+		}
+		if !result.Verified {
+			return errors.New("appraisal not verified")
+		}
+		return nil
+	}
+
+	t.Run("allowed application is verified", func(t *testing.T) {
+		err := appraiseWith(t, &config.AttestationConfig{
+			AndroidApplications: map[string]map[string][]string{
+				scope.SystemTenant: {appraisaltest.FixtureApplicationPackage: {appraisaltest.FixtureApplicationDigest}},
+			},
+		})
+		require.NoError(t, err)
+	})
+
+	t.Run("no allow-list refuses", func(t *testing.T) {
+		err := appraiseWith(t, nil)
+		var refused *appraisal.EvidenceRefusedError
+		require.ErrorAs(t, err, &refused)
+		assert.ErrorIs(t, err, appraisal.ErrNoApplicationAllowList)
+	})
 }
