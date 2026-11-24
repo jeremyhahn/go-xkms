@@ -4994,7 +4994,7 @@ integration-test-sdk-go:
 ## integration-test-sshagent: Run agent-only SSH session acceptance tests (real git commit -S through the agent socket)
 integration-test-sshagent:
 	@echo "$(CYAN)$(BOLD)→ Running agent-only SSH session integration tests...$(RESET)"
-	$(call run_in_devcontainer,$(GO) test -v -tags='$(call go_tags,integration)' ./test/integration/sshagent/... -timeout 5m,integration-test-sshagent)
+	$(call run_in_devcontainer,$(GO) test -v -tags='$(call go_tags,integration codec_cbor codec_json codec_msgpack)' ./test/integration/sshagent/... -timeout 5m,integration-test-sshagent)
 	@echo "$(GREEN)✓ Agent-only SSH session integration tests complete$(RESET)"
 
 .PHONY: integration-test-initceremony
