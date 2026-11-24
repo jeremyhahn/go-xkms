@@ -136,6 +136,21 @@ func TestBootstrapTestRunnerGetsTheAdminCredential(t *testing.T) {
 	}
 }
 
+// TestGeneratedConfigRequestsTheAdminClientCert guards Codex P1 #1 on #2377:
+// with tls.client_auth empty the server never requests a client certificate,
+// so the admin mTLS pair the suite sends is never seen and admin calls go out
+// unauthenticated.
+func TestGeneratedConfigRequestsTheAdminClientCert(t *testing.T) {
+	cfg, _ := generateBootstrapConfig(t)
+	switch mode := cfg.TLS.ClientAuth; mode {
+	case "verify", "request":
+	case "require", "require_and_verify":
+		t.Fatalf("tls.client_auth %q demands a certificate, but the compose health check, the zone generator and the unauthenticated bootstrap/truststrap clients present none", mode)
+	default:
+		t.Fatalf("tls.client_auth %q never requests the admin client certificate; want \"verify\" or \"request\"", mode)
+	}
+}
+
 // hasVolume reports whether vols mounts spec, read-only or not.
 func hasVolume(vols []string, spec string) bool {
 	for _, v := range vols {
