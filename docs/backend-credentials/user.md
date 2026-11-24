@@ -115,11 +115,12 @@ backend_pin:
   unseals it from the TPM (`Server.tpmSealedBackendPINRelease`). If the TPM
   cannot seal it, start-up fails closed with `BackendPINTPMSealerError` and
   never falls back to `sealed`.
-  While the credential is replaced, a transient `<name>-tpm2-staged`
+  While the credential is replaced, a transient `xkms-internal.backend-pin-custody.<name>`
   credential holds only the TPM-sealed blob; if start-up is interrupted
   mid-replacement, the next start completes it from that credential before
   config secrets resolve (`Server.recoverBackendPINCustody`), so the PIN is
-  never lost.
+  never lost. Credential names starting with `xkms-internal.` are reserved
+  for the server, and submitting one is refused.
   A persisted record is refused too if the storage has changed since it was
   written. Every release checks the storage again.
 - **Minimum.** `minimum` orders `sealed` < `tpm2` < `manual`. A resolved
