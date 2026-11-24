@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"testing"
 
 	tenantpkg "github.com/jeremyhahn/go-qrdb/pkg/tenant"
@@ -12,6 +13,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/require"
 )
@@ -129,6 +131,75 @@ func TestProvisioningTenantService_NativeOnboardingAfterUndoneCreateGetsLoginCA(
 
 	prov, err := f.ProviderForTenant("tenant-u")
 	require.NoError(t, err, "a natively onboarded tenant whose ID was undone must get its login CA")
+	signer, err := prov.Signer(ctx)
+	require.NoError(t, err)
+	cert, err := prov.Certificate(ctx)
+	require.NoError(t, err)
+	require.True(t, signer.Public().(*ecdsa.PublicKey).Equal(cert.PublicKey), "the login CA cert must be over the signer's key")
+}
+
+// failingDeleteKeyBackend fails DeleteKey while fail is set, as a key
+// backend that is down or denies the delete.
+type failingDeleteKeyBackend struct {
+	xkms.Backend
+	fail atomic.Bool
+}
+
+func (b *failingDeleteKeyBackend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes) error {
+	if b.fail.Load() {
+		return errors.New("key backend unavailable")
+	}
+	return b.Backend.DeleteKey(ctx, attrs)
+}
+
+// A wrapped create whose rollback fails in its login CA cleanup leaves the
+// tenant listed beside its CA tombstone. A restart after the key backend
+// recovers resumes that rollback instead of failing the boot pass, and a
+// tenant natively re-created under an ID whose undo had finished gets its
+// login CA at boot.
+func TestProvisionTenantCAKeys_RestartAfterFailedRollbackResumesUndo(t *testing.T) {
+	ctx := context.Background()
+	_, inner := newTenantCAKeyTestFactory(t)
+	base := &failingDeleteKeyBackend{Backend: inner}
+	f := newTenantCAKeyFactory()
+	native := &fakeTenantService{}
+	s := &Server{
+		config:       &config.Config{},
+		tenantCAKeys: f,
+		backends:     map[string]xkms.Backend{"software": base},
+	}
+	s.adoptTenantService(native)
+	useTenantCAClaimStorage(s)
+	require.NoError(t, s.provisionTenantCAKeys(ctx))
+
+	p := newProvisioningTenantService(native, failingEnsureTenantCAKeys{f})
+
+	// A finished undo, then a native re-create of the same ID that never
+	// asks for its provider before the restart.
+	_, err := p.CreateTenant(ctx, "tenant-n", "N", "")
+	var provErr *TenantProvisionError
+	require.ErrorAs(t, err, &provErr)
+	_, err = native.CreateTenant(ctx, "tenant-n", "N", qrdbsdk.TenantIsolationType(""))
+	require.NoError(t, err)
+
+	// A rollback whose CA cleanup fails keeps the tenant.
+	base.fail.Store(true)
+	_, err = p.CreateTenant(ctx, "tenant-r", "R", "")
+	require.ErrorAs(t, err, &provErr)
+	_, err = native.GetTenant(ctx, "tenant-r")
+	require.NoError(t, err, "a rollback whose CA cleanup failed keeps the tenant")
+
+	// The backend recovers; the node restarts.
+	base.fail.Store(false)
+	require.NoError(t, provisionTenantCAKeysWith(ctx, native, f), "boot must resume the rollback, not fail on its tombstone")
+
+	_, err = native.GetTenant(ctx, "tenant-r")
+	require.Error(t, err, "boot must finish the pending rollback")
+	_, err = tenantLoginCAKeyAttrs(ctx, base, "tenant-r")
+	require.ErrorIs(t, err, errTenantLoginCAKeyNotFound, "the rolled-back tenant must keep no CA key")
+
+	prov, err := f.ProviderForTenant("tenant-n")
+	require.NoError(t, err, "a natively re-created tenant must get its login CA at boot")
 	signer, err := prov.Signer(ctx)
 	require.NoError(t, err)
 	cert, err := prov.Certificate(ctx)
