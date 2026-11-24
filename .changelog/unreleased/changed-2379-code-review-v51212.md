@@ -1,0 +1,1 @@
+- **`code-review.yml` is the handbook template v5.12.12, copied verbatim.** A draft pull request gets no scope job and so no review, a cancelled review job fails the gate closed, and on github.com the scope job takes the bigdisk pool for same-repository heads; `TestCodeReviewTemplateV51212` pins it (#2379).
