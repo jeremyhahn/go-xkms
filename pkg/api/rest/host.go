@@ -534,6 +534,7 @@ func WebAuthnConfigFromXKMS(cfg *config.WebAuthnConfig) *webauthn.Config {
 		ResidentKeyRequirement:  cfg.ResidentKey,
 		UserVerification:        cfg.UserVerification,
 		AllowPublicRegistration: cfg.AllowPublicRegistration,
+		TenantHosts:             cfg.TenantHosts,
 	}
 	if wc.RPDisplayName == "" {
 		wc.RPDisplayName = wc.RPID

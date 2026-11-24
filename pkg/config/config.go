@@ -538,6 +538,11 @@ type WebAuthnConfig struct {
 	// creation is withheld.
 	AllowPublicRegistration *bool `yaml:"allow_public_registration,omitempty"`
 
+	// TenantHosts maps a request host (no port) to the tenant whose relying
+	// party serves logins on it. Each host must be an RP origin host; a login
+	// naming another tenant on a mapped host is decoyed.
+	TenantHosts map[string]string `yaml:"tenant_hosts,omitempty"`
+
 	// JWT settings for token generation after successful authentication
 	JWTKeyID     string   `yaml:"jwt_key_id"`     // Key ID in xkms for JWT signing
 	JWTIssuer    string   `yaml:"jwt_issuer"`     // JWT issuer claim
