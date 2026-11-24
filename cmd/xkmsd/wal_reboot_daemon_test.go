@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -192,24 +195,62 @@ func walDaemonCorruptInteriorWALBlock(t *testing.T, pebbleDir string) {
 	}
 }
 
-// walDaemonClient talks to the daemon's loopback listener. The sealed window
-// serves a certificate the daemon minted for itself; this test checks the
-// daemon's liveness, not its identity, so it does not pin that certificate.
-func walDaemonClient() *http.Client {
-	return &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				MinVersion:         tls.VersionTLS12,
-				InsecureSkipVerify: true, //nolint:gosec // loopback liveness probe of a self-minted test cert
-			},
-		},
+// walDaemonTLSConfig trusts the certificate the daemon minted for itself and
+// persisted under its datastore (pkg/server/unified_tls.go: unified-tls/
+// cert.pem), plus the CA bundle once the daemon has written one, and verifies
+// the server against the name in that certificate.
+func walDaemonTLSConfig(storage string) (*tls.Config, error) {
+	dir := filepath.Join(storage, "unified-tls")
+	certPEM, err := os.ReadFile(filepath.Join(dir, "cert.pem")) //nolint:gosec // test-owned temp dir
+	if err != nil {
+		return nil, err
 	}
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, errors.New("daemon cert.pem holds no PEM block")
+	}
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse daemon certificate: %w", err)
+	}
+	var name string
+	switch {
+	case len(leaf.DNSNames) > 0:
+		name = leaf.DNSNames[0]
+	case len(leaf.IPAddresses) > 0:
+		name = leaf.IPAddresses[0].String()
+	default:
+		return nil, errors.New("daemon certificate names no DNS or IP SAN")
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	if bundle, err := os.ReadFile(filepath.Join(dir, "ca-bundle.pem")); err == nil { //nolint:gosec // test-owned temp dir
+		pool.AppendCertsFromPEM(bundle)
+	}
+	return &tls.Config{RootCAs: pool, ServerName: name, MinVersion: tls.VersionTLS12}, nil
+}
+
+func walDaemonHTTPClient(cfg *tls.Config) *http.Client {
+	return &http.Client{
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: cfg},
+	}
+}
+
+// walDaemonClient builds a client pinned to the daemon's current certificate;
+// rebuild it after each daemon start, the certificate may have changed.
+func walDaemonClient(t *testing.T, storage string) *http.Client {
+	t.Helper()
+	cfg, err := walDaemonTLSConfig(storage)
+	if err != nil {
+		t.Fatalf("load the daemon's certificate: %v", err)
+	}
+	return walDaemonHTTPClient(cfg)
 }
 
 // walDaemonUnseal posts the passphrase to the sealed-window unseal verb,
 // retrying until the listener answers or run() returns.
-func walDaemonUnseal(t *testing.T, client *http.Client, base string, done <-chan int) {
+func walDaemonUnseal(t *testing.T, storage, base string, done <-chan int) {
 	t.Helper()
 	body, err := json.Marshal(map[string][]byte{"secret": []byte(walDaemonPassphrase)})
 	if err != nil {
@@ -222,7 +263,17 @@ func walDaemonUnseal(t *testing.T, client *http.Client, base string, done <-chan
 			t.Fatalf("run() returned %d before the sealed window took the unseal", rc)
 		default:
 		}
-		resp, err := client.Post(base+"/v1/barrier/unseal", "application/json", bytes.NewReader(body))
+		// The certificate is read on every attempt: the daemon writes it
+		// before its listener serves, and may replace one left by provisioning.
+		cfg, err := walDaemonTLSConfig(storage)
+		if err != nil {
+			if time.Now().After(deadline) {
+				t.Fatalf("daemon never wrote its certificate: %v", err)
+			}
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		resp, err := walDaemonHTTPClient(cfg).Post(base+"/v1/barrier/unseal", "application/json", bytes.NewReader(body))
 		if err == nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
@@ -255,9 +306,8 @@ func TestDaemon_WALRebootBootFailureKeepsDaemonUp(t *testing.T) {
 	go func() { done <- run() }()
 	t.Cleanup(func() { walDaemonStop(t, done) })
 
-	client := walDaemonClient()
 	base := fmt.Sprintf("https://127.0.0.1:%d", port)
-	walDaemonUnseal(t, client, base, done)
+	walDaemonUnseal(t, storage, base, done)
 
 	// (a) The boot completion that follows the unseal fails on the corrupt
 	// WAL block; the daemon must survive it instead of exiting.
@@ -271,6 +321,7 @@ func TestDaemon_WALRebootBootFailureKeepsDaemonUp(t *testing.T) {
 	}
 
 	// (b) Still answering on its listener, with the precise boot error.
+	client := walDaemonClient(t, storage)
 	resp, err := client.Get(base + "/v1/barrier/status")
 	if err != nil {
 		t.Fatalf("daemon stopped answering after the boot failure: %v", err)
