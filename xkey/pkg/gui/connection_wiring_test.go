@@ -31,6 +31,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/events"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
@@ -147,6 +148,37 @@ func TestApplyConnectionEvent_CAFollowsTheConnection(t *testing.T) {
 		_, err = a.caService.GetCAInfo()
 		assert.ErrorIs(t, err, services.ErrCAServiceNilClient, "%s detaches the CA", eventType)
 	}
+}
+
+func TestInitLocalCA_ServesCAWithNoServer(t *testing.T) {
+	a := newConnectionWiringApp()
+	_, err := xkmssdk.NewEmbeddedService(xkmssdk.EmbeddedServiceConfig{KeyDir: t.TempDir()})
+	require.NoError(t, err)
+	t.Cleanup(xkmssdk.Reset)
+	before, _ := xkmssdk.Get()
+
+	start := time.Now()
+	a.initLocalCA(t.TempDir(), nil)
+	t.Cleanup(a.closeLocalCA)
+	t.Logf("initLocalCA took %s", time.Since(start))
+
+	info, err := a.caService.GetCAInfo()
+	require.NoError(t, err, "with no server connected the local CA serves")
+	assert.True(t, info.IsCA)
+	assert.Contains(t, info.Subject, "Root CA")
+
+	after, _ := xkmssdk.Get()
+	assert.Same(t, before, after, "the local CA leaves the key service singleton untouched")
+
+	a.applyConnectionEvent(events.EventServerConnected, caClient{certPEM: testCACertPEM(t, "Connected xkms CA")})
+	info, err = a.caService.GetCAInfo()
+	require.NoError(t, err)
+	assert.Equal(t, "CN=Connected xkms CA", info.Subject, "a connected server replaces the local CA")
+
+	a.applyConnectionEvent(events.EventServerDisconnected, nil)
+	info, err = a.caService.GetCAInfo()
+	require.NoError(t, err)
+	assert.Contains(t, info.Subject, "Root CA", "a disconnect falls back to the local CA")
 }
 
 func TestApplyConnectionEvent_ConnectPutsTPMPoliciesInServerMode(t *testing.T) {

@@ -204,6 +204,38 @@ func TestNewEmbeddedClient_WithCA(t *testing.T) {
 	}
 }
 
+func TestNewEmbeddedService_IsolatedLeavesTheSingleton(t *testing.T) {
+	defer Reset()
+	ctx := context.Background()
+
+	if _, err := NewEmbeddedService(EmbeddedServiceConfig{KeyDir: t.TempDir()}); err != nil {
+		t.Fatalf("NewEmbeddedService() returned error: %v", err)
+	}
+	before, _ := Get()
+
+	client, err := NewEmbeddedClient(EmbeddedServiceConfig{
+		KeyDir:   t.TempDir(),
+		CA:       DefaultMultiIdentityCAConfig(),
+		Isolated: true,
+	})
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient(Isolated) returned error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.GetCACertificate(ctx, &GetCACertificateRequest{})
+	if err != nil {
+		t.Fatalf("GetCACertificate() returned error: %v", err)
+	}
+	if !resp.IsCA {
+		t.Error("expected IsCA == true")
+	}
+	after, _ := Get()
+	if after != before {
+		t.Error("an Isolated embedded service replaced the process-wide singleton")
+	}
+}
+
 // TestNewEmbeddedService_NoCA confirms a nil CA leaves the embedded service
 // without a CA, so GetCACertificate fails.
 func TestNewEmbeddedService_NoCA(t *testing.T) {
