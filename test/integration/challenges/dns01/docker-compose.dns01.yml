@@ -1,9 +1,4 @@
-# Docker Compose configuration for DNS-01 E2E integration testing
-# Tests the complete DNS-01 challenge flow:
-# 1. Client requests certificate from ACME server
-# 2. Client sets TXT record via mock DNS server API
-# 3. ACME server validates DNS-01 challenge by querying mock DNS server
-# 4. Certificate is issued
+# DNS-01 end-to-end challenge flow.
 
 services:
   # ACME Server

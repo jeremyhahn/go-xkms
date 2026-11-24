@@ -1,24 +1,4 @@
-# Docker Compose stack for the acme-tpm integration lane
-# (make integration-test-acme-tpm).
-#
-# test/integration/acme-tpm (build tags `integration tpm2`) exercises the
-# device-attest-01, enroll-01 and permanent-identifier ACME end-to-end flows:
-# the test runner acts as the TPM-backed device (dialing swtpm directly, and
-# serving its own enroll-01 challenge-response HTTP endpoint), and dials a
-# real ACME server over the network for the account/order/challenge/finalize
-# protocol exchange.
-#
-# Three services, all built from images/Dockerfiles this repository already
-# builds elsewhere:
-#   - tpm-simulator: the same test/docker/swtpm image the top-level
-#     docker-compose.yml and test/integration/api/docker-compose.yml use.
-#   - acme-server: xkmsd (root Dockerfile, already builds /app/xkmsd) with
-#     its embedded ACME server turned on via config.acme-tpm.yaml.
-#   - test: the same image as acme-server (root Dockerfile bakes the full
-#     source tree and pre-built xkmsd into one image), running `go test`
-#     against the baked-in source instead of a runtime bind mount --
-#     test/integration/tpm2/Dockerfile's comment explains why a runtime bind
-#     mount is unreliable on the Gitea Actions runner.
+# Docker Compose stack for the acme-tpm integration suite (make integration-test-acme-tpm).
 services:
   tpm-simulator:
     build:
@@ -51,20 +31,13 @@ services:
         - gomodauth
         - apt_proxy
     image: go-xkms-integration-acme-server:${XKMS_IMAGE_TAG:-latest}
-    # config.acme-tpm.yaml, and the fixed EK issuer trust anchor its
-    # ca.tcg-config.trust-anchors points at, are read from the source tree
-    # this image already COPYs into /workspace, not bind-mounted: the Docker
-    # daemon resolves a bind-mount source on its own host, which in CI is not
-    # the job container holding the checkout (DS-4181).
+    # Config and trust anchor come from the image's source copy, not bind mounts, because the daemon resolves mounts on its own host.
     volumes:
       - acme-data:/data
     environment:
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
-    # Generates the ACME listener's throwaway self-signed TLS cert (see
-    # certgen/main.go for why this runs stdlib-only `go run` rather than
-    # shelling out to openssl, which the runtime image does not carry) and
-    # then execs the daemon xkmsd already builds at image build time.
+    # Generate the ACME listener's throwaway TLS certificate, then exec xkmsd.
     command: >
       sh -c "
       set -e &&
@@ -77,12 +50,7 @@ services:
       timeout: 2s
       retries: 30
       start_period: 10s
-    # Resolve the "test" service via a static /etc/hosts entry instead of
-    # Docker's embedded DNS -- see the "test" service's ipv4_address comment
-    # below for why. Every callback this container makes to the device under
-    # test (enroll-01/endorse-01/device-attest-01 challenge fetches) goes
-    # through CHALLENGE_CLIENT_HOSTNAME=test, so this is the one name that
-    # matters here.
+    # Resolve the "test" service by a static hosts entry.
     extra_hosts:
       - "test:172.28.90.10"
     networks:
@@ -102,11 +70,7 @@ services:
       acme-server:
         condition: service_healthy
     volumes:
-      # Read-only: the acme-server container generates
-      # /data/acme-tls/acme.crt (certgen/main.go) before it becomes healthy,
-      # so it already exists by the time this depends_on condition is met.
-      # Sharing the same named volume (rather than copying the file) means
-      # there is nothing to keep in sync if the cert is regenerated.
+      # Read-only: acme-server writes its certificate before it turns healthy.
       - acme-data:/data:ro
     environment:
       - CGO_ENABLED=1
@@ -114,21 +78,9 @@ services:
       - ACME_TPM_HOST=tpm-simulator
       - TPM_SOCKET_HOST=tpm-simulator
       - TPM_SOCKET_PORT=2321
-      # The acme-server listener presents the throwaway self-signed cert
-      # certgen generates; trust it explicitly here (getTLSConfig in
-      # helpers_test.go, and createTestACMEClient via trustedRootPEM) rather
-      # than skip verification. It is the ACME server's own leaf certificate,
-      # self-signed, which is a valid (if unusual) x509.CertPool root entry:
-      # verification succeeds against it because Issuer == Subject and the
-      # presented chain is exactly that one certificate.
+      # Trust the acme-server's throwaway certificate explicitly.
       - ACME_CA_CERT=/data/acme-tls/acme.crt
-      # The test runner serves its own enroll-01/endorse-01/device-attest-01
-      # challenge-response HTTP endpoint (test/integration/acme-tpm's
-      # startChallengeServer et al.), which the acme-server container must be
-      # able to reach back by this hostname:port, named explicitly so the
-      # value matches pkg/acme/server/handlers/challenge.go's 8080 default
-      # for enrollment-type challenges rather than the test helpers' bare
-      # 8888 fallback (which nothing server-side would ever dial).
+      # The hostname and port the acme-server dials back for the test's challenge responses.
       - CHALLENGE_CLIENT_HOSTNAME=test
       - CHALLENGE_CLIENT_PORT=8080
     working_dir: /workspace
@@ -137,16 +89,7 @@ services:
       ./test/integration/acme-tpm/... -timeout 20m
     networks:
       acme-tpm-network:
-        # Static IP, not the compose-assigned DNS name: acme-server's
-        # callback to CHALLENGE_CLIENT_HOSTNAME=test repeatedly failed with
-        # "dial tcp: lookup test on 127.0.0.11:53: server misbehaving" --
-        # Docker's embedded DNS proxy returning SERVFAIL for a sibling
-        # service's own name, observed often enough in one run (every
-        # concurrent-enrollment test, plus the resulting cascade below) to
-        # be a real reliability gap, not a one-off. A fixed address removes
-        # the embedded resolver from this specific lookup entirely; every
-        # other cross-container name in this stack (acme-server,
-        # tpm-simulator) keeps using normal compose DNS.
+        # A static IP, because Docker's embedded DNS intermittently failed to resolve sibling services.
         ipv4_address: 172.28.90.10
 
 networks:
@@ -165,8 +108,7 @@ volumes:
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env
-  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
-  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  # Optional package caches as BuildKit secrets; empty when unset.
   apk_mirror:
     environment: DEVCACHE_APK_MIRROR
   apt_proxy:

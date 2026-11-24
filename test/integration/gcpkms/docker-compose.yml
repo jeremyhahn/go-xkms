@@ -1,7 +1,5 @@
 services:
-  # Pinned by tag and digest (DS-4181): floci-gcp 0.11.0 is built on
-  # ubi9-micro, which ships no curl, so a curl probe never passes. The image's
-  # own bash probe polls GET /_floci-gcp/health on 4588.
+  # Pinned by tag and digest; the image has no curl.
   floci-gcp:
     image: floci/floci-gcp:0.11.0@sha256:eae9683d806ceb643bcb36aee97cdb8cad13c3e2959cd053bf40e481994fde12
     environment:
@@ -35,10 +33,7 @@ services:
       - GCPKMS_EMULATOR_ENDPOINT=floci-gcp:4588
     working_dir: /app
 
-# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
-# gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
-# available, in which case the Dockerfile's optional secret mount falls back
-# to public module resolution.
+# Module credentials staged by `make stage-gomodauth`; empty when none are configured.
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env

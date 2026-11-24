@@ -1,30 +1,7 @@
-# Compose project name. This MUST be set explicitly.
-#
-# Without it, compose derives the project name from the directory holding this
-# file — "build/docker/devcontainer" → "devcontainer" — which is exactly the
-# name go-trusted-platform's stack (build/docker/devcontainer) already uses. Both
-# projects then share a namespace: `docker compose exec devcontainer ...` run
-# from go-xkms attaches to go-trusted-platform's container, `up -d xkms-server`
-# silently matches nothing, and the volumes collide. Naming the project pins
-# every container, image, volume and network to go-xkms.
-#
-# This is only the floor, for someone invoking `docker compose -f` by hand. A
-# project name is host-global, so a constant one still lets two CI jobs on the
-# same runner host collide with each other. The Makefile therefore overrides
-# it per run with `go-xkms-$GITHUB_RUN_ID-devcontainer` (see COMPOSE_NS), and
-# that override is what CI always uses.
-#
-# For the same reason no service below may declare `container_name:`, a fixed
-# `networks: name:` or a fixed host port: each of those is absolute and
-# silently defeats the project prefix. Services address each other by compose
-# service name, which resolves inside the project network regardless.
+# Compose project name.
 name: go-xkms
 
-# Hardened posture for the CI stages (handbook ci-standard.md): the toolchain
-# and integration services run with no capabilities, no network and a
-# read-only root. The interactive devcontainer harness below keeps its
-# privileged sidecars; the profiles keep `compose up` from starting the CI
-# services, and `compose run <service>` enables them.
+# Hardened posture for the CI stages: no capabilities, no network, read-only root.
 x-posture: &posture
   init: true
   read_only: true
@@ -59,8 +36,7 @@ services:
   toolchain:
     <<: *posture
     profiles: [toolchain]
-    # Offline unless the caller opts in: make docker-run gives its default
-    # `make build` a bridge, for build-xkey-local's `npm ci`.
+    # Offline unless the caller opts in.
     network_mode: ${GO_XKMS_TOOLCHAIN_NETWORK:-none}
     image: go-xkms-toolchain:${GO_XKMS_TOOLCHAIN_TAG:-latest}
     pull_policy: never
@@ -74,21 +50,14 @@ services:
       HOME: /tmp
 
   devcontainer:
-    # The interactive stage of the one devcontainer Dockerfile. Its context is
-    # the repository root, so the Dockerfile reads scripts/tool-pins.sh and the
-    # SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418) from the tree.
-    # GO_IMAGE comes from scripts/tool-pins.sh, which the Makefile exports;
-    # devcontainer.json's initializeCommand (make devcontainer-env) writes it
-    # into .env for a launch with no Makefile.
+    # The interactive stage of the devcontainer Dockerfile.
     build:
       context: ../../..
       dockerfile: build/docker/devcontainer/Dockerfile
       target: devcontainer
       args:
         GO_IMAGE: ${GO_IMAGE:?GO_IMAGE is unset; build through make, which exports scripts/tool-pins.sh}
-      # The Dockerfile's modules stage resolves in-house modules from Gitea
-      # tags through the gomodauth BuildKit secret (dependency-resolution.md
-      # §6), as xkms-server does; the Makefile stages it before every `up`.
+      # Module credentials reach the build through the gomodauth BuildKit secret.
       secrets:
         - gomodauth
         - apt_proxy
@@ -101,8 +70,7 @@ services:
       - SYS_ADMIN        # For mount operations
       - NET_ADMIN        # For network configuration
       - IPC_LOCK         # For TPM memory locking
-    # Device access for KVM acceleration
-    # Note: /dev/uhid access handled via privileged mode + mknod in post-start
+    # Device access for KVM acceleration; /dev/uhid is handled in post-start.
     devices:
       - /dev/kvm:/dev/kvm
     # Shared memory for QEMU
@@ -119,24 +87,13 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # Shared socket volume for xkms server communication
       - xkms-socket:/var/run/xkms
-      # The xkms-server's state directory, read-only. The daemon initializes its
-      # CA here on first start and issues its own TLS server certificate from it,
-      # so this is where the gRPC-over-TCP lane of the PKCS#11 suites gets the
-      # root it must trust. See scripts/ensure-server-ca.sh, which normalizes it
-      # into XKMS_GRPC_TLS_CA.
+      # The xkms-server's state directory, read-only.
       - xkms-data:/xkms-data:ro
     environment:
-      # Positive devcontainer identity marker, also baked into the image
-      # (build/docker/devcontainer/Dockerfile). Set here too so a container created from
-      # a pre-marker image still carries it. The Makefile tests this instead
-      # of /.dockerenv, which is true in ANY container and made the CI job
-      # container impersonate the devcontainer (go-xkms #19).
+      # Devcontainer identity marker, also baked into the image.
       - XKMS_DEVCONTAINER=1
       - GOPATH=/go
-      # In-house modules resolve from Gitea tags (dependency-resolution.md §6).
-      # Credentials: the Makefile's GOMODAUTH_* resolution (the CI runner's
-      # injected rewrite first), else the read-only token from the gitignored
-      # build/docker/devcontainer/.env when compose is loaded directly.
+      # Builds never resolve through a workspace.
       - GOWORK=off
       - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+github.com/jeremyhahn/*}}
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
@@ -148,33 +105,19 @@ services:
       - TPM_SIMULATOR_PORT=2321
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
       - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
-      # Integration test endpoints (XKMS_* prefix for PKCS#11 module)
+      # Integration test endpoints
       - XKMS_UNIX_SOCKET=/var/run/xkms/xkms.sock
       - XKMS_GRPC_ADDR=xkms-server:9443
       - XKMS_GRPC_TLS_ENABLED=true
-      # Written by scripts/ensure-server-ca.sh from the read-only xkms-data
-      # mount. It must be a path the unprivileged container user can write, so
-      # it is NOT /etc/xkms/certs/ca.crt (the module's compiled-in default,
-      # which nothing in this stack ever creates).
+      # Written by scripts/ensure-server-ca.sh from the read-only xkms-data mount.
       - XKMS_GRPC_TLS_CA=/tmp/xkms/ca.crt
-      # First-boot admin mTLS credential (published by ensure-server-ca.sh):
-      # the unified server enforces authentication, and the admin certificate
-      # is the only credential a fresh deployment holds.
+      # First-boot admin mTLS credential, published by ensure-server-ca.sh.
       - XKMS_GRPC_TLS_CERT=/tmp/xkms/admin-cert.pem
       - XKMS_GRPC_TLS_KEY=/tmp/xkms/admin-key.pem
       - XKMS_SERVER_STATE_DIR=/xkms-data
-      # The xkms-server's throwaway test SO PIN, which `xkmsd init` made its
-      # barrier passphrase; open-server-barrier.sh unseals with it.
+      # The test SO PIN, which is also the server's barrier passphrase.
       - XKMS_SERVER_BARRIER_SECRET=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
-      # The same trust anchor and admin credential again, under the names the
-      # PKCS#11 MODULE reads (pkg/pkcs11/module/config.go). A module the
-      # pkcs11-tool, OpenSSL and C ABI lanes dlopen has only the environment to
-      # go on, and the Go harness reads the same variables for its in-process
-      # module (test/integration/pkcs11/module DefaultTestConfig). The unix
-      # socket is the embedded qrdb node's TLS-only listener: Health answers an
-      # anonymous TLS client, so C_Initialize succeeds without a certificate,
-      # but every key operation is refused as unauthenticated
-      # (CKR_USER_NOT_LOGGED_IN). The client certificate is what lets them run.
+      # The same trust anchor and admin credential under the names the PKCS#11 module reads.
       - XKMS_PKCS11_TLS_ENABLED=true
       - XKMS_PKCS11_TLS_CA=/tmp/xkms/ca.crt
       - XKMS_PKCS11_TLS_CERT=/tmp/xkms/admin-cert.pem
@@ -199,9 +142,6 @@ services:
       - XKMS_PKCS11_STORAGE_TYPE=file
       - XKMS_PKCS11_STORAGE_PATH=/tmp/pkcs11-storage
       # FIDO2 configuration (auto-detect device or use FIDO2_DEVICE_PATH).
-      # FIDO2_USE_VIRTUAL only has any effect on an xkmsctl built with the
-      # "integration,fido2" tags (see Makefile integration-test-fido2* targets
-      # and cmd/xkmsctl/fido2_virtual.go); the release binary ignores it (#807).
       - FIDO2_PIN=123456
       - FIDO2_DEVICE_PATH=
       - FIDO2_USE_VIRTUAL=true
@@ -237,12 +177,12 @@ services:
     networks:
       - xkms-dev
 
-  # SoftHSM PKCS#11 Service (shared across all tests)
+  # SoftHSM PKCS#11 service (shared across all tests)
   softhsm:
     build:
       context: ../../../test/docker/softhsm
       dockerfile: Dockerfile
-      # The SoftHSM pin (scripts/build-softhsm.sh, go-xkms#1418).
+      # The SoftHSM pin.
       additional_contexts:
         softhsm-pin: ../../../scripts
       secrets:
@@ -254,8 +194,7 @@ services:
       - SOFTHSM2_CONF=/home/softhsm/softhsm2.conf
       - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
     healthcheck:
-      # Loads the library rather than stat'ing it: a `test -f` cannot detect
-      # the "the .so will not load" failure mode (#227).
+      # Loads the library rather than checking the file exists.
       test: ["CMD", "softhsm2-util", "--show-slots"]
       interval: 10s
       timeout: 3s
@@ -268,23 +207,12 @@ services:
     build:
       context: ../../..
       dockerfile: Dockerfile
-      # In-house modules resolve from Gitea tags at image build via the
-      # gomodauth BuildKit secret (dependency-resolution.md §6). Stage it with
-      # `make stage-gomodauth` before building this service.
+      # Module credentials reach the build through the gomodauth BuildKit secret.
       secrets:
         - gomodauth
         - apt_proxy
     image: go-xkms-server:${XKMS_IMAGE_TAG:-dev}
-    # Published on an EPHEMERAL host port (host side 0), not a fixed one. A
-    # published host port is a host-global resource: a fixed number means this
-    # stack fights other project stacks (go-trusted-platform publishes
-    # 8443/9445/10443/3000) and, worse, fights the *same* stack belonging to
-    # another CI job on the same runner host. Nothing in the test path needs a
-    # predictable number — tests reach the server over the shared xkms-socket
-    # volume or by service DNS on the xkms-dev network — so these exist purely
-    # for host-side debugging. Ask docker which port it picked:
-    #   docker compose -p <project> port xkms-server 8443
-    # Set XKMS_HOST_*_PORT to pin one when you want a stable local endpoint.
+    # Published on an ephemeral host port.
     ports:
       - "${XKMS_HOST_REST_PORT:-0}:8443"    # REST API
       - "${XKMS_HOST_GRPC_PORT:-0}:9443"    # gRPC
@@ -294,11 +222,7 @@ services:
     volumes:
       - xkms-data:/data
       - xkms-socket:/var/run/xkms
-      # xkmsd.yaml is baked into the image (see Dockerfile) rather than bind
-      # mounted: a relative host path here resolves against the Gitea
-      # Actions job container's filesystem, not the actual docker daemon
-      # host, and fails outright when the daemon tries to auto-create the
-      # missing mount source (task 3771: "mkdir /workspace: file exists").
+      # xkmsd.yaml is baked into the image, not bind-mounted, because the daemon resolves mounts on its own host.
     environment:
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - KEYSTORE_LOG_LEVEL=debug
@@ -307,9 +231,7 @@ services:
       - TPM_USE_SIMULATOR=true
       - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
-      # Throwaway test SO PIN for `xkmsd init` (see command below), which also
-      # becomes the passphrase of this server's barrier. The devcontainer's
-      # XKMS_SERVER_BARRIER_SECRET must resolve to the same value.
+      # Test SO PIN for `xkmsd init`, also the barrier passphrase.
       - XKMS_SO_PIN=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
     depends_on:
       swtpm:
@@ -324,33 +246,10 @@ services:
       start_period: 10s
     networks:
       xkms-dev:
-        # The dotted alias exists for the WebAuthn login matrix: a WebAuthn
-        # RPID must be "localhost" or contain a dot, so the fido2 leg dials
-        # this alias and the integration config's rp_id matches it. xkey
-        # trusts the connection by SPKI pin, so no certificate SAN is needed.
+        # A WebAuthn RPID needs a dot, so the fido2 leg dials this dotted alias.
         aliases:
           - xkms-server.test
-    # xkmsd has no insecure override: it refuses to start whenever
-    # ComplianceGaps() is non-empty. The integration config therefore ships a
-    # compliant posture — TLS from the embedded CA, composite jwt+mtls auth
-    # (the first-boot admin authenticates with the generated mTLS
-    # credential), and a passphrase barrier.
-    #
-    # A fresh volume is bootstrapped the supported way, with `xkmsd init`: it
-    # initializes the barrier in-process with the SO PIN as its passphrase, runs
-    # first boot, and writes the admin credential to /data/storage. The sealed
-    # window cannot do this: it refuses barrier initialization (HTTP 409) and
-    # leaves first-contact initialization to the go-qrdb ceremony. init does not
-    # refuse a second run (it fails partway, once the admin exists), so the
-    # admin-cert.pem/admin-key.pem pair it delivers is what marks the volume as
-    # initialized. The daemon then boots sealed, and the Makefile's
-    # devcontainer-server-wait unseals it through the sealed window with the same
-    # PIN (build/docker/devcontainer/scripts/open-server-barrier.sh) before the suites run,
-    # so they need no unseal step of their own. The PIN reaches init only
-    # through its environment, never argv, and is dropped before the daemon
-    # starts. This instance is reachable from the private xkms-dev network, the
-    # xkms-socket volume and the ephemeral debug ports above, over a throwaway
-    # data volume.
+    # xkmsd refuses to start while ComplianceGaps is non-empty.
     command:
       - /bin/sh
       - -ec
@@ -362,22 +261,13 @@ services:
         fi
         exec env -u XKMS_SO_PIN /app/xkmsd -config /etc/xkms/xkmsd.yaml
 
-  # quicbaasd fixture for the login verification matrix
-  # (make integration-test-logins-quicbaas). Built from the sibling
-  # go-quicbaas working tree with the SAME gomodauth BuildKit secret the
-  # xkms-server build uses (its go.mod pins first-party modules from the
-  # internal Gitea). Started only by the quicbaas logins lane — it is NOT
-  # part of the default stack.
+  # quicbaasd fixture for the login verification matrix.
   quicbaas-server:
     build:
       context: ../../../../go-quicbaas
       dockerfile: Dockerfile
       args:
-        # The default BUILD_TAGS is gms_pure_go only, which compiles
-        # quicbaas's module REST surface out entirely ("REST server not
-        # available (build with -tags rest to enable)") — the login matrix
-        # needs the real REST plane. gms_pure_go must stay in the list
-        # (CGO_ENABLED=0 builder).
+        # The login matrix needs the rest tag; gms_pure_go stays for the CGO_ENABLED=0 build.
         BUILD_TAGS: "gms_pure_go rest"
       secrets:
         - gomodauth
@@ -387,12 +277,10 @@ services:
     volumes:
       - quicbaas-data:/data
       - ../../../configs/quicbaasd-integration.yaml:/etc/quicbaas/quicbaas.yaml:ro
-    # "start" = single-node local PebbleDB backend (no Raft) — the right
-    # shape for a login-matrix fixture.
+    # "start" is a single-node local PebbleDB backend.
     command: ["start", "--config", "/etc/quicbaas/quicbaas.yaml", "--data-dir", "/data"]
     healthcheck:
-      # The REST port answers TLS only; a TCP connect proves liveness
-      # without needing credentials inside the container.
+      # A TCP connect proves liveness without credentials.
       test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 8443 || exit 1"]
       interval: 5s
       timeout: 3s
@@ -400,13 +288,11 @@ services:
       start_period: 15s
     networks:
       xkms-dev:
-        # Dotted alias for the WebAuthn RPID, mirroring xkms-server.test:
-        # a WebAuthn RPID must be "localhost" or contain a dot.
+        # Dotted alias for the WebAuthn RPID.
         aliases:
           - quicbaas-server.test
 
-  # Virtual FIDO2 Authenticator Service (for WebAuthn testing without hardware)
-  # Uses software CTAP2 implementation with socket-based interface
+  # Virtual FIDO2 authenticator for WebAuthn testing without hardware.
   softfido:
     build:
       context: .
@@ -445,14 +331,11 @@ networks:
   xkms-dev:
     driver: bridge
 
-# Module-fetch credentials for image builds: sourceable `export` lines staged
-# 0600 by `make stage-gomodauth` (gitignored and dockerignored; empty when no
-# Gitea token is configured, so public-proxy builds work unchanged).
+# Module-fetch credentials staged by `make stage-gomodauth`; empty when none are configured.
 secrets:
   gomodauth:
     file: ./gomodauth.env
-  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
-  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  # Optional package caches as BuildKit secrets; empty when unset.
   apk_mirror:
     environment: DEVCACHE_APK_MIRROR
   apt_proxy:

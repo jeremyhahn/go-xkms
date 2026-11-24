@@ -5,9 +5,7 @@ services:
       context: ../../..
       dockerfile: test/integration/storage/Dockerfile
       args:
-        # libicu-dev/libusb-1.0-0-dev: unconditional cgo deps of the module
-        # graph itself (dolthub/go-icu-regex, google/gousb via go-qrdb), not
-        # gated by any tag here -- needed for any CGO_ENABLED=1 build.
+        # cgo dependencies of the module graph.
         EXTRA_APT_PACKAGES: "build-essential libicu-dev libusb-1.0-0-dev"
       secrets:
         - gomodauth
@@ -31,9 +29,7 @@ services:
     working_dir: /app
     environment:
       - CGO_ENABLED=0
-    # gms_pure_go selects go-mysql-server's non-cgo regex engine; without it
-    # the cgo-only variant (github.com/dolthub/go-icu-regex) fails to build
-    # under CGO_ENABLED=0 with "build constraints exclude all Go files".
+    # gms_pure_go selects go-mysql-server's non-cgo regex engine.
     command: >
       sh -c "
       go test -v -tags='integration codec_cbor codec_json codec_msgpack gms_pure_go' ./test/integration/storage/...
@@ -67,9 +63,7 @@ services:
       context: ../../..
       dockerfile: test/integration/storage/Dockerfile
       args:
-        # libicu-dev/libusb-1.0-0-dev: see the "test" service's comment --
-        # unconditional cgo deps of the module graph, needed for any
-        # CGO_ENABLED=1 build regardless of tags.
+        # cgo dependencies of the module graph.
         EXTRA_APT_PACKAGES: "build-essential libicu-dev libusb-1.0-0-dev"
       secrets:
         - gomodauth
@@ -97,9 +91,7 @@ services:
       context: ../../..
       dockerfile: test/integration/storage/Dockerfile
       args:
-        # libicu-dev/libusb-1.0-0-dev: see the "test" service's comment --
-        # unconditional cgo deps of the module graph, needed for any
-        # CGO_ENABLED=1 build regardless of tags.
+        # cgo dependencies of the module graph.
         EXTRA_APT_PACKAGES: "build-essential libtss2-dev libicu-dev libusb-1.0-0-dev"
       secrets:
         - gomodauth
@@ -120,17 +112,7 @@ services:
     networks:
       - storage-test-network
 
-  # SoftHSM initialization service. Runs no Go code and needs no module
-  # source, so it builds only the shared Dockerfile's "softhsm" stage -- the
-  # same pinned SoftHSM 2.7.0 (scripts/build-softhsm.sh, go-xkms#1418) the
-  # test lanes load, so the token is written by the release that later opens
-  # it -- and runs softhsm2-util (with --module) from that stage's staged
-  # install. The config it needs (directories.tokendir) is written inline
-  # below instead of bind-mounting test/integration/storage/softhsm2.conf
-  # from the host: on the Gitea Actions runner a relative bind mount
-  # resolves against the JOB CONTAINER's filesystem, not the true host's, so
-  # the mount would silently attach an unrelated (usually empty) directory
-  # instead of erroring.
+  # SoftHSM initialization service.
   softhsm-init:
     build:
       context: ../../..
@@ -140,9 +122,7 @@ services:
       - softhsm-tokens:/var/lib/softhsm/tokens
     environment:
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
-    # Runs once per dependent service on the same softhsm-tokens volume, so it
-    # initializes test-token only when no token carries that label yet.
-    # --free takes SoftHSM's empty slot: once a token exists, slot 0 is gone.
+    # Initializes test-token only when no token carries that label yet.
     command: >
       sh -c "
       mkdir -p /var/lib/softhsm/tokens /etc/softhsm &&
@@ -194,10 +174,7 @@ networks:
 volumes:
   softhsm-tokens:
 
-# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
-# gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
-# available, in which case the Dockerfile's optional secret mount falls back
-# to public module resolution.
+# Module credentials staged by `make stage-gomodauth`; empty when none are configured.
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env

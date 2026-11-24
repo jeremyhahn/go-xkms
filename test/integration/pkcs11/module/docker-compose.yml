@@ -1,19 +1,4 @@
-# Docker Compose for PKCS#11 module integration testing
-#
-# This setup tests the go-xkms PKCS#11 module (libxkms_pkcs11.so)
-# with pkcs11-tool and custom integration tests.
-#
-# Architecture:
-#   xkms-server: gRPC server providing key management backend
-#   pkcs11-test: Test container with PKCS#11 module and pkcs11-tool
-#
-# Connection modes:
-#   - Unix socket: /var/run/xkms/xkms.sock (default, fastest)
-#   - TCP: xkms-server:9443 (gRPC)
-#
-# Usage:
-#   docker-compose -f test/integration/pkcs11/module/docker-compose.yml up --build --abort-on-container-exit
-#   docker-compose -f test/integration/pkcs11/module/docker-compose.yml down -v
+# Docker Compose for PKCS#11 module integration testing.
 
 services:
   # xKMS gRPC server providing backend for PKCS#11 module
@@ -219,7 +204,6 @@ networks:
     driver: bridge
 
 secrets:
-  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
-  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  # Optional package caches as BuildKit secrets; empty when unset.
   apt_proxy:
     environment: DEVCACHE_APT_PROXY

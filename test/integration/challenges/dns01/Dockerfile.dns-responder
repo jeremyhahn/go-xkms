@@ -11,11 +11,7 @@ RUN go mod init dns-responder && \
     go get github.com/miekg/dns && \
     CGO_ENABLED=0 GOOS=linux go build -o dns-responder .
 
-# Final stage
-# alpine:3.24 rather than :latest: a floating base changes under CI without a
-# commit, so a base regression reads as a code regression. The minor-series tag
-# still receives patches and the upgrade below takes them on every rebuild --
-# a patch-level pin would freeze the security fixes too.
+# A pinned base, so a base change cannot appear as a code regression.
 FROM alpine:3.24
 
 RUN apk --no-cache upgrade && \

@@ -40,8 +40,7 @@ services:
       - SOFTHSM2_CONF=/home/softhsm/softhsm2.conf
       - PKCS11_LIBRARY=/usr/local/lib/softhsm/libsofthsm2.so
     healthcheck:
-      # Loads the library rather than stat'ing it: a `test -f` cannot detect
-      # the "the .so will not load" failure mode (#227).
+      # Loads the library rather than checking the file exists.
       test: ["CMD", "softhsm2-util", "--show-slots"]
       interval: 10s
       timeout: 3s
@@ -149,8 +148,7 @@ networks:
     driver: bridge
 
 secrets:
-  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
-  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  # Optional package caches as BuildKit secrets; empty when unset.
   apk_mirror:
     environment: DEVCACHE_APK_MIRROR
   apt_proxy:

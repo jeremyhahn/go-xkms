@@ -1,18 +1,8 @@
-# Host-facing developer/coverage stack, NOT part of `make integration-test`.
-#
-# The host port bindings below are deliberately fixed: `make emulator-status`,
-# `make coverage-awskms` and friends run on the host and dial these numbers
-# directly. That does mean two concurrent copies of THIS stack would collide
-# on the ports -- acceptable only because no CI job starts it. Everything CI
-# runs publishes on an ephemeral host port instead (host side 0). If this
-# stack is ever added to CI, the ports must be made ephemeral too and the
-# callers taught to resolve them with `docker compose port`, the way
-# `integration-test-ssh-backends` already does.
+# Host-facing developer and coverage stack, not part of `make integration-test`.
 services:
   # Floci - AWS Emulator (KMS)
   floci:
-    # Pinned and probed as in test/integration/awskms/docker-compose.yml: the
-    # ubi9-micro image ships no curl, only its own bash healthcheck.sh.
+    # Pinned; the image has no curl, so the probe uses its own healthcheck.sh.
     image: floci/floci:2.3.0@sha256:e0b292df4dc9559b7b1bf4f51bdda4bb8e269276236438cd03cae661260ea8a9
     ports:
       - "4566:4566"

@@ -1,9 +1,4 @@
-# TPM-sealed PKCS#11 barrier PIN (go-xkms#811): `make integration-test-pkcs11-barrier`.
-#
-# One swtpm runs for the whole test and outlives every xkmsd the test starts,
-# so an xkmsd restart sees the TPM state a reboot would. The test service is
-# the SoftHSM 2.7.0 image from ../Dockerfile; the test provisions its own
-# token, so the image's token-initializing CMD is replaced by the Makefile.
+# TPM-sealed PKCS#11 barrier PIN: `make integration-test-pkcs11-barrier`.
 services:
   tpm-simulator:
     image: ghcr.io/stefanberger/swtpm:v0.10.0@sha256:303a1998b9ae7ad500146036bb63e1e0703208f788db8741233f0080c3125a78
@@ -41,10 +36,7 @@ services:
       - TPM2_SIMULATOR_PORT=2421
     working_dir: /app
 
-# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
-# gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
-# available, in which case the Dockerfile's optional secret mount falls back
-# to public module resolution.
+# Module credentials staged by `make stage-gomodauth`; empty when none are configured.
 secrets:
   gomodauth:
     file: ../../../../build/docker/devcontainer/gomodauth.env

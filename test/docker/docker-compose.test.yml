@@ -1,6 +1,4 @@
-# Docker Compose Test Configuration
-# Optimized configuration for running integration tests
-# Usage: docker compose -f docker-compose.yml -f test/docker/docker-compose.test.yml up --abort-on-container-exit
+# Test overlay: docker compose -f docker-compose.yml -f test/docker/docker-compose.test.yml up --abort-on-container-exit
 
 services:
   # SWTPM service overrides for testing

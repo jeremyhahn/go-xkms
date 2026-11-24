@@ -1,6 +1,5 @@
 services:
   # Android emulator for E2E testing via budtmo/docker-android.
-  # Requires /dev/kvm access (hardware virtualization).
   android-emulator:
     image: budtmo/docker-android:emulator_14.0
     privileged: true
@@ -23,8 +22,7 @@ services:
     build:
       context: ../../../..
       dockerfile: build/docker/devcontainer/Dockerfile
-      # The Dockerfile's base image pin (scripts/tool-pins.sh), which
-      # xkey's integration-test-phone-android target loads.
+      # The Dockerfile's base image pin.
       args:
         GO_IMAGE: ${GO_IMAGE:?GO_IMAGE is unset; run make integration-test-phone-android, which loads scripts/tool-pins.sh}
       additional_contexts:
@@ -43,12 +41,7 @@ services:
       android-emulator:
         condition: service_healthy
 
-  # Test runner that orchestrates the E2E test flow:
-  # 1. Wait for emulator boot
-  # 2. Install xKey Android APK
-  # 3. Configure TCP pairing target
-  # 4. Run pairing flow
-  # 5. Verify pairing on both sides
+  # Test runner that orchestrates the E2E flow.
   test-runner:
     build:
       context: ../../../..
@@ -71,7 +64,6 @@ services:
         condition: service_started
 
 secrets:
-  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
-  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  # Optional package caches as BuildKit secrets; empty when unset.
   apt_proxy:
     environment: DEVCACHE_APT_PROXY

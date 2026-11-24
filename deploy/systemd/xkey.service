@@ -43,9 +43,7 @@ Restart=on-failure
 RestartSec=5
 StartLimitBurst=3
 StartLimitIntervalSec=60
-# Exit 78 (EX_CONFIG): the TPM rejected the Platform SRK PIN (--pin-file).
-# Each start is a counted TPM auth failure, so never restart on it: fix the
-# PIN file, then start the unit again. See xkey/docs/fido2/user.md.
+# Exit 78 (EX_CONFIG): the TPM rejected the Platform SRK PIN.
 RestartPreventExitStatus=78
 
 # Logging

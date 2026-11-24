@@ -1,16 +1,4 @@
-# Docker Compose configuration for SDK integration tests
-#
-# This file sets up the xkms server and all required services
-# for running SDK integration tests against real protocol endpoints.
-#
-# Usage:
-#   make integration-test-sdk       # Full test suite with docker-compose
-#   make integration-test-sdk-go    # Go SDK tests only (uses devcontainer)
-#
-# Or manually:
-#   docker compose -f test/integration/sdk/docker-compose.yml up -d
-#   docker compose -f test/integration/sdk/docker-compose.yml run --rm sdk-tests
-#   docker compose -f test/integration/sdk/docker-compose.yml down -v
+# Docker Compose configuration for SDK integration tests.
 
 services:
   # xKMS server with all protocols enabled
@@ -37,10 +25,7 @@ services:
       - xkms-data:/data
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs
-    # The config and the cert script are read from the source tree the image
-    # COPYs into /workspace, not bind-mounted: on the CI runner the docker
-    # daemon resolves bind-mount sources on its own host, which lacks the
-    # job's checkout (DS-4181).
+    # Config and scripts come from the image's source copy, not bind mounts.
     environment:
       - XKMS_CONFIG=/workspace/test/integration/sdk/config.sdk.yaml
       - KEYSTORE_LOG_LEVEL=debug
@@ -214,8 +199,7 @@ networks:
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env
-  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
-  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  # Optional package caches as BuildKit secrets; empty when unset.
   apk_mirror:
     environment: DEVCACHE_APK_MIRROR
   apt_proxy:

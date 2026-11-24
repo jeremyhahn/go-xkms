@@ -23,24 +23,14 @@ services:
         go-codec: ../../../../../go-codec
         go-frost: ../../../../../go-frost
         go-objstore: ../../../../../go-objstore
-    # Privileged plus CAP_NET_ADMIN: loading hci_vhci and attaching emulated
-    # controllers to it are host-kernel operations.
+    # Privileged plus CAP_NET_ADMIN to load hci_vhci and attach emulated controllers.
     privileged: true
     cap_add:
       - NET_ADMIN
-    # AF_BLUETOOTH sockets are only permitted in the initial network
-    # namespace (net/bluetooth/af_bluetooth.c rejects every other netns with
-    # EAFNOSUPPORT), so the container must share the host's network namespace.
-    # Without this, hciconfig reports "Address family not supported by
-    # protocol" and bluetoothd cannot open the management socket.
+    # AF_BLUETOOTH sockets work only in the initial network namespace.
     network_mode: host
     volumes:
       - /lib/modules:/lib/modules:ro
       - /dev:/dev
-      # Only one bluetoothd can exist per machine: it binds the ATT and SDP
-      # L2CAP sockets on BDADDR_ANY, and the initial network namespace is the
-      # only one where Bluetooth sockets work at all. When the host already
-      # runs bluetoothd, the entrypoint drives it over this socket instead of
-      # starting a second daemon that could not register an adapter. When the
-      # host has none, the entrypoint starts its own.
+      # Only one bluetoothd can run per machine.
       - /run/dbus:/host/run/dbus:ro

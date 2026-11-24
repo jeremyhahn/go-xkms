@@ -1,7 +1,5 @@
 services:
-  # Pinned by tag and digest (DS-4181): floci 2.3.0 moved to ubi9-micro, which
-  # ships no curl, so a curl probe never passes. The image's own bash probe
-  # polls GET /_floci/init on 4566 until the emulator reports ready.
+  # Pinned by tag and digest; the image has no curl.
   floci:
     image: floci/floci:2.3.0@sha256:e0b292df4dc9559b7b1bf4f51bdda4bb8e269276236438cd03cae661260ea8a9
     environment:
@@ -37,10 +35,7 @@ services:
       - AWS_REGION=us-east-1
     working_dir: /app
 
-# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
-# gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
-# available, in which case the Dockerfile's optional secret mount falls back
-# to public module resolution.
+# Module credentials staged by `make stage-gomodauth`; empty when none are configured.
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env
