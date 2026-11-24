@@ -49,6 +49,10 @@ type BarrierSink struct {
 	seq     uint64
 	head    string
 	lock    *writerLock
+	// cpPending is set when the checkpoint of the last record failed to
+	// persist; the next Emit seals it before appending, so the checkpoint
+	// is never more than one record behind the chain.
+	cpPending bool
 }
 
 // ErrAuditWriterLocked is returned by OpenBarrierSink when another sink,
@@ -216,6 +220,14 @@ func (s *BarrierSink) Emit(ctx context.Context, ev xkms.QRDBNodeAuditEvent) erro
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.cpPending {
+		// Seal the outstanding checkpoint first: appending past it would
+		// leave the checkpoint two records behind, which a reopen refuses.
+		if err := s.writeCheckpoint(ctx); err != nil {
+			return fmt.Errorf("audit: append refused until the outstanding checkpoint persists: %w", err)
+		}
+		s.cpPending = false
+	}
 	ev.PrevHash = s.head
 	raw, err := json.Marshal(ev)
 	if err != nil {
@@ -227,6 +239,7 @@ func (s *BarrierSink) Emit(ctx context.Context, ev xkms.QRDBNodeAuditEvent) erro
 	s.seq++
 	s.head = digest(raw)
 	if err := s.writeCheckpoint(ctx); err != nil {
+		s.cpPending = true
 		return err
 	}
 	return s.ring.Emit(ctx, ev)

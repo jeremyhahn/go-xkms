@@ -220,6 +220,51 @@ func TestBarrierSink_FirstRecordWithoutCheckpointReopens(t *testing.T) {
 	require.NoError(t, s.VerifyChain(ctx))
 }
 
+// Repeated checkpoint failures never leave the checkpoint more than one
+// record behind: the sink refuses further appends until the outstanding
+// checkpoint persists, so the chain still reopens once storage recovers.
+func TestBarrierSink_RepeatedCheckpointFailuresStillReopen(t *testing.T) {
+	ctx := context.Background()
+	be := newSinkBackend(t)
+	fb := &checkpointFaultBackend{StorageBackend: be}
+	s, err := OpenBarrierSink(ctx, fb, 100)
+	require.NoError(t, err)
+	emitN(t, s, 2)
+
+	fb.armed = true
+	ev := xkms.QRDBNodeAuditEvent{Actor: "xkey", Resource: "xkey", Action: "op", Outcome: "success"}
+	require.ErrorIs(t, s.Emit(ctx, ev), errInjected, "record 3 is written, its checkpoint fails")
+	require.ErrorIs(t, s.Emit(ctx, ev), errInjected, "the append is refused while the checkpoint is outstanding")
+	require.ErrorIs(t, s.Emit(ctx, ev), errInjected)
+	exists, err := be.Exists(ctx, recordKey(4))
+	require.NoError(t, err)
+	require.False(t, exists, "no record is appended past an outstanding checkpoint")
+	require.NoError(t, s.Close())
+
+	// Storage recovers: the one-behind checkpoint is repaired on reopen.
+	s, err = OpenBarrierSink(ctx, be, 100)
+	require.NoError(t, err)
+	require.NoError(t, s.VerifyChain(ctx))
+	require.NoError(t, s.Close())
+
+	// Storage recovers without a restart: the next Emit seals the
+	// outstanding checkpoint, then appends.
+	fb2 := &checkpointFaultBackend{StorageBackend: newSinkBackend(t)}
+	s, err = OpenBarrierSink(ctx, fb2, 100)
+	require.NoError(t, err)
+	fb2.armed = true
+	require.ErrorIs(t, s.Emit(ctx, ev), errInjected)
+	require.ErrorIs(t, s.Emit(ctx, ev), errInjected)
+	fb2.armed = false
+	emitN(t, s, 2)
+	require.NoError(t, s.VerifyChain(ctx))
+	require.NoError(t, s.Close())
+	s, err = OpenBarrierSink(ctx, fb2, 100)
+	require.NoError(t, err, "the checkpoint matches the chain")
+	defer func() { _ = s.Close() }()
+	require.NoError(t, s.VerifyChain(ctx))
+}
+
 func TestBarrierSink_NilBackend(t *testing.T) {
 	_, err := OpenBarrierSink(context.Background(), nil, 1)
 	assert.ErrorIs(t, err, ErrNilBarrierBackend)
