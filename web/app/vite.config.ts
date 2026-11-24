@@ -22,6 +22,13 @@ import tailwindcss from "@tailwindcss/vite";
 const devAPI = process.env.XKMS_DEV_API ?? "https://localhost:8443";
 const proxyTarget = { target: devAPI, secure: false, ws: true, changeOrigin: true };
 
+// Node 25 and later define a global localStorage (the webstorage feature)
+// that is unusable without --localstorage-file and shadows jsdom's, so the
+// test workers turn it off wherever this Node knows the flag.
+const webstorageOff = process.allowedNodeEnvironmentFlags.has("--experimental-webstorage")
+  ? ["--no-experimental-webstorage"]
+  : [];
+
 export default defineConfig({
   // base is "./" so Vite emits RELATIVE asset paths (./assets/index.js) in
   // index.html, which resolve correctly in every deployment context:
@@ -66,6 +73,8 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./test/setup.ts"],
     include: ["test/**/*.test.ts"],
+    pool: "forks",
+    poolOptions: { forks: { execArgv: webstorageOff } },
     coverage: {
       provider: "v8",
       reportsDirectory: "./coverage",

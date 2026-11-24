@@ -29,6 +29,7 @@ import (
 	gosshagent "golang.org/x/crypto/ssh/agent"
 
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
+	"github.com/jeremyhahn/go-xkms/sdk/go/internal/testsupport"
 )
 
 // These tests are hermetic: they speak the ssh-agent protocol in-process and
@@ -255,12 +256,14 @@ func TestStartAgent_ContextCancelEndsTheSession(t *testing.T) {
 // privateAgentDir returns a temp directory this user alone can write to, which
 // is what StartAgent requires of a SocketDir's parent: a directory another user
 // can write to is one in which the session's own directory can be swapped out
-// between the bind and the child process's connect. t.TempDir does not promise
-// the mode, so it is stated here — which is exactly what a consumer laying out
-// a tenant root has to do.
+// between the bind and the child process's connect. The directory sits directly
+// under the system temp root (testsupport.SocketDir), not t.TempDir, so the
+// socket path stays inside AF_UNIX's sun_path limit under a long TMPDIR. The
+// mode is still stated here, which is exactly what a consumer laying out a
+// tenant root has to do.
 func privateAgentDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsupport.SocketDir(t)
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("chmod %s: %v", dir, err)
 	}

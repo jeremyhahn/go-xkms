@@ -15,6 +15,7 @@ package webauthn
 
 import (
 	"encoding/base64"
+	"encoding/binary"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -40,12 +41,20 @@ func SessionAccountFromIdentity(id *auth.Identity) (SessionAccount, error) {
 	if id == nil || id.Subject == "" {
 		return SessionAccount{}, ErrSessionAccountMismatch
 	}
-	handle, err := base64.RawURLEncoding.DecodeString(id.Subject)
-	if err != nil || len(handle) == 0 {
-		return SessionAccount{}, ErrSessionAccountMismatch
-	}
 	email := id.Metadata["email"]
 	if email == "" {
+		return SessionAccount{}, ErrSessionAccountMismatch
+	}
+	// Bearer authentication binds a handle that encodes an account id to
+	// that account (auth.JWTAuthenticator): the handle is then the account
+	// id, rendered as the 8-byte big-endian value the adapter encodes.
+	if id.UserID != 0 {
+		handle := make([]byte, 8)
+		binary.BigEndian.PutUint64(handle, id.UserID)
+		return SessionAccount{UserID: handle, Email: email}, nil
+	}
+	handle, err := base64.RawURLEncoding.DecodeString(id.Subject)
+	if err != nil || len(handle) == 0 {
 		return SessionAccount{}, ErrSessionAccountMismatch
 	}
 	return SessionAccount{UserID: handle, Email: email}, nil

@@ -30,6 +30,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 )
 
 // TestConfig holds configuration for integration tests
@@ -73,7 +75,7 @@ func LoadTestConfig() *TestConfig {
 		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/xkms/xkms.sock"),
 		RESTBaseURL:    getEnv("KEYSTORE_REST_URL", "http://localhost:8443"),
 		GRPCAddr:       getEnv("KEYSTORE_GRPC_ADDR", "localhost:9443"),
-		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:9443"),
+		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:8443"),
 		MCPAddr:        getEnv("KEYSTORE_MCP_ADDR", "localhost:9444"),
 	}
 	return cfg
@@ -87,19 +89,48 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// loadCACertPool loads the test CA certificate pool from the environment or default path.
-// Returns nil if the CA cert cannot be loaded (e.g., running outside Docker).
+// loadCACertPool loads the server trust bundle (apiharness.TrustPool): the
+// suite CA (KEYSTORE_TLS_CA) plus the ceremony root and the serving CA the
+// server persists under the unified-TLS data dir at unseal. Returns nil if
+// the suite CA cannot be loaded (e.g., running outside Docker).
 func loadCACertPool() *x509.CertPool {
-	caFile := getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")
-	caPEM, err := os.ReadFile(caFile)
+	pool, err := apiharness.TrustPool()
 	if err != nil {
 		return nil
 	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caPEM) {
+	return pool
+}
+
+// cliTLSArgs returns the xkmsctl flags that authenticate a CLI invocation
+// against serverURL as the init-ceremony admin over mTLS and verify the server
+// against the suite's trust bundle (apiharness.ClientTLSArgs). Every server
+// listener but plain MCP and plain HTTP is TLS: the Unix socket (also the
+// default when serverURL is empty), REST over HTTPS, gRPC and QUIC. A missing
+// credential fails the test.
+func cliTLSArgs(t testing.TB, serverURL string) []string {
+	t.Helper()
+	if strings.HasPrefix(serverURL, "http://") {
 		return nil
 	}
-	return pool
+	args, err := apiharness.ClientTLSArgs()
+	if err != nil {
+		t.Fatalf("admin mTLS credential for %q: %v", serverURL, err)
+	}
+	return args
+}
+
+// adminTLSConfig is the TLS configuration for the tests that build their own
+// HTTP, HTTP/3 or MCP client: it verifies the server against the suite's
+// trust bundle and presents the init-ceremony admin certificate
+// (apiharness.ClientTLSConfig), because every listener requires a client
+// certificate.
+func adminTLSConfig(t testing.TB) *tls.Config {
+	t.Helper()
+	cfg, err := apiharness.ClientTLSConfig()
+	if err != nil {
+		t.Fatalf("admin mTLS credential: %v", err)
+	}
+	return cfg
 }
 
 // isCLIAvailable checks if the CLI binary is available
@@ -349,7 +380,9 @@ func (cfg *TestConfig) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(cfg.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + cfg.MCPAddr
+		// The MCP listener is streamable HTTP over TLS on the unified
+		// server: mcps://, with the admin client certificate (cliTLSArgs).
+		return "mcps://" + cfg.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""

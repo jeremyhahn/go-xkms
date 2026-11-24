@@ -25,6 +25,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
@@ -49,7 +50,7 @@ func (s *authRecordingServer) Health(ctx context.Context, _ *pb.HealthRequest) (
 // credentials, as xkmsd's Unix listener does, and returns the socket path.
 func unixSocketServer(t *testing.T, srv pb.KeystoreServiceServer) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "xkms.sock")
+	path := filepath.Join(testsupport.SocketDir(t), "xkms.sock")
 	lis, err := net.Listen("unix", path)
 	require.NoError(t, err)
 	server := grpc.NewServer()

@@ -19,9 +19,12 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+
+	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 )
 
 // QRDBUserStoreOptions configures the adapter pair at construction time.
@@ -40,6 +43,19 @@ type QRDBUserStoreOptions struct {
 	// the system tenant ("system") for daemon-internal use, or a
 	// per-tenant id for multi-tenant deployments. Required.
 	TenantID string
+
+	// CallContext binds the context every users and credentials call runs
+	// on, as datastore.WithCallContext does for the DAOs. Over an embedded
+	// node pass Node.ServiceContext: the store is xkms's own persistence, so
+	// it runs as the node's service principal, not as the HTTP caller (a
+	// sign-up's registration/begin is anonymous). A bind error fails the
+	// call. Nil keeps the caller's context.
+	CallContext qrdbstorage.CallContext
+
+	// Clock is the time source first-credential claim leases are taken and
+	// judged by. Production leaves it nil (time.Now); it exists so tests
+	// can expire a lease deterministically.
+	Clock func() time.Time
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -49,6 +65,19 @@ type qrdbUserStore struct {
 	users    qrdbtransport.UserClient
 	creds    CredentialStore
 	tenantID string
+	bind     qrdbstorage.CallContext
+}
+
+// callContext returns the context a call into qrdb runs on.
+func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error) {
+	if s.bind == nil {
+		return ctx, nil
+	}
+	bound, err := s.bind(ctx)
+	if err != nil {
+		return nil, WrapError("bind qrdb call context", err)
+	}
+	return bound, nil
 }
 
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair
@@ -70,7 +99,10 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	if err != nil {
 		return nil, nil, WrapError("build credential store", err)
 	}
-	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID}
+	if opts.Clock != nil {
+		creds.now = opts.Clock
+	}
+	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID, bind: opts.CallContext}
 	return users, creds, nil
 }
 
@@ -111,6 +143,10 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	u, err := s.users.GetUser(ctx, id)
 	if err != nil {
 		return nil, mapNotFound(err)
@@ -129,6 +165,10 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 	if email == "" {
 		return nil, ErrUserNotFound
 	}
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	u, err := s.users.GetUserByEmail(ctx, s.tenantID, email)
 	if err != nil {
 		return nil, mapNotFound(err)
@@ -145,6 +185,10 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
 	if email == "" {
 		return nil, &QRDBAdapterConfigError{Field: "email"}
+	}
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
 	}
 	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: email,
@@ -174,6 +218,10 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 	if err != nil {
 		return err
 	}
+	ctx, err = s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	if _, uErr := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
 		ID:   id,
 		Name: dn,
@@ -189,6 +237,10 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 // no longer exists.
 func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	id, err := UserIDFromHandle(userID)
+	if err != nil {
+		return err
+	}
+	ctx, err = s.callContext(ctx)
 	if err != nil {
 		return err
 	}

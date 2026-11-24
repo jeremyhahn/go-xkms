@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 )
@@ -64,8 +65,7 @@ type extension struct {
 
 func connectExtension(t *testing.T, handler ipc.Handler) *extension {
 	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0o700))
+	dir := testsupport.SocketDir(t)
 	socket := filepath.Join(dir, "x.sock")
 	srv, err := ipc.NewServer(socket, handler, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)

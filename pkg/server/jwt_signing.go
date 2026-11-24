@@ -19,6 +19,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 )
 
 // initializeTokenIssuer provisions the session-token signing key and builds
@@ -52,6 +53,19 @@ func (s *Server) initializeTokenIssuer() error {
 
 	accessTTL, refreshTTL := s.sessionTTLs()
 
+	// Over the embedded node the refresh store runs as the node's service
+	// principal (its base grant holds the kv permissions it uses): a login
+	// that mints a pair may be anonymous, as a WebAuthn sign-up is (#2541).
+	// The issuer's user resolver re-reads the account on every refresh as
+	// that principal too, so it gains users:read here, independently of
+	// WebAuthn: a PIV/mTLS-only deployment never registers the WebAuthn
+	// grant.
+	var callContext token.CallContext
+	if s.qrdbNode != nil {
+		serviceprincipal.RegisterTokenResolverGrant()
+		callContext = s.qrdbNode.ServiceContext
+	}
+
 	issuer, err := rest.BuildTokenIssuer(s.ctx, rest.TokenIssuerParams{
 		Backend:      backend,
 		BackendName:  s.defaultBackendName,
@@ -61,6 +75,7 @@ func (s *Server) initializeTokenIssuer() error {
 		AccessTTL:    accessTTL,
 		RefreshTTL:   refreshTTL,
 		QRDBClient:   s.qrdbClient,
+		CallContext:  callContext,
 		Logger:       s.logger,
 		Retry:        retryNotLeader,
 	})

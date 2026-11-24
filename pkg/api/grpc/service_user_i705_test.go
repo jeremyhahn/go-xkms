@@ -211,6 +211,10 @@ func (f *grpcFakeRoleClient) ReconcileBuiltInRoles(context.Context, *qrdbtranspo
 	return nil, errors.New("not used")
 }
 
+func (f *grpcFakeRoleClient) ReconcileBuiltInRolesAllTenants(context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
+	return nil, errors.New("not used")
+}
+
 // newUserGRPCService wires a fresh XKMSService with in-memory user/role
 // clients and returns the gRPC Service in front of it.
 // grpcSingleStoreResolver resolves every tenant to the same backing

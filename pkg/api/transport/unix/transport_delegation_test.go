@@ -183,13 +183,14 @@ func TestInvites_SendTheInvitee(t *testing.T) {
 	})
 
 	t.Run("BeginInviteRegistration", func(t *testing.T) {
-		rec := &rpcRecorder{reply: &pb.BeginInviteRegistrationResponse{SessionId: "s1", OptionsJson: "{}"}}
+		rec := &rpcRecorder{reply: &pb.BeginInviteRegistrationResponse{SessionId: "s1", OptionsJson: "{}", Ceremony: transport.InviteCeremonyGet}}
 		resp, err := rec.connect(t).BeginInviteRegistration(ctx, &transport.BeginInviteRegistrationRequest{TenantID: "acme", Token: "tok"})
 		require.NoError(t, err)
 		var req pb.BeginInviteRegistrationRequest
 		assert.Equal(t, "BeginInviteRegistration", rec.request(t, &req))
 		assert.Equal(t, "tok", req.GetToken())
 		assert.Equal(t, "s1", resp.SessionID)
+		assert.Equal(t, transport.InviteCeremonyGet, resp.Ceremony, "the ceremony type crosses the wire")
 		assert.Equal(t, "{}", resp.OptionsJSON)
 	})
 

@@ -299,22 +299,22 @@ func sshClientWithHostKeys(cmd *cobra.Command) (sshsdk.Client, sshsdk.HostKeySto
 // sshServerEndpoint resolves the xkmsd endpoint an SSH command acts on. It
 // reports false when the command runs on the local shared SSH store instead.
 func sshServerEndpoint(cmd *cobra.Command) (XKMSdEndpoint, bool, error) {
+	useServer, err := sshUseServer(cmd)
+	if err != nil || !useServer {
+		return XKMSdEndpoint{}, false, err
+	}
 	if server := strings.TrimSpace(commandFlagString(cmd, "server")); server != "" {
+		certFile, keyFile := resolveXKMSdTLSClientFiles(cmd)
 		endpoint, err := withXKMSdToken(XKMSdEndpoint{
 			URL:         server,
 			TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
-			TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
-			TLSKeyFile:  strings.TrimSpace(os.Getenv(envXKMSdTLSKey)),
+			TLSCertFile: certFile,
+			TLSKeyFile:  keyFile,
 		})
 		if err != nil {
 			return XKMSdEndpoint{}, false, err
 		}
 		return endpoint, true, nil
-	}
-
-	useServer, err := sshUseServer(cmd)
-	if err != nil || !useServer {
-		return XKMSdEndpoint{}, false, err
 	}
 	endpoint, err := resolveXKMSdEndpoint(cmd)
 	if err != nil {
@@ -345,17 +345,24 @@ func openLocalSSHClient() (sshsdk.Client, *sshsdk.Stores, func(), error) {
 	return client, stores, closeSSHQuiet(client, backend), nil
 }
 
-// sshUseServer reports whether an SSH command acts on the server's SSH
-// keys: an xkmsd is configured and --local was not given.
+// sshUseServer is the single rule for whether an SSH command acts on the
+// server's SSH keys rather than the local shared store: --local always keeps
+// it local; otherwise --server, or a configured xkmsd URL (global flag, env
+// or config), makes it remote. sshServerEndpoint (the client) and
+// sshDefaultOwner (the owner default) both decide through it, so a command
+// that talks to the server never sends the local $USER default.
 func sshUseServer(cmd *cobra.Command) (bool, error) {
-	if resolveXKMSdURL() == "" {
-		return false, nil
-	}
 	local, err := commandFlagBool(cmd, "local")
 	if err != nil {
 		return false, err
 	}
-	return !local, nil
+	if local {
+		return false, nil
+	}
+	if strings.TrimSpace(commandFlagString(cmd, "server")) != "" {
+		return true, nil
+	}
+	return resolveXKMSdURL() != "", nil
 }
 
 // sshClientForEndpoint constructs the SDK SSH client for an xkmsd endpoint.
@@ -363,13 +370,20 @@ func sshUseServer(cmd *cobra.Command) (bool, error) {
 // quic→HTTP/3, mcp(s)→JSON-RPC) lives in the SDK so xkey and other consumers
 // share one code path.
 func sshClientForEndpoint(endpoint XKMSdEndpoint) (sshsdk.Client, func(), error) {
-	tlsConfig, err := endpoint.TLSConfig()
+	// The server trust comes from the endpoint's TLS config; the client
+	// certificate goes through the SDK's ServerOptions, which loads and
+	// checks the pair once and presents it on every TLS transport.
+	trust := endpoint
+	trust.TLSCertFile, trust.TLSKeyFile = "", ""
+	tlsConfig, err := trust.TLSConfig()
 	if err != nil {
 		return nil, nil, err
 	}
 	client, err := sshsdk.NewClientForServerWith(endpoint.URL, sshsdk.ServerOptions{
-		TLSConfig: tlsConfig,
-		Token:     endpoint.Token,
+		TLSConfig:   tlsConfig,
+		TLSCertFile: endpoint.TLSCertFile,
+		TLSKeyFile:  endpoint.TLSKeyFile,
+		Token:       endpoint.Token,
 	})
 	if err != nil {
 		return nil, nil, &SentinelCauseError{Sentinel: ErrSSHClientConstruct, Cause: err}
@@ -510,7 +524,7 @@ func runSSHKeysGenerate(cmd *cobra.Command, _ []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	if algo == "" {
 		algo = "ed25519"
@@ -552,7 +566,7 @@ func runSSHKeysImport(cmd *cobra.Command, args []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	if name == "" {
 		name = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
@@ -718,7 +732,7 @@ func runSSHHostKeysAdd(cmd *cobra.Command, _ []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 
 	client, closer, err := sshClient(cmd)
@@ -773,7 +787,7 @@ func runSSHHostKeysRemove(cmd *cobra.Command, _ []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	client, closer, err := sshClient(cmd)
 	if err != nil {
@@ -801,7 +815,7 @@ func runSSHAuthorizedAdd(cmd *cobra.Command, args []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	if name == "" {
 		return ErrSSHMissingKeyName
@@ -855,7 +869,7 @@ func runSSHAuthorizedRemove(cmd *cobra.Command, _ []string) error {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	client, closer, err := sshClient(cmd)
 	if err != nil {
@@ -887,13 +901,27 @@ func readKeySelector(cmd *cobra.Command) (string, string, string, error) {
 		scope = "user"
 	}
 	if owner == "" {
-		owner = defaultOwner()
+		owner = sshDefaultOwner(cmd)
 	}
 	return scope, owner, name, nil
 }
 
 // defaultOwner returns a sensible default owner identifier. We prefer
 // the $USER env var, then the Unix login, falling back to "default".
+// sshDefaultOwner is the owner an ssh subcommand sends when --owner is
+// unset. Against a server it is empty: the server serves an empty
+// user-scope owner as the authenticated caller itself (ruling 937), whose
+// policy subject -- after account binding, the qrdb account id -- no client
+// can know, so a local $USER would only name somebody else. The embedded
+// (--local / no server) store has no authenticated caller and addresses
+// every asset by a named owner, so only there does it keep defaultOwner.
+func sshDefaultOwner(cmd *cobra.Command) string {
+	if server, err := sshUseServer(cmd); err == nil && server {
+		return ""
+	}
+	return defaultOwner()
+}
+
 func defaultOwner() string {
 	if v := strings.TrimSpace(os.Getenv("USER")); v != "" {
 		return v
@@ -939,6 +967,8 @@ func init() {
 	// back to XKMSD_URL (REST) then the local embedded store.
 	SSHCmd.PersistentFlags().String("server", "", "Remote xkmsd URL (e.g. grpcs://host:9443, quic://host:8444, unix:///path/xkms.sock)")
 	SSHCmd.PersistentFlags().String("tls-ca", "", "TLS CA certificate file used to verify the server")
+	SSHCmd.PersistentFlags().String(tlsCertFlagName, "", "path to client certificate file for mTLS authentication (default $XKMSD_TLS_CERT)")
+	SSHCmd.PersistentFlags().String(tlsKeyFlagName, "", "path to client key file for mTLS authentication (default $XKMSD_TLS_KEY)")
 	SSHCmd.PersistentFlags().Bool("local", false, "use the local SSH store even when an xkmsd server is configured")
 
 	SSHCmd.AddCommand(sshKeysCmd)
@@ -965,7 +995,7 @@ func init() {
 		sshKeysGetCmd, sshKeysDeleteCmd, sshKeysExportCmd,
 	} {
 		c.Flags().String("scope", "", "Scope (tenant|user|service) — defaults to user")
-		c.Flags().String("owner", "", "Owner identifier — defaults to $USER")
+		c.Flags().String("owner", "", "Owner identifier — defaults to you on a server, $USER in the local store")
 	}
 	sshKeysGenerateCmd.Flags().String("name", "", "Key name (required)")
 	sshKeysGenerateCmd.Flags().String("type", "ed25519", "Key algorithm (ed25519, rsa, ecdsa-p256, ecdsa-p384, ecdsa-p521)")
@@ -983,7 +1013,7 @@ func init() {
 	// Host-key flags.
 	for _, c := range []*cobra.Command{sshHostKeysAddCmd, sshHostKeysListCmd, sshHostKeysRemoveCmd} {
 		c.Flags().String("scope", "", "Scope — defaults to user")
-		c.Flags().String("owner", "", "Owner identifier — defaults to $USER")
+		c.Flags().String("owner", "", "Owner identifier — defaults to you on a server, $USER in the local store")
 	}
 	sshHostKeysAddCmd.Flags().String("host", "", "Target host (required)")
 	sshHostKeysAddCmd.Flags().String("key", "", "Host key as an authorized_keys-format line (required unless --file)")
@@ -994,7 +1024,7 @@ func init() {
 	// Authorized flags.
 	for _, c := range []*cobra.Command{sshAuthorizedAddCmd, sshAuthorizedListCmd, sshAuthorizedRemoveCmd} {
 		c.Flags().String("scope", "", "Scope — defaults to user")
-		c.Flags().String("owner", "", "Owner identifier — defaults to $USER")
+		c.Flags().String("owner", "", "Owner identifier — defaults to you on a server, $USER in the local store")
 	}
 	sshAuthorizedAddCmd.Flags().String("name", "", "Entry name (required)")
 	sshAuthorizedRemoveCmd.Flags().String("name", "", "Entry name (required)")

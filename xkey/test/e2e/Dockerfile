@@ -18,7 +18,7 @@
 # (scripts/build-softhsm.sh) instead of Ubuntu's 2.6.1, which answers an
 # AES-GCM tag mismatch with the ambiguous CKR_GENERAL_ERROR (go-xkms#1418).
 FROM ubuntu:24.04 AS softhsm
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     build-essential autoconf automake libtool pkg-config libssl-dev \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -34,7 +34,7 @@ ENV GOFLAGS="-buildvcs=false"
 # ---------------------------------------------------------------------------
 # Core build tools + Wails v2 GUI dependencies
 # ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     # Core build tools
     build-essential \
     pkg-config \
@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 # TPM simulation (swtpm + tpm2-tools)
 # ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     swtpm \
     swtpm-tools \
     libtpms-dev \
@@ -65,7 +65,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Required by test/e2e/setup-softhsm-piv.sh, which provisions a PIV token at
 # /usr/lib/softhsm/libsofthsm2.so so the PIV-via-PKCS#11 GUI workflows run.
 # ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     opensc \
     openssl \
     && rm -rf /var/lib/apt/lists/*
@@ -74,7 +74,7 @@ COPY --from=softhsm /build/softhsm-install/ /
 # ---------------------------------------------------------------------------
 # Virtual display + image manipulation (headless GUI rendering)
 # ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     xvfb \
     xdotool \
     imagemagick \
@@ -90,7 +90,7 @@ ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 # Node.js 20.x LTS (Svelte/Vite frontend build + Playwright runtime)
 # ---------------------------------------------------------------------------
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
+    timeout 300 apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------

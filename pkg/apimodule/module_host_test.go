@@ -15,18 +15,26 @@ package apimodule
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
@@ -195,6 +203,174 @@ func TestModule_SelfBuiltSurfaceServesRealWebAuthnCeremony(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.NotEmpty(t, resp, "BeginRegistration must return real ceremony options, not a stub")
+}
+
+// TestModule_NodeCORSBeforeClientPublishedKeepsPersistenceAndWebAuthn pins
+// that CORS inspection, which runs before the node exists, does not build and
+// cache the REST surface: once the node client is published, a real request
+// still reaches the persisted WebAuthn ceremony.
+func TestModule_NodeCORSBeforeClientPublishedKeepsPersistenceAndWebAuthn(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "test",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	client, _, err := testutil.NewQRDBFakeClient()
+	require.NoError(t, err)
+
+	var published atomic.Pointer[qrdbsdk.Client]
+	allow := true
+	m, err := NewModule(func() *xkms.XKMSService { return svc },
+		WithQRDBClient(func() *qrdbsdk.Client { return published.Load() }),
+		WithWebAuthnConfig(&config.WebAuthnConfig{
+			RPID:                    "example.com",
+			AllowPublicRegistration: &allow,
+		}))
+	require.NoError(t, err)
+
+	_, err = m.NodeCORS()
+	require.NoError(t, err)
+
+	published.Store(client)
+
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+
+	var begin http.HandlerFunc
+	for _, rec := range *recs {
+		if rec.method == "POST" && rec.pattern == "/api/v1/webauthn/registration/begin" {
+			begin = rec.handler
+		}
+	}
+	require.NotNil(t, begin, "webauthn registration/begin must be registered after NodeCORS ran early")
+
+	body, _ := json.Marshal(map[string]string{"email": "alice@example.com", "display_name": "Alice"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	begin(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+}
+
+// TestModule_SelfBuiltSurfaceRegistersOnAnEnforcingNode drives the
+// self-built module host over an authentication-enforcing node, as a host
+// embedding the module wires it (serviceprincipal.Option(),
+// WithServiceContext(node.ServiceContext), WithWebAuthnConfig). The fixture
+// registers no WebAuthn grant itself: the module-host construction path must
+// give the service principal the user store's permissions, or
+// registration/begin fails users:read authorization and answers 500.
+func TestModule_SelfBuiltSurfaceOnAnEnforcingNode(t *testing.T) {
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	backend := xkmsmocks.NewMockKeyStore()
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": backend},
+		DefaultBackend: "test",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+
+	node := barriertest.NewPrincipalNode(t)
+	allow := true
+	m, err := NewModule(func() *xkms.XKMSService { return svc },
+		WithQRDBClient(node.Client),
+		WithServiceContext(node.ServiceContext),
+		WithWebAuthnConfig(&config.WebAuthnConfig{
+			RPID:                    "example.com",
+			AllowPublicRegistration: &allow,
+		}))
+	require.NoError(t, err)
+
+	reg, recs := newCaptureRegistrar()
+	m.RegisterHTTP(reg)
+
+	var begin, addBegin http.HandlerFunc
+	for _, rec := range *recs {
+		if rec.method == "POST" && rec.pattern == "/api/v1/webauthn/registration/begin" {
+			begin = rec.handler
+		}
+		if rec.method == "POST" && rec.pattern == "/api/v1/webauthn/credentials/begin" {
+			addBegin = rec.handler
+		}
+	}
+	require.NotNil(t, begin, "webauthn registration/begin must be registered")
+	require.NotNil(t, addBegin, "webauthn credentials/begin must be registered")
+
+	// Anonymous public registration is refused over an enforcing node (CA
+	// ruling 602, pending go-xkms #2202): a clean 403, never a 500 for a
+	// missing users grant, and no account persisted.
+	body, _ := json.Marshal(map[string]string{"email": "alice@example.com", "display_name": "Alice"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	begin(w, req)
+
+	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	var refusal rest.ErrorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &refusal))
+	require.Equal(t, webauthnhttp.ErrorCodeRegistrationRefused, refusal.Error)
+
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+	_, err = node.Client().Users().GetUserByEmail(ctx, rest.DefaultWebAuthnTenant, "alice@example.com")
+	require.Error(t, err, "a refused anonymous begin must leave no user")
+	var denied *qrdbsdk.PermissionDeniedError
+	require.NotErrorAs(t, err, &denied, "the lookup must be authorized, so its failure means no user")
+
+	// An account's own add-a-passkey begin still works on this path: the
+	// principal keeps users:read, so the ceremony enrols the session's user.
+	u, err := node.UserService().CreateUser(context.Background(), &qrdbuser.CreateUserRequest{
+		Username: "carol@example.com",
+		Email:    "carol@example.com",
+		Name:     "Carol",
+	})
+	require.NoError(t, err)
+	var raw [8]byte
+	binary.BigEndian.PutUint64(raw[:], u.ID)
+	handle := base64.RawURLEncoding.EncodeToString(raw[:])
+	// The self-built surface's issuer signs with the backend's JWT key; an
+	// issuer built over the same backend reuses that key.
+	issuer, err := rest.BuildTokenIssuer(context.Background(), rest.TokenIssuerParams{
+		Backend:     backend,
+		BackendName: "test",
+	})
+	require.NoError(t, err)
+	pair, err := issuer.Mint(context.Background(), &auth.Identity{
+		Subject:  handle,
+		TenantID: rest.DefaultWebAuthnTenant,
+		Metadata: map[string]string{
+			auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle,
+			"username":                  "carol@example.com",
+			"email":                     "carol@example.com",
+		},
+	})
+	require.NoError(t, err)
+
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/credentials/begin", nil)
+	req.Header.Set("Authorization", "Bearer "+pair.AccessToken)
+	// go-qrdb's middleware authenticates through the module's fallback and
+	// binds the identity before the handler runs; the capture does the same.
+	id, err := m.AuthenticateHTTP(req)
+	require.NoError(t, err)
+	req = req.WithContext(auth.WithIdentity(req.Context(), id))
+	w = httptest.NewRecorder()
+	addBegin(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	require.NotEmpty(t, w.Header().Get(webauthnhttp.HeaderSessionID))
+	var options struct {
+		PublicKey struct {
+			User struct {
+				ID string `json:"id"`
+			} `json:"user"`
+		} `json:"publicKey"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &options))
+	require.Equal(t, handle, options.PublicKey.User.ID, "the ceremony enrols the session's own account")
 }
 
 // TestModule_SelfBuiltSurfaceAuthenticatesJWT proves the module's

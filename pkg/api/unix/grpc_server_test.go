@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 )
 
@@ -145,7 +146,7 @@ func TestGRPCServer_StartStop(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath: socketPath,
@@ -199,7 +200,7 @@ func TestGRPCServer_StartExistingSocket(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	// Create an existing socket file
 	f, err := os.Create(socketPath)
@@ -257,7 +258,7 @@ func TestGRPCServer_StopWithoutStart(t *testing.T) {
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cfg := &GRPCConfig{
-		SocketPath: filepath.Join(tmpDir, "test-grpc.sock"),
+		SocketPath: filepath.Join(testsupport.SocketDir(t), "test-grpc.sock"),
 	}
 
 	server, err := NewGRPCServer(cfg)
@@ -286,7 +287,7 @@ func TestGRPCServer_StopBeforeStart(t *testing.T) {
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	cfg := &GRPCConfig{
-		SocketPath: filepath.Join(tmpDir, "test-grpc.sock"),
+		SocketPath: filepath.Join(testsupport.SocketDir(t), "test-grpc.sock"),
 	}
 
 	server, err := NewGRPCServer(cfg)
@@ -348,7 +349,7 @@ func TestGRPCServer_ClientConnection(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath: socketPath,
@@ -412,7 +413,7 @@ func TestGRPCServer_MultipleClients(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath: socketPath,
@@ -484,7 +485,7 @@ func TestGRPCServer_GracefulStopTimeout(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath: socketPath,
@@ -519,7 +520,7 @@ func TestGRPCServer_SocketPermissions(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath: socketPath,
@@ -579,7 +580,7 @@ func TestGRPCServer_MessageSizeLimits(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	// Set small message size limits for testing
 	cfg := &GRPCConfig{
@@ -624,7 +625,7 @@ func TestGRPCServer_ConcurrentStreamLimit(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath:           socketPath,

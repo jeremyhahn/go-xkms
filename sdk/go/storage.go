@@ -19,7 +19,7 @@ import (
 	filestorage "github.com/jeremyhahn/go-xkms/pkg/storage/file"
 	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbobjstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
 // Storage interface and types re-exported from pkg/storage.
@@ -68,7 +68,7 @@ type (
 	// evidence). The backend — memory, file, pebble or a go-objstore
 	// provider — is chosen by configuration; go-quicbaas re-exports this
 	// alias so service-level consumers reach it without naming go-qrdb.
-	ObjectStorage = qrdbsdk.Storage
+	ObjectStorage = qrdbobjstorage.Storage
 )
 
 // CertStoreDatabase is the go-qrdb database the certificate store keeps its
@@ -129,11 +129,62 @@ var (
 var (
 	// NewObjectStorage opens an ObjectStorage on the configured go-objstore
 	// provider (for example "local", "s3", "gcs") with its provider settings.
-	NewObjectStorage = qrdbsdk.NewObjStoreStorage
+	NewObjectStorage = qrdbobjstorage.NewObjStoreStorage
 
 	// NewObjectStorageMemory constructs an in-memory ObjectStorage
 	// implementation suitable for testing and embedded use.
-	NewObjectStorageMemory = qrdbsdk.NewMemoryStorage
+	NewObjectStorageMemory = qrdbobjstorage.NewMemoryStorage
+
+	// WithObjectStorageCredentialFiles makes NewObjectStorage hand the
+	// provider the credential the named files hold. go-qrdb refuses a
+	// credential written inline into the provider settings, so this option is
+	// the only way to open a provider with explicit credentials. A provider
+	// that does not read a configured file fails the open with
+	// ObjectStorageCredentialIgnoredError.
+	WithObjectStorageCredentialFiles = qrdbobjstorage.WithObjStoreCredentialFiles
+
+	// RegisterObjectStorageProvider registers a go-objstore storage creator
+	// under name and declares which credential files it reads, so
+	// NewObjectStorage delivers them to it. It never replaces a shipped or
+	// earlier registration.
+	RegisterObjectStorageProvider = qrdbobjstorage.RegisterObjStoreProvider
+
+	// ErrObjectStorageCredentialKeyWithoutSecret is returned for
+	// ObjectStorageCredentialFiles naming a key file without a secret file.
+	ErrObjectStorageCredentialKeyWithoutSecret = qrdbobjstorage.ErrObjStoreCredentialKeyWithoutSecret
+)
+
+type (
+	// ObjectStorageOption configures NewObjectStorage beyond the provider
+	// settings.
+	ObjectStorageOption = qrdbobjstorage.ObjStoreOption
+
+	// ObjectStorageCredentialFiles names the files holding an object-storage
+	// credential: KeyFile the access key, SecretFile the secret. Pass it
+	// through WithObjectStorageCredentialFiles; NewObjectStorage reads each
+	// file into protected memory and destroys it when the open returns.
+	ObjectStorageCredentialFiles = qrdbobjstorage.ObjStoreCredentialFiles
+
+	// ObjectStorageProviderCredentials declares which credential files a
+	// provider registered with RegisterObjectStorageProvider reads.
+	ObjectStorageProviderCredentials = qrdbobjstorage.ObjStoreProviderCredentials
+
+	// ObjectStorageCredentialFileError is returned when a credential file
+	// cannot be read; it names the file, never its contents.
+	ObjectStorageCredentialFileError = qrdbobjstorage.ObjStoreCredentialFileError
+
+	// ObjectStorageCredentialSettingError is returned when the provider
+	// settings carry a credential inline; it names the setting, never its
+	// value.
+	ObjectStorageCredentialSettingError = qrdbobjstorage.ObjStoreCredentialSettingError
+
+	// ObjectStorageCredentialIgnoredError is returned when credential files
+	// are configured for a provider that does not read them.
+	ObjectStorageCredentialIgnoredError = qrdbobjstorage.ObjStoreCredentialIgnoredError
+
+	// ObjectStorageCredentialUnavailableError is returned when a provider
+	// fails to read the credential handles it was given.
+	ObjectStorageCredentialUnavailableError = qrdbobjstorage.ObjStoreCredentialUnavailableError
 )
 
 // Storage error sentinels re-exported from pkg/storage.

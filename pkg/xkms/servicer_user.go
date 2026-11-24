@@ -54,6 +54,23 @@ func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User
 	}, nil
 }
 
+// effectiveRequestTenant resolves the tenant an IAM request acts on exactly
+// as go-qrdb's tenant.EffectiveTenant will: the request tenant when given,
+// else the tenant bound to the caller context (qrdbsdk.TenantFromContext
+// reads the same binding). An unbound context yields "", which
+// qrdbsdk.NormalizeTenantID reads as the system tenant. A request tenant
+// that differs from the context is left as given: go-qrdb refuses that
+// cross-tenant request itself.
+func effectiveRequestTenant(ctx context.Context, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if fromCtx, ok := qrdbsdk.TenantFromContext(ctx); ok {
+		return fromCtx
+	}
+	return ""
+}
+
 // roleNameToID resolves a role name to its qrdb role id in tenantID (the
 // context tenant when empty). A built-in role's id is deterministic
 // (qrdbsdk.SystemRoleID); a custom role is looked up by name. An empty name
@@ -62,11 +79,7 @@ func (s *XKMSService) roleNameToID(ctx context.Context, tenantID, name string) (
 	if name == "" {
 		return "", nil
 	}
-	if tenantID == "" {
-		if fromCtx, ok := qrdbsdk.TenantFromContext(ctx); ok {
-			tenantID = fromCtx
-		}
-	}
+	tenantID = effectiveRequestTenant(ctx, tenantID)
 	if qrdbsdk.IsSystemRoleName(name) {
 		return qrdbsdk.SystemRoleID(tenantID, name), nil
 	}
@@ -138,6 +151,20 @@ func (s *XKMSService) CreateUser(ctx context.Context, req *transport.CreateUserR
 	// misconfiguration that happens to be true at the same time.
 	if !req.WithoutEmailLoginKey && s.inviteStore == nil {
 		return nil, ErrNotConfigured
+	}
+	// Every redemption path serves system-tenant invitations only (#2183
+	// narrowing; tenant-scoped redemption is go-xkms #2202), so an invited
+	// account of any other tenant would be a pending account nothing can
+	// activate. Refuse it with the same typed refusal redemption gives,
+	// before anything is persisted. The tenant checked is the one the
+	// account will land in: an omitted tenant_id resolves to the caller's
+	// context tenant in go-qrdb (tenant.EffectiveTenant), so an
+	// administrator of acme omitting it must be refused too (#2183
+	// narrowing part 12, Codex P1).
+	if !req.WithoutEmailLoginKey {
+		if err := requireSystemTenantInvite(effectiveRequestTenant(ctx, req.TenantID)); err != nil {
+			return nil, err
+		}
 	}
 	roleID, err := s.roleNameToID(ctx, req.TenantID, req.Role)
 	if err != nil {

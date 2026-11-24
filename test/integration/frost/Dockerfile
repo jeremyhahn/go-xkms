@@ -5,7 +5,7 @@ ENV GOTOOLCHAIN=auto
 ENV GOWORK=off
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     ca-certificates \

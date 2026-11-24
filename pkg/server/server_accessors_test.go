@@ -22,7 +22,7 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -53,7 +53,7 @@ func TestSetUIAssets(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 
 	require.Nil(t, s.uiAssets)
@@ -69,7 +69,7 @@ func TestSetRESTListener(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.Nil(t, s.restListener)
 
@@ -92,7 +92,7 @@ func TestSetMetricsListener(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.Nil(t, s.metricsListener)
 
@@ -115,7 +115,7 @@ func TestWithAuthenticatorDecorator(t *testing.T) {
 	marker := &namedAuthenticator{name: "decorator-marker"}
 	decorator := func(auth.Authenticator) auth.Authenticator { return marker }
 
-	s, err := New(cfg, WithAuthenticatorDecorator(decorator))
+	s, err := newServerWithCleanup(t, cfg, WithAuthenticatorDecorator(decorator))
 	require.NoError(t, err)
 	require.Equal(t, "decorator-marker", s.authenticator.Name())
 }
@@ -131,17 +131,17 @@ func TestWithExtraModules(t *testing.T) {
 	mod1 := &fakeServiceModule{name: "mod1"}
 	mod2 := &fakeServiceModule{name: "mod2"}
 
-	s, err := New(cfg, WithExtraModules(mod1, mod2))
+	s, err := newServerWithCleanup(t, cfg, WithExtraModules(mod1, mod2))
 	require.NoError(t, err)
 	require.Len(t, s.extraModules, 2)
 	require.Equal(t, "mod1", s.extraModules[0].Name())
 	require.Equal(t, "mod2", s.extraModules[1].Name())
 }
 
-// fakeServiceModule is a minimal qrdbsdk.ServiceModule for exercising
+// fakeServiceModule is a minimal qrdbserver.ServiceModule for exercising
 // WithExtraModules without depending on any real module implementation.
 type fakeServiceModule struct {
-	qrdbsdk.BaseModule
+	qrdbserver.BaseModule
 	name string
 }
 
@@ -154,7 +154,7 @@ func TestEscrowRegistry_NilByDefault(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.Nil(t, s.EscrowRegistry())
 }
@@ -197,7 +197,7 @@ func TestTenantService_NilWithoutNodeFlip(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.Nil(t, s.TenantService())
 }

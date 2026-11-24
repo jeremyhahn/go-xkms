@@ -331,6 +331,10 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 	case webauthn.IsSessionLimit(err):
 		h.writeError(w, http.StatusServiceUnavailable, ErrorCodeSessionLimit, "too many unfinished ceremonies; retry later")
 	default:
+		// The client sees only internal_error; the cause goes to the log at
+		// Error so a daemon at Info still records it. Error text only, no
+		// request body (go-xkms#2033).
+		h.logger.Error("webauthn: internal error", "error", err)
 		h.writeError(w, http.StatusInternalServerError, ErrorCodeInternalError, "internal server error")
 	}
 }

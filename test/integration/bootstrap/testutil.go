@@ -37,6 +37,8 @@ const (
 	EnvHostname  = "BOOTSTRAP_HOSTNAME"
 	EnvSPKIPin   = "BOOTSTRAP_SPKI_PIN"
 	EnvTLSCA     = "BOOTSTRAP_TLS_CA"
+	EnvTLSCert   = "BOOTSTRAP_TLS_CERT"
+	EnvTLSKey    = "BOOTSTRAP_TLS_KEY"
 
 	// xkmsBundlePath is the REST API path for the CA bootstrap bundle endpoint.
 	// This matches the path hardcoded in go-truststrap for DANE/SPKI bootstrapping.
@@ -106,9 +108,19 @@ func newSDKTransport(t *testing.T) *rest.Transport {
 	serverURL := requiredEnv(t, EnvServerURL)
 	caFile := requiredEnv(t, EnvTLSCA)
 
+	// The daemon refuses to start without an authenticator (ComplianceGaps),
+	// so the admin API answers only an authenticated caller: present the
+	// first-boot administrator certificate xkmsd writes beside its datastore
+	// (BOOTSTRAP_TLS_CERT / BOOTSTRAP_TLS_KEY, mounted from the server's data
+	// volume by docker-compose.yml).
+	tlsOpt := transport.WithTLS(caFile)
+	if certFile := optionalEnv(EnvTLSCert, ""); certFile != "" {
+		tlsOpt = transport.WithMTLS(certFile, requiredEnv(t, EnvTLSKey), caFile)
+	}
+
 	tr, err := rest.New(
 		transport.WithAddress(serverURL),
-		transport.WithTLS(caFile),
+		tlsOpt,
 	)
 	if err != nil {
 		t.Fatalf("create REST transport: %v", err)

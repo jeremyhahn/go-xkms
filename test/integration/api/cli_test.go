@@ -28,8 +28,11 @@ import (
 func execCLI(t *testing.T, cfg *TestConfig, args ...string) (string, string, error) {
 	t.Helper()
 
-	// Prepend --server flag to use the configured Unix socket path
-	allArgs := append([]string{"--server", "unix://" + cfg.UnixSocketPath}, args...)
+	// Prepend --server flag to use the configured Unix socket path, with the
+	// admin mTLS credential and the trust bundle (the socket is a TLS listener).
+	serverURL := "unix://" + cfg.UnixSocketPath
+	allArgs := append([]string{"--server", serverURL}, cliTLSArgs(t, serverURL)...)
+	allArgs = append(allArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, allArgs...)
 
 	var stdout, stderr bytes.Buffer

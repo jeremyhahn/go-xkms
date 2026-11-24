@@ -53,7 +53,7 @@ func TestNew_AppliesWeakHashPolicy(t *testing.T) {
 			cfg := createMinimalConfig(t)
 			cfg.Crypto.AllowWeakHashes = tc.allow
 
-			srv, err := New(cfg)
+			srv, err := newServerWithCleanup(t, cfg)
 			if err != nil {
 				t.Fatalf("server.New: %v", err)
 			}

@@ -24,6 +24,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 // newTestEd25519Key generates a fresh ed25519 key pair.
@@ -45,7 +47,7 @@ func newTestEd25519Key(t *testing.T) (ssh.PublicKey, ed25519.PrivateKey) {
 // against the reference golang.org/x/crypto/ssh/agent implementation.
 func serveTestAgent(t *testing.T, keyring sshagent.Agent) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "agent.sock")
+	sock := filepath.Join(testsupport.SocketDir(t), "agent.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("listen: %v", err)

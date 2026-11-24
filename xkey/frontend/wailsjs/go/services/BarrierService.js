@@ -6,8 +6,8 @@ export function BestStrategy() {
   return window['go']['services']['BarrierService']['BestStrategy']();
 }
 
-export function ChangePassword(arg1) {
-  return window['go']['services']['BarrierService']['ChangePassword'](arg1);
+export function ChangePassword(arg1, arg2) {
+  return window['go']['services']['BarrierService']['ChangePassword'](arg1, arg2);
 }
 
 export function GetBackend() {

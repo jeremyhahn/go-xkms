@@ -30,6 +30,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // waitDone fails the test if the session does not finish cleaning up promptly.
@@ -73,7 +75,7 @@ func stopBounded(t *testing.T, s *Session) {
 // A real caller supplying a WorkDir has to do exactly this.
 func privateDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(dir, 0o700))
 	return dir
 }
@@ -367,7 +369,7 @@ func TestStartSession_LeftoverSocketIsRefusedNotCleared(t *testing.T) {
 // child's directory, not ours. The test moves this process elsewhere after
 // starting the session and requires the socket to still be reachable.
 func TestStartSession_RelativeWorkDirIsAbsolutised(t *testing.T) {
-	base := t.TempDir()
+	base := privateDir(t)
 	require.NoError(t, os.Mkdir(filepath.Join(base, "sock"), 0o700))
 	t.Chdir(base)
 
