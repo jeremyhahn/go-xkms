@@ -79,7 +79,8 @@ type TestRunner struct {
 	Verbose        bool
 	TLSCACert      string
 	// ClientCert, ClientKey and Token identify the caller on every remote
-	// transport: the server refuses anonymous (adaptive) auth.
+	// transport: the server refuses anonymous (adaptive) auth. The API stack
+	// supplies the first-boot admin credential through KEYSTORE_TLS_CERT/KEY.
 	ClientCert string
 	ClientKey  string
 	Token      string

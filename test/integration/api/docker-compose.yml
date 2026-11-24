@@ -156,6 +156,7 @@ services:
       - cli-build:/app/build
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
+      - xkms-data:/data:ro
     environment:
       - CGO_ENABLED=1
       - GOWORK=off
@@ -172,6 +173,9 @@ services:
       - KEYSTORE_CLI_BIN=/app/build/bin/xkmsctl
       # TLS configuration - use CA certificate for proper verification
       - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
+      # Client identity: the first-boot admin credential (Codex round 5 P1-1 on #2324)
+      - KEYSTORE_TLS_CERT=/data/xkms/admin-cert.pem
+      - KEYSTORE_TLS_KEY=/data/xkms/admin-key.pem
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
       - GO_TEST_FLAGS=-v -tags=integration,frost

@@ -31,13 +31,12 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # No client auth for integration tests
-  client_auth: none
+  # The server asks for a client certificate (request: not required, so the
+  # healthcheck still connects without one).
+  client_auth: request
 
-# Adaptive authentication: anonymous until the first user is provisioned, then
-# enforced. This keeps the integration suites able to exercise the API without
-# pre-seeding credentials while still satisfying the secure-by-default gate
-# (the daemon has no insecure override).
+# The integration runner presents the first-boot admin credential, which
+# composite auth's mtls method binds to its user by SPKI thumbprint.
 auth:
   enabled: true
   type: "composite"
