@@ -1628,6 +1628,13 @@ func (c *Config) Validate() error {
 		return &errs.Message{Msg: fmt.Sprintf("invalid log format: %s (must be json, text, or console)", c.Logging.Format)}
 	}
 
+	// The server listeners map any tls.client_auth they do not know to
+	// tls.NoClientCert, so a misspelt value would serve without client
+	// certificates. Refuse it here, matched exactly as the server matches it.
+	if _, err := parseClientAuthType(c.TLS.ClientAuth); err != nil {
+		return &errs.Message{Msg: fmt.Sprintf("invalid tls.client_auth %q (must be none, request, require, verify or require_and_verify)", c.TLS.ClientAuth)}
+	}
+
 	// PIV/mTLS cert login exchanges a TLS-verified client certificate for a
 	// bearer token, so the TLS layer must actually request client certs —
 	// otherwise the endpoint can never succeed and the operator config is a
