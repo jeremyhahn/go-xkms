@@ -13,6 +13,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -364,12 +365,27 @@ func TestKeyLookup_TenantExact_ExportBindsCaller(t *testing.T) {
 	assert.Equal(t, own, omitted, "acme with no TenantID exports acme's key material")
 	assert.NotEqual(t, sys, omitted, "acme with no TenantID never exports the system key's plaintext")
 
+	const wrapAlg = string(backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 	wrapped := func(tenant string) error {
-		_, err := svc.ExportKey(acme, &transport.ExportKeyRequest{Backend: "software", KeyID: "ek", TenantID: tenant})
+		_, err := svc.ExportKey(acme, &transport.ExportKeyRequest{Backend: "software", KeyID: "ek", Algorithm: wrapAlg, TenantID: tenant})
 		return err
 	}
-	// The omitted tenant resolves exactly like acme naming itself.
-	assert.Equal(t, wrapped("acme") == nil, wrapped("") == nil, "ExportKey with no TenantID acts on acme's key")
+	// The omitted tenant exports acme's key: the wrapped blob, imported back
+	// into acme and exported as material, is acme's secret, not the system's.
+	exp, err := svc.ExportKey(acme, &transport.ExportKeyRequest{Backend: "software", KeyID: "ek", Algorithm: wrapAlg})
+	require.NoError(t, err, "ExportKey with no TenantID exports acme's key")
+	exportable := true
+	_, err = svc.ImportKey(acme, &transport.ImportKeyRequest{
+		Backend: "software", KeyID: "ek-rt", TenantID: "acme",
+		KeyType: "symmetric", KeySize: 256, Exportable: &exportable,
+		WrappedKeyMaterial: exp.WrappedKeyMaterial, Algorithm: exp.Algorithm,
+		ImportToken: exp.ImportToken, Metadata: exp.Metadata,
+	})
+	require.NoError(t, err)
+	rt, err := svc.ExportKeyMaterial(acme, &transport.ExportKeyMaterialRequest{Backend: "software", KeyID: "ek-rt", TenantID: "acme"})
+	require.NoError(t, err)
+	assert.Equal(t, own, rt.KeyMaterial, "ExportKey with no TenantID wraps acme's key material")
+	assert.NotEqual(t, sys, rt.KeyMaterial, "ExportKey with no TenantID never wraps the system key")
 
 	// A key version update with no TenantID never reaches the system key.
 	_, _ = svc.DisableKeyVersion(acme, &transport.KeyVersionRequest{Backend: "software", KeyID: "sysonly", Version: 1})
