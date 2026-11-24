@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -64,6 +65,15 @@ func withServerBackedConnect(t *testing.T) *[]string {
 	}
 	t.Cleanup(func() { sshConnectClient = saved })
 	return owners
+}
+
+// TestServerBackedConnectSocketDirIsShort proves the server-backed helper
+// leaves the agent's socket path under the unix sun_path floor (104 bytes on
+// macOS, 108 on Linux).
+func TestServerBackedConnectSocketDirIsShort(t *testing.T) {
+	withServerBackedConnect(t)
+	sock := filepath.Join(os.Getenv("TMPDIR"), "xkey-ssh-0000000000", "agent.sock")
+	assert.Less(t, len(sock), 104, "agent socket path %q exceeds the unix limit", sock)
 }
 
 // hostKeyLine is the known_hosts line ssh writes on first contact.
