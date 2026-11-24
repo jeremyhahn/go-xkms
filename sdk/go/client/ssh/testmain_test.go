@@ -14,7 +14,7 @@ import (
 // runners with a deep TMPDIR or GOTMPDIR (#2248).
 func TestMain(m *testing.M) { os.Exit(shortTMPDIR(m.Run)) }
 
-// shortTMPDIR is go-xkms internal/testtmp.Short for this module, which pins a
+// shortTMPDIR is go-xkms internal/testsupport.RunWithShortTempDir for this module, which pins a
 // go-xkms release without that package. It makes one short directory
 // (/tmp/xkNNNN, or under os.TempDir() when /tmp is unusable), sets TMPDIR and
 // GOTMPDIR to it while run executes, then restores both and removes the

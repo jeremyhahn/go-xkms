@@ -8,7 +8,7 @@ import (
 )
 
 // TestShortTMPDIR_socket_path_fits_under_a_deep_TMPDIR mirrors
-// internal/testtmp's test for this module, which cannot import it (#2248).
+// go-xkms internal/testsupport's short_test.go for this module, which cannot import it (#2248).
 func TestShortTMPDIR_socket_path_fits_under_a_deep_TMPDIR(t *testing.T) {
 	deep := filepath.Join(os.TempDir(), "a-deep-runner-work-directory-like-home-runner-_work-_temp-"+strings.Repeat("x", 40))
 	if len(deep) <= 90 {

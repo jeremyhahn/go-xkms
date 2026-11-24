@@ -15,8 +15,12 @@
 package testsupport
 
 import (
+	"crypto/rand"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -46,7 +50,8 @@ func SocketDir(t testing.TB) string {
 }
 
 // RunWithShortTempDir runs m with TMPDIR and GOTMPDIR pointed at a fresh
-// mode-0700 directory directly under /tmp, removes it afterwards and returns
+// mode-0700 directory directly under /tmp, removes it and restores both
+// variables afterwards, and returns
 // m.Run's exit code; call it from TestMain as
 // os.Exit(testsupport.RunWithShortTempDir(m)).
 //
@@ -66,21 +71,81 @@ func runWithShortTempDir(run func() int) int {
 	if runtime.GOOS == "windows" {
 		return run()
 	}
-	dir, err := os.MkdirTemp("/tmp", "xt")
+	dir, err := mkdirShort(shortRoot)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "testsupport.RunWithShortTempDir: %v\n", err)
-		return 1
+		dir, err = os.MkdirTemp(os.TempDir(), "xk")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "testsupport.RunWithShortTempDir: %v\n", err)
+			return run()
+		}
 	}
+
+	// t.TempDir() makes its directories under GOTMPDIR when it is set
+	// (testing.go: os.MkdirTemp(os.Getenv("GOTMPDIR"), ...)), so both
+	// variables point at the short directory, and both are restored after.
+	restore := setEnv(map[string]string{"TMPDIR": dir, "GOTMPDIR": dir})
 	defer func() {
+		restore()
 		if err := os.RemoveAll(dir); err != nil {
 			fmt.Fprintf(os.Stderr, "testsupport.RunWithShortTempDir: remove %s: %v\n", dir, err)
 		}
 	}()
-	for _, key := range []string{"TMPDIR", "GOTMPDIR"} {
-		if err := os.Setenv(key, dir); err != nil {
-			fmt.Fprintf(os.Stderr, "testsupport.RunWithShortTempDir: %v\n", err)
-			return 1
+
+	return run()
+}
+
+// shortRoot is where runWithShortTempDir makes its directory.
+const shortRoot = "/tmp"
+
+// setEnv sets vars and returns a function that restores their earlier values
+// (unsetting the ones that were unset).
+func setEnv(vars map[string]string) func() {
+	type saved struct {
+		val string
+		had bool
+	}
+	prev := make(map[string]saved, len(vars))
+	for k, v := range vars {
+		old, had := os.LookupEnv(k)
+		prev[k] = saved{old, had}
+		if err := os.Setenv(k, v); err != nil {
+			fmt.Fprintf(os.Stderr, "testsupport: setting %s: %v\n", k, err)
 		}
 	}
-	return run()
+	return func() {
+		for k, s := range prev {
+			if s.had {
+				_ = os.Setenv(k, s.val)
+			} else {
+				_ = os.Unsetenv(k)
+			}
+		}
+	}
+}
+
+// mkdirShort makes a mode-0700 directory root/xkNNNN (11 bytes under /tmp),
+// shorter than os.MkdirTemp's 10-digit suffix allows.
+func mkdirShort(root string) (string, error) {
+	const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
+	var lastErr error
+	for range 1000 {
+		var b [4]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return "", err
+		}
+		name := []byte("xk")
+		for _, c := range b {
+			name = append(name, alphabet[int(c)%len(alphabet)])
+		}
+		dir := filepath.Join(root, string(name))
+		err := os.Mkdir(dir, 0o700)
+		if err == nil {
+			return dir, nil
+		}
+		lastErr = err
+		if !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+	}
+	return "", lastErr
 }

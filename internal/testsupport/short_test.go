@@ -1,4 +1,4 @@
-package testtmp
+package testsupport
 
 import (
 	"net"
@@ -17,7 +17,7 @@ const failingSocketDir = "TestNewQRDBControlTransport_PlaintextBearerTLS_carries
 // pkg/api/unix test needs it at most 11 bytes ("/tmp/xk" plus 4).
 func TestShort_dir_name_is_short(t *testing.T) {
 	var dir string
-	Short(func() int { dir = os.TempDir(); return 0 })
+	runWithShortTempDir(func() int { dir = os.TempDir(); return 0 })
 	if filepath.Dir(dir) == "/tmp" && len(dir) > 11 {
 		t.Fatalf("short directory %q is %d bytes, want at most 11", dir, len(dir))
 	}
@@ -36,7 +36,7 @@ func TestShort_unix_socket_binds_under_a_deep_TMPDIR(t *testing.T) {
 
 	var short string
 	var bindErr error
-	code := Short(func() int {
+	code := runWithShortTempDir(func() int {
 		short = os.TempDir()
 		dir, err := os.MkdirTemp(short, failingSocketDir)
 		if err != nil {
@@ -89,7 +89,7 @@ func TestShort_t_TempDir_is_short_under_a_deep_GOTMPDIR(t *testing.T) {
 	t.Setenv("GOTMPDIR", deep)
 
 	var sock string
-	Short(func() int {
+	runWithShortTempDir(func() int {
 		sock = filepath.Join(t.TempDir(), "x/agent.sock")
 		return 0
 	})
@@ -105,7 +105,7 @@ func TestShort_t_TempDir_is_short_under_a_deep_GOTMPDIR(t *testing.T) {
 }
 
 func TestShort_returns_the_run_exit_code(t *testing.T) {
-	if got := Short(func() int { return 3 }); got != 3 {
+	if got := runWithShortTempDir(func() int { return 3 }); got != 3 {
 		t.Fatalf("Short returned %d, want 3", got)
 	}
 }
