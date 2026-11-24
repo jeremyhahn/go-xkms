@@ -388,11 +388,31 @@ func TestKeyLookup_TenantExact_ExportBindsCaller(t *testing.T) {
 	assert.NotEqual(t, sys, rt.KeyMaterial, "ExportKey with no TenantID never wraps the system key")
 
 	// A key version update with no TenantID never reaches the system key.
-	_, _ = svc.DisableKeyVersion(acme, &transport.KeyVersionRequest{Backend: "software", KeyID: "sysonly", Version: 1})
-	vers, err := svc.ListKeyVersions(context.Background(), &transport.ListKeyVersionsRequest{Backend: "software", KeyID: "sysonly"})
+	// Rotate first so version 1 is not current: SetState would disable or
+	// retire it if the lookup reached the system key.
+	_, err = svc.RotateKey(context.Background(), &transport.RotateKeyRequest{Backend: "software", KeyID: "sysonly"})
 	require.NoError(t, err)
-	require.Len(t, vers.Versions, 1)
-	assert.Equal(t, "enabled", vers.Versions[0].State, "acme with no TenantID never changes a system-tenant key version")
+	for _, update := range []struct {
+		name string
+		call func(*transport.KeyVersionRequest) error
+	}{
+		{"DisableKeyVersion", func(r *transport.KeyVersionRequest) error { _, err := svc.DisableKeyVersion(acme, r); return err }},
+		{"RetireKeyVersion", func(r *transport.KeyVersionRequest) error { _, err := svc.RetireKeyVersion(acme, r); return err }},
+	} {
+		err = update.call(&transport.KeyVersionRequest{Backend: "software", KeyID: "sysonly", Version: 1})
+		require.Error(t, err, "%s with no TenantID never reaches the system key", update.name)
+		assert.ErrorIs(t, err, ErrKeyNotFound, "%s with no TenantID looks up acme's key only", update.name)
+		var cur *keyversion.CurrentVersionError
+		assert.False(t, errors.As(err, &cur), "%s with no TenantID is refused by the lookup, not by SetState", update.name)
+		vers, err := svc.ListKeyVersions(context.Background(), &transport.ListKeyVersionsRequest{Backend: "software", KeyID: "sysonly"})
+		require.NoError(t, err)
+		require.Len(t, vers.Versions, 2)
+		for _, v := range vers.Versions {
+			if v.Version == 1 {
+				assert.Equal(t, "enabled", v.State, "%s with no TenantID never changes a system-tenant key version", update.name)
+			}
+		}
+	}
 
 	cases := []struct {
 		name string
