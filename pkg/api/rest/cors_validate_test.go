@@ -61,6 +61,9 @@ func TestCORSOptionsValidate(t *testing.T) {
 		"https://[1.2.3.4]",
 		"https://[fe80::1%25eth0]",
 		"https://[]",
+		"https://::1",
+		"https://::1:8443",
+		"http://fe80::1",
 		"",
 	} {
 		t.Run("refused "+origin, func(t *testing.T) {
