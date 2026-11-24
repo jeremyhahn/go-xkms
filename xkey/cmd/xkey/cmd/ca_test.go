@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -505,9 +506,10 @@ func TestGetSDKClient_LocalRefusesBarrierStore(t *testing.T) {
 
 	dataDir, err := resolveXKeySSHDataDir()
 	require.NoError(t, err)
-	keyPath := filepath.Join(dataDir, defaultBarrierRootKeyPath)
-	require.NoError(t, os.MkdirAll(filepath.Dir(keyPath), 0o700))
-	require.NoError(t, os.WriteFile(keyPath, []byte("sealed"), 0o600))
+	backend, err := xkmssdk.NewFileStorageBackend(dataDir)
+	require.NoError(t, err)
+	require.NoError(t, backend.Put(t.Context(), defaultBarrierRootKeyPath, []byte("sealed")))
+	require.NoError(t, backend.Close())
 	require.True(t, barrierRootKeyExists(dataDir))
 
 	client, err := getSDKClient(newLocalCATestCmd(t))

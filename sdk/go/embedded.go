@@ -14,6 +14,9 @@
 package xkms
 
 import (
+	"context"
+
+	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -35,6 +38,17 @@ type EmbeddedServiceConfig struct {
 	// storage.Backend here (e.g. from pkg/pkcs11/localseal), so the embedded
 	// service consumes go-qrdb's barrier rather than any bespoke sealer.
 	KeyStorage StorageBackend
+
+	// CA optionally runs a Certificate Authority in the embedded service.
+	// When set, NewEmbeddedService builds a TrustedCA from it on file stores
+	// under KeyDir/ca (its certificate store in KeyDir/ca/certs), loading the
+	// CA persisted there or initializing a new one, and wires it into the
+	// service so the CA verbs are served in-process. Each CA key resolves its
+	// keystore by its store type among the registered backends, so the
+	// config's keys must use a store type that names a registered backend:
+	// the default config's software keys need the default BackendName. Nil
+	// leaves the service without a CA.
+	CA *TrustedCAMultiIdentityConfig
 }
 
 // NewEmbeddedService builds and initializes the in-process XKMS service with a
@@ -86,7 +100,45 @@ func NewEmbeddedService(cfg EmbeddedServiceConfig) (XKMSServicer, error) {
 		return nil, err
 	}
 
-	return pkgxkms.Get()
+	svc, err := pkgxkms.Get()
+	if err != nil {
+		return nil, err
+	}
+	if cfg.CA != nil {
+		if err := wireEmbeddedCA(svc, cfg.KeyDir, cfg.CA); err != nil {
+			return nil, err
+		}
+	}
+	return svc, nil
+}
+
+// wireEmbeddedCA builds the CA from caConfig on file stores under keyDir/ca
+// and publishes it into svc.
+func wireEmbeddedCA(svc *pkgxkms.XKMSService, keyDir string, caConfig *TrustedCAMultiIdentityConfig) error {
+	caDir := keyDir + "/ca"
+	certBackend, err := NewFileStorageBackend(caDir + "/certs")
+	if err != nil {
+		return err
+	}
+	kv, err := NewKVStoreAdapter(certBackend)
+	if err != nil {
+		return err
+	}
+	trustedCA, err := compose.BuildCA(context.Background(), compose.CAParams{
+		Config: caConfig,
+		DAOs:   NewStoreDAOFactory(kv),
+		Storage: func(name string) (StorageBackend, error) {
+			return NewFileStorageBackend(caDir + "/" + name)
+		},
+		BackendForStore: func(_ string, storeType StoreType) (pkgxkms.Backend, error) {
+			return svc.LookupBackend(string(storeType))
+		},
+	})
+	if err != nil {
+		return err
+	}
+	(&compose.Stores{CA: trustedCA}).Wire(svc)
+	return nil
 }
 
 // NewEmbeddedClient is a one-call convenience that builds the embedded service
