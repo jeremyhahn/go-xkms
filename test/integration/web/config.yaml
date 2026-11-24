@@ -40,6 +40,9 @@ tls:
 auth:
   enabled: true
   type: "composite"
+  # One address signs in many times a minute; the limiter stays on.
+  session:
+    login_rate_per_min: 6000
 
 # A passphrase barrier, initialized the way a real deployment is: run-server.sh
 # runs `xkmsd init` with the SO PIN in the environment, then unseals through
