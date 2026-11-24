@@ -130,6 +130,24 @@ func (b *hookedKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext typ
 	return err
 }
 
+// forwardSwap hands a blob swap to the wrapped backend's KeyBlobSwapper,
+// so a test wrapper keeps the store's atomic swap.
+func forwardSwap(backend store.KeyBackend, attrs *types.KeyAttributes, fsext types.FSExtension, expected, next []byte) (bool, error) {
+	s, ok := backend.(KeyBlobSwapper)
+	if !ok {
+		return false, store.ErrKeyBlobSwapUnsupported
+	}
+	return s.CompareAndSwapBlob(attrs, fsext, expected, next)
+}
+
+func (b *hookedKeyBackend) CompareAndSwapBlob(attrs *types.KeyAttributes, fsext types.FSExtension, expected, next []byte) (bool, error) {
+	ok, err := forwardSwap(b.KeyBackend, attrs, fsext, expected, next)
+	if ok && err == nil && fsext == store.FSEXT_PRIVATE_BLOB && b.afterPrivate != nil {
+		b.once.Do(b.afterPrivate)
+	}
+	return ok, err
+}
+
 // TestSaveKeyPair_ConcurrentCreatorsNeverMismatch: two create-only writers
 // of one key on one shared BlobStore, the second finding the first's
 // private blob before its public blob exists, never leave the public blob of
@@ -209,6 +227,13 @@ func (b *crashingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext t
 	return b.KeyBackend.Save(attrs, data, ext, overwrite)
 }
 
+func (b *crashingKeyBackend) CompareAndSwapBlob(attrs *types.KeyAttributes, fsext types.FSExtension, expected, next []byte) (bool, error) {
+	if fsext == store.FSEXT_PRIVATE_BLOB {
+		panic(errPairCrash)
+	}
+	return forwardSwap(b.KeyBackend, attrs, fsext, expected, next)
+}
+
 // TestSaveKeyPair_RecoveryCrashLeavesNoMismatch: a create-only save that
 // recovers an incomplete pair (private blob A, no public blob) and crashes
 // before its private blob B is durable leaves no apparently complete pair:
@@ -277,6 +302,13 @@ func (b *pausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, fsext 
 		b.once.Do(b.beforePrivate)
 	}
 	return b.KeyBackend.Save(attrs, data, fsext, overwrite)
+}
+
+func (b *pausingKeyBackend) CompareAndSwapBlob(attrs *types.KeyAttributes, fsext types.FSExtension, expected, next []byte) (bool, error) {
+	if fsext == store.FSEXT_PRIVATE_BLOB {
+		b.once.Do(b.beforePrivate)
+	}
+	return forwardSwap(b.KeyBackend, attrs, fsext, expected, next)
 }
 
 // Two recoveries of one private-only key overlap: A fences the pair and

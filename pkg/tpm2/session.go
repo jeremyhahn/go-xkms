@@ -1250,14 +1250,18 @@ func (tpm *TPM2) SaveKeyPair(
 // algorithm ID), so no reader takes it for a public area.
 var keyPairRecoveryFence = []byte("xkms-tpm2-key-pair-recovery\x00")
 
-// KeyBlobSwapper is the optional KeyBackend capability that makes a key
-// pair update safe across processes sharing one store: CompareAndSwapBlob
-// atomically writes next at fsext only if the stored blob equals expected,
-// and reports false (no write) when it does not or the blob is absent. A
-// backend without it is guarded only within one TPM2 (keyPairMu).
+// KeyBlobSwapper is the KeyBackend capability that makes a key pair update
+// safe across processes sharing one store: CompareAndSwapBlob atomically
+// writes next at fsext only if the stored blob equals expected, and reports
+// false (no write) when it does not or the blob is absent. A key pair
+// replacement (recovery or overwrite) on a backend without it refuses with
+// store.ErrKeyBlobSwapUnsupported.
 type KeyBlobSwapper interface {
 	CompareAndSwapBlob(attrs *types.KeyAttributes, fsext types.FSExtension, expected, next []byte) (bool, error)
 }
+
+// The production store swaps key blobs atomically.
+var _ KeyBlobSwapper = (*store.BlobStore)(nil)
 
 // getKeyBlob reads one blob; present is false when the backend has none.
 func getKeyBlob(backend store.KeyBackend, attrs *types.KeyAttributes, fsext types.FSExtension) (blob []byte, present bool, err error) {
@@ -1273,9 +1277,10 @@ func getKeyBlob(backend store.KeyBackend, attrs *types.KeyAttributes, fsext type
 
 // swapKeyBlob writes next at fsext only if the blob is still what the
 // caller observed (expected, or absent when present is false), and reports
-// false when another writer changed it. It is atomic when the backend is a
-// KeyBlobSwapper (or for an absent blob, by a create-only save); otherwise
-// it re-reads and writes, which is atomic only under keyPairMu.
+// false when another writer changed it. An absent blob is written by a
+// create-only save, a present one by the backend's KeyBlobSwapper; a
+// backend without one returns store.ErrKeyBlobSwapUnsupported and writes
+// nothing, never a read followed by an overwrite.
 func swapKeyBlob(backend store.KeyBackend, attrs *types.KeyAttributes, fsext types.FSExtension, expected []byte, present bool, next []byte) (bool, error) {
 	if !present {
 		err := backend.Save(attrs, next, fsext, false)
@@ -1284,14 +1289,11 @@ func swapKeyBlob(backend store.KeyBackend, attrs *types.KeyAttributes, fsext typ
 		}
 		return err == nil, err
 	}
-	if s, ok := backend.(KeyBlobSwapper); ok {
-		return s.CompareAndSwapBlob(attrs, fsext, expected, next)
+	s, ok := backend.(KeyBlobSwapper)
+	if !ok {
+		return false, store.ErrKeyBlobSwapUnsupported
 	}
-	cur, ok, err := getKeyBlob(backend, attrs, fsext)
-	if err != nil || !ok || !bytes.Equal(cur, expected) {
-		return false, err
-	}
-	return true, backend.Save(attrs, next, fsext, true)
+	return s.CompareAndSwapBlob(attrs, fsext, expected, next)
 }
 
 // isKeyPairRecoveryFence reports whether a public-blob record is a recovery

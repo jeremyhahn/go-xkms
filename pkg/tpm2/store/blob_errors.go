@@ -27,6 +27,12 @@ var (
 	// ErrBlobExists is matched by the error a write that may not overwrite
 	// returns when the blob is already stored.
 	ErrBlobExists = errors.New("blob store: blob already exists")
+
+	// ErrKeyBlobSwapUnsupported is returned when a key pair replacement
+	// meets a key backend that cannot compare and swap a blob in one
+	// guarded operation: the replacement refuses rather than read and then
+	// overwrite, which a second process could interleave.
+	ErrKeyBlobSwapUnsupported = errors.New("blob store: key backend cannot swap blobs atomically")
 )
 
 // InvalidBlobKeyError reports a tenant, name or extension that cannot be one

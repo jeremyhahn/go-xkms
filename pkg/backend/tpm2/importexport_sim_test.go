@@ -464,6 +464,22 @@ func (f *failPublicBlobOnce) Save(attrs *types.KeyAttributes, data []byte, ext t
 	return f.KeyBackend.Save(attrs, data, ext, overwrite)
 }
 
+// CompareAndSwapBlob keeps the wrapped store's atomic blob swap, which a
+// key pair replacement requires.
+func (f *failPublicBlobOnce) CompareAndSwapBlob(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	if f.fail && ext == store.FSEXT_PUBLIC_BLOB {
+		f.fail = false
+		return false, errors.New("injected public blob write fault")
+	}
+	s, ok := f.KeyBackend.(interface {
+		CompareAndSwapBlob(*types.KeyAttributes, types.FSExtension, []byte, []byte) (bool, error)
+	})
+	if !ok {
+		return false, store.ErrKeyBlobSwapUnsupported
+	}
+	return s.CompareAndSwapBlob(attrs, ext, expected, next)
+}
+
 // TestImportKey_RetryRepairsIncompletePair proves a create-only import whose
 // public-blob write failed after the private blob was stored is an
 // incomplete import a retry repairs: the retry succeeds and the key loads.

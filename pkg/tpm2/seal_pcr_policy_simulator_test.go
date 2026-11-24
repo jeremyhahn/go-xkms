@@ -1218,6 +1218,12 @@ func (b *legacyKeyBackend) Save(
 	return b.KeyBackend.Save(attrs, data, ext, overwrite)
 }
 
+// CompareAndSwapBlob keeps the wrapped store's atomic blob swap, which a
+// key pair replacement requires.
+func (b *legacyKeyBackend) CompareAndSwapBlob(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	return forwardSwap(b.KeyBackend, attrs, ext, expected, next)
+}
+
 // TestSealUnseal_ObjectWithoutPolicyPin_StillOpens is the backward
 // compatibility test. Objects sealed before the platform policy pin existed
 // have only their public and private areas on disk, and they must keep

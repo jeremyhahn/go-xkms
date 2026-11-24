@@ -14,6 +14,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"sort"
@@ -162,6 +163,41 @@ func (s *BlobStore) Save(attrs *types.KeyAttributes, data []byte, ext types.FSEx
 		return err
 	}
 	return s.write(context.Background(), name, string(ext), data, overwrite)
+}
+
+// CompareAndSwapBlob writes next as attrs' blob at ext only while the
+// stored blob is exactly expected. The comparison and the write are one
+// guarded store operation (the DAO's CompareAndSwap), so another process
+// sharing the store cannot replace the blob between them. swapped=false
+// with a nil error means the blob was changed or removed meanwhile and
+// storage is unchanged.
+func (s *BlobStore) CompareAndSwapBlob(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	name, err := attrsName(attrs)
+	if err != nil {
+		return false, err
+	}
+	key, err := s.blobKey(name, string(ext))
+	if err != nil {
+		return false, err
+	}
+	ctx := context.Background()
+	stored, err := s.blobs.GetByNaturalKey(ctx, key)
+	if qrdbsdk.IsDAONotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, &BlobReadError{Name: key, Cause: err}
+	}
+	if !bytes.Equal(stored.Data, expected) {
+		return false, nil
+	}
+	updated := *stored
+	updated.Data = next
+	swapped, err := s.blobs.CompareAndSwap(ctx, stored, &updated)
+	if err != nil {
+		return false, &BlobWriteError{Name: key, Cause: err}
+	}
+	return swapped, nil
 }
 
 // Delete removes every blob of the key attrs names. Blobs the key never had
