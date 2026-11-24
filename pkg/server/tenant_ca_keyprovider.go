@@ -254,17 +254,40 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		_ = f.ReclaimWithdrawnTenants(context.Background())
 	}
 	return qrdbsdk.CAKeyAdapter{
-		SignerFunc: func(ctx context.Context) (crypto.Signer, error) {
+		SignerFunc: func(callerCtx context.Context) (crypto.Signer, error) {
+			ctx, release := detachTenantCAKeyCall(callerCtx)
+			defer release()
 			attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
 			if err != nil {
 				return nil, err
 			}
 			return scoped.Signer(ctx, attrs)
 		},
-		CertificateFunc: func(ctx context.Context) (*x509.Certificate, error) {
+		CertificateFunc: func(callerCtx context.Context) (*x509.Certificate, error) {
+			ctx, release := detachTenantCAKeyCall(callerCtx)
+			defer release()
 			return scoped.GetCert(ctx, tenantLoginCAKeyCN)
 		},
 	}, nil
+}
+
+// detachTenantCAKeyCall returns a context for the factory's own storage
+// calls made on behalf of go-qrdb: it keeps the caller's cancellation and
+// deadline but none of its values. go-qrdb calls the provider with the
+// request context of a tenant administrator's IssueCert, whose tenant scope
+// would otherwise reach the key and certificate stores, which run as the
+// xkms service principal in the system tenant and are then refused
+// ("identity not in target tenant").
+func detachTenantCAKeyCall(caller context.Context) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if deadline, ok := caller.Deadline(); ok {
+		var cancelDeadline context.CancelFunc
+		ctx, cancelDeadline = context.WithDeadline(ctx, deadline)
+		prev := cancel
+		cancel = func() { cancelDeadline(); prev() }
+	}
+	stop := context.AfterFunc(caller, cancel)
+	return ctx, func() { stop(); cancel() }
 }
 
 // TenantIDs lists, sorted, the tenants that hold a login CA key in the backend.

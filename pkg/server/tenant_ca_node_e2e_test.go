@@ -41,10 +41,15 @@ func tenantLoginCADER(t *testing.T, s *Server, tenantID string) []byte {
 
 // authenticateCert runs the node's own authentication of an HTTP request
 // whose TLS peer presented cert.
-func authenticateCert(t *testing.T, s *Server, cert *x509.Certificate) (*qrdbauth.Identity, error) {
+func authenticateCert(t *testing.T, s *Server, cert, ca *x509.Certificate) (*qrdbauth.Identity, error) {
 	t.Helper()
 	r := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
-	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	// As a TLS listener that verified the client certificate leaves it.
+	r.TLS = &tls.ConnectionState{
+		HandshakeComplete: true,
+		PeerCertificates:  []*x509.Certificate{cert},
+		VerifiedChains:    [][]*x509.Certificate{{cert, ca}},
+	}
 	ctx := qrdbauth.WithTLSState(r.Context(), r.TLS)
 	_, id, err := s.qrdbNode.AuthMiddleware().AuthenticateHTTP(ctx, httptest.NewRecorder(), r.WithContext(ctx))
 	return id, err
@@ -108,7 +113,7 @@ func TestServer_TenantLoginCANodeE2E_OnboardLoginRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, leaf.CheckSignatureFrom(caCert), "the account certificate must be issued under the xkms login CA")
 
-	id, err := authenticateCert(t, s, leaf)
+	id, err := authenticateCert(t, s, leaf, caCert)
 	require.NoError(t, err, "the issued certificate must authenticate")
 	require.Equal(t, tenantID, id.TenantID)
 	require.Equal(t, account.ID, id.UserID)
@@ -121,7 +126,7 @@ func TestServer_TenantLoginCANodeE2E_OnboardLoginRestart(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = restarted.Shutdown() }()
 	require.Equal(t, caDER, tenantLoginCADER(t, restarted, tenantID), "a restart must keep the tenant's login CA")
-	id, err = authenticateCert(t, restarted, leaf)
+	id, err = authenticateCert(t, restarted, leaf, caCert)
 	require.NoError(t, err, "the credential must still authenticate after a restart")
 	require.Equal(t, tenantID, id.TenantID)
 	require.Equal(t, account.ID, id.UserID)
