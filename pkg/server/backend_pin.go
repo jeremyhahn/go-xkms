@@ -105,6 +105,34 @@ func (s *Server) resolveBackendPIN() error {
 	return nil
 }
 
+// backendPINPolicyPreflight runs the backend PIN policy checks that need
+// no secret, before config secret resolution: a refused strategy never
+// waits on a PIN reference resolution cannot serve (manual credential
+// retrieval blocks until an operator submits it).
+func (s *Server) backendPINPolicyPreflight() error {
+	if !s.pkcs11Enabled() && !s.rngPKCS11PINActive() {
+		return nil
+	}
+	strategy := pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy)
+	minimum := pinselect.BackendPINStrategy(s.config.BackendPIN.Minimum)
+	if strategy == pinselect.BackendPINManual || minimum == pinselect.BackendPINManual {
+		return ErrBackendPINManualUnavailable
+	}
+	store := s.backendPINStore()
+	if strategy == pinselect.BackendPINSealed {
+		if s.barrier == nil {
+			return &pinselect.BackendPINUnavailableError{Strategy: strategy, Reason: "no barrier"}
+		}
+		if store != pinselect.BackendPINSealed {
+			return &pinselect.BackendPINStoreError{Strategy: strategy, Store: store}
+		}
+	}
+	if (strategy == pinselect.BackendPINTPM2 || minimum == pinselect.BackendPINTPM2) && store != pinselect.BackendPINTPM2 {
+		return s.checkBackendPINTPMCustody()
+	}
+	return nil
+}
+
 // resolveBackendPINStrategy resolves (and on a fresh install persists) the
 // backend PIN strategy. preNode raises the minimum to tpm2, so pinselect
 // refuses a weaker strategy before it persists a record.

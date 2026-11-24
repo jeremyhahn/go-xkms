@@ -769,6 +769,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// KMS secret key, Azure Key Vault client secret, Vault token), which
 	// could not resolve here before this reorder. See resolveConfigSecrets
 	// for what this does and does not cover.
+	// The backend PIN policy checks that need no secret run first (#2262):
+	// a refused strategy never waits on a PIN reference resolution cannot
+	// serve.
+	if err := s.backendPINPolicyPreflight(); err != nil {
+		abortAfterStorage("backend PIN strategy")
+		return nil, &ErrServiceInit{Service: "backend PIN strategy", Err: err}
+	}
 	if err := s.resolveConfigSecrets(); err != nil {
 		abortAfterStorage("config secret resolution")
 		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}

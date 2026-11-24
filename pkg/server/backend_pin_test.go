@@ -429,9 +429,17 @@ func TestNew_BackendPINPolicyRefusesBeforeResolvingCredentialReference(t *testin
 		{"manual", func(t *testing.T, err error) {
 			require.ErrorIs(t, err, ErrBackendPINManualUnavailable)
 		}},
+		// Seal is off: sealed has no barrier to store the PIN under.
 		{"sealed", func(t *testing.T, err error) {
-			var storeErr *pinselect.BackendPINStoreError
-			require.ErrorAs(t, err, &storeErr)
+			var unavailable *pinselect.BackendPINUnavailableError
+			require.ErrorAs(t, err, &unavailable)
+			require.Equal(t, "no barrier", unavailable.Reason)
+		}},
+		// Default (manual) credential storage cannot move the PIN into
+		// TPM custody.
+		{"tpm2", func(t *testing.T, err error) {
+			var custody *BackendPINTPMCustodyError
+			require.ErrorAs(t, err, &custody)
 		}},
 	} {
 		t.Run(tc.strategy, func(t *testing.T) {
