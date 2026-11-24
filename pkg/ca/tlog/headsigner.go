@@ -118,6 +118,12 @@ func (p *HeadSignerProvider) CreateKey(ctx context.Context, req qrdbsdk.HeadSign
 	return qrdbsdk.HeadSignerCreatedKey{Ref: KeyRef, Public: signer.Public()}, nil
 }
 
+// KeyType returns the head-signature type of the bound CA key.
+func (p *HeadSignerProvider) KeyType(ctx context.Context) (qrdbsdk.HeadSignatureType, error) {
+	_, typ, err := p.caSigner(ctx)
+	return typ, err
+}
+
 // HeadSigner returns a signer over the CA key for the log req names.
 func (p *HeadSignerProvider) HeadSigner(ctx context.Context, req qrdbsdk.HeadSignerRequest) (qrdbsdk.HeadSigner, error) {
 	if req.KeyRef != KeyRef {

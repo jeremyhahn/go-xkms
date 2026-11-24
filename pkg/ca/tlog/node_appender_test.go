@@ -50,16 +50,16 @@ type fakeClient struct{ v *fakeVlog }
 
 func (c fakeClient) Vlog() transport.VlogClient { return c.v }
 
-type fakeCA struct{ s *ecdsa.PrivateKey }
+type appenderCA struct{ s *ecdsa.PrivateKey }
 
-func (c fakeCA) Signer(context.Context) (crypto.Signer, error) { return c.s, nil }
+func (c appenderCA) Signer(context.Context) (crypto.Signer, error) { return c.s, nil }
 
 func newBoundProvider(t *testing.T) *HeadSignerProvider {
 	t.Helper()
 	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	p := NewHeadSignerProvider()
-	require.NoError(t, p.Bind(fakeCA{s: k}))
+	require.NoError(t, p.Bind(appenderCA{s: k}))
 	return p
 }
 
