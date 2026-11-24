@@ -327,3 +327,115 @@ func TestKeyLookup_TenantExact_SystemCallerNamesTenant(t *testing.T) {
 	}
 	assertTenantKeysUnchanged(t, svc, tenants)
 }
+
+// TestKeyLookup_TenantExact_ExportBindsCaller covers the request paths that
+// built their backend view from the raw request tenant: an acme caller that
+// names another tenant is refused before any key is resolved.
+func TestKeyLookup_TenantExact_ExportBindsCaller(t *testing.T) {
+	svc, tenants := setupSameCNKeys(t)
+	genKey(t, svc, "", "sysonly", "ecdsa", 0)
+	acme := identityCtx("acme")
+
+	// Same-CN exportable secrets in acme and the system tenant.
+	for _, gen := range []struct {
+		ctx    context.Context
+		tenant string
+	}{{acme, "acme"}, {context.Background(), ""}} {
+		_, err := svc.GenerateKey(gen.ctx, &transport.GenerateKeyRequest{
+			KeyID: "ek", Backend: "software", TenantID: gen.tenant,
+			KeyType: "Symmetric", Algorithm: "Symmetric", KeySize: 256, Exportable: true,
+		})
+		require.NoError(t, err)
+	}
+	material := func(ctx context.Context, tenant string) ([]byte, error) {
+		resp, err := svc.ExportKeyMaterial(ctx, &transport.ExportKeyMaterialRequest{Backend: "software", KeyID: "ek", TenantID: tenant})
+		if err != nil {
+			return nil, err
+		}
+		return resp.KeyMaterial, nil
+	}
+	own, err := material(acme, "acme")
+	require.NoError(t, err)
+	sys, err := material(context.Background(), "")
+	require.NoError(t, err)
+	require.NotEqual(t, own, sys)
+	omitted, err := material(acme, "")
+	require.NoError(t, err)
+	assert.Equal(t, own, omitted, "acme with no TenantID exports acme's key material")
+	assert.NotEqual(t, sys, omitted, "acme with no TenantID never exports the system key's plaintext")
+
+	wrapped := func(tenant string) error {
+		_, err := svc.ExportKey(acme, &transport.ExportKeyRequest{Backend: "software", KeyID: "ek", TenantID: tenant})
+		return err
+	}
+	// The omitted tenant resolves exactly like acme naming itself.
+	assert.Equal(t, wrapped("acme") == nil, wrapped("") == nil, "ExportKey with no TenantID acts on acme's key")
+
+	// A key version update with no TenantID never reaches the system key.
+	_, _ = svc.DisableKeyVersion(acme, &transport.KeyVersionRequest{Backend: "software", KeyID: "sysonly", Version: 1})
+	vers, err := svc.ListKeyVersions(context.Background(), &transport.ListKeyVersionsRequest{Backend: "software", KeyID: "sysonly"})
+	require.NoError(t, err)
+	require.Len(t, vers.Versions, 1)
+	assert.Equal(t, "enabled", vers.Versions[0].State, "acme with no TenantID never changes a system-tenant key version")
+
+	cases := []struct {
+		name string
+		call func(tenant string) error
+	}{
+		{"ExportKeyMaterial", func(tenant string) error {
+			_, err := material(acme, tenant)
+			return err
+		}},
+		{"ExportKey", wrapped},
+		{"DisableKeyVersion", func(tenant string) error {
+			_, err := svc.DisableKeyVersion(acme, &transport.KeyVersionRequest{Backend: "software", KeyID: "k", Version: 1, TenantID: tenant})
+			return err
+		}},
+		{"RetireKeyVersion", func(tenant string) error {
+			_, err := svc.RetireKeyVersion(acme, &transport.KeyVersionRequest{Backend: "software", KeyID: "k", Version: 1, TenantID: tenant})
+			return err
+		}},
+		{"CopyKey", func(tenant string) error {
+			_, err := svc.CopyKey(acme, &transport.CopyKeyRequest{SourceBackend: "software", DestBackend: "software", SourceKeyID: "ek", DestKeyID: "ek-copy", TenantID: tenant})
+			return err
+		}},
+		{"WrapKeyByID", func(tenant string) error {
+			_, err := svc.WrapKeyByID(acme, &transport.WrapKeyByIDRequest{WrappingKeyBackend: "software", WrappingKeyID: "ek", Algorithm: "AES-KWP", TargetKeyID: "ek", TenantID: tenant})
+			return err
+		}},
+		{"UnwrapKeyByID", func(tenant string) error {
+			_, err := svc.UnwrapKeyByID(acme, &transport.UnwrapKeyByIDRequest{WrappedKey: []byte("w"), UnwrappingKeyBackend: "software", UnwrappingKeyID: "ek", Algorithm: "AES-KWP", TargetKeyID: "t", TargetKeyBackend: "software", TenantID: tenant})
+			return err
+		}},
+		{"DeriveKeyECDH", func(tenant string) error {
+			_, err := svc.DeriveKeyECDH(acme, &transport.DeriveKeyECDHRequest{Backend: "software", KeyID: "k", PeerPublicKey: []byte("p"), TenantID: tenant})
+			return err
+		}},
+		{"AttestKey", func(tenant string) error {
+			_, err := svc.AttestKey(acme, &transport.AttestKeyRequest{Backend: "software", KeyID: "k", TenantID: tenant})
+			return err
+		}},
+		{"DeriveKey", func(tenant string) error {
+			_, err := svc.DeriveKey(acme, &transport.DeriveKeyRequest{Backend: "software", KeyID: "ek", Algorithm: "HKDF", Salt: []byte("s"), Info: []byte("i"), KeyLength: 32, Hash: "SHA-256", TenantID: tenant})
+			return err
+		}},
+		{"Seal", func(tenant string) error {
+			_, err := svc.Seal(acme, &transport.SealRequest{Backend: "software", KeyID: "ek", Data: []byte("d"), TenantID: tenant})
+			return err
+		}},
+		{"Unseal", func(tenant string) error {
+			_, err := svc.Unseal(acme, &transport.UnsealRequest{Backend: "software", KeyID: "ek", Ciphertext: []byte("c"), TenantID: tenant})
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, other := range []string{"aaa", "platform"} {
+				err := tc.call(other)
+				var tbe *TenantBindingError
+				assert.True(t, errors.As(err, &tbe), "acme naming tenant %q is refused with a TenantBindingError, got %v", other, err)
+			}
+		})
+	}
+	assertTenantKeysUnchanged(t, svc, tenants)
+}
