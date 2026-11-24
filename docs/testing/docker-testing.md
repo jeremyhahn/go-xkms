@@ -127,9 +127,15 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
   registry is masked first ("Mask the pool registry") and never printed: the
   output is `go-xkms-ci-<family>@sha256:...` with no registry, since Actions
   drops a job output that holds a secret, and each consumer's `use` adds the
-  registry back from the secret and pulls by digest with no login. An empty
-  reference on a same-repo pull request fails `use`; no consumer builds its
-  own image. The integration image is not built on the pool: no `ci.yml` job
+  registry back from the secret and pulls by digest with no login. The pool
+  step runs only when preflight's `runner` and `runner_docker` both select
+  the self-hosted pool, since a GitHub-hosted consumer cannot reach the LAN
+  registry (#2302 Codex round 3): when preflight picks `ubuntu-latest`, the
+  pool step is skipped and the consumers get the resolved reference, or ""
+  and build the image on their hosted runner as on a fork pull request. `use`
+  refuses a pool reference on a GitHub-hosted runner (`RUNNER_ENVIRONMENT`)
+  with a clear message, and an empty reference on a pool runner of a
+  same-repo pull request fails `use`. The integration image is not built on the pool: no `ci.yml` job
   consumes `ci-images`'s `it_ref` (Integration and soak build their own, and
   `scans.yml` resolves it itself), so an empty `it_ref` on a same-repo pull
   request passes validation. Fork pull requests keep the path above.
