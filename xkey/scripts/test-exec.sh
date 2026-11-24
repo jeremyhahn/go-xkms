@@ -1,6 +1,5 @@
 #!/bin/bash
-# test-exec.sh - Test script for OIDC exec integration
-# This script verifies that environment variables are passed correctly
+# test-exec.sh: checks that the OIDC exec integration passes environment variables.
 
 echo "=== OIDC Exec Test Script ==="
 echo ""

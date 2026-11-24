@@ -1,13 +1,5 @@
 #!/usr/bin/env bash
 # Boot a clean-state xkmsd for the WebAuthn browser ceremony test.
-#
-# Playwright's webServer hook invokes this and waits for /health. The data
-# directory is wiped on every run so each test run starts from an empty
-# keystore (deterministic registration ceremonies).
-#
-# XKMSD_BIN may point at a prebuilt binary; otherwise the binary is built
-# locally with the software-only tag set (no pkcs11) which is all the WebAuthn
-# RP needs.
 set -euo pipefail
 
 cd "$(dirname "$0")"

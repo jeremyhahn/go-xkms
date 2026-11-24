@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/release-assets.sh against a local stub of the two Gitea
-# endpoints it uses: the release-by-tag lookup and the asset download URL,
-# plus the asset POST and DELETE that `upload` performs. The stub records
-# every mutating request, so each decision of the upload table -- skip,
-# replace, add -- is asserted by what reached the server, not by what the
-# script printed. Nothing here touches a real release.
+# Tests for scripts/release-assets.sh against a local stub of the release API.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/release-assets.sh"

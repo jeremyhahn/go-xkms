@@ -1,21 +1,5 @@
 #!/bin/bash
-# aws-oidc-login.sh - Exchange OIDC token for AWS credentials
-#
-# This script is called by xkey after OIDC login and exchanges the
-# ID token for temporary AWS credentials using STS AssumeRoleWithWebIdentity.
-#
-# Usage:
-#   xkey oidc login --issuer https://your-idp.com --client-id ID --exec ./aws-oidc-login.sh
-#
-# Required environment variables (set by xkey):
-#   OIDC_ID_TOKEN      - The OIDC ID token to exchange
-#   OIDC_EMAIL         - User's email (used for session name)
-#
-# Required configuration (set before running):
-#   AWS_ROLE_ARN       - The IAM role ARN to assume
-#   AWS_REGION         - (optional) AWS region, defaults to us-east-1
-#
-# The script writes credentials to ~/.aws/credentials under the [oidc] profile.
+# aws-oidc-login.sh: exchange an OIDC token for AWS credentials.
 
 set -euo pipefail
 

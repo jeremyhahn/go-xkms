@@ -1,6 +1,5 @@
 #!/bin/bash
-# TPM2 Session Encryption Verification Test Runner
-# This script runs packet capture tests to verify TPM session encryption
+# Runs the packet capture tests that verify TPM session encryption.
 
 set -e
 

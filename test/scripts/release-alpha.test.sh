@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
 #
-# Unit tests for scripts/release-alpha.sh: the pure functions directly, and
-# the fetch/checkout/commit/push flow end to end against a throwaway fixture
-# repository with its own bare "dev" remote (go-xkms#419/#211 rewrote this
-# script to fetch and prepare a pull request rather than publish directly, so
-# a fixture with no remote at all can no longer exercise it).
-#
-# scripts/release-tag.sh -- the tagging, signature confirmation and atomic
-# push that used to live here -- has its own suite,
-# test/scripts/release-tag.test.sh, which sources this file's pure functions
-# the same way the script itself does.
+# Tests for scripts/release-alpha.sh against a fixture repository.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)

@@ -1,6 +1,5 @@
 #!/bin/bash
-# Post-create script for go-xkms devcontainer
-# This script runs once after the container is created
+# Post-create script for the go-xkms devcontainer; runs once after the container is created.
 
 set -e
 

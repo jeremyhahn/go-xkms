@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for build/docker/devcontainer/scripts/ensure-server-ca.sh (DS-3769).
-#
-# With the qrdb storage backend the script fetches the compose xkms-server's CA
-# bundle from its trust-bootstrap endpoint. It verifies the server only against
-# the anchors the server persisted in its state directory, never with curl -k,
-# and fails with a clear message when no verified server serves a bundle.
-# These tests run the script against a fake `curl` and `getent` on PATH that
-# model the server and record every request. No Docker, no network.
+# Tests for build/docker/devcontainer/scripts/ensure-server-ca.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/build/docker/devcontainer/scripts/ensure-server-ca.sh"

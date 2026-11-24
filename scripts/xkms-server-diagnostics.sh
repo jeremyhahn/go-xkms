@@ -1,30 +1,5 @@
 #!/usr/bin/env bash
-# xkms-server-diagnostics.sh — say, from the host, why the compose xkms-server
-# is not serving the Unix socket the integration suites dial (DS-3769).
-#
-# A readiness step that gives up with only "not serving" leaves the CI log
-# blind: the server may have exited, still be sealed, or be refusing the
-# suite's user at connect(2). This prints what tells those apart:
-#   - the container's state (Status, ExitCode, OOMKilled, RestartCount, start
-#     and finish times) and its confinement (AppArmor profile, SELinux label,
-#     privileged), the LSM inputs to an EACCES at connect(2);
-#   - the socket and its directory as xkms-server sees them;
-#   - the same, plus socket-probe.sh's connect(2), from the devcontainer as
-#     the suite's user (exec's default user, the one the suites run as) and
-#     as root;
-#   - AppArmor and SELinux denials in the kernel log, and the AppArmor
-#     profiles that issued them;
-#   - the last 200 lines of the xkms-server log.
-#
-# It never prints a secret. The compose environment carries PINs, so the
-# container is inspected only for the named State and HostConfig fields above,
-# never for .Config or its environment, and the server speaks through its log.
-# It always exits 0: it explains a failure, it is not one.
-#
-# Usage:
-#   DOCKER_COMPOSE="docker compose -f ..." xkms-server-diagnostics.sh [SOCKET]
-# Environment:
-#   DOCKER_COMPOSE  the compose command the Makefile drives (default "docker compose")
+# xkms-server-diagnostics.sh: report why the compose xkms-server is not serving the integration suites' Unix socket.
 set -u
 
 SOCKET="${1:-/var/run/xkms/xkms.sock}"

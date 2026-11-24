@@ -1,27 +1,4 @@
-# secure-analyzer-key.sh -- shared key-derivation and allowlist-matching
-# functions for scripts/secure-analyzer.sh and its selftest (go-xkms#607).
-# Meant to be SOURCED, never executed: it only defines functions and
-# touches no files by itself. Splitting these out of secure-analyzer.sh
-# lets secure-analyzer-selftest.sh exercise the REAL matching logic against
-# a throwaway fixture and allowlist, rather than a second copy of it that
-# could silently drift from what the gate actually enforces.
-#
-# See scripts/secure-analyzer.sh's KEYING comment for why an entry keys on
-# path + rule + symbol instead of path:line.
-#
-# Callers must set, before use:
-#
-#   SYMTOOL    absolute path to a built scripts/secure-analyzer-symbol
-#              binary (symbol_for, for rule 2 and rule 3 findings).
-#   ALLOWLIST  absolute path to a tab-separated allowlist file
-#              (allowed_reason, check_stale).
-#   WORK       a scratch directory; process_diagnostics appends allowed
-#              hits to "$WORK/hits" and check_stale reads that file back.
-#
-# And must maintain a `fails` counter in the calling shell: every function
-# here that finds a problem increments it rather than exiting, so a caller
-# can keep sweeping after one bad finding and report a full tally at the
-# end -- the same behavior scripts/secure-analyzer.sh's own sweep has.
+# secure-analyzer-key.sh: shared key-derivation and allowlist functions for secure-analyzer.sh and its selftest.
 
 # rule_for classifies MSG ($1, a diagnostic's text after "file:line:col: ")
 # as a securecheck rule number, matching the Reportf messages of the pinned

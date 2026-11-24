@@ -1,68 +1,6 @@
 #!/usr/bin/env bash
 #
-# release-alpha.sh — PREPARE an -alpha release of go-xkms. It stops at a pull
-# request; it never publishes.
-#
-# Usage:
-#	scripts/release-alpha.sh --version X.Y.Z-alpha [--bump LEVEL] [--dry-run]
-#	                         [--remote NAME] [--branch NAME]
-#
-#	--version   REQUIRED. The exact version to publish, e.g. 0.9.2-alpha.
-#	--bump      Optional. patch|minor|major. Declares what KIND of release
-#	            this is; refused unless it agrees with --version. The
-#	            exported-API growth gate below does not depend on this flag
-#	            being given — see its comment.
-#	--dry-run   Rehearse every check, the pin rewrite AND the changelog
-#	            assembly against a scratch copy of the fetched remote tip;
-#	            print the diff, change nothing, push nothing.
-#	--remote    Remote to fetch from and push the release branch to
-#	            (default: dev).
-#	--branch    The branch releases are cut from (default: main). Overriding
-#	            it is the only way to rehearse against a branch other than
-#	            main.
-#	FORGE_TOKEN Environment, REQUIRED. The project agent's forge API token,
-#	            used to open the pull request.
-#
-# WHAT THIS SCRIPT DOES, and where the rest of the release happens
-# (go-xkms#419, go-xkms#211 "option B"):
-#
-#	1. Fetches --branch from --remote and reads VERSION, the reciprocal
-#	   pins and CHANGELOG.md from THAT fetched tip, never from whatever
-#	   happens to be checked out locally — a stale local main cannot pass a
-#	   check it never reads.
-#	2. Validates the requested version, the pin set, the changelog heading,
-#	   and refuses a release that grows the exported Go API under an
-#	   effective PATCH bump.
-#	3. On a real (non-dry-run) cut: checks out a new branch
-#	   release/X.Y.Z-alpha from the fetched tip, assembles the changelog,
-#	   moves the pins, bumps VERSION, commits, and pushes THE BRANCH ONLY.
-#	   It then opens the pull request into --branch, titled exactly
-#	   "chore(release): vX.Y.Z-alpha", on the forge --remote's own URL names
-#	   (ssh, scp-like or http form), prints its URL and stops.
-#
-# It used to also create the three lockstep tags and push them, atomically,
-# to main — with no pull request anywhere in that path (go-xkms#419: two
-# releases raced for the same base because the tooling path had no review
-# gate the documented issue → branch → PR → review → merge flow provides).
-# That step is now `scripts/release-tag.sh` / `make release-tag`, run only
-# after this script's pull request has been reviewed and merged. See
-# docs/release-engineering/.
-#
-# The version is STATED, never derived. Deriving it asks an open question --
-# what is the greatest version anywhere? -- whose answer depends on local tags,
-# remote tags, reachability, malformed tags, three lockstep namespaces and
-# partial publications, and which grows a new edge case every time one is
-# found. Validating a stated version asks a closed one against a fixed
-# checklist: well-formed, strictly greater than the current in every lockstep
-# namespace, and not already taken in any of them.
-#
-# Scope note: fetching --branch and reading from that tip (rather than a fully
-# isolated, disposable checkout) is go-xkms#211's "fetch-and-assert" option,
-# not its "cut from a disposable checkout" option — the latter was considered
-# and declined. This script still writes into the operator's own working
-# tree/index for the real cut, and still refuses to run on a dirty tree or a
-# non-empty index rather than defending every seam between its first read and
-# its last push against a concurrent writer.
+# release-alpha.sh: prepare an -alpha release of go-xkms as a release branch and pull request.
 set -euo pipefail
 
 REMOTE=${REMOTE:-dev}

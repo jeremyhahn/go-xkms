@@ -1,23 +1,5 @@
 #!/bin/sh
-# socket-probe.sh — connect(2) to a Unix socket as the caller and say whether
-# the connect succeeded (DS-3769).
-#
-# Every readiness step and diagnostic that asks "can this user reach the
-# socket" runs this one probe. It is curl --unix-socket, not nc -U: CI runner
-# hosts ship an AppArmor profile for nc.openbsd that attaches to nc inside the
-# devcontainer and refuses a connect to a socket on a volume it cannot name
-# ("Failed name lookup - disconnected path"), so nc reported EACCES for a
-# socket the suites reach. curl's num_connects counts the connections curl
-# opened, so it proves the connect(2) whatever the TLS socket makes of the
-# plaintext request that follows; the verbose trace carries connect(2)'s
-# error when it fails.
-#
-# Usage:
-#   socket-probe.sh SOCKET
-# Environment:
-#   XKMS_SOCKET_PROBE_TIMEOUT  seconds curl may spend on the probe (default 3)
-#
-# Exits 0 when the connect succeeded; otherwise 1, with the reason on stderr.
+# socket-probe.sh: connect to a Unix socket as the caller and report whether it succeeded.
 
 socket="${1:?usage: socket-probe.sh SOCKET}"
 

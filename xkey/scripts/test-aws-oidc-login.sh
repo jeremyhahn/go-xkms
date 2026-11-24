@@ -1,10 +1,5 @@
 #!/bin/bash
-# test-aws-oidc-login.sh - Test the AWS OIDC login script with mocked AWS CLI
-#
-# This test verifies:
-# 1. Input validation (missing token, missing role ARN)
-# 2. Session name sanitization
-# 3. Credential file writing
+# test-aws-oidc-login.sh: tests the AWS OIDC login script with a mocked AWS CLI.
 
 set -e
 

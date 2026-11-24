@@ -1,6 +1,5 @@
 #!/bin/bash
-# Generate TLS certificates for SDK integration testing
-# These certificates are used by the QUIC server which requires TLS 1.3
+# Generate TLS certificates for the SDK integration tests' QUIC server.
 
 set -e
 

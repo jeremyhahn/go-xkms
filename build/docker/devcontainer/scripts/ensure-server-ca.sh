@@ -1,40 +1,5 @@
 #!/bin/bash
-# ensure-server-ca.sh — publish the xkms server's root CA and admin credential
-# where the PKCS#11 integration suites expect to find them: the compose
-# xkms-server's, or without it the one scripts/start-test-xkmsd.sh started.
-#
-# The gRPC-over-TCP lane of test/integration/pkcs11/module dials
-# xkms-server:9443, which serves TLS with a certificate the daemon issues from
-# the CA it initializes on first start. The suite loads the root to trust from
-# XKMS_GRPC_TLS_CA; without it C_Initialize fails with CKR_GENERAL_ERROR (the
-# module cannot build its credentials) and every /grpc subtest goes red while
-# the /unix subtests pass — a failure mode that looks like a protocol bug and is
-# not one.
-#
-# Two details make this a script rather than a bind mount:
-#
-#   * The CA is created at RUNTIME, into the xkms-data volume, so there is no
-#     host path to mount. The volume is mounted read-only at /xkms-data instead.
-#   * The daemon's certificate store writes DER bytes into files named `.pem`.
-#     Go's x509.CertPool.AppendCertsFromPEM and OpenSSL's -CAfile both reject
-#     that outright ("no certificate or crl found"), so the bytes are sniffed
-#     and converted to PEM here.
-#
-# The root is identified as the certificate whose subject equals its issuer,
-# rather than by filename: the filename is the CA's CN from
-# configs/xkmsd-integration.yaml and would silently break if that CN changed.
-#
-# Usage:
-#   ensure-server-ca.sh          # write $XKMS_GRPC_TLS_CA, or exit non-zero
-# Environment:
-#   XKMS_SERVER_STATE_DIR   read-only xkms-server state mount (default /xkms-data)
-#   XKMS_GRPC_TLS_CA        destination PEM file      (default /tmp/xkms/ca.crt)
-#   XKMS_COMPOSE_SERVER_HOST  compose server service name (default xkms-server)
-#   XKMS_SERVER_BOOTSTRAP_URL trust-bootstrap endpoint
-#                             (default https://<compose server>:8443/v1/ca/bootstrap)
-#   XKMS_TEST_DATA_DIR      start-test-xkmsd.sh data directory, read when the
-#                           compose server is not running (default /tmp/xkmsd-test)
-#   XKMS_TEST_REST_PORT     its loopback REST port (default 18443)
+# ensure-server-ca.sh: publish the xkms server's root CA and admin credential where the PKCS#11 integration suites read them.
 
 set -euo pipefail
 

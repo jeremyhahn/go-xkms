@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# build-web-deps.test.sh: `make build-web` must install the
-# sdk/ts/svelte-auth dependencies before it builds web/app (#2286 item 2).
-# svelte-auth resolves its @go-xkms/sdk devDependency (file:..) only through
-# its own node_modules, so a clean checkout fails the web/app Rollup build
-# without that npm ci. The check is a make dry run: no npm is executed.
+# build-web-deps.test.sh: `make build-web` must install the sdk/ts/svelte-auth dependencies before building web/app.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

@@ -1,6 +1,5 @@
 #!/bin/bash
-# test-oidc-exec.sh - Integration test for OIDC exec functionality
-# Simulates what xkey oidc login does after obtaining tokens
+# test-oidc-exec.sh: integration test for OIDC exec.
 
 set -e
 

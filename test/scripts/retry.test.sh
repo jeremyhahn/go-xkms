@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/retry.sh: a fake command that fails a fixed number of
-# times before succeeding, driven with --backoff 0 so the suite stays fast.
-# Nothing here touches a real docker daemon or QEMU -- that is exactly the
-# point: the bounded-attempt/backoff arithmetic is verified in isolation from
-# whatever the wrapped command happens to be (go-xkms#1026).
+# Tests for scripts/retry.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/retry.sh"

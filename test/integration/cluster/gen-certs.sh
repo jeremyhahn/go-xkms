@@ -1,21 +1,5 @@
 #!/usr/bin/env bash
-# Generates an ephemeral test CA + one certificate per Raft node for the 3-node
-# mTLS cluster. go-quicraft mandates MTLSConfig when the QUIC raft transport is
-# enabled, so the harness supplies operator-style PEM (CA / cert / key) exactly
-# as a production deployment would via
-# XKMS_CLUSTER_RAFT_TLS_{CA_CERT,CERT,KEY}_FILE.
-#
-# Each node gets its OWN keypair whose only hostname SAN is that node. A single
-# shared certificate carrying every node's SAN is refused by the transport, and
-# correctly so: a cert that names all three peers lets any replica present
-# itself as any other, so mTLS would prove cluster membership but not identity —
-# a compromised replica could impersonate the leader. Per-node SANs make the
-# certificate an identity rather than a group badge.
-#
-# localhost / 127.0.0.1 stay on every cert because they are not peer addresses;
-# they let a test dial a node directly without weakening peer identity.
-#
-# These are throwaway test certs — never use them outside this harness.
+# Generates a test CA and one certificate per Raft node for the 3-node mTLS cluster.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)/certs"

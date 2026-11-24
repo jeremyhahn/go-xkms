@@ -1,6 +1,5 @@
 #!/bin/sh
-# Generate a DNS zone file with TLSA records computed from the server's CA certificate.
-# This runs as a one-shot container after the xkms server is healthy.
+# Generate a DNS zone file with TLSA records from the server's CA certificate.
 set -e
 
 CERT_FILE="/etc/xkms/certs/ca.crt"

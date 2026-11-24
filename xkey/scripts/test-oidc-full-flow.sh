@@ -1,6 +1,5 @@
 #!/bin/bash
-# test-oidc-full-flow.sh - Full end-to-end OIDC login test with exec script
-# Tests the complete flow: login -> callback -> token exchange -> exec script
+# test-oidc-full-flow.sh: end-to-end OIDC login test with an exec script.
 
 set -e
 

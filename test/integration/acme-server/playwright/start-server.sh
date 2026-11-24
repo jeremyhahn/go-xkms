@@ -1,19 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Build and start xkmsd (with its embedded ACME server) for E2E testing.
-# This script is called by Playwright's webServer config.
-#
-# The ACME protocol surface (RFC 8555 directory/account/order/challenge/cert
-# endpoints) now lives inside cmd/xkmsd (see cmd/xkmsd/acme.go), started via
-# the "acme:" section of the daemon's YAML configuration -- it is no longer a
-# standalone cmd/trusted-acme-server binary.
-#
-# NOTE: xkmsd does not expose an admin REST API, an admin SPA ("/ui/admin/"),
-# a tenant API ("/api/v1/tenants"), or the unauthenticated first-boot setup
-# endpoints ("/admin/setup/*") that the trusted-acme-server used to serve.
-# Those surfaces are not wired into xkmsd (see the task report); pointing
-# this harness at xkmsd only restores the underlying ACME protocol listener.
+# Build and start xkmsd with its embedded ACME server for E2E testing.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"

@@ -1,32 +1,5 @@
 #!/bin/bash
-# Tear down the docker resources this repo's integration suites create.
-#
-# SCOPE: this run's compose projects, and nothing else.
-#
-# The previous version of this script matched containers by NAME SUBSTRING
-# ("swtpm", "vault", "floci", ...) and by PUBLISHED HOST PORT, then killed
-# whatever it found. Both are host-global searches, so on a shared CI runner
-# it happily destroyed the containers of other jobs that happened to be
-# running a similarly named service -- including concurrent runs of this very
-# suite. It also pruned images and build cache out from under them.
-#
-# Every stack is now namespaced per run (Makefile: COMPOSE_NS ->
-# COMPOSE_PROJECT_NAME=go-xkms-$GITHUB_RUN_ID-<lane>), so `compose down`
-# against each compose file with this run's project name removes exactly the
-# containers, networks and volumes this run created and provably cannot touch
-# another job's. Nothing here may search the host by name, port or image.
-#
-# The per-lane suites only. Three projects are deliberately NOT touched here:
-#
-#   devcontainer  `make integration-test` runs this script as its first
-#                 prerequisite, and a developer's devcontainer is a long-lived
-#                 shell that must survive that. CI tears it down separately
-#                 with `make devcontainer-clean` in its if:always() step.
-#   root          the docker-compose.yml dev stack -- `make compose-clean`.
-#   emulators     docker-compose.emulators.yml -- `make emulator-stop`.
-#
-# Each is owned by the target that starts it, and each CI job cleans up
-# exactly the projects it created.
+# Tear down the docker resources this repository's integration suites create.
 
 set -u
 

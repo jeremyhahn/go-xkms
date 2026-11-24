@@ -1,37 +1,6 @@
 #!/bin/sh
 #
-# secure-analyzer-selftest.sh -- prove `make secure-analyzer`'s gate can
-# actually go RED, not merely that it prints "clean" when nothing is wrong.
-# Called by `make secure-analyzer-selftest`.
-#
-# WHY A CLEAN SWEEP IS NOT EVIDENCE ON ITS OWN
-#
-# `make secure-analyzer` is green on a clean tree, and so is a sweep whose
-# analyzer failed to build and silently vetted nothing, whose -vettool never
-# started, or whose allowlist swallowed a real finding under too broad a
-# reason. All four print approximately the same thing. The instrument has to
-# find a KNOWN violation first, or a green result is not a measurement.
-#
-# test/lint/secure/_fixtures holds the known instances: bad/bad.go trips
-# every rule once and clean/clean.go trips none, same shape otherwise. Both are
-# under a directory named with a leading underscore, which the Go toolchain
-# excludes from `./...` package discovery (`go help packages`) -- so this is
-# the ONLY thing in the repository that ever builds, vets or lints them, and
-# `make build`/`make test`/`make vet`/`make lint` never touch this fixture.
-#
-# Exit status is checked separately from message text: a diagnostic printed
-# by a `go vet` that still exits 0 fails to block a merge, which is the whole
-# job of the gate this selftest is proving works.
-#
-# A SECOND case, below the bad/clean pair, proves the allowlist's keying
-# itself (go-xkms#607): that an entry survives an edit that only shifts the
-# exempted finding's line number, and that the stale check still catches an
-# entry whose finding is genuinely gone. It sources
-# scripts/secure-analyzer-key.sh -- the same rule_for/symbol_for/
-# allowed_reason/process_diagnostics/check_stale functions
-# scripts/secure-analyzer.sh's real sweep uses -- against a throwaway
-# module and a throwaway allowlist built at run time, never against
-# scripts/secure-analyzer-allowlist.txt itself.
+# secure-analyzer-selftest.sh: prove the secure-analyzer gate fails on planted violations.
 set -eu
 
 ROOT="${SECURE_ANALYZER_ROOT:-.}"

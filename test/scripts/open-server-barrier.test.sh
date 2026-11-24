@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for build/docker/devcontainer/scripts/open-server-barrier.sh (go-xkms#1055).
-#
-# The compose xkms-server is initialized by `xkmsd init` before it first boots,
-# and its sealed window refuses barrier initialization with HTTP 409, so the
-# opener must only ever unseal, and must fail with the server's own message on
-# any other answer. It verifies the server only against the anchors the server
-# persisted in its state directory, never with curl -k. These tests run the
-# script against a fake `curl` on PATH that models the server and records every
-# request it is asked to make. No Docker, no network.
+# Tests for build/docker/devcontainer/scripts/open-server-barrier.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/build/docker/devcontainer/scripts/open-server-barrier.sh"

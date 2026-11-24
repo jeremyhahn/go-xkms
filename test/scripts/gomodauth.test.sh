@@ -1,16 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for the Makefile's module-fetch credential resolution (GOMODAUTH_*):
-# every compose file's GIT_CONFIG_* environment and the stage-gomodauth secret
-# must carry the CI runner's injected rewrite when one is present, otherwise
-# the FORGE_MODULE_TOKEN/GITEA_HOST rewrite, otherwise nothing. The nightly
-# devcontainer once built its rewrite from FORGE_MODULE_TOKEN alone, which a CI
-# checkout does not have, and failed every private module fetch.
-#
-# No Docker and no network: the compose `${A:-${B}}` interpolation is the same
-# syntax as bash parameter expansion, so each compose expression is evaluated
-# by bash inside a make recipe, with exactly the environment make exports.
-# Every token here is a fake.
+# Tests for the Makefile's module-fetch credential resolution (GOMODAUTH_*).
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 set +e

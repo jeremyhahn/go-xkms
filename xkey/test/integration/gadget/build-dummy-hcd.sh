@@ -1,17 +1,5 @@
 #!/bin/bash
-# build-dummy-hcd.sh — Build and load the dummy_hcd kernel module.
-#
-# Ubuntu kernels ship with CONFIG_USB_DUMMY_HCD=n, so the module isn't
-# available in any package. This script downloads the source from the
-# kernel git tree, compiles it against installed headers, and loads it.
-#
-# Prerequisites:
-#   sudo apt install linux-headers-$(uname -r) build-essential curl
-#
-# Usage:
-#   sudo ./build-dummy-hcd.sh         # build + load
-#   sudo ./build-dummy-hcd.sh build   # build only
-#   sudo ./build-dummy-hcd.sh load    # load previously built module
+# build-dummy-hcd.sh: build and load the dummy_hcd kernel module.
 
 set -euo pipefail
 

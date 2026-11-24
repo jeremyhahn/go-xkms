@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/xkms-server-diagnostics.sh (DS-3769).
-#
-# The helper runs on the host when a readiness step gives up, so it must say
-# why the socket is not served without ever printing the PINs the compose
-# environment carries, and must never turn a diagnosed failure into a second
-# one. These tests run it against a fake `docker` on PATH that logs every call
-# and runs each `compose exec` command locally, with fake `id`, `curl` and
-# `dmesg` (and an `nc` that must never run) standing in for the containers. No Docker, no network.
+# Tests for scripts/xkms-server-diagnostics.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/xkms-server-diagnostics.sh"

@@ -1,24 +1,5 @@
 #!/bin/bash
-# Shell-level tests for test/scripts/clean-test-containers.sh.
-#
-# The script under test decides WHICH Docker resources a CI run may destroy, on
-# Actions hosts whose daemon is SHARED with every other repository (go-xkms#2,
-# the 2026-08-17 shared-runner incident). These tests pin that safety boundary.
-#
-# History worth keeping, because it explains what the assertions are guarding
-# against. Two branches fixed the same incident differently: issue #2 kept the
-# host-global machinery (name-substring sweeps, fixed-port sweeps, prunes) and
-# gated it behind XKMS_CLEAN_SCOPE=project under CI; issue #8 deleted the
-# machinery outright and namespaced every compose project per run instead. The
-# consolidation took issue #8's script, because a capability that is merely
-# switched off can be switched back on by anyone who does not know why it was
-# off — and rewrote these tests, which were issue #2's, to pin issue #8's
-# boundary. The point of the file is unchanged: prove the script cannot reach
-# outside this run.
-#
-# No Docker daemon is involved: a fake `docker` on PATH records every
-# invocation and answers queries. DOCKER_HOST also points at a closed port, so
-# a PATH mistake fails loudly instead of reaching a real daemon.
+# Tests for test/scripts/clean-test-containers.sh.
 
 set -uo pipefail
 

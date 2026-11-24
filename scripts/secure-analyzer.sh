@@ -1,54 +1,6 @@
 #!/bin/sh
 #
-# secure-analyzer.sh -- build go-qrdb's pkg/secure/analyzer singlechecker and
-# sweep it, as `go vet -vettool=...`, over every Go module in this tree under
-# every tag combination the Makefile already declares for testing that
-# module. Called by `make secure-analyzer`; `make secure-analyzer-selftest`
-# uses --build and --build-symtool directly (see secure-analyzer-selftest.sh).
-#
-#   secure-analyzer.sh --build <abs-out>           build the analyzer at <abs-out>
-#   secure-analyzer.sh --build-symtool <abs-out>   build the symbol helper at <abs-out>
-#   secure-analyzer.sh --sweep                     build both + sweep + report
-#
-# WHY THIS EXISTS (go-xkms#549)
-#
-# go-qrdb's pkg/secure/analyzer is a complete, unit-tested go/analysis pass
-# enforcing three rules on sensitive-material handling (raw memguard imports,
-# ssh.ParsePrivateKey, string/[]byte holder fields) -- but an analyzer
-# enforces nothing where its make target does not run, and nothing in
-# go-qrdb reaches into this repository. Before this script go-xkms's
-# compliance with those three rules was unmeasured, not known-good.
-#
-# TWO TRAPS THIS SCRIPT EXISTS TO AVOID, both measured while sizing #549:
-#
-#   - `go vet ./...` DOES NOT CROSS A MODULE BOUNDARY. This repository has
-#     four go.mod files (., sdk/go, xkey, web/desktop); a single invocation
-#     from the root reaches the root module only.
-#   - A single build-tag combination answers about the files THAT
-#     combination compiles and says nothing about the others -- the same
-#     blindness LINT_TAGS_xkey exists to remove from `make vet`/`make lint`.
-#     The root module is therefore swept both untagged (matching `make vet`)
-#     and under TEST_TAGS (matching what `make test` actually compiles).
-#
-# THE ALLOWLIST is not a baseline. It exempts a bounded, named set of
-# findings the Makefile passes as SECURE_ANALYZER_ALLOWLIST, each carrying a
-# reason in the file itself (scripts/secure-analyzer-allowlist.txt). Every
-# other finding fails the sweep. An allowlist entry that stops matching
-# ANYTHING across the whole sweep is stale and fails the sweep too (see
-# check_stale) -- silence is not evidence the exemption is still needed.
-#
-# KEYING (go-xkms#607): an entry keys on path + rule + the finding's own
-# symbol text, NOT path:line. A path:line key breaks on any edit that shifts
-# the line -- happened twice on 2026-09-21 (fido2.go 208->207, mock_extended
-# after go-xkms#154) -- with no signal beyond a red Lint on main days later.
-# The symbol is: rule 1, the forbidden import path (constant, and already in
-# the diagnostic message -- no parsing needed beyond the message itself);
-# rule 2, the call expression's own source text; rule 3, "<Struct>.<Field>".
-# Rule 2 and 3's symbols are not in the diagnostic message (rule 2's message
-# is the same fixed string for every call site; rule 3's never names the
-# struct), so both are read back out of the source at the reported
-# file:line:col by scripts/secure-analyzer-symbol, a small go/ast-based
-# helper built alongside the analyzer itself (see symbol_for below).
+# secure-analyzer.sh: run go-qrdb's pkg/secure/analyzer over every Go module in this tree under each declared tag set.
 set -eu
 
 # ROOT is canonicalized to an absolute path once, here, rather than left as

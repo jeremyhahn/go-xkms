@@ -1,28 +1,6 @@
 #!/usr/bin/env bash
 #
-# changelog-assemble.sh -- fold .changelog/unreleased/*.md into CHANGELOG.md
-# under a new version heading, and remove the assembled files.
-#
-# Usage: changelog-assemble.sh [--root DIR] <version-without-v> [<date>]
-#
-# --root names the tree to assemble in, holding CHANGELOG.md and
-# .changelog/unreleased. It defaults to the repository this script lives in.
-# The option exists because assembly is destructive -- it deletes the entry
-# files it splices -- so a caller rehearsing a release (release-alpha.sh
-# --dry-run) must be able to point it at a scratch copy instead (#415, #416).
-#
-# Entries are files named <section>-<slug>.md where <section> selects the
-# `###` heading (security|added|changed|deprecated|removed|fixed). The file
-# body is spliced verbatim. Sections appear in the fixed order below; within a
-# section, entries sort by file name, so ordering is deterministic.
-#
-# With no entry files the script exits 0 without touching CHANGELOG.md: a
-# release cut from a tree whose entries were already assembled (or that
-# genuinely has none) is not an error here -- the release gate's heading
-# check remains the arbiter.
-#
-# Sourcing with CHANGELOG_ASSEMBLE_LIB=1 defines the functions and returns,
-# for the unit tests in test/scripts/changelog-assemble.test.sh.
+# changelog-assemble.sh: fold .changelog/unreleased/*.md into CHANGELOG.md under a new version heading.
 set -euo pipefail
 
 SECTION_ORDER=(security added changed deprecated removed fixed)

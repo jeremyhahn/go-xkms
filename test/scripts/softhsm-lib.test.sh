@@ -1,13 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/softhsm-lib.sh (go-xkms#1420, ruling 991 (3)).
-#
-# The helper prints the libsofthsm2.so the PKCS#11 suites load: the system
-# module when the installed SoftHSM is 2.7.0 or newer (the minimum that
-# reports PKCS#11 tamper, #1418), otherwise the pinned release built by
-# scripts/build-softhsm.sh into a user cache, built once and reused. Nothing
-# here downloads or compiles SoftHSM: softhsm2-util and the build script are
-# stubs that only record they were called.
+# Tests for scripts/softhsm-lib.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/softhsm-lib.sh"

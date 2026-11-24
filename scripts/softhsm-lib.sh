@@ -1,29 +1,6 @@
 #!/bin/sh
 #
-# softhsm-lib.sh -- print the libsofthsm2.so the PKCS#11 suites should load
-# (go-xkms#1420, ruling 991 (3)).
-#
-# Usage:
-#	SOFTHSM2_LIB=$(scripts/softhsm-lib.sh)
-#
-# SoftHSM 2.7.0 is the minimum that reports PKCS#11 tamper (#1418, see
-# scripts/build-softhsm.sh). When the softhsm2-util on PATH reports 2.7.0 or
-# newer, the module of that utility's own installation (symlinks resolved) is
-# printed. Otherwise -- a distribution 2.6.1, no SoftHSM at all, or a newer
-# utility whose installation holds no module -- the pinned
-# release is built once, without root, into a user cache and that module is
-# printed; a later call reuses the cache. Build output goes to stderr, so
-# stdout is only the path.
-#
-# Environment:
-#	SOFTHSM_CACHE         cache directory; a relative path is taken from the
-#	                      working directory, and <cache>.lock serialises builds
-#	                      (default $HOME/.cache/go-xkms/softhsm-<pinned version>)
-#	SOFTHSM_BUILD_SCRIPT  build script (default scripts/build-softhsm.sh)
-#
-# The cache build keeps build-softhsm.sh's /etc/softhsm configuration path;
-# internal/softhsmtest points SOFTHSM2_CONF at a per-test file, so it is
-# never read.
+# softhsm-lib.sh: print the libsofthsm2.so the PKCS#11 suites should load.
 set -eu
 
 MIN_VERSION=2.7.0

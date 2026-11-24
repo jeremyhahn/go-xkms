@@ -1,27 +1,5 @@
 #!/bin/bash
-# Report per-package statement coverage against a threshold (issue #703).
-#
-# Reads one or more raw `go test -coverprofile` files directly (NOT the
-# text `go tool cover -func` output) and sums, per package, the statement
-# counts and covered-statement counts recorded on each profile line:
-#
-#   <file>:<startLine>.<startCol>,<endLine>.<endCol> <numStmt> <count>
-#
-# A package's coverage is covered-statements / total-statements -- the same
-# statement-weighted definition `go tool cover -func`'s own "total:" line
-# uses for the whole profile, applied per package instead of averaging the
-# per-FUNCTION percentages `go tool cover -func` prints (a function with 3
-# statements and one with 300 must not count equally, and the previous
-# version of this script did exactly that).
-#
-# Multiple profile files may be given (e.g. the main unit lane plus the
-# tpm2-simulator and pkcs11-tagged lanes, issue #703): a package whose
-# build-tag-gated files only compile under one lane is measured wherever
-# its tests actually ran, and passing every lane's profile here merges them
-# into one per-package total rather than requiring the caller to hand-merge
-# "mode:" headers first.
-#
-# Usage: check-coverage.sh THRESHOLD PROFILE [PROFILE...]
+# Report per-package statement coverage against a threshold.
 
 set -uo pipefail
 

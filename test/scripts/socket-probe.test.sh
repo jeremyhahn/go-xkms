@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/socket-probe.sh (DS-3769).
-#
-# The probe must say "connected" exactly when connect(2) on the socket
-# succeeds, whatever the server then makes of curl's request, and must carry
-# connect(2)'s error when it does not. These tests run the real curl against
-# Unix sockets in a temporary directory. No Docker, no network.
+# Tests for scripts/socket-probe.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/socket-probe.sh"

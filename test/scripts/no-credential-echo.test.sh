@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
-# Tests that no make target or gate prints a credential or a matched source
-# line (handbook ci-template v1.21.1, ci-standard.md §5): `make
-# stage-gomodauth` stays silent about the values it writes, and the lint and
-# check gates report path and line only.
-#
-# Every planted value is obviously fake.
-#
-# Usage: bash test/scripts/no-credential-echo.test.sh
+# Tests that no make target or gate prints a credential or a matched source line.
 
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)

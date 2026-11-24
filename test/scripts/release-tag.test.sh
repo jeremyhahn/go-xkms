@@ -1,22 +1,6 @@
 #!/usr/bin/env bash
 #
-# End-to-end tests for scripts/release-tag.sh -- step two of the two-step
-# release flow (go-xkms#419, go-xkms#211). Every fixture is a throwaway git
-# repository under mktemp -d with its own bare "dev" remote: release-tag.sh's
-# whole job is fetching that remote and refusing unless what it finds there
-# is exactly right, so a fixture with no remote could not exercise it at all.
-#
-# The pure functions release-tag.sh reuses (is_alpha_semver, escape_dots,
-# require_pins_at, changelog_has_heading, TAG_NAMESPACES, ...) are already
-# covered by test/scripts/release-alpha.test.sh, which sources
-# scripts/release-alpha.sh the same way release-tag.sh does. This file only
-# covers what release-tag.sh adds: the fetch, the HEAD/VERSION/reachability
-# assertions, and the tag creation, signing and atomic push.
-#
-# Tags are real annotated, SSH-signed objects here -- signed with this
-# repository's own agent key (the checkout's user.signingkey), never the
-# owner's hardware key, and only ever inside a throwaway fixture removed at
-# the end of the run.
+# Tests for scripts/release-tag.sh.
 set -uo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)

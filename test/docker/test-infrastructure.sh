@@ -1,6 +1,5 @@
 #!/bin/bash
-# Test script to validate Docker infrastructure
-# Usage: ./docker/test-infrastructure.sh
+# Validates the Docker test infrastructure.
 
 set -e
 

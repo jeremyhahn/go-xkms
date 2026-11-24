@@ -1,35 +1,5 @@
 #!/usr/bin/env bash
-# Fail when a direct dependency of a shipped module is behind a release that
-# has been out for 7 days or more.
-#
-#   usage: scripts/deps-check.sh
-#
-# The latest-version stage of the company CI standard (handbook
-# ci-standard.md, `make deps-check`). It walks the root module, sdk/go and
-# xkey, asks the module proxy (and, for github.com/jeremyhahn/*, the forge
-# through GOPRIVATE) for each direct requirement's newest release, and lists
-# every one that is behind. `make deps-latest` updates the in-house modules;
-# this check covers every direct requirement.
-#
-# A requirement behind its newest release fails the check, except:
-#   - the newest release was published less than 7 days ago (.Update.Time
-#     from `go list -m -u`): it is reported with the release's age and does
-#     not fail;
-#   - its require line in that module's go.mod carries a `// held: <reason>`
-#     comment (handbook devops.md §9: a require held below latest carries a
-#     go.mod comment naming the reason): it is reported with the reason and
-#     does not fail.
-#
-# A requirement with a replace directive is skipped: a local replace is a
-# sibling module of this repository, and a version replace is a deliberate
-# pin recorded in that go.mod.
-#
-# `go list -m -u` also reads the checksum database, whose transient HTTP/2
-# errors say nothing about the dependencies, so a failing `go list` is tried
-# three times, a few seconds apart, before the module fails.
-#
-# Needs a Go toolchain and network; in CI it runs in the toolchain image with
-# IN_IMAGE_NETWORK=bridge (scripts/in-toolchain-image.sh).
+# Fail when a direct dependency of a shipped module is behind a release out for 7 days or more.
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)

@@ -1,34 +1,5 @@
 #!/bin/bash
-# start-test-xkmsd.sh — make sure an xkmsd serves the Unix socket the PKCS#11
-# integration suites dial, starting one in this container only when no server
-# is there to serve it.
-#
-# The compose `xkms-server` service serves the socket through the xkms-socket
-# volume it shares with the devcontainer. While that service runs, this script
-# only waits for its socket: it never unlinks the socket or starts a second
-# daemon on the path, because the suites must talk to the server the Makefile's
-# devcontainer-server-wait step unsealed. Unlinking a live server's socket
-# leaves that server listening on a deleted inode, so every later dial fails.
-#
-# When the service is not running (its image is not built, or
-# XKMS_COMPOSE_SERVER=0), the script builds xkmsd and starts it the way an
-# operator does: `xkmsd init` with the SO PIN in the environment, then the
-# daemon, then an unseal through the sealed window by open-server-barrier.sh.
-# No secret is written into the config; the loader refuses one.
-#
-# It is idempotent. A socket that is already accepting connections is left
-# alone, so running a second suite does not disturb the first.
-#
-# Usage:
-#   start-test-xkmsd.sh [SOCKET_PATH]
-# Environment:
-#   XKMS_TEST_DATA_DIR        state directory              (default /tmp/xkmsd-test)
-#   XKMS_TEST_LOG             server log file              (default /tmp/xkmsd-test.log)
-#   XKMS_TEST_REST_PORT       loopback sealed-window port  (default 18443)
-#   XKMS_TEST_SO_PIN          SO PIN init makes the barrier passphrase
-#   XKMS_TEST_BIN             where xkmsd is built         (default build/bin/xkmsd)
-#   XKMS_COMPOSE_SERVER_HOST  compose server service name  (default xkms-server)
-#   XKMS_SOCKET_WAIT          seconds to wait for a socket (default 30)
+# start-test-xkmsd.sh: start an xkmsd on the PKCS#11 suites' Unix socket when none is serving it.
 
 set -euo pipefail
 
