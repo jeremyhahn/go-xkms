@@ -331,6 +331,58 @@ func TestResolveBackendPIN_TPM2MinimumLeavesNoBarrierPINCopy(t *testing.T) {
 	require.Empty(t, *opened2)
 }
 
+// distinctPINsServer is a tpm2 server with distinct key backend and RNG
+// PKCS#11 PINs, both credential:// references under barrier storage.
+func distinctPINsServer(t *testing.T, keyPIN, rngPIN []byte) (*Server, *fakeBackendPINCredentials, *[][]byte) {
+	t.Helper()
+	s, opened, _ := backendPINTestServer(t, "tpm2", nil, true, true)
+	creds := newFakeBackendPINCredentials(map[string][]byte{"pkcs11-pin": keyPIN, "rng-pin": rngPIN})
+	s.backendPINCredentials = creds
+	s.config.Backends.PKCS11.Pin = creds.resolve(t, "pkcs11-pin")
+	s.config.RNG.Mode = "pkcs11"
+	s.config.RNG.PKCS11 = &config.RNGPKCS11Config{PINRequired: true, PIN: creds.resolve(t, "rng-pin")}
+	return s, creds, opened
+}
+
+// Distinct backends.pkcs11.pin and rng.pkcs11.pin both enter the PIN
+// lifecycle: each is sealed to the TPM in its own credential and held,
+// and the strategy is not reported while either is not in TPM custody.
+func TestResolveBackendPIN_DistinctBackendAndRNGPINsBothEnterLifecycle(t *testing.T) {
+	keyPIN, rngPIN := []byte("backend-pin-1"), []byte("rng-pin-2")
+	s, creds, opened := distinctPINsServer(t, keyPIN, rngPIN)
+	backendPINSimulatorTPM(t, s)
+
+	err := s.resolveBackendPIN()
+	skipWithoutTPMSimulator(t, err)
+	require.NoError(t, err)
+	require.NotNil(t, s.rngBackendPIN, "the RNG PIN has its own holder")
+	require.NoError(t, s.startPKCS11AfterUnseal())
+	require.Len(t, *opened, 1)
+	require.True(t, bytes.Equal(keyPIN, (*opened)[0]), "key backend opened with its own PIN")
+	got, err := s.rngBackendPIN.PIN()
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(rngPIN, got), "RNG PIN held")
+	for name, pin := range map[string][]byte{"pkcs11-pin": keyPIN, "rng-pin": rngPIN} {
+		stored := creds.value(name)
+		require.NotEmpty(t, stored, name)
+		require.False(t, bytes.Contains(stored, pin), "%s holds only its TPM-sealed blob", name)
+	}
+	require.Equal(t, "tpm2", s.BackendPINStrategy())
+
+	// The RNG PIN cannot move into TPM custody: start-up fails closed and
+	// tpm2 is not reported.
+	s2, creds2, _ := distinctPINsServer(t, keyPIN, rngPIN)
+	s2.logger = s.logger
+	s2.platformStoreTPM = s.platformStoreTPM // the simulator s opened
+	creds2.failStore["rng-pin"] = true
+	require.NoError(t, s2.resolveBackendPIN())
+	err = s2.startPKCS11AfterUnseal()
+	var custody *BackendPINTPMCustodyError
+	require.ErrorAs(t, err, &custody)
+	require.Equal(t, "rng.pkcs11.pin", custody.Field)
+	require.Empty(t, s2.BackendPINStrategy(), "status not satisfied while the RNG PIN is not in TPM custody")
+}
+
 // TestResolveBackendPIN_AutoWithTPMWithoutTPMSealerFailsClosed proves a TPM
 // the PIN cannot be sealed to refuses start-up with a typed error, never
 // falling back to sealed, and persists nothing.
