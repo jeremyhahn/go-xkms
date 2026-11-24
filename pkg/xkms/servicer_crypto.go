@@ -1457,7 +1457,11 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 		}
 	}
 
-	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "DeriveKeyECDH", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.resolveTenantBackend(req.Backend, tenant)
 	if err != nil {
 		return nil, roleLookupError("backend", req.Backend, err)
 	}
@@ -1542,7 +1546,11 @@ func (s *XKMSService) AttestKey(ctx context.Context, req *transport.AttestKeyReq
 		return nil, requiredField("key_id")
 	}
 
-	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "AttestKey", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.resolveTenantBackend(req.Backend, tenant)
 	if err != nil {
 		return nil, roleLookupError("backend", req.Backend, err)
 	}

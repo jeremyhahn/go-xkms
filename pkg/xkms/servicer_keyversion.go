@@ -158,7 +158,11 @@ func (s *XKMSService) setAllKeyVersions(ctx context.Context, req *transport.AllK
 // store is required, so a change the caller cannot persist is never
 // reported as made.
 func (s *XKMSService) updateVersions(ctx context.Context, backendName, tenantID, keyID string, change func(*versionedKey) (bool, error)) (*versionedKey, error) {
-	b, resolvedName, err := s.resolveTenantBackendWithName(backendName, tenantID)
+	tenant, err := ownTenant(ctx, "UpdateKeyVersions", tenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, resolvedName, err := s.resolveTenantBackendWithName(backendName, tenant)
 	if err != nil {
 		return nil, err
 	}
