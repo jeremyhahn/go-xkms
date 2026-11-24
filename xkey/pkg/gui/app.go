@@ -149,8 +149,8 @@ type App struct {
 	caService                *services.CAService
 	// localCAClient is xkey's local embedded CA, served by caService while
 	// no server is connected (see initLocalCA).
-	localCAClient xkmssdk.Client
-	securityFactorService    *services.SecurityFactorService
+	localCAClient         xkmssdk.Client
+	securityFactorService *services.SecurityFactorService
 
 	// backendRegistry tracks all registered cryptographic backends
 	// (local and remote) and their operational state.
