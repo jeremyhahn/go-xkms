@@ -1,20 +1,5 @@
 #!/bin/sh
-# make-gates-test.sh — tests that the Makefile's actionlint and trivy gates
-# fail closed (go-xkms#1434).
-#
-# WHY THIS EXISTS
-#
-# `make security` used to pass with trivy absent: the trivy targets printed a
-# skip and exited 0. `make lint` ran no actionlint at all. A gate that can pass
-# vacuously is worse than no gate, and the vacuous pass is invisible on a
-# machine that happens to have the tool. So these tests take the tool away.
-#
-# The tools are fakes on a REPLACED PATH (prepending would leave a real trivy or
-# actionlint reachable, and the "absent" cases would find it). GOPATH and the
-# module cache point into the scratch directory and GOPROXY=off, so the
-# install-the-pin path is exercised and fails without touching the network or
-# the developer's GOPATH. No network, no host mutation; about a minute, almost
-# all of it make parsing the Makefile once per case.
+# make-gates-test.sh: tests that the Makefile's actionlint and trivy gates fail closed.
 
 set -eu
 

@@ -1,40 +1,5 @@
 #!/bin/sh
-# require-tool-test.sh — the test suite for require-tool.sh's version
-# comparison.
-#
-# WHY THIS EXISTS
-#
-# The natural way to write that comparison is `case "$report" in *"$bare"*)` —
-# a SUBSTRING test, which FAILS OPEN. A `v1.8.0` pin accepts a tool reporting
-# `v11.8.0`; a `v2.29.0` pin accepts `v12.29.0`. CI would run an unintended
-# scanner version and print `ok`, defeating the exact reproducibility assertion
-# the check exists to make. That is a check looser than the property it claims
-# — the same defect class this whole change is about, appearing inside the fix
-# for it. It is not hypothetical: it shipped that way in the repo this pattern
-# comes from and had to be fixed there.
-#
-# So the comparison gets its own tests, and they include the near-misses. A
-# test suite for a version check that only feeds it correct versions cannot
-# fail for the reason the check exists.
-#
-# The fakes here print the REAL output formats, captured from the actual
-# binaries rather than written from memory:
-#
-#	golangci-lint has version 2.14.0 built with go1.27.1 from (unknown, ...
-#	Version: v2.29.0
-#	Go: go1.27.1 / Scanner: govulncheck@v1.8.0
-#
-# govulncheck's is the one that matters most: its output's FIRST version-shaped
-# token is the GO TOOLCHAIN's, so a generic "find something version-shaped"
-# extractor would pin the wrong number. There is a case below that would catch
-# exactly that.
-#
-# MUTATION: run with --mutate to loosen the comparison in a COPY of
-# require-tool.sh back to the substring test and re-run everything. The
-# near-miss cases must go red. If they do not, these tests are not testing what
-# they claim and the suite says so instead of reporting a pass.
-#
-# No network, no host mutation, under a second.
+# require-tool-test.sh: tests for require-tool.sh's version comparison.
 
 set -eu
 

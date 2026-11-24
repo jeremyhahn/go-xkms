@@ -1,44 +1,15 @@
-# Qwen review: the #18 workflow's qwen job (dept-infra#164, option A).
-#
-# The interim codex sweep hands a PR it cannot review (codex unavailable,
-# #174) to this job by labelling it `agent:opencode` + `task:ready`. The job
-# runs on the `qwen` runner (role: ci-runner), whose label maps to the
-# qwen-review image pinned by digest: opencode at go-quicbaas's toolchain.mk
-# pin, provider Ollama on the review host (the image's
-# OLLAMA_URL), model review-q8 with thinking off.
-#
-# ADVISORY ONLY (Codex review 6149 on #1619; DS-2946 keeps this file on
-# go-xkms). code-review.yml v5.5 runs the same opencode review, isolated and
-# advisory, on the same labels; this job kept the old path, where the model
-# held the `opencode` token, ran as root and posted its own APPROVED or
-# REQUEST_CHANGES, and automerge.yml counts an opencode approval, so it could
-# release a PR before Codex finished. Now, as in code-review.yml v5.5:
-# - opencode runs as uid 1000 (setpriv, scrubbed environment, no token) with
-#   read, glob, grep and list only, OPENCODE_DISABLE_PROJECT_CONFIG=1 and
-#   --pure, over a root-owned checkout and a root-made diff;
-# - the model posts nothing: it ends with the review between two nonce marks
-#   and root posts that body as one COMMENT, so this job never files a
-#   decisive review. A finding the model calls blocking is text in the body.
-#   Codex is the reviewer of record.
-#
-# | Input | Where |
-# |---|---|
-# | Gitea token of `opencode` | `/run/reviewer/token`, a root-only host file mounted read-only by the runner (never a secret, never in the repo) |
-# | Model and provider | `/opt/review/opencode.json` in the image |
-# | Prompt | `/opt/review/review-agent.md` in the image (dept-software `prompts/review-agent.md`) |
+# Qwen review: an advisory review by opencode.
 name: Qwen Review
 
 on:
   pull_request_target:
     types: [opened, reopened, synchronize, labeled]
 
-# Least privilege: the job token only checks the head out. The review is
-# posted with the opencode token from TOKEN_FILE, never with this one.
+# Least privilege: the job token only checks the head out.
 permissions:
   contents: read
 
-# One review per PR at a time; the guard de-duplicates what cancellation
-# cannot (codex-review.yml's reasoning, unchanged).
+# One review per PR at a time.
 concurrency:
   group: qwen-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -61,11 +32,7 @@ env:
 jobs:
   review:
     name: Code Review (qwen)
-    # A JOB-LEVEL `if:`, unlike codex-review.yml, and safe here: this check is
-    # not a required context (repo-policy.sh gate_context_for requires only the
-    # CI gate), so a `skipped` conclusion gates nothing. Without it every PR
-    # event would queue on the qwen runner's single slot. The guard re-checks the
-    # LIVE labels; this reads the event's.
+    # A job-level `if:` is safe because this check is not required.
     if: contains(github.event.pull_request.labels.*.name, 'agent:opencode')
     runs-on: qwen
     timeout-minutes: 55
@@ -130,10 +97,9 @@ jobs:
           # shellcheck source=/dev/null
           . "$WORK/lib.sh"
 
-          # FAIL CLOSED on the credential: no token, no review.
+          # No token, no review.
           [ -r "$TOKEN_FILE" ] || die "the reviewer token $TOKEN_FILE is not mounted on this runner (dept-infra#164)"
-          # read fails at end of file; a token without a trailing newline is
-          # still read, so only a failed read that got nothing dies.
+          # A token without a trailing newline is still read.
           tok=""
           if ! IFS= read -r tok < "$TOKEN_FILE" && [ -z "$tok" ]; then
             die "the reviewer token $TOKEN_FILE cannot be read (dept-infra#164)"
@@ -144,8 +110,7 @@ jobs:
           printf 'Authorization: token %s\n' "$tok" > "$HDR"
           unset tok
 
-          # automerge accepts approvals from several logins: review as
-          # `opencode` or not at all.
+          # Review as `opencode` or not at all.
           me=$(api GET /user | jq -r '.login // empty')
           [ "$me" = "$REVIEWER" ] ||
             die "the token at $TOKEN_FILE belongs to '${me:-unknown}', not '$REVIEWER' (dept-infra#164)"
@@ -172,8 +137,7 @@ jobs:
           fi
           echo "requested=true" >> "$GITHUB_OUTPUT"
 
-          # Advisory only: an advisory review that stands on this head is not
-          # repeated.
+          # An advisory review already on this head is not repeated.
           if jq -e 'length > 0' <<<"$(my_reviews)" >/dev/null; then
             echo "$REVIEWER already commented on $EVENT_SHA."; echo "skip=reviewed" >> "$GITHUB_OUTPUT"; exit 0
           fi
@@ -193,8 +157,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # ROOT, before uid 1000 runs anything: the job config, the change as a
-      # diff, the prompt, and uid 1000's directories.
+      # As root, before uid 1000 runs: the job config, the diff, the prompt and uid 1000's directories.
       - name: Prepare the reviewer's config, the change and the prompt
         if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
         env:
@@ -205,8 +168,7 @@ jobs:
           . "$WORK/lib.sh"
           SRC=$PWD
           rm -rf "$OC_HOME" "$OC_CONF" "$OC_XDG" "$OC_DATA"
-          # opencode makes $XDG_CONFIG_HOME/opencode at start and fails if it
-          # cannot: root makes it, empty.
+          # opencode needs $XDG_CONFIG_HOME/opencode to exist.
           install -d -m 0755 -o 0 -g 0 "$OC_CONF" "$OC_XDG" "$OC_XDG/opencode" "$OC_DATA"
           install -d -m 0700 -o 1000 -g 1000 "$OC_HOME"
           install -d -m 0755 -o 0 -g 0 "$OC_HOME/.opencode"
@@ -223,8 +185,7 @@ jobs:
             die "cannot rewrite the opencode config $OPENCODE_CONFIG"
           install -m 0644 -o 0 -g 0 "$WORK/opencode.json" "$OC_CONF/opencode.json"
 
-          # The change, made by root's git with no external diff or textconv
-          # driver: nothing the head carries runs.
+          # The diff is made by root's git with no external diff or textconv driver.
           [ "$(git -C "$SRC" rev-parse HEAD)" = "$EVENT_SHA" ] || die "the checkout is not $EVENT_SHA"
           pr=$(api GET "/pulls/$PR_NUM")
           base_ref=$(jq -r '.base.ref // empty' <<<"$pr")
@@ -270,10 +231,7 @@ jobs:
           } > "$OC_DATA/prompt.md"
           chmod 0644 "$OC_DATA"/*
 
-      # UNTRUSTED MODEL, UNTRUSTED HEAD. opencode runs as uid 1000 and writes
-      # only root-owned files under ::stop-commands::. opencode exits 0 when the
-      # model stops talking, reviewed or not, so a run that ends without a
-      # marked body is resumed ONCE with `--continue` (same session).
+      # The model and the head are untrusted: opencode runs as uid 1000 and its output goes to root-owned files.
       - name: Review the head with opencode and review-q8
         if: steps.guard.outputs.requested == 'true' && steps.guard.outputs.skip == ''
         run: |
@@ -305,9 +263,7 @@ jobs:
           ( cd "$SRC" && as_reviewer test -r "$OC_DATA/prompt.md" ) || die "uid 1000 cannot read the prompt"
           reap
 
-          # One bounded run as uid 1000: stdout (the model's text) and stderr
-          # (the logs) to root-owned files only, workflow commands stopped
-          # until every uid 1000 process is gone. 124 is the timeout.
+          # One bounded run as uid 1000; 124 is the timeout.
           run_reviewer() { # n seconds message [--continue]
             local n=$1 secs=$2 msg=$3 rc=0 stop
             stop=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
@@ -356,9 +312,7 @@ jobs:
           touch "$WORK/posted"
           echo "Posted $REVIEWER's advisory COMMENT on $EVENT_SHA."
 
-      # THE JOB'S STATUS IS NOT THE REVIEW (go-luks2 #137: green over a PENDING
-      # draft). Green only when a submitted opencode COMMENT with a body stands
-      # on this head.
+      # The job status is not the review.
       - name: Confirm an advisory opencode review stands on this head
         if: >-
           steps.guard.outputs.requested == 'true' &&

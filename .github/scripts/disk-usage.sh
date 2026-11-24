@@ -1,14 +1,5 @@
 #!/bin/sh
-# disk-usage.sh LABEL -- print the size of the three caches the Lint job
-# fills inside its container (go-xkms#1553): the module cache (GOMODCACHE),
-# the build cache (GOCACHE) and golangci-lint's analysis cache, plus the free
-# space left on the filesystem holding them. The Lint job calls it after
-# `make vet` and, through `make lint LINT_CI=1`, after every golangci-lint
-# pass, so each run's log carries the figures the job's disk use is sized by.
-#
-# Measurement only: a cache that does not exist yet prints "absent", and
-# nothing du or go reports can fail the step being measured. The one failure
-# is a missing label (exit 2).
+# disk-usage.sh LABEL: print the size of the Lint job's Go module, build and golangci-lint caches and the free space beside them.
 
 set -eu
 

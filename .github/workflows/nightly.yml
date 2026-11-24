@@ -1,25 +1,8 @@
-# Nightly scans (ci-template v1.9).
-#
-# Trivy lives here rather than in ci.yml because it was RED ON EVERY PUSH and a
-# known-red job that burns runner-minutes on every push verifies nothing — it
-# only teaches people to ignore a red. The scan itself is not weakened: it runs
-# nightly and on demand, at the same severity, against the same tree.
-#
-# The specific failure is tracked as go-xkms#43 and company task #39: the
-# Gitea path installs
-# the CLI from raw.githubusercontent.com, whose version lookup is an
-# unauthenticated GitHub API call and rate-limits. That is an install defect,
-# not a finding, which is precisely why gating pushes on it bought nothing.
-#
-# The image-scan gate in ci.yml's docker job STAYS on every push (devops.md §8).
-# That one gates a publish, and a publish is where an unscanned image actually
-# costs something.
+# Nightly scans.
 
 name: Nightly
 
-# Manual only (#1483): no cron trigger. A timer-driven run on the shared
-# runners competes with every PR and train for the same slots; whoever needs
-# the nightly suite dispatches it.
+# Manual only: no cron trigger.
 on:
   workflow_dispatch:
 
@@ -27,21 +10,7 @@ permissions:
   contents: read
   security-events: write
 
-# The integration-test job below interpolates env.GO_VERSION into
-# actions/setup-go. This block did not exist, so that expression evaluated to
-# the empty string and the step failed on every run since the job moved here
-# (2026-08-21):
-#
-#   [warning]go-version input was not specified. The action will try to use
-#            pre-installed version.
-#   /bin/sh: 1: version: not found
-#   ::error::Command failed:  version
-#
-# The job died at step 3 and never reached the harness, so the red everyone
-# was reading as go-xkms#19's devcontainer misdetection was, since that move,
-# a missing variable. Kept identical to ci.yml's pin rather than defaulted to
-# `stable`: an unpinned toolchain is what moved a green head to red once
-# already, which is why ci.yml carries that pin and this comment.
+# The integration-test job below reads env.GO_VERSION.
 env:
   GO_VERSION: '1.27.4'
 
@@ -57,11 +26,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      # Two paths for one gate. trivy-action's setup step cannot authenticate
-      # to github.com from a Gitea runner and upload-sarif has no
-      # GHES-compatible endpoint there, so the action path is guarded on the
-      # server URL and Gitea gates with the trivy CLI below. Both run the same
-      # fs scan at the same severity; only the SARIF upload is GitHub-only.
+      # SARIF upload on github.com; other forges gate with the trivy CLI below.
       - name: Trivy scan (SARIF for code scanning)
         if: github.server_url == 'https://github.com'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
@@ -95,23 +60,7 @@ jobs:
           format: table
           skip-dirs: test,examples,data,bin,build
 
-      # PINNED, and deliberately not via contrib/install.sh. That script
-      # resolves the version to install through an UNAUTHENTICATED GitHub API
-      # call, which rate-limits from our runners -- so the job failed before
-      # scanning anything and its red said nothing about this repository
-      # (#43, portfolio task #39). A red that cannot carry a finding trains
-      # everyone to read red as noise, which is how a real finding gets missed.
-      #
-      # A release asset URL is a plain file download: no API call, no rate
-      # limit, and the version is visible here rather than resolved at run
-      # time. The checksum is verified because an unverified binary fetched
-      # over the network is then handed the entire source tree to scan.
-      #
-      # Bump TRIVY_VERSION deliberately; `curl -sI
-      # https://github.com/aquasecurity/trivy/releases/latest` reveals the
-      # current tag without an API call. This version is also pinned at the
-      # trivy-action `version:` inputs above and the aquasec/trivy image tags
-      # in ci.yml and release.yml (#325) -- bump them all together.
+      # Pinned trivy CLI install.
       - name: Install Trivy CLI (Gitea)
         if: github.server_url != 'https://github.com'
         env:
@@ -135,44 +84,13 @@ jobs:
           trivy fs --scanners vuln,secret --severity CRITICAL,HIGH --exit-code 1 --format table \
             --skip-dirs test --skip-dirs examples --skip-dirs data --skip-dirs bin --skip-dirs build .
 
-  # MOVED OFF THE PUSH PATH 2026-08-21 (go-xkms #19, #61).
-  #
-  # This job was already ADVISORY in ci-gate -- ruled 2026-08-18 because it had
-  # passed once in 40 executions and never on main. What changed is that its red
-  # is now fully explained and cannot clear from this repository: xkmsd dies
-  # during boot because a standalone embedded qrdb node exposes no
-  # TransactionServicer, so the CA's first PutIfAbsent fails (#61, blocked on
-  # go-qrdb#62). Until that ruling lands the job cannot pass no matter what is
-  # pushed here.
-  #
-  # That is exactly the ci-template v1.9 criterion that moved fips and trivy
-  # here: a known-red job burning runner-minutes on every push verifies
-  # nothing, and worse, it trains everyone to read red as noise. At 17m25s
-  # (measured, run 4384) across every push and every PR, this was the single
-  # largest non-gating cost in ci.yml.
-  #
-  # NOT a deletion, and #19's instruction against one still stands. The suite is
-  # unchanged and dispatchable on demand (#1483 removed the timer) -- so the moment #61
-  # unblocks it can be exercised immediately with workflow_dispatch, and it
-  # returns to ci.yml (with its ci-gate entry restored to `check`, not
-  # `advisory`) once it has passed there.
-  # Job 2: Integration Tests
+  # The full integration suite, off the push path.
   integration-test:
     name: Integration Tests
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
 
     steps:
-      # DELIBERATE divergence from ci-template v1: the template's
-      # `sudo docker system prune -af --volumes` is gone and must not come
-      # back. Our Actions hosts are SHARED between repositories, and that
-      # prune is host-global -- it deletes every image no running container
-      # holds plus every unused named volume, i.e. other repos' images, not
-      # just ours. On 2026-08-17 it repeatedly destroyed the codex-review
-      # job image on two shared hosts and failed 16 review runs
-      # portfolio-wide (go-xkms#2). Docker cleanup is scoped to this
-      # repository's own resources and happens in the suite's pre-run
-      # `clean-test-containers` step -- see the note at the end of this job
-      # for why there is no end-of-job teardown.
+      # Never prune the whole docker host; other jobs share it.
       - name: Free up disk space
         run: |
           echo "=== Disk space before cleanup ==="
@@ -182,19 +100,7 @@ jobs:
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
-          # This used to be `docker system prune -af --volumes`, which on a
-          # shared runner host deleted the tagged images, stopped containers
-          # and volumes of every OTHER job running at the same time --
-          # breaking their runs to free disk for this one.
-          #
-          # `image prune -f` (no -a) removes only DANGLING images, so it can
-          # never take an image another job is about to run. Do not widen it
-          # to -a, and never add --volumes: both reach into live jobs.
-          #
-          # `builder prune -af` is aggressive on purpose. Build cache is a
-          # pure performance resource -- dropping it can slow a concurrent
-          # job's build but cannot change what that job produces or tests --
-          # and this step exists because the runner does run out of disk.
+          # Prune only dangling images.
           docker image prune -f || true
           docker builder prune -af || true
           echo "=== Disk space after cleanup ==="
@@ -212,52 +118,21 @@ jobs:
       - name: Install dependencies
         run: go mod download
 
-      # docker/setup-buildx-action@v3 spins up a NEW docker-container-driver
-      # buildkitd (pull moby/buildkit:buildx-stable-1 + boot a container) on
-      # every run -- needed for the multi-platform builds the release/docker
-      # jobs do, but this job's builds are all single-arch --load (make
-      # docker-build and everything make integration-test's docker
-      # compose/buildx sub-targets do), which the runner's already-running
-      # built-in BuildKit (the default `docker` buildx driver) handles
-      # without bootstrapping anything. Runner-log-proven (task 2975): under
-      # load, that bootstrap took 83.9s and then failed outright --
-      # "failed to list workers ... buildkitd.sock: no such file or
-      # directory" -- before make docker-build ever ran. Skipping the setup
-      # step removes that failure mode entirely rather than just retrying it.
+      # The default docker buildx driver handles these single-arch builds.
       - name: Build Docker image
         run: make docker-build
 
-      # Redacted: prints GOPROXY/GOFLAGS/GOMODCACHE/GOPRIVATE, GIT_CONFIG_COUNT,
-      # whether GIT_CONFIG_KEY_0 is set (yes/no, never its value) and which
-      # first-party modules the devcontainer's module cache already holds --
-      # the evidence for where private modules resolve from (go-xkms#1055).
+      # Prints the module resolution settings, never a credential value.
       - name: Devcontainer module resolution
         run: make devcontainer-module-env
         continue-on-error: true
 
       - name: Run integration tests
-        # XKMS_COMPOSE_SERVER=1 forces the compose xkms-server (grpc/quic/mcp
-        # network listeners) to build and start unconditionally. The default
-        # `auto` mode only starts it when a go-xkms-server:dev image already
-        # exists locally -- a local-dev convenience that never holds on a
-        # fresh runner, so `auto` silently degrades to the in-devcontainer
-        # unix-socket-only fallback (scripts/start-test-xkmsd.sh) and every
-        # grpc/quic/mcp subtest fails with "protocol grpc is not reachable at
-        # xkms-server:9443" (task 3129).
+        # XKMS_COMPOSE_SERVER=1 builds and starts the compose xkms-server.
         run: XKMS_COMPOSE_SERVER=1 make integration-test
         timeout-minutes: 60
 
-      # Unconditional: the compose stacks are torn down whether the suite
-      # passed, failed, timed out or the job was cancelled. Cleanup used to
-      # exist only on the success path inside the make recipes, so a crashed
-      # or cancelled run left its containers on the host forever and every
-      # later run on that host failed to start with a name conflict.
-      #
-      # Safe to run concurrently with another job's: every stack is namespaced
-      # by repository AND run id (Makefile: COMPOSE_NS / XKMS_IMAGE_TAG), and
-      # image removal is additionally bounded to the image names this harness
-      # builds, so these targets can only ever name this run's own containers,
-      # networks, volumes and image tags.
+      # Always tear down the integration stacks.
       - name: Tear down integration test stacks
         if: always()
         run: |
@@ -276,45 +151,9 @@ jobs:
             build/test-results/
           retention-days: 7
 
-      # NO end-of-job Docker teardown here, deliberately. Cleanup of this
-      # repository's containers/networks/volumes/images happens at the START
-      # of the suite instead: `make integration-test` depends on
-      # `clean-test-containers`, which under CI runs in `project` scope --
-      # this repo's own compose projects and `go-xkms-*` containers only, no
-      # port sweep, no substring sweep, no prune of any kind.
-      #
-      # An `if: always()` teardown at the end of the job would be
-      # repository-scoped but not RUN-scoped: compose project names,
-      # container names and image tags are fixed, so it could tear down a
-      # second, concurrent run of this repository that was mid-suite: a push
-      # to an open PR triggers both a `push` and a `pull_request` run, and
-      # those carry DIFFERENT refs, so they key into different `concurrency:`
-      # groups and never serialize against each other. (This comment once
-      # claimed Gitea cancels any job carrying a concurrency group even when
-      # the group is unoccupied; that premise was wrong -- a workflow-level
-      # `concurrency:` block cancels only a SUPERSEDED head on the same ref,
-      # exactly as designed, see ci.yml and #392/#394. The conclusion that no
-      # cross-event serialization exists still holds, for the correct reason.)
-      # Per-run isolation (run-id-derived project names, tags and ports) plus
-      # the job-scoped teardown it would make safe are tracked in #15 for the
-      # owner to approve.
-      #
-      # What this job leaves behind is therefore bounded by the next run's
-      # pre-suite cleanup rather than reclaimed immediately -- an acceptable
-      # trade against deleting a sibling run's or another repository's
-      # resources. Daemon-level image/build-cache GC stays a host concern.
+      # No end-of-job Docker teardown here.
 
-  # xkey/pkg/pkcs11's unit suite, on the nightly cadence rather than on every
-  # PR (#147). It is pure Go over the IPC transport and needs nothing from the
-  # host, but it is the one xkey unit package expensive enough to argue about:
-  # 92 CPU-s (268 under -race) for 34 tests, 37% of the cost of the module's
-  # whole dark set and 1.7x the other forty packages combined. ci.yml's "xkey
-  # unit suites" step names it as excluded and points here, so the package is
-  # still executed by a gate, just not by the one on the PR path.
-  #
-  # -tags codec_json for the same reason as ci.yml's xkey steps: the
-  # DAO-backed tests fail on "codec json is not supported in this build"
-  # without it, which is a failure of the invocation and not of the code.
+  # xkey/pkg/pkcs11's unit suite.
   xkey-pkcs11-unit:
     name: xkey pkcs11 unit tests
     runs-on: ubuntu-latest
@@ -329,9 +168,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: ${{ runner.environment != 'self-hosted' }}
 
-      # Same cgo deps ci.yml's nested-module-test job installs, for the same
-      # reason: libicu-dev and libusb-1.0-0-dev are unconditional deps of the
-      # xkey module graph once CGO_ENABLED is 1, which -race requires.
+      # The cgo dependencies of the xkey module graph.
       - name: Install cgo dependencies
         run: sudo .github/scripts/apt-deps.sh libicu-dev libusb-1.0-0-dev
 
