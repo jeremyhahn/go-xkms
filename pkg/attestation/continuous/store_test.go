@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -322,6 +323,70 @@ func TestStore_TenantIsolation(t *testing.T) {
 	list, err = store.ListVerdicts(ctx, "acme", "dev-1")
 	if err != nil || len(list) != 1 {
 		t.Fatalf("ListVerdicts(dev-1) = %+v, %v; want only dev-1, not dev-10", list, err)
+	}
+}
+
+func TestStore_ConcurrentStoresOverOneDatastoreKeepEveryVerdict(t *testing.T) {
+	f := testutil.NewMemoryDAOFactory()
+	newStore := func() *Store {
+		s, err := NewStore(StoreConfig{DAOs: f})
+		if err != nil {
+			t.Fatalf("NewStore: %v", err)
+		}
+		return s
+	}
+	stores := []*Store{newStore(), newStore()}
+	const perStore = 200
+	ctx := context.Background()
+	base := time.Unix(1_700_000_000, 0).UTC()
+	at := func(g, i int) time.Time { return base.Add(time.Duration(g*perStore+i) * time.Second) }
+	start := make(chan struct{})
+	errs := make(chan error, len(stores)*perStore)
+	var wg sync.WaitGroup
+	for g, s := range stores {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			for i := range perStore {
+				errs <- s.SaveVerdict(ctx, Verdict{Tenant: "acme", DeviceID: "dev-1", Verified: true, At: at(g, i)})
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("SaveVerdict: %v", err)
+		}
+	}
+	reader := newStore()
+	list, err := reader.ListVerdicts(ctx, "acme", "dev-1")
+	if err != nil {
+		t.Fatalf("ListVerdicts: %v", err)
+	}
+	want := len(stores) * perStore
+	if len(list) != want {
+		t.Fatalf("ListVerdicts returned %d verdicts, want %d", len(list), want)
+	}
+	seen := make(map[int64]bool, want)
+	for _, v := range list {
+		if seen[v.At.UnixNano()] {
+			t.Fatalf("verdict at %v listed twice", v.At)
+		}
+		seen[v.At.UnixNano()] = true
+	}
+	for g := range stores {
+		for i := range perStore {
+			if !seen[at(g, i).UnixNano()] {
+				t.Fatalf("verdict at %v lost", at(g, i))
+			}
+		}
+	}
+	page, err := reader.ListVerdictsPage(ctx, "acme", "dev-1", 0, 1)
+	if err != nil || page.Total != want {
+		t.Fatalf("ListVerdictsPage Total = %d, %v; want %d", page.Total, err, want)
 	}
 }
 
