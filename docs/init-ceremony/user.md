@@ -26,14 +26,26 @@
    ceremony CA key is gone when init exits.
 4. Keep `admin-key.pem` private; it is the administrator's mTLS credential.
 5. Start the daemon: `xkmsd --config xkmsd.yaml`.
-6. Give clients the running server's trust material. Take the server's TLS
-   certificate, compute its pin and distribute the pin out of band; clients
-   then fetch the server's bundle from `/v1/ca/bootstrap`
-   (see [Trust Bootstrap](../trust-bootstrap/user.md)):
+6. Give clients the running server's trust material. In a shell on the
+   server host (the trusted administrative channel), take the server's TLS
+   certificate, compute its pin and distribute the pin out of band. Fetch the
+   certificate the daemon serves on loopback (the default config binds
+   `127.0.0.1`), or, when `tls.cert_file` is configured, read that file
+   directly instead (`--cert-file` set to the `tls.cert_file` path). Never take
+   the pin from a certificate fetched over the network from another machine:
+   whoever intercepts that connection would choose the pin every client trusts.
 
    ```bash
-   openssl s_client -connect kms.example.com:8443 </dev/null | openssl x509 > kms.crt
+   # on the server host
+   openssl s_client -connect 127.0.0.1:8443 -servername kms.example.com </dev/null | openssl x509 > kms.crt
    xkmsctl bootstrap spki show-pin --cert-file kms.crt   # PIN = the printed pin
+   ```
+
+   Each client then fetches the server's bundle from `/v1/ca/bootstrap`,
+   pinned to that pin (see [Trust Bootstrap](../trust-bootstrap/user.md)).
+   On the client:
+
+   ```bash
    xkmsctl bootstrap auto --server-url https://kms.example.com:8443 \
      --spki-pin "$PIN" --bundle-path /v1/ca/bootstrap --bundle-output ca-bundle.pem
    ```
