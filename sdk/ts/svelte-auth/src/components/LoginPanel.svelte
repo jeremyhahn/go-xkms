@@ -255,7 +255,12 @@
       // Step 3: finish — same anti-enumeration collapse as begin.
       let resp;
       try {
-        resp = await client.auth.webAuthnFinishLogin(begin.sessionId, credential);
+        // Finish names the tenant begin sent, so the server selects the
+        // relying party holding the ceremony session (go-xkms#2319).
+        resp =
+          defaultTenant !== undefined && trimmedTenant
+            ? await client.auth.webAuthnFinishLogin(begin.sessionId, credential, trimmedTenant)
+            : await client.auth.webAuthnFinishLogin(begin.sessionId, credential);
       } catch (e: unknown) {
         errorMessage = isNetworkFailure(e) ? NETWORK_MESSAGE : failureMessage;
         return;

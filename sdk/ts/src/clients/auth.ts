@@ -29,6 +29,8 @@ import type {
 
 /** WebAuthn session correlation header (pkg/webauthn/http/types.go). */
 export const HEADER_SESSION_ID = 'X-Session-Id';
+/** Names the login's tenant on a WebAuthn ceremony finish (go-xkms#2319). */
+export const HEADER_TENANT_ID = 'X-Tenant-Id';
 
 const WEBAUTHN_BASE = '/api/v1/webauthn';
 
@@ -171,15 +173,25 @@ export class AuthClient {
   /**
    * POST /api/v1/webauthn/login/finish — submit the encoded assertion
    * (encodeAssertionResponse) under the session's X-Session-Id header.
+   *
+   * tenantId is the tenant the login named at begin (`tenant_id`); when it
+   * is non-empty it is sent as X-Tenant-Id so finish selects the same
+   * tenant's relying party that holds the ceremony session (go-xkms#2319).
+   * Omit it when begin named no tenant.
    */
   webAuthnFinishLogin(
     sessionId: string,
     credential: AssertionCredentialJSON,
+    tenantId?: string,
   ): Promise<WebAuthnAuthResponse> {
+    const headers: Record<string, string> = { [HEADER_SESSION_ID]: sessionId };
+    if (tenantId) {
+      headers[HEADER_TENANT_ID] = tenantId;
+    }
     return this.http.request('POST', `${WEBAUTHN_BASE}/login/finish`, {
       auth: false,
       body: credential,
-      headers: { [HEADER_SESSION_ID]: sessionId },
+      headers,
     });
   }
 }
