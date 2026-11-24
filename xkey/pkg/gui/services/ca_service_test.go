@@ -466,13 +466,38 @@ func TestNewCAService(t *testing.T) {
 	mock := &mockCAClient{}
 	svc := NewCAService(mock)
 	require.NotNil(t, svc)
-	assert.Equal(t, mock, svc.client)
+	client, err := svc.getClient()
+	require.NoError(t, err)
+	assert.Equal(t, transport.Client(mock), client)
 }
 
 func TestNewCAService_NilClient(t *testing.T) {
 	svc := NewCAService(nil)
 	require.NotNil(t, svc)
-	assert.Nil(t, svc.client)
+	_, err := svc.getClient()
+	assert.ErrorIs(t, err, ErrCAServiceNilClient)
+}
+
+func TestCAService_SetClient(t *testing.T) {
+	svc := NewCAService(nil)
+	_, err := svc.GetCAInfo()
+	require.ErrorIs(t, err, ErrCAServiceNilClient)
+
+	svc.SetClient(&mockCAClient{
+		getCACertificateResp: &transport.GetCACertificateResponse{CertificatePEM: generateTestCertPEM(t)},
+	})
+	info, err := svc.GetCAInfo()
+	require.NoError(t, err)
+	assert.Contains(t, info.Subject, "Test CA", "GetCAInfo is served by the client set last")
+
+	svc.SetClient(nil)
+	_, err = svc.GetCAInfo()
+	assert.ErrorIs(t, err, ErrCAServiceNilClient, "SetClient(nil) detaches the client")
+
+	var typedNil *mockCAClient
+	svc.SetClient(typedNil)
+	_, err = svc.GetCAInfo()
+	assert.ErrorIs(t, err, ErrCAServiceNilClient, "a typed-nil client counts as no client")
 }
 
 // ---------------------------------------------------------------------------

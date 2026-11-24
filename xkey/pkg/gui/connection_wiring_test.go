@@ -15,10 +15,18 @@ package gui
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,6 +49,7 @@ func newConnectionWiringApp() *App {
 		pivService:         services.NewPIVService(nil, "software"),
 		tenantService:      services.NewTenantService(),
 		certificateService: services.NewCertificateService(),
+		caService:          services.NewCAService(nil),
 		tpmPolicyService:   services.NewTPMPolicyService(),
 		staticPWService:    services.NewStaticPasswordService(nil),
 		oidcServerService:  services.NewOIDCServerService(nil),
@@ -90,6 +99,54 @@ func TestApplyConnectionEvent_PasswordVaultFollowsTheConnection(t *testing.T) {
 	a.applyConnectionEvent(events.EventServerDisconnected, nil)
 	_, err = a.staticPWService.VaultStatus()
 	assert.ErrorIs(t, err, services.ErrStaticPWNoClient, "a disconnect detaches the vault")
+}
+
+// caClient is a connected xkmsd client that serves only the CA certificate,
+// so a test can see which client the CA service follows.
+type caClient struct {
+	transport.Client
+	certPEM []byte
+}
+
+func (c caClient) GetCACertificate(context.Context, *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
+	return &transport.GetCACertificateResponse{CertificatePEM: c.certPEM}, nil
+}
+
+// testCACertPEM builds a self-signed CA certificate with the given common name.
+func testCACertPEM(t *testing.T, commonName string) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(781),
+		Subject:               pkix.Name{CommonName: commonName},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
+	require.NoError(t, err)
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func TestApplyConnectionEvent_CAFollowsTheConnection(t *testing.T) {
+	a := newConnectionWiringApp()
+	_, err := a.caService.GetCAInfo()
+	assert.ErrorIs(t, err, services.ErrCAServiceNilClient, "before a connection there is no CA to reach")
+
+	client := caClient{certPEM: testCACertPEM(t, "Connected xkms CA")}
+	for _, eventType := range []events.EventType{events.EventServerDisconnected, events.EventServerError} {
+		a.applyConnectionEvent(events.EventServerConnected, client)
+		info, err := a.caService.GetCAInfo()
+		require.NoError(t, err)
+		assert.Equal(t, "CN=Connected xkms CA", info.Subject, "the CA is served by the connected client")
+
+		a.applyConnectionEvent(eventType, nil)
+		_, err = a.caService.GetCAInfo()
+		assert.ErrorIs(t, err, services.ErrCAServiceNilClient, "%s detaches the CA", eventType)
+	}
 }
 
 func TestApplyConnectionEvent_ConnectPutsTPMPoliciesInServerMode(t *testing.T) {
