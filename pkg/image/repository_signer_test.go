@@ -3,7 +3,13 @@ package image
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
 	"errors"
+	"fmt"
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -77,4 +83,60 @@ func TestNewRepositorySigner_Refusals(t *testing.T) {
 	_, err = NewRepositorySigner(t.Context(), other, "acme/app", cfg)
 	require.ErrorIs(t, err, ErrKeyMismatch, "the certificate must certify the resolved key")
 	assert.Nil(t, cfg.Signer, "the caller's config is not modified")
+}
+
+// strictCurveSigner mirrors Azure Key Vault, which signs a P-384 key only
+// as ES384 over a SHA-384 digest (and likewise per curve for P-256/P-521).
+type strictCurveSigner struct {
+	key  *ecdsa.PrivateKey
+	seen crypto.Hash
+}
+
+func (s *strictCurveSigner) Public() crypto.PublicKey { return s.key.Public() }
+
+func (s *strictCurveSigner) Sign(random io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	s.seen = opts.HashFunc()
+	want := map[elliptic.Curve]crypto.Hash{
+		elliptic.P256(): crypto.SHA256,
+		elliptic.P384(): crypto.SHA384,
+		elliptic.P521(): crypto.SHA512,
+	}[s.key.Curve]
+	if opts.HashFunc() != want || len(digest) != want.Size() {
+		return nil, fmt.Errorf("strict %s signer: refuses %v over a %d-byte digest", s.key.Curve.Params().Name, opts.HashFunc(), len(digest))
+	}
+	return s.key.Sign(random, digest, opts)
+}
+
+func TestNewRepositorySigner_SignsImagesWithAStrictP384Key(t *testing.T) {
+	tests := map[string]struct {
+		curve elliptic.Curve
+		hash  crypto.Hash
+	}{
+		"P-256": {curve: elliptic.P256(), hash: crypto.SHA256},
+		"P-384": {curve: elliptic.P384(), hash: crypto.SHA384},
+		"P-521": {curve: elliptic.P521(), hash: crypto.SHA512},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newSignerFixture(t, registryConfig{referrers: true})
+			key, err := ecdsa.GenerateKey(tt.curve, rand.Reader)
+			require.NoError(t, err)
+			strict := &strictCurveSigner{key: key}
+			source := &fakeRepositorySigners{signers: map[string]crypto.Signer{"team/app": strict}}
+
+			signer, err := NewRepositorySigner(t.Context(), source, "team/app", &SignerConfig{
+				Certificate: f.pki.codeSigning(t, strict.Public()),
+				Chain:       []*x509.Certificate{f.pki.certificate},
+				Registry:    f.client,
+			})
+			require.NoError(t, err)
+			_, err = signer.SignImage(t.Context(), f.ref, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.hash, strict.seen, "the DSSE digest follows the curve")
+
+			verified, err := f.verifier(t, VerifierConfig[purpose]{}).VerifyImage(t.Context(), f.ref)
+			require.NoError(t, err)
+			assert.Equal(t, f.digest, verified.Digest)
+		})
+	}
 }
