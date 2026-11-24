@@ -47,11 +47,10 @@ const (
 	offCommittedTCB = 0x1e0
 )
 
-// The blob: a version byte, the 32-byte key request, the 96-bit GCM nonce,
-// then the ciphertext and its 16-byte tag. Everything before the ciphertext
-// is the GCM additional data.
+// The blob: the version byte and key request are the GCM additional data; the nonce is part of the GCM output.
 const (
 	blobVersion    = 1
+	blobAADSize    = 1 + keyRequestSize
 	gcmNonceSize   = 12
 	gcmTagSize     = 16
 	blobHeaderSize = 1 + keyRequestSize + gcmNonceSize
@@ -263,7 +262,7 @@ func withAEAD(dk []byte, fn func(cipher.AEAD) error) error {
 			return
 		}
 		var aead cipher.AEAD
-		if aead, err = cipher.NewGCM(block); err != nil {
+		if aead, err = cipher.NewGCMWithRandomNonce(block); err != nil {
 			return
 		}
 		err = fn(aead)
@@ -273,16 +272,12 @@ func withAEAD(dk []byte, fn func(cipher.AEAD) error) error {
 
 // sealBlob seals key under dk into a blob whose header is req.
 func sealBlob(dk []byte, req keyRequest, key []byte) ([]byte, error) {
-	blob := make([]byte, blobHeaderSize, blobHeaderSize+len(key)+gcmTagSize)
+	blob := make([]byte, blobAADSize, blobHeaderSize+len(key)+gcmTagSize)
 	blob[0] = blobVersion
 	enc := req.encode()
 	copy(blob[1:], enc[:])
-	nonce := blob[1+keyRequestSize : blobHeaderSize]
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
 	err := withAEAD(dk, func(aead cipher.AEAD) error {
-		blob = aead.Seal(blob, nonce, key, blob[:blobHeaderSize])
+		blob = aead.Seal(blob, nil, key, blob[:blobAADSize])
 		return nil
 	})
 	if err != nil {
@@ -294,8 +289,7 @@ func sealBlob(dk []byte, req keyRequest, key []byte) ([]byte, error) {
 // openBlob opens blob under dk into key, writing key only once the tag holds.
 func openBlob(dk, blob, key []byte) error {
 	return withAEAD(dk, func(aead cipher.AEAD) error {
-		nonce := blob[1+keyRequestSize : blobHeaderSize]
-		out, err := aead.Open(nil, nonce, blob[blobHeaderSize:], blob[:blobHeaderSize])
+		out, err := aead.Open(nil, nil, blob[blobAADSize:], blob[:blobAADSize])
 		if err != nil {
 			return errBlob("blob does not authenticate")
 		}
