@@ -21,6 +21,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -38,7 +39,7 @@ func newGatedSurface(t *testing.T, opts ...Option) *httptest.Server {
 	gate := func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}
-	r := qrdbsdk.NewModuleHTTPRegistrar(mux,
+	r := qrdbserver.NewModuleHTTPRegistrar(mux,
 		func(method, pattern string, _ qrdbsdk.Permission, _ http.HandlerFunc) {
 			mux.MethodFunc(method, pattern, gate)
 		},

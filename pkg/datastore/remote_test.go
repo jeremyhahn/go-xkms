@@ -21,6 +21,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	"github.com/jeremyhahn/go-qrdb/sdk/go/testutil/qrdbdharness"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,7 +67,7 @@ func startRemoteNode(t *testing.T) *remoteNode {
 	res, err := embeddednode.NewNode(context.Background(), &embeddednode.NodeOptions{
 		QRDB:   qcfg,
 		Logger: testLogger(),
-		ServerOptions: []qrdbsdk.ServerOption{qrdbsdk.WithServerTLS(&tls.Config{
+		ServerOptions: []qrdbserver.ServerOption{qrdbserver.WithServerTLS(&tls.Config{
 			Certificates: []tls.Certificate{serverCert},
 			ClientCAs:    ca.Pool,
 			ClientAuth:   tls.VerifyClientCertIfGiven,

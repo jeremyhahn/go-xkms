@@ -152,6 +152,11 @@ func (m *mcpMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdb
 	return nil, errMCPMockUnused
 }
 
+// ReconcileBuiltInRolesAllTenants is not exercised by these tests.
+func (m *mcpMockRoleClient) ReconcileBuiltInRolesAllTenants(context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
+	return nil, errors.New("not used")
+}
+
 // newUserTestServer builds a real *Server (createTestServer) and, when users
 // is non-nil, wires it into the server's XKMSService alongside a role client.
 // This exercises the same real dispatch core (handler + XKMSService) that

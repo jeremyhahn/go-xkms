@@ -397,7 +397,7 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	// Re-seal the barrier root key with the new password so that
 	// the next unseal after restart uses the updated credential.
 	if bsvc := s.barrierSvc.Load(); bsvc != nil {
-		if err := bsvc.ChangePassword(newUserPIN); err != nil {
+		if err := bsvc.ChangePassword(currentUserPIN, newUserPIN); err != nil {
 			s.log.Error("ChangeUserPIN: barrier re-seal failed", "error", err)
 			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 				"operation": "barrier_reseal",
