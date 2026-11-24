@@ -128,8 +128,9 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
   output is `go-xkms-ci-<family>@sha256:...` with no registry, since Actions
   drops a job output that holds a secret, and each consumer's `use` adds the
   registry back from the secret and pulls by digest with no login. The pool
-  step runs only when preflight's `runner` and `runner_docker` both select
-  the self-hosted pool, since a GitHub-hosted consumer cannot reach the LAN
+  step runs on github.com only when preflight's `runner` and `runner_docker`
+  both select the self-hosted pool, and always off github.com, where every
+  consumer keeps its fixed `bigdisk` label (#2302 Codex round 4), since a GitHub-hosted consumer cannot reach the LAN
   registry (#2302 Codex round 3): when preflight picks `ubuntu-latest`, the
   pool step is skipped and the consumers get the resolved reference, or ""
   and build the image on their hosted runner as on a fork pull request. `use`
