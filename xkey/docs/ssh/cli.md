@@ -180,7 +180,11 @@ authenticates). See [architecture.md](architecture.md#shape-chosen-three-ways-to
 ## `xkey ssh console [profile|user@host]`
 
 Opens an interactive SSH PTY **in-process** (no `ssh` subprocess), through
-the same capability the embedded GUI console uses.
+the same capability the embedded GUI console uses. Against an xkmsd server
+the PTY still runs in this process: it signs with the server-held key
+through `Keys().Signer` (no owner sent unless `--key-owner` gives one) and
+verifies the host against this machine's pin store under `local` (or the
+given owner), like `connect`.
 
 | Flag | Default | Description |
 |---|---|---|

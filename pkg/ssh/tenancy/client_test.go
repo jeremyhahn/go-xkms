@@ -392,9 +392,10 @@ func requireHostKeyRefused(t *testing.T, session interface{ Close() error }, err
 		"want a host-key mismatch or unknown host, got %v", err)
 }
 
-// TestConsole_OmittedKeyOwnerIsCaller covers `xkey ssh console` against a
-// server: it sends no key owner, and the server keeps the console's
-// authentication key and host-key pins under the caller.
+// TestConsole_OmittedKeyOwnerIsCaller covers the tenancy (embedded) console:
+// with no key owner it keeps the console's authentication key and host-key
+// pins under the caller. `xkey ssh console` against an xkmsd server is
+// covered in xkey/cmd/xkey/cmd/ssh_console_server_test.go.
 func TestConsole_OmittedKeyOwnerIsCaller(t *testing.T) {
 	c, _ := newTestClient(t, false)
 	generate(t, c, aliceA, "user", "alice", "laptop")
