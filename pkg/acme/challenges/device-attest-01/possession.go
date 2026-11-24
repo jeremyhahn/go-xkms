@@ -122,7 +122,40 @@ var (
 	// ErrPossessionCSRMalformed, when a possession set's measurements claim
 	// (273) is not the one shape that carries the application evidence.
 	ErrPossessionMeasurementsShape = errors.New("device-attest-01: the measurements claim is not the application evidence shape")
+
+	// ErrPossessionEvidenceMismatch is returned by VerifyPossessionCSR when
+	// the request's application evidence is not the evidence of the alias
+	// certificate the challenge verified: finalization holds the alias's
+	// evidence to the registered reference, so the request must carry the
+	// same evidence.
+	ErrPossessionEvidenceMismatch = errors.New("device-attest-01: the possession request's application evidence is not the verified alias certificate's")
 )
+
+// matchAliasEvidence refuses a possession request whose application evidence
+// differs from the verified alias certificate's. ConfirmRegistration holds the
+// alias's evidence to the registered application reference (docs/SPEC.md,
+// acme-issuance), so a request accepted here carries evidence that met the
+// reference. An alias without a measurements claim carries no evidence: with
+// a registered reference ConfirmRegistration refuses it; without one there is
+// nothing to match.
+func matchAliasEvidence(leaf *x509.Certificate, requested []byte) error {
+	claims, err := dice.UccsFromCertificate(leaf)
+	if err != nil {
+		return &errs.Joined{Lead: ErrPossessionEvidenceMismatch, Detail: "the alias certificate's claims set does not parse", Cause: err}
+	}
+	measurements := claims.Other[dice.ClaimMeasurements]
+	if measurements == nil {
+		return nil
+	}
+	evidence, err := dice.ApplicationEvidence(measurements)
+	if err != nil {
+		return &errs.Joined{Lead: ErrPossessionEvidenceMismatch, Detail: "the alias certificate's measurements are not the application evidence shape", Cause: err}
+	}
+	if subtle.ConstantTimeCompare(evidence, requested) != 1 {
+		return ErrPossessionEvidenceMismatch
+	}
+	return nil
+}
 
 // PossessionRequest is what a possession certificate request states.
 type PossessionRequest struct {
@@ -415,6 +448,9 @@ func (v *VerifiedAttestation) VerifyPossessionCSR(csr *x509.CertificateRequest, 
 	}
 	if subtle.ConstantTimeCompare(request.Claims.Nonce, DICENonce(v.KeyAuthorization)) != 1 {
 		return ErrPossessionNonceMismatch
+	}
+	if err := matchAliasEvidence(leaf, request.ApplicationEvidence); err != nil {
+		return err
 	}
 	if len(orderIdentifiers) != 1 || orderIdentifiers[0] != request.Identifier() {
 		return &errs.Detail{
