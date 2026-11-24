@@ -2,10 +2,9 @@ package continuous
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"sort"
+	"sync"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
@@ -35,7 +34,18 @@ type StoreConfig struct {
 
 // Store persists verdicts per tenant and device.
 type Store struct {
-	records qrdbsdk.GenericDAO[*verdictEntity]
+	records verdictRecords
+	// mu serialises SaveVerdict so the head's sequence and the verdict
+	// key it names advance together.
+	mu sync.Mutex
+}
+
+// verdictRecords is the narrow DAO seam the store reads and writes
+// through: every read is one record by its natural key, so a read's cost
+// is bounded by the number of keys it names, never by a device's history.
+type verdictRecords interface {
+	Save(ctx context.Context, e *verdictEntity) error
+	GetByNaturalKey(ctx context.Context, key string) (*verdictEntity, error)
 }
 
 type verdictEntity struct {
@@ -45,6 +55,26 @@ type verdictEntity struct {
 	// selects one device's verdicts without a collection scan.
 	Device  string  `json:"device" index:"true"`
 	Verdict Verdict `json:"verdict"`
+	// Seq is the verdict's 1-based position in the device's history; on
+	// the device's head record it is the latest verdict's sequence.
+	Seq uint64 `json:"seq"`
+	// Count is the number of verdicts stored for the device; set on the
+	// head record only.
+	Count uint64 `json:"count,omitempty"`
+}
+
+// headKey is the natural key of a device's head record, which carries the
+// device's verdict count and latest sequence.
+func headKey(prefix string) string { return prefix + "head" }
+
+// verdictKey is the natural key of a device's seq-th verdict.
+func verdictKey(prefix string, seq uint64) string { return fmt.Sprintf("%sv%020d", prefix, seq) }
+
+// isNotFound reports whether err is the DAO's "no entity under this key".
+func isNotFound(err error) bool {
+	var byValue qrdbsdk.DAONotFoundError
+	var byPointer *qrdbsdk.DAONotFoundError
+	return errors.As(err, &byValue) || errors.As(err, &byPointer) || qrdbsdk.IsNotFound(err)
 }
 
 // EntityID returns the entity ID.
@@ -77,36 +107,74 @@ func (s *Store) SaveVerdict(ctx context.Context, v Verdict) error {
 	if err != nil {
 		return err
 	}
-	key := fmt.Sprintf("%s%020d-%s", prefix, v.At.UnixNano(), rand.Text())
-	if err := s.records.Save(ctx, &verdictEntity{Key: key, Device: prefix, Verdict: v}); err != nil {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	head, err := s.head(ctx, prefix)
+	if err != nil {
+		return err
+	}
+	seq := head.Count + 1
+	// The verdict is written before the head that names it, so a reader
+	// never follows the head to a missing verdict; a head write that fails
+	// leaves seq free, and the next save overwrites it.
+	key := verdictKey(prefix, seq)
+	if err := s.records.Save(ctx, &verdictEntity{Key: key, Device: prefix, Verdict: v, Seq: seq}); err != nil {
 		return &StoreError{Op: "save", Key: key, Err: err}
+	}
+	head.Count, head.Seq = seq, seq
+	if err := s.records.Save(ctx, head); err != nil {
+		return &StoreError{Op: "save", Key: head.Key, Err: err}
 	}
 	return nil
 }
 
-// ListVerdicts returns the device's verdicts, oldest first.
+// head reads the device's head record; a device with no verdicts yields a
+// new head with a zero count.
+func (s *Store) head(ctx context.Context, prefix string) (*verdictEntity, error) {
+	key := headKey(prefix)
+	head, err := s.records.GetByNaturalKey(ctx, key)
+	if err != nil {
+		if isNotFound(err) {
+			return &verdictEntity{Key: key}, nil
+		}
+		return nil, &StoreError{Op: "read", Key: key, Err: err}
+	}
+	return head, nil
+}
+
+// readRange reads the verdicts with sequences first..last inclusive, one
+// record per sequence, in sequence (save) order.
+func (s *Store) readRange(ctx context.Context, prefix string, first, last uint64) ([]Verdict, error) {
+	verdicts := make([]Verdict, 0, last-first+1)
+	for seq := first; seq <= last; seq++ {
+		key := verdictKey(prefix, seq)
+		e, err := s.records.GetByNaturalKey(ctx, key)
+		if err != nil {
+			return nil, &StoreError{Op: "read", Key: key, Err: err}
+		}
+		verdicts = append(verdicts, e.Verdict)
+	}
+	return verdicts, nil
+}
+
+// ListVerdicts returns the device's whole history in save order, which is
+// oldest first: each verdict is saved as it is made. It reads one record per
+// verdict; a caller serving a request pages with ListVerdictsPage instead.
 func (s *Store) ListVerdicts(ctx context.Context, tenant, deviceID string) ([]Verdict, error) {
 	prefix, err := devicePrefix(tenant, deviceID)
 	if err != nil {
 		return nil, err
 	}
-	// The indexed Device field selects one device's verdicts; no other
+	// Every key read is under this tenant's device prefix; no other
 	// tenant's or device's history is read.
-	entities, err := s.records.Find(ctx).Where("Device = ?", prefix).Execute()
+	head, err := s.head(ctx, prefix)
 	if err != nil {
-		return nil, &StoreError{Op: "list", Key: prefix, Err: err}
+		return nil, err
 	}
-	sort.Slice(entities, func(i, j int) bool {
-		if !entities[i].Verdict.At.Equal(entities[j].Verdict.At) {
-			return entities[i].Verdict.At.Before(entities[j].Verdict.At)
-		}
-		return entities[i].Key < entities[j].Key
-	})
-	verdicts := make([]Verdict, 0, len(entities))
-	for _, e := range entities {
-		verdicts = append(verdicts, e.Verdict)
+	if head.Count == 0 {
+		return []Verdict{}, nil
 	}
-	return verdicts, nil
+	return s.readRange(ctx, prefix, 1, head.Count)
 }
 
 // DefaultVerdictPageSize is the page size of a history request that names
@@ -140,13 +208,23 @@ func (s *Store) ListVerdictsPage(ctx context.Context, tenant, deviceID string, o
 		limit = DefaultVerdictPageSize
 	}
 	limit = min(limit, MaxVerdictPageSize)
-	all, err := s.ListVerdicts(ctx, tenant, deviceID)
+	prefix, err := devicePrefix(tenant, deviceID)
 	if err != nil {
 		return VerdictPage{}, err
 	}
-	page := VerdictPage{Verdicts: []Verdict{}, Total: len(all)}
-	if offset < len(all) {
-		page.Verdicts = all[offset:min(offset+limit, len(all))]
+	head, err := s.head(ctx, prefix)
+	if err != nil {
+		return VerdictPage{}, err
+	}
+	page := VerdictPage{Verdicts: []Verdict{}, Total: int(head.Count)}
+	if uint64(offset) >= head.Count {
+		return page, nil
+	}
+	first := uint64(offset) + 1
+	last := min(uint64(offset)+uint64(limit), head.Count)
+	page.Verdicts, err = s.readRange(ctx, prefix, first, last)
+	if err != nil {
+		return VerdictPage{}, err
 	}
 	return page, nil
 }
@@ -154,14 +232,22 @@ func (s *Store) ListVerdictsPage(ctx context.Context, tenant, deviceID string, o
 // LatestVerdict returns the device's newest verdict, or a
 // *VerdictNotFoundError when it has none.
 func (s *Store) LatestVerdict(ctx context.Context, tenant, deviceID string) (*Verdict, error) {
-	verdicts, err := s.ListVerdicts(ctx, tenant, deviceID)
+	prefix, err := devicePrefix(tenant, deviceID)
 	if err != nil {
 		return nil, err
 	}
-	if len(verdicts) == 0 {
+	head, err := s.head(ctx, prefix)
+	if err != nil {
+		return nil, err
+	}
+	if head.Count == 0 {
 		return nil, &VerdictNotFoundError{Tenant: tenant, DeviceID: deviceID}
 	}
-	return &verdicts[len(verdicts)-1], nil
+	verdicts, err := s.readRange(ctx, prefix, head.Seq, head.Seq)
+	if err != nil {
+		return nil, err
+	}
+	return &verdicts[0], nil
 }
 
 // devicePrefix returns the key prefix of one device's verdicts.
