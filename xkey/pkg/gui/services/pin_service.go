@@ -376,17 +376,20 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 	s.log.Debug("ChangeUserPIN: attempting PIN change", "strategy", svc.Strategy())
 
 	// Setup may give the barrier a password of its own (BarrierPassword),
-	// independent of the user PIN. Decide before committing anything
-	// whether the barrier is bound to the current PIN: only then is it
-	// resealed with the new one. A barrier that cannot be checked stops
-	// the change here, so PIN and barrier never go out of sync. Until
-	// go-qrdb tells a wrong credential apart from a strategy failure, a
-	// barrier the current PIN does not open stops it too (fail closed).
+	// independent of the user PIN, and records which it chose. Decide
+	// before committing anything whether the barrier is bound to the
+	// current PIN: only then is it resealed with the new one. A barrier
+	// recorded as independent keeps its password and is not checked. A
+	// barrier recorded as bound must open with the current PIN. With no
+	// record (a barrier set up before the record existed), go-qrdb cannot
+	// tell a wrong credential apart from a strategy failure, so a barrier
+	// the current PIN does not open stops the change (fail closed). An
+	// unreadable record or a failed check stops it too, so PIN and barrier
+	// never go out of sync.
 	bsvc := s.barrierSvc.Load()
 	barrierBound := false
 	if bsvc != nil {
-		bound, err := bsvc.PasswordBound(currentUserPIN)
-		if err != nil {
+		refuse := func(err error) error {
 			s.log.Error("ChangeUserPIN: barrier credential check failed", "error", err)
 			if auditErr := s.logPINOperation(audit.OpPINFailed, false, err, map[string]any{
 				"operation": "barrier_reseal",
@@ -396,7 +399,20 @@ func (s *PINService) ChangeUserPIN(currentUserPIN, newUserPIN string) (retErr er
 			}
 			return ErrBarrierResealFailed
 		}
-		barrierBound = bound
+		recordedBound, known, err := bsvc.pinBinding()
+		if err != nil {
+			return refuse(err)
+		}
+		if !known || recordedBound {
+			bound, err := bsvc.PasswordBound(currentUserPIN)
+			if err == nil && !bound {
+				err = ErrBarrierCredentialUnverified
+			}
+			if err != nil {
+				return refuse(err)
+			}
+			barrierBound = true
+		}
 	}
 
 	if err := svc.ChangeUserPIN(currentUserPIN, newUserPIN); err != nil {

@@ -680,6 +680,83 @@ func (s *BarrierService) PasswordBound(password string) (bound bool, err error) 
 	}
 }
 
+// barrierPINBindingFile names the file, under storageDir(), that records
+// whether setup bound the barrier to the user PIN. It holds only the
+// flag, never a credential.
+const barrierPINBindingFile = "barrier_pin_binding"
+
+const (
+	pinBindingBound       = "bound\n"
+	pinBindingIndependent = "independent\n"
+)
+
+// errPINBinding marks a failure to record or read the barrier PIN binding.
+var errPINBinding = errors.New("barrier: PIN binding record")
+
+// recordPINBinding records whether setup bound the barrier to the user
+// PIN (true) or gave it a password of its own (false). The file is
+// written atomically (temp file + rename) with mode 0600.
+func (s *BarrierService) recordPINBinding(bound bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dir := s.storageDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return errors.Join(errPINBinding, err)
+	}
+	content := pinBindingIndependent
+	if bound {
+		content = pinBindingBound
+	}
+	tmp, err := os.CreateTemp(dir, barrierPINBindingFile+".tmp-*")
+	if err != nil {
+		return errors.Join(errPINBinding, err)
+	}
+	tmpName := tmp.Name()
+	writeErr := tmp.Chmod(0o600)
+	if writeErr == nil {
+		_, writeErr = tmp.WriteString(content)
+	}
+	if writeErr == nil {
+		writeErr = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr == nil {
+		writeErr = os.Rename(tmpName, filepath.Join(dir, barrierPINBindingFile))
+	}
+	if writeErr != nil {
+		_ = os.Remove(tmpName)
+		return errors.Join(errPINBinding, writeErr)
+	}
+	return nil
+}
+
+// pinBinding reads the binding recordPINBinding wrote. A missing record
+// is known=false with a nil error; any other read failure, or content
+// that is neither flag, is returned as an error.
+func (s *BarrierService) pinBinding() (bound, known bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := os.ReadFile(filepath.Join(s.storageDir(), barrierPINBindingFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, errors.Join(errPINBinding, err)
+	}
+	switch string(data) {
+	case pinBindingBound:
+		return true, true, nil
+	case pinBindingIndependent:
+		return false, true, nil
+	default:
+		return false, false, errors.Join(errPINBinding, errors.New("unrecognized record"))
+	}
+}
+
 // Status returns the current barrier status. If the barrier has not been
 // initialized, a zero-value BarrierStatus is returned.
 func (s *BarrierService) Status() *xkms.BarrierStatus {
