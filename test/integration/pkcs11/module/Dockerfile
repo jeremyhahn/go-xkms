@@ -16,7 +16,7 @@ ENV GOTOOLCHAIN=auto
 ENV CGO_ENABLED=1
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     g++ \
@@ -49,7 +49,7 @@ RUN mkdir -p /build/lib && \
 # tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
 # be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
 FROM golang:1.27.4-bookworm AS softhsm
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     autoconf automake libtool libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY scripts/build-softhsm.sh /build/build-softhsm.sh
@@ -66,7 +66,7 @@ ENV CGO_ENABLED=1
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install test dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     # Build tools for CGO
     build-essential \
     gcc \
