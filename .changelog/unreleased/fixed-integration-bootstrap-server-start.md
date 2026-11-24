@@ -1,0 +1,1 @@
+CI: `make integration-test-bootstrap` starts a healthy xkms-server (compliant, auto-unsealed config; the test runners present the first-boot admin mTLS credential), and when the run fails it prints `--- xkms-server log ---` with the last 200 lines of the xkms-server log, tears the stack down and exits with the run's status (#2376).
