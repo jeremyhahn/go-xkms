@@ -115,6 +115,11 @@ backend_pin:
   unseals it from the TPM (`Server.tpmSealedBackendPINRelease`). If the TPM
   cannot seal it, start-up fails closed with `BackendPINTPMSealerError` and
   never falls back to `sealed`.
+  While the credential is replaced, a transient `<name>-tpm2-staged`
+  credential holds only the TPM-sealed blob; if start-up is interrupted
+  mid-replacement, the next start completes it from that credential before
+  config secrets resolve (`Server.recoverBackendPINCustody`), so the PIN is
+  never lost.
   A persisted record is refused too if the storage has changed since it was
   written. Every release checks the storage again.
 - **Minimum.** `minimum` orders `sealed` < `tpm2` < `manual`. A resolved
