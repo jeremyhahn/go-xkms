@@ -237,9 +237,18 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		// stale pass stays fenced. knownTenant is checked right before the
 		// revive, so an in-flight undo's tombstone is not revived on a stale
 		// lookup; material a revive leaves for a tenant undone right after
-		// has a key for ReclaimWithdrawnTenants to find.
+		// has a key for ReclaimWithdrawnTenants to find. A tenant whose
+		// create rollback is still pending (its CA cleanup failed) gets no
+		// new CA: the boot pass finishes that rollback.
 		if !f.knownTenant(context.Background(), tenantID) {
 			return nil, err
+		}
+		pending, pendErr := f.CreateUndoPending(context.Background(), tenantID)
+		if pendErr != nil {
+			return nil, pendErr
+		}
+		if pending {
+			return nil, fmt.Errorf("tenant login CA key factory: tenant %q has a create rollback pending", tenantID)
 		}
 		if err := f.ReviveTenant(context.Background(), tenantID); err != nil {
 			return nil, err
@@ -536,6 +545,57 @@ func tenantLoginCAFenceWrite(ctx context.Context) error {
 // provisioning generation.
 func tenantLoginCAGenerationKey(tenantID string) string {
 	return "tenant-login-ca/generations/" + tenantLoginCAKeyName(tenantID)
+}
+
+// tenantLoginCACreateUndoKey is the claims-storage key that records a
+// create rollback in progress for a tenant ID (see MarkCreateUndo).
+func tenantLoginCACreateUndoKey(tenantID string) string {
+	return "tenant-login-ca/undo/" + tenantLoginCAKeyName(tenantID)
+}
+
+// MarkCreateUndo records that a wrapped create of tenantID is being rolled
+// back. The record outlives a rollback whose login CA cleanup failed, so the
+// boot pass resumes that rollback rather than meeting a listed tenant beside
+// its CA tombstone.
+func (f *tenantCAKeyFactory) MarkCreateUndo(ctx context.Context, tenantID string) error {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return err
+	}
+	if err := claims.Put(ctx, tenantLoginCACreateUndoKey(tenantID), []byte("1")); err != nil {
+		return fmt.Errorf("tenant login CA key factory: mark create rollback of tenant %q: %w", tenantID, err)
+	}
+	return nil
+}
+
+// CreateUndoPending reports whether a create rollback of tenantID was marked
+// and has not finished.
+func (f *tenantCAKeyFactory) CreateUndoPending(ctx context.Context, tenantID string) (bool, error) {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return false, err
+	}
+	_, err = claims.Get(ctx, tenantLoginCACreateUndoKey(tenantID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("tenant login CA key factory: read create rollback of tenant %q: %w", tenantID, err)
+	}
+	return true, nil
+}
+
+// ClearCreateUndo drops tenantID's create rollback record once the rollback
+// finished. A missing record is success.
+func (f *tenantCAKeyFactory) ClearCreateUndo(ctx context.Context, tenantID string) error {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return err
+	}
+	if err := claims.Delete(ctx, tenantLoginCACreateUndoKey(tenantID)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("tenant login CA key factory: clear create rollback of tenant %q: %w", tenantID, err)
+	}
+	return nil
 }
 
 // tenantLoginCAGeneration reads a tenant ID's provisioning generation (0

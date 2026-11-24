@@ -55,8 +55,16 @@ func (p *provisioningTenantService) CreateTenant(ctx context.Context, id, name s
 		return nil, err
 	}
 	// The tenant is new: a login CA an earlier tenant under this ID tore
-	// down does not keep it from being provisioned.
-	ensureErr := p.keys.ReviveTenant(ctx, info.ID)
+	// down does not keep it from being provisioned. A create can reach this
+	// ID only after an earlier rollback of it finished, so a rollback record
+	// left for the ID is stale.
+	var ensureErr error
+	if rec, ok := p.keys.(tenantCreateUndoRecorder); ok {
+		ensureErr = rec.ClearCreateUndo(ctx, info.ID)
+	}
+	if ensureErr == nil {
+		ensureErr = p.keys.ReviveTenant(ctx, info.ID)
+	}
 	if ensureErr == nil {
 		ensureErr = p.keys.EnsureTenant(ctx, info.ID)
 	}
@@ -73,6 +81,16 @@ func (p *provisioningTenantService) CreateTenant(ctx context.Context, id, name s
 // could not be provisioned.
 const tenantCreateUndoTimeout = 30 * time.Second
 
+// tenantCreateUndoRecorder persists a create rollback across restarts;
+// tenantCAKeyFactory implements it. A provisioner without it rolls back
+// without a record.
+type tenantCreateUndoRecorder interface {
+	MarkCreateUndo(ctx context.Context, tenantID string) error
+	CreateUndoPending(ctx context.Context, tenantID string) (bool, error)
+	ClearCreateUndo(ctx context.Context, tenantID string) error
+	tenantLoginCARemoved(ctx context.Context, tenantID string) (bool, error)
+}
+
 // undoCreate rolls back a create that did not complete. It undoes the create
 // rather than deleting the tenant, so the tenant ID stays free for a retry,
 // and it runs on its own bounded context: a request cancelled during
@@ -80,15 +98,32 @@ const tenantCreateUndoTimeout = 30 * time.Second
 func (p *provisioningTenantService) undoCreate(ctx context.Context, id string) error {
 	undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tenantCreateUndoTimeout)
 	defer cancel()
+	// The rollback is recorded before the CA cleanup tombstones the ID: a
+	// cleanup that fails leaves the tenant listed beside its tombstone, and
+	// the boot pass resumes the recorded rollback once the key backend
+	// recovers. When the record cannot be written nothing is torn down, so
+	// the tenant has no tombstone and the boot pass provisions it.
+	rec, recorded := p.keys.(tenantCreateUndoRecorder)
+	if recorded {
+		if err := rec.MarkCreateUndo(undoCtx, id); err != nil {
+			return err
+		}
+	}
 	// The tenant record fences the ID until its login CA material is gone:
 	// undoing it first would let a concurrent create reuse the ID, adopt
 	// the saved key, and then have this rollback tombstone its CA. When the
-	// CA cleanup fails the tenant stays, still fencing the ID, for
-	// DeleteTenant to finish.
+	// CA cleanup fails the tenant stays, still fencing the ID, for the boot
+	// pass or DeleteTenant to finish.
 	if err := p.keys.RemoveTenant(undoCtx, id); err != nil {
 		return err
 	}
-	return p.UndoCreateTenant(undoCtx, id)
+	if err := p.UndoCreateTenant(undoCtx, id); err != nil {
+		return err
+	}
+	if recorded {
+		return rec.ClearCreateUndo(undoCtx, id)
+	}
+	return nil
 }
 
 // DeleteTenant deletes the tenant, then its login CA key and certificate, so
@@ -130,6 +165,41 @@ func (s *Server) provisionTenantCAKeys(ctx context.Context) error {
 	return provisionTenantCAKeysWith(ctx, s.tenantService, s.tenantCAKeys)
 }
 
+// resumeTenantCreateUndo prepares a listed tenant for the boot pass. A
+// tenant whose create rollback was recorded and never finished (its login CA
+// cleanup failed) has that rollback finished here: its CA material is
+// removed, the create undone and the record cleared, and resumed is true so
+// the tenant gets no CA. An error leaves the record for the next boot. A
+// tombstoned tenant with no pending rollback was created natively under an
+// ID whose rollback had finished: it is new, so its tombstone is cleared
+// (as ProviderForTenant's no-key branch does) and EnsureTenant provisions it.
+func resumeTenantCreateUndo(ctx context.Context, svc qrdbsdk.ServiceTenantServicer, keys tenantCAKeyProvisioner, rec tenantCreateUndoRecorder, id string) (resumed bool, err error) {
+	pending, err := rec.CreateUndoPending(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if pending {
+		if err := keys.RemoveTenant(ctx, id); err != nil {
+			return false, fmt.Errorf("resume create rollback: %w", err)
+		}
+		if err := svc.UndoCreateTenant(ctx, id); err != nil {
+			return false, fmt.Errorf("resume create rollback: %w", err)
+		}
+		return true, rec.ClearCreateUndo(ctx, id)
+	}
+	removed, err := rec.tenantLoginCARemoved(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if removed {
+		return false, keys.ReviveTenant(ctx, id)
+	}
+	return false, nil
+}
+
+// provisionTenantCAKeysWith provisions every listed tenant's login CA key,
+// first resuming a create rollback a restart interrupted (see
+// resumeTenantCreateUndo); the system tenant is provisioned as is.
 func provisionTenantCAKeysWith(ctx context.Context, svc qrdbsdk.ServiceTenantServicer, keys tenantCAKeyProvisioner) error {
 	infos, err := svc.ListTenants(ctx)
 	if err != nil {
@@ -141,7 +211,17 @@ func provisionTenantCAKeysWith(ctx context.Context, svc qrdbsdk.ServiceTenantSer
 			ids = append(ids, id)
 		}
 	}
+	rec, recorded := keys.(tenantCreateUndoRecorder)
 	for _, id := range ids {
+		if recorded && id != qrdbsdk.SystemTenantID {
+			resumed, err := resumeTenantCreateUndo(ctx, svc, keys, rec, id)
+			if err != nil {
+				return &TenantProvisionError{TenantID: id, Err: err}
+			}
+			if resumed {
+				continue
+			}
+		}
 		if err := keys.EnsureTenant(ctx, id); err != nil {
 			return &TenantProvisionError{TenantID: id, Err: err}
 		}
