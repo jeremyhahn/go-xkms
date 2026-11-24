@@ -372,6 +372,7 @@ func TestWALReboot_BootCompletionFailureIsPrecise(t *testing.T) {
 	require.Error(t, err, "a corrupt interior WAL block must fail boot completion")
 	var nodeErr *QRDBNodeError
 	require.ErrorAs(t, err, &nodeErr)
+	require.Equal(t, node.IsSealed(), nodeErr.Resealed)
 	require.Equal(t, "complete boot after sealed window", nodeErr.Stage)
 	require.ErrorIs(t, err, encfs.ErrAuthFailed)
 }

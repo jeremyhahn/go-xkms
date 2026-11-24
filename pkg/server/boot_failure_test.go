@@ -52,6 +52,14 @@ func TestBootCompletionFailure_OnlyTheBootStage(t *testing.T) {
 			name: "sealed window wrapping a plain error",
 			err:  &QRDBNodeError{Stage: "sealed window", Err: errors.New("window canceled")},
 		},
+		{
+			// A re-sealed node has nothing for the failed-boot listener to
+			// hold: exiting lets the supervisor restart reopen the sealed
+			// window, where unseal works, so no unseal is lost.
+			name: "boot completion that re-sealed the node",
+			err: &QRDBNodeError{Stage: "sealed window", Err: &QRDBNodeError{
+				Stage: StageBootAfterSealedWindow, Err: io.ErrUnexpectedEOF, Resealed: true}},
+		},
 		{name: "bind refusal", err: &SealedWindowBindError{}},
 		{name: "nil error", err: nil},
 	}
@@ -188,6 +196,24 @@ func TestServeBootFailure_KeepsUnifiedTLSPolicy(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, resp)
 	})
+
+	stop()
+}
+
+// TestServeBootFailure_ReportsResealed pins that the failed-boot body carries
+// the node's sealed state out of the boot failure (Codex round 3 on #2291).
+func TestServeBootFailure_ReportsResealed(t *testing.T) {
+	addr, caFile, stop := bootFailureTestListener(t, "",
+		&QRDBNodeError{Stage: StageBootAfterSealedWindow, Err: io.ErrUnexpectedEOF, Resealed: true})
+
+	client := bootFailureTestClient(t, caFile, 0)
+	resp, err := client.Get("https://" + addr + "/v1/barrier/status")
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, resp.Body.Close())
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+	assert.Contains(t, string(body), `"sealed":true`)
 
 	stop()
 }
