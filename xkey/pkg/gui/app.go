@@ -1398,6 +1398,9 @@ func (a *App) initializeAuthenticator() {
 // `xkey ca --local`. A failure is logged and leaves the CA view with no CA.
 func (a *App) initLocalCA(dir string, barrierBackend xkmssdk.StorageBackend) {
 	a.closeLocalCA()
+	if a.caService == nil {
+		return
+	}
 
 	var keyStorage xkmssdk.StorageBackend
 	if barrierBackend != nil {
