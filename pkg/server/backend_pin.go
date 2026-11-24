@@ -202,7 +202,15 @@ func preNodeBackendPINError(err error) error {
 // installBackendPIN installs the in-memory holder for strategy and ties its
 // zeroization to the running barrier's seal.
 func (s *Server) installBackendPIN(strategy pinselect.BackendPINStrategy) {
-	s.backendPIN = pinselect.NewBackendPIN(strategy, s.backendPINRelease(strategy))
+	s.backendPIN = pinselect.NewBackendPIN(strategy,
+		s.backendPINRelease(strategy, s.primaryBackendPINSecret, &s.backendPINTPMCustody))
+	// An active RNG PIN beside the key backend's is resolved and protected
+	// on its own: same strategy and minimum, own credential and sealed blob.
+	s.rngBackendPIN = nil
+	if s.separateRNGPKCS11PIN() {
+		s.rngBackendPIN = pinselect.NewBackendPIN(strategy,
+			s.backendPINRelease(strategy, s.rngBackendPINSecret, &s.rngBackendPINTPMCustody))
+	}
 	// Zeroize at every seal of the running barrier, not only at shutdown:
 	// the barrier runs this before it wipes its own root key.
 	if s.barrier != nil {
@@ -210,6 +218,20 @@ func (s *Server) installBackendPIN(strategy pinselect.BackendPINStrategy) {
 			return s.SealBackendPIN()
 		})
 	}
+}
+
+// separateRNGPKCS11PIN reports an active RNG PIN beside an enabled key
+// backend: the RNG PIN then has its own holder (rngBackendPIN).
+func (s *Server) separateRNGPKCS11PIN() bool {
+	return s.pkcs11Enabled() && s.rngPKCS11PINActive()
+}
+
+// rngBackendPINSecret is the RNG PKCS#11 PIN.
+func (s *Server) rngBackendPINSecret() backendPINSecret {
+	if s.config.RNG.PKCS11 == nil {
+		return backendPINSecret{field: "rng.pkcs11.pin"}
+	}
+	return backendPINSecret{field: "rng.pkcs11.pin", secret: s.config.RNG.PKCS11.PIN}
 }
 
 // backendPINStore maps credentials.seal_strategy, the storage the configured
@@ -242,11 +264,18 @@ func (s *Server) sealerIsPKCS11() bool {
 // re-check at every release that the PIN is still stored as the strategy
 // asserts (sealed to the TPM, under the barrier), so a holder never
 // releases a PIN whose protection is weaker than the persisted strategy.
-func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy) func(context.Context) ([]byte, error) {
-	if strategy != pinselect.BackendPINTPM2 && strategy != pinselect.BackendPINSealed {
-		return s.releaseConfiguredPKCS11PIN
+func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy, pinSecret func() backendPINSecret, custody *atomic.Bool) func(context.Context) ([]byte, error) {
+	configured := func(ctx context.Context) ([]byte, error) {
+		p := pinSecret()
+		if p.secret == nil {
+			return nil, errBackendPINNoConfiguredPIN
+		}
+		return secretPIN(ctx, p.secret)
 	}
-	tpmSealed := s.tpmSealedBackendPINRelease(s.primaryBackendPINSecret, &s.backendPINTPMCustody)
+	if strategy != pinselect.BackendPINTPM2 && strategy != pinselect.BackendPINSealed {
+		return configured
+	}
+	tpmSealed := s.tpmSealedBackendPINRelease(pinSecret, custody)
 	return func(ctx context.Context) ([]byte, error) {
 		if store := s.backendPINStore(); store != strategy {
 			if strategy == pinselect.BackendPINTPM2 {
@@ -255,7 +284,7 @@ func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy) func(c
 			}
 			return nil, errBackendPINNotBarrierSealed
 		}
-		return s.releaseConfiguredPKCS11PIN(ctx)
+		return configured(ctx)
 	}
 }
 
@@ -469,7 +498,11 @@ func (s *Server) primaryBackendPINSecret() backendPINSecret {
 // activeBackendPINSecrets lists every configured PIN the backend PIN
 // policy protects.
 func (s *Server) activeBackendPINSecrets() []backendPINSecret {
-	return []backendPINSecret{s.primaryBackendPINSecret()}
+	active := []backendPINSecret{s.primaryBackendPINSecret()}
+	if s.separateRNGPKCS11PIN() {
+		active = append(active, s.rngBackendPINSecret())
+	}
+	return active
 }
 
 // secretPIN copies a secret's bytes into a slice the caller wipes.
@@ -494,6 +527,11 @@ func (s *Server) startPKCS11AfterUnseal() error {
 	}
 	if err := s.backendPIN.Unseal(s.ctx, nil); err != nil {
 		return &ErrBackendInit{Backend: "PKCS#11", Err: err}
+	}
+	if s.rngBackendPIN != nil {
+		if err := s.rngBackendPIN.Unseal(s.ctx, nil); err != nil {
+			return &ErrBackendInit{Backend: "PKCS#11 RNG", Err: err}
+		}
 	}
 	if !s.pkcs11Enabled() {
 		// Only an RNG PIN is held: released, but no key backend to open.
@@ -559,6 +597,9 @@ func (s *Server) SealBackendPIN() error {
 		}
 	}
 	s.backendPIN.Seal()
+	if s.rngBackendPIN != nil {
+		s.rngBackendPIN.Seal()
+	}
 	return closeErr
 }
 
@@ -568,11 +609,16 @@ func (s *Server) BackendPINStrategy() string {
 	if s.backendPIN == nil {
 		return ""
 	}
+	// Every active PIN is under the strategy, or none is reported.
+	separate := s.separateRNGPKCS11PIN()
+	if separate && s.rngBackendPIN == nil {
+		return ""
+	}
 	strategy := s.backendPIN.Strategy()
-	// tpm2 over a PIN not stored in the TPM is reported only once the PIN
-	// is in TPM custody: never while a barrier-stored copy exists.
+	// tpm2 over a PIN not stored in the TPM is reported only once every
+	// PIN is in TPM custody: never while a barrier-stored copy exists.
 	if strategy == pinselect.BackendPINTPM2 && s.backendPINStore() != pinselect.BackendPINTPM2 &&
-		!s.backendPINTPMCustody.Load() {
+		(!s.backendPINTPMCustody.Load() || (separate && !s.rngBackendPINTPMCustody.Load())) {
 		return ""
 	}
 	return string(strategy)

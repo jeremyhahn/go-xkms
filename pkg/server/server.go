@@ -154,7 +154,11 @@ type Server struct {
 	// backendPINTPMCustody reports the backend PIN in TPM custody: its
 	// credential holds only the TPM-sealed blob.
 	backendPINTPMCustody atomic.Bool
-	logger               *slog.Logger
+	// rngBackendPIN holds an active rng.pkcs11.pin beside the key
+	// backend's PIN under the same strategy; nil otherwise.
+	rngBackendPIN           *pinselect.BackendPIN
+	rngBackendPINTPMCustody atomic.Bool
+	logger                  *slog.Logger
 
 	// sshClient is the shared SSH SDK client wired into every transport. It
 	// is built once, lazily, via ensureSSHClient.
