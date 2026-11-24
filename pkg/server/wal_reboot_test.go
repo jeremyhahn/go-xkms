@@ -307,21 +307,42 @@ func walRebootDamageWAL(t *testing.T, dataDir string, delta int64) {
 }
 
 // (2c) A torn or zero-extended WAL tail must not make the store
-// unopenable: pebble tolerates a torn tail of its own WAL, and only the
-// last unsynced record may be lost. On the board this is the exact error.
+// unopenable: a durable prefix (run 0, synced by a clean Close and a
+// reboot) is followed by a disposable unsynced tail (run 1) in a newer WAL,
+// the crash copy's newest WAL is damaged, and only the synced prefix is
+// promised. encfs authenticates up to 4096 plaintext bytes per block, so a
+// damaged trailing block may drop several tail records; nothing is asserted
+// about run 1. On the board this is the exact error.
 func TestWALReboot_DamagedTailReplays(t *testing.T) {
 	for _, delta := range []int64{-1, -100, 1, 4096} {
 		t.Run(fmt.Sprintf("delta=%d", delta), func(t *testing.T) {
 			dir := t.TempDir()
 			node := walRebootFirstBoot(t, dir)
-			walRebootPut(t, node, 0, walRebootRecords)
-			require.NoError(t, node.Close())
-			walRebootDamageWAL(t, dir, delta)
+			node = walRebootSyncedPut(t, node, dir, 0, walRebootRecords)
 
-			node, err := walRebootUnsealBoot(t, dir)
+			prefixLogs, err := filepath.Glob(filepath.Join(dir, "pebble", "*.log"))
+			require.NoError(t, err)
+			prefix := make(map[string]bool, len(prefixLogs))
+			for _, l := range prefixLogs {
+				prefix[filepath.Base(l)] = true
+			}
+
+			walRebootPut(t, node, 1, walRebootRecords)
+			crashed := walRebootCrashCopy(t, dir)
+			require.NoError(t, node.Close())
+
+			logs, err := filepath.Glob(filepath.Join(crashed, "pebble", "*.log"))
+			require.NoError(t, err)
+			require.NotEmpty(t, logs)
+			newest := filepath.Base(logs[len(logs)-1])
+			require.False(t, prefix[newest],
+				"the damaged WAL %s must hold only the unsynced tail, not the synced prefix", newest)
+			walRebootDamageWAL(t, crashed, delta)
+
+			node, err = walRebootUnsealBoot(t, crashed)
 			t.Cleanup(func() { _ = node.Close() })
 			require.NoError(t, err, "boot completion after unseal with a damaged WAL tail")
-			walRebootCheck(t, node, 1, walRebootRecords-1)
+			walRebootCheck(t, node, 1, walRebootRecords)
 		})
 	}
 }
