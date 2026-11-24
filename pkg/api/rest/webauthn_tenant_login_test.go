@@ -30,8 +30,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 const (
@@ -43,12 +45,14 @@ const (
 // tenantLoginFixture is a tenant-aware relying party over the fake qrdb
 // identity plane, with tenant-b as the one known non-system tenant.
 type tenantLoginFixture struct {
-	router *webauthn.TenantRouter
-	issuer *WebAuthnTokenAdapter
-	rp     virtualwebauthn.RelyingParty
-	authn  virtualwebauthn.Authenticator
-	cred   virtualwebauthn.Credential
-	handle []byte
+	router    *webauthn.TenantRouter
+	issuer    *WebAuthnTokenAdapter
+	rawIssuer *token.Issuer
+	cfg       *webauthn.Config
+	rp        virtualwebauthn.RelyingParty
+	authn     virtualwebauthn.Authenticator
+	cred      virtualwebauthn.Credential
+	handle    []byte
 }
 
 func newTenantLoginFixture(t *testing.T) *tenantLoginFixture {
@@ -78,11 +82,13 @@ func newTenantLoginFixture(t *testing.T) *tenantLoginFixture {
 	require.NoError(t, err)
 
 	f := &tenantLoginFixture{
-		router: router,
-		issuer: NewWebAuthnTokenAdapter(issuer, ""),
-		rp:     virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
-		authn:  virtualwebauthn.NewAuthenticator(),
-		cred:   virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2),
+		router:    router,
+		issuer:    NewWebAuthnTokenAdapter(issuer, ""),
+		rawIssuer: issuer,
+		cfg:       cfg,
+		rp:        virtualwebauthn.RelyingParty{Name: cfg.RPDisplayName, ID: cfg.RPID, Origin: cfg.RPOrigins[0]},
+		authn:     virtualwebauthn.NewAuthenticator(),
+		cred:      virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2),
 	}
 	f.enrol(t)
 	return f
@@ -293,6 +299,88 @@ func TestTenantLogin_AddCredentialUsesIdentityTenant(t *testing.T) {
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 		require.Equal(t, webauthnhttp.ErrorCodeSessionAccountMismatch, body["error"])
+	})
+}
+
+// server mounts the fixture's tenant router behind the real REST routes.
+func (f *tenantLoginFixture) server(t *testing.T) *Server {
+	t.Helper()
+	authenticator, err := BuildAuthenticator(AuthenticatorParams{TokenIssuer: f.rawIssuer})
+	require.NoError(t, err)
+	server, err := NewServer(&Config{
+		Authenticator:   authenticator,
+		Backends:        map[string]xkms.Backend{"test": newMockKeyStore()},
+		Logger:          testLogger(),
+		TokenIssuer:     f.rawIssuer,
+		WebAuthnConfig:  f.cfg,
+		WebAuthnService: f.router.System(),
+		WebAuthnTenants: f.router,
+	})
+	require.NoError(t, err)
+	return server
+}
+
+func TestTenantLogin_AddCredentialOverMountedRoutes(t *testing.T) {
+	f := newTenantLoginFixture(t)
+	server := f.server(t)
+	ctx := context.Background()
+	tenantSvc, err := f.router.For(ctx, tenantLoginTenantB)
+	require.NoError(t, err)
+
+	opts, loginSession := f.begin(t, tenantSvc, loginByEmail, tenantLoginEmail)
+	tok, err := f.finish(t, tenantSvc, opts, loginSession)
+	require.NoError(t, err)
+	require.NotEmpty(t, tok)
+
+	serve := func(path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		server.server.Handler.ServeHTTP(rec, req)
+		return rec
+	}
+	begin := func(t *testing.T) (string, string, string) {
+		t.Helper()
+		rec := serve("/api/v1/webauthn/credentials/begin", nil, map[string]string{"Authorization": "Bearer " + tok})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		sessionID := rec.Header().Get(webauthnhttp.HeaderSessionID)
+		require.NotEmpty(t, sessionID)
+
+		var creation protocol.CredentialCreation
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &creation))
+		raw, err := json.Marshal(creation.Response)
+		require.NoError(t, err)
+		attOpts, err := virtualwebauthn.ParseAttestationOptions(string(raw))
+		require.NoError(t, err)
+		cred := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+		att := virtualwebauthn.CreateAttestationResponse(f.rp, f.authn, cred, *attOpts)
+		return sessionID, rec.Header().Get(webauthnhttp.HeaderTenantID), att
+	}
+
+	t.Run("finish on the public route uses the begin tenant", func(t *testing.T) {
+		sessionID, tenantID, att := begin(t)
+		require.Equal(t, tenantLoginTenantB, tenantID)
+
+		rec := serve("/api/v1/webauthn/registration/finish", []byte(att), map[string]string{
+			webauthnhttp.HeaderSessionID: sessionID,
+			webauthnhttp.HeaderTenantID:  tenantID,
+		})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		creds, err := tenantSvc.GetCredentials(ctx, f.handle)
+		require.NoError(t, err)
+		require.Len(t, creds, 2)
+	})
+
+	t.Run("finish without the tenant header misses the session", func(t *testing.T) {
+		sessionID, _, att := begin(t)
+		rec := serve("/api/v1/webauthn/registration/finish", []byte(att), map[string]string{
+			webauthnhttp.HeaderSessionID: sessionID,
+		})
+		require.NotEqual(t, http.StatusOK, rec.Code, rec.Body.String())
 	})
 }
 
