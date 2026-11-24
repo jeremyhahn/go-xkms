@@ -2116,6 +2116,27 @@ func (s *Server) initializeHealth() error {
 // If config.CA is nil, the CA is not configured and initialization is skipped.
 // On first startup (no existing CA data), Init() creates new root/intermediate certificates.
 // On subsequent startups, Load() restores the CA from stored certificates and keys.
+// transparencyLog returns the appender the CA writes its transparency-log
+// entries through: the node's verifiable logs of the system tenant, signed
+// by the key headSignerProvider binds. It is nil, and the CA appends
+// nothing, when the node has no verifiable-log service (built without
+// qrdb_vlog) or no head signer.
+func (s *Server) transparencyLog() tlog.Appender {
+	if s.qrdbClient == nil || s.qrdbNode == nil || s.headSignerProvider == nil {
+		return nil
+	}
+	if svcs := s.qrdbNode.Services(); svcs == nil || svcs.Log == nil {
+		return nil
+	}
+	return tlog.NewNodeAppender(s.qrdbClient, tlog.NodeAppenderConfig{
+		Tenant: qrdbsdk.SystemTenantID,
+		Keys:   s.headSignerProvider,
+		// The CA's log writes are xkms's own, as its storage is: they run
+		// as the node's service principal.
+		Context: s.qrdbNode.ServiceContext,
+	})
+}
+
 func (s *Server) initializeCA() error {
 	if s.config.CA == nil {
 		return nil
@@ -2185,6 +2206,7 @@ func (s *Server) initializeCA() error {
 		Storage:         s.caStorage,
 		BackendForStore: backendForStore,
 		AuditLogger:     s.auditLogger,
+		TransparencyLog: s.transparencyLog(),
 		AdoptCertStore:  s.adoptStagedClusterCACerts,
 		Logger:          s.logger,
 	})

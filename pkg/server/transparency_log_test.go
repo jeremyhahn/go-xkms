@@ -118,14 +118,18 @@ func TestEmbeddedNode_LogCheckpointSignedWithCAKey(t *testing.T) {
 
 	cfg := qrdbBarrierConfig(t)
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
-	cfg.Cluster.RaftEnrollment.ClusterCACN = "cluster-ca"
+	// The cluster CA identity carries the server's own root CN: first-boot
+	// issuance appends to the issuance log, whose head signer must resolve
+	// it in the server's CA before the test rebinds a two-identity CA.
+	clusterCN := cfg.CA.Identity[0].Subject.CommonName
+	cfg.Cluster.RaftEnrollment.ClusterCACN = clusterCN
 	s, err := New(cfg)
 	require.NoError(t, err)
 	defer func() { _ = s.Shutdown() }()
 
-	trusted := &twoIdentityCA{clusterCN: "cluster-ca"}
+	trusted := &twoIdentityCA{clusterCN: clusterCN}
 	trusted.selectedKey, trusted.selectedCert = selfSignedCA(t, "selected-ca")
-	trusted.clusterKey, trusted.clusterCert = selfSignedCA(t, "cluster-ca")
+	trusted.clusterKey, trusted.clusterCert = selfSignedCA(t, clusterCN)
 	require.NoError(t, s.bindCAProviders(trusted))
 
 	// The node's log service authorizes every call: act as the first-boot
@@ -144,16 +148,18 @@ func TestEmbeddedNode_LogCheckpointSignedWithCAKey(t *testing.T) {
 	caller := &qrdbsdk.Identity{Subject: "owner", TenantID: qrdbsdk.SystemTenantID, Roles: []string{owner.ID}}
 	ctx = qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(ctx, caller), qrdbsdk.SystemTenantID)
 
-	const origin = "xkms.test/issuance"
+	// A log of the test's own: the server's first-boot issuance already
+	// created the issuance log under the server's CA key.
+	const origin = "xkms.test/checkpoint"
 	vl := s.qrdbClient.Vlog()
 	_, err = vl.VlogCreate(ctx, &vlogwire.CreateRequest{
-		Log: "issuance", Origin: origin,
+		Log: "checkpoint", Origin: origin,
 		SigningKeyType: qrdbsdk.HeadSignatureECDSAP256SHA256,
 	})
 	require.NoError(t, err)
-	_, err = vl.VlogAppend(ctx, &vlogwire.AppendRequest{Log: "issuance", Entries: [][]byte{[]byte("cert-1")}})
+	_, err = vl.VlogAppend(ctx, &vlogwire.AppendRequest{Log: "checkpoint", Entries: [][]byte{[]byte("cert-1")}})
 	require.NoError(t, err)
-	signed, err := vl.VlogSignHead(ctx, &vlogwire.LogRequest{Log: "issuance"})
+	signed, err := vl.VlogSignHead(ctx, &vlogwire.LogRequest{Log: "checkpoint"})
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), signed.Head.Size)
 
@@ -174,15 +180,9 @@ func TestEmbeddedNode_TransparencyLogAppendsToNodeLog(t *testing.T) {
 
 	cfg := qrdbBarrierConfig(t)
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
-	cfg.Cluster.RaftEnrollment.ClusterCACN = "cluster-ca"
 	s, err := New(cfg)
 	require.NoError(t, err)
 	defer func() { _ = s.Shutdown() }()
-
-	trusted := &twoIdentityCA{clusterCN: "cluster-ca"}
-	trusted.selectedKey, trusted.selectedCert = selfSignedCA(t, "selected-ca")
-	trusted.clusterKey, trusted.clusterCert = selfSignedCA(t, "cluster-ca")
-	require.NoError(t, s.bindCAProviders(trusted))
 
 	appender := s.transparencyLog()
 	if s.qrdbNode.Services().Log == nil {
@@ -194,15 +194,25 @@ func TestEmbeddedNode_TransparencyLogAppendsToNodeLog(t *testing.T) {
 	}
 	require.NotNil(t, appender, "a server with a qrdb client hands the CA an appender")
 
+	owner := &qrdbsdk.Identity{Subject: "owner", TenantID: qrdbsdk.SystemTenantID,
+		Roles: []string{qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, "owner")}}
+	octx := qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(ctx, owner), qrdbsdk.SystemTenantID)
+	vl := s.qrdbClient.Vlog()
+
+	// The server's first-boot issuance already created the log and
+	// appended its certificates.
+	before, err := vl.VlogHead(octx, &vlogwire.LogRequest{Log: tlog.LogIssuance})
+	require.NoError(t, err)
+	require.NotZero(t, before.Size, "first-boot issuance appends cert-issued entries")
+
 	require.NoError(t, tlog.AppendEntry(ctx, appender, tlog.CertIssued{SHA256: "00", Serial: "1"}))
 	require.NoError(t, tlog.AppendEntry(ctx, appender, tlog.CertIssued{SHA256: "01", Serial: "2"}))
 
-	owner := &qrdbsdk.Identity{Subject: "owner", TenantID: qrdbsdk.SystemTenantID,
-		Roles: []string{qrdbsdk.SystemRoleID(qrdbsdk.SystemTenantID, "owner")}}
-	ctx = qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(ctx, owner), qrdbsdk.SystemTenantID)
-	signed, err := s.qrdbClient.Vlog().VlogSignHead(ctx, &vlogwire.LogRequest{Log: tlog.LogIssuance})
+	signed, err := vl.VlogSignHead(octx, &vlogwire.LogRequest{Log: tlog.LogIssuance})
 	require.NoError(t, err)
-	require.Equal(t, uint64(2), signed.Head.Size)
-	require.NoError(t, vlog.VerifyHead(&trusted.clusterKey.PublicKey,
-		qrdbsdk.SystemTenantID+"/"+tlog.LogIssuance, signed.Head))
+	require.Equal(t, before.Size+2, signed.Head.Size)
+	hs, err := s.headSignerProvider.HeadSigner(ctx, qrdbsdk.HeadSignerRequest{KeyRef: tlog.KeyRef})
+	require.NoError(t, err)
+	require.NoError(t, vlog.VerifyHead(hs.Public(), qrdbsdk.SystemTenantID+"/"+tlog.LogIssuance, signed.Head),
+		"the issuance checkpoint verifies under the server's CA key")
 }
