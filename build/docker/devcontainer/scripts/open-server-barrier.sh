@@ -1,32 +1,5 @@
 #!/bin/bash
-# open-server-barrier.sh — unseal the compose xkms-server through its sealed window.
-#
-# configs/xkmsd-integration.yaml enables a passphrase barrier, and a passphrase
-# barrier never auto-unseals from configuration (go-xkms#653): the daemon boots
-# sealed and serves only the sealed-window listener (pkg/server/sealed_window.go)
-# on https://xkms-server:8443 until an operator unseals it. The Unix socket the
-# suites dial does not exist until then, so this script is that operator, as
-# test/integration/xkmsdtest.OpenBarrier is for the Go harnesses.
-#
-# It only ever unseals. The barrier is initialized by `xkmsd init` before the
-# daemon first starts (the xkms-server command in build/docker/devcontainer/compose.yaml),
-# with the SO PIN as its passphrase; the sealed window refuses initialization
-# outright (HTTP 409). Any answer but 204 fails with the server's own message.
-# An unsealed server is left alone.
-#
-# The server is verified against the anchors it persisted in its data volume,
-# mounted read-only at $XKMS_SERVER_STATE_DIR: the bootstrap certificate the
-# sealed window serves, and the CA bundle the full server writes beside it
-# moments after the unseal, when it swaps that certificate for one its CA
-# issued (pkg/server/unified_tls.go upgradeUnifiedTLSCert). Nothing is fetched
-# unverified and the passphrase goes only to a server those anchors verify.
-#
-# Usage:
-#   open-server-barrier.sh       # exit 0 once the barrier is open and /health answers
-# Environment:
-#   XKMS_SERVER_STATE_DIR       read-only xkms-server state mount (default /xkms-data)
-#   XKMS_SERVER_WINDOW_URL      sealed-window base URL (default https://xkms-server:8443)
-#   XKMS_SERVER_BARRIER_SECRET  the server's test SO PIN, its barrier passphrase (required)
+# open-server-barrier.sh: unseal the compose xkms-server through its sealed window.
 
 set -euo pipefail
 

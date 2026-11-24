@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/build-agsim.sh: a local fixture git repository stands in
-# for the trusted-firmware repository, and fake `go` and `make` commands on
-# PATH for the module lookup and the C build, so the suite checks the script's
-# commit and tree pinning and its error reporting without a network or a C
-# toolchain. The script reads its pins from agsim.sum beside it, so a copy of
-# it runs from a work directory holding a test pin (DS-3754, DS-7409).
+# Tests for scripts/build-agsim.sh against a local fixture repository and fake go and make.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 set +e

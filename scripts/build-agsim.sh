@@ -1,37 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-agsim.sh -- build the trusted-firmware host simulators (tfwsim and
-# tfwsim-atecc608a) at the version go.mod pins, into DIR.
-#
-# Usage:
-#	scripts/build-agsim.sh DIR
-#
-# Why this exists (go-xkms#737). The device-attest-01 DICE end-to-end test
-# (pkg/acme/client) enrolls the REAL trusted-firmware firmware, compiled for the
-# host, through the ACME server. The simulators are C programs, so the Go
-# module cache holds their source but not a binary; the sdk/go/tfwsim launcher
-# finds them in $TFWSIM_DIR, and a missing binary FAILS the test rather than
-# skipping it.
-#
-# The source is the trusted-firmware repository at the same version as the
-# sdk/go dependency. It is fetched with git, not the Go module machinery: the
-# repository root has no go.mod, so proxy.golang.org and sum.golang.org serve
-# no version of github.com/jeremyhahn/trusted-firmware (only sdk/go resolves).
-# The version is read from go.mod, so bumping the dependency is the only step
-# that changes what is simulated, and a bump with no pin line fails here.
-#
-# The source is compiled and executed, so it is pinned: scripts/agsim.sum names
-# the repository, the commit and its tree for each version. The script fetches
-# that commit (never the tag name, which can move) into a fresh repository,
-# where git hashes every object it receives, and checks the commit and tree
-# against the pin before anything is built.
-#
-# An offline image pre-fetches the pinned commit into $AGSIM_SRC/<version>
-# (default /opt/agsim-src, build/docker/devcontainer/Dockerfile); when that
-# directory exists the commit is fetched from it instead, and checked the same
-# way, so a pre-fetched source at another commit fails too.
-#
-# A DIR already built for this version is left alone.
+# build-agsim.sh: build the trusted-firmware host simulators at the version go.mod pins into DIR.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then

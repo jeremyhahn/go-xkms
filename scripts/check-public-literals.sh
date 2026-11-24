@@ -1,42 +1,6 @@
 #!/usr/bin/env bash
 #
-# check-public-literals.sh — public-release readiness gate (go-xkms#1030).
-#
-# Fails with file:line output if any file in the tree contains an internal
-# literal: a lab-network address or a fleet host name. None of these may
-# reach a published tree. Owner workstation paths are not matched here: the
-# Releasability (private patterns) step in ci.yml's lint-gates job owns that
-# class, so its value is not written into this public tree. The placeholders that
-# replace them are documented in CLAUDE.md's feature-docs convention and in
-# the release-engineering docs:
-#   - lab subnet 198.51.100.0/24        -> 192.0.2.x (RFC 5737 TEST-NET-1)
-#   - fleet host names (dellemc-*, ...)   -> kms.example.com / ca.example.com
-#
-# Generic private-range examples used as test data (192.168.1.1, 10.0.0.1,
-# etc.) are NOT internal and must not be flagged -- only the lab's own
-# subnet is.
-#
-# omega* is matched as the single known literal "omega-docker", not a
-# wildcard: bare "omega" is an ordinary word (it is, among other things, a
-# public gTLD baked into the vendored swagger-ui bundle under
-# pkg/acme/api/swagger/, and an unrelated test fixture value in two xkey SSH
-# tests). A wildcard here would flag both as false positives. If another
-# omega-prefixed runner name shows up, add its literal string to PATTERN
-# below rather than widening the match.
-#
-# Only tracked files are scanned: the gate keeps literals out of what is
-# committed. An untracked file -- such as the gitignored
-# build/docker/devcontainer/gomodauth.env that `make stage-gomodauth` writes
-# with module credentials -- is never read, and a ROOT that is not a git work
-# tree fails closed rather than falling back to a tree scan.
-#
-# A finding is reported as path:line only. The matched line's text is never
-# printed: a match can sit beside a secret, and CI logs are public (CA m417).
-#
-# Usage: scripts/check-public-literals.sh [ROOT]
-#   ROOT defaults to the repository root. A second, throwaway ROOT (a scratch
-#   git repository) is how test/scripts/check-public-literals.test.sh proves
-#   the gate fires on a planted literal and stays quiet on a clean tree.
+# check-public-literals.sh: public-release readiness gate for internal literals.
 set -uo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

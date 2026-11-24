@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/check-public-literals.sh: proves the public-release
-# readiness gate (go-xkms#1030) fires on each category of internal literal,
-# respects the CLAUDE.md/AGENTS.md/.claude allowlist, and stays quiet on a
-# clean tree. Everything here runs against synthetic scratch trees under
-# mktemp -- it never points the script at this repository's own tree, so it
-# cannot go red because something ELSE in the tree changed.
-#
-# The five literals this test plants are built from split fragments (see
-# below) rather than written out whole: the gate scans every tracked file,
-# including this one, so a literal written out here would trip the very
-# check this file exists to exercise. scripts/check-public-literals.sh's own
-# header comment is the one place these patterns are declared in full.
+# Tests for scripts/check-public-literals.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/check-public-literals.sh"

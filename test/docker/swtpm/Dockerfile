@@ -1,16 +1,8 @@
-# Multi-stage build for SWTPM TPM 2.0 simulator
-# Based on Alpine for minimal image size
-# Pinned to the 3.24 minor series, bumped from 3.22.1 (two minors stale). The
-# series tag keeps the build reproducible while still receiving patches, and
-# the apk upgrade in each stage takes them on rebuild; a patch-level pin would
-# freeze the fixes. libtpms and swtpm below are built from source at pinned
-# upstream commits against the base toolchain, so a base bump moves that
-# toolchain -- verify a clean build of this image when bumping the series again.
+# SWTPM TPM 2.0 simulator on Alpine 3.24.
 
 # Build stage
 FROM alpine:3.24 AS builder
-# Ruling 888: the pool's LAN apk cache, the BuildKit secret apk_mirror (in no
-# layer and no history entry), empty on a hosted runner.
+# Optional apk cache as the BuildKit secret apk_mirror; empty when unset.
 
 # Install build dependencies
 RUN --mount=type=bind,from=scripts,source=apk-mirror.sh,target=/usr/local/bin/apk-mirror \
@@ -54,8 +46,7 @@ RUN git clone https://github.com/stefanberger/swtpm.git && \
 
 # Runtime stage
 FROM alpine:3.24
-# Ruling 888: the pool's LAN apk cache, the BuildKit secret apk_mirror (in no
-# layer and no history entry), empty on a hosted runner.
+# Optional apk cache as the BuildKit secret apk_mirror; empty when unset.
 
 # Install runtime dependencies only
 RUN --mount=type=bind,from=scripts,source=apk-mirror.sh,target=/usr/local/bin/apk-mirror \

@@ -1,35 +1,6 @@
 #!/usr/bin/env bash
 #
-# release-assets.sh — the release workflow's view of a Gitea release's assets.
-#
-# Usage:
-#	scripts/release-assets.sh list
-#	scripts/release-assets.sh expected        VERSION
-#	scripts/release-assets.sh verify          VERSION
-#	scripts/release-assets.sh verify-complete VERSION
-#	scripts/release-assets.sh download        DIR [GLOB]
-#	scripts/release-assets.sh upload          FILE...
-#
-# Environment (all required except DRY_RUN):
-#	RELEASE_API   Gitea API root, e.g. http://forge.example.invalid/api/v1 (github.api_url)
-#	RELEASE_REPO  owner/repo (github.repository)
-#	RELEASE_TAG   the tag whose release is addressed, e.g. v0.11.0-alpha
-#	RELEASE_TOKEN a token allowed to read and write that release's assets
-#	DRY_RUN       when 1, upload prints its decisions and changes nothing
-#
-# Why this exists (#447). The generic release action deletes an existing asset
-# and re-uploads it, and Gitea answers the re-upload with 404, so a workflow
-# re-run failed on every leg that had ALREADY succeeded while succeeding on
-# the leg that had flaked. One flaked matrix leg therefore cost a release its
-# master checksums for good, because a tag cannot be re-cut. Here an upload is
-# idempotent: an asset that is already present with the same SHA-256 is left
-# alone, one with a different digest is replaced, one that is absent is added.
-# `verify` states the complete asset set the build matrix produces, so the
-# checksums job can fail on what is genuinely missing rather than on how many
-# runs it took to get there.
-#
-# Every command is a closed question against the release as it IS, read
-# through the API, never against what this run happens to have built.
+# release-assets.sh: the release workflow's view of a release's assets.
 set -euo pipefail
 
 usage() { sed -n '3,17p' "$0" >&2; exit 2; }

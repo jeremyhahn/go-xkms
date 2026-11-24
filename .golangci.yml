@@ -1,58 +1,6 @@
 # golangci-lint v2 configuration for go-xkms.
-#
-# devops.md §8 makes six linters mandatory: errcheck, staticcheck, unused,
-# ineffassign, misspell and gocritic. The first four arrive with the "standard"
-# default set (identical to golangci-lint's zero-config default); misspell and
-# gocritic are enabled explicitly below. None of them may be disabled.
-#
-# Two scoped exclusions, each with a reason:
-#
-#   - errcheck is not enforced inside _test.go files. The overwhelming majority
-#     of findings there are unactionable cleanup/setup calls (Close, Setenv/
-#     Unsetenv, Write, Encode) whose failure cannot change a test outcome.
-#     errcheck stays strict for all production code, where an unchecked error is
-#     a real defect.
-#
-#   - gocritic is not enforced in examples/ or in tests. examples/ is
-#     documentation that happens to compile: it is written for readability, and
-#     rewriting it to satisfy performance checks makes it worse at its job.
 
-# Issue output caps: UNLIMITED, decided rather than inherited (#225).
-#
-# golangci-lint applies three output filters by default, and this file used to
-# set none of them, so the gate reported a FLOOR rather than a count:
-#
-#   max-same-issues        3   -- per identical message text
-#   max-issues-per-linter  50
-#   uniq-by-line           true -- only the first finding on a given line
-#
-# The caps never produced a false green: exit-code is 1 while any issue
-# survives filtering, and a filter can only reduce a printed count, never take
-# one from >=1 to 0. What they distort is the reported EXTENT, and that costs
-# real time twice over. A family sharing one message prints three at a time, so
-# fixing what was printed and pushing yields three more -- indistinguishable
-# from a regression to whoever is watching, at a full CI cycle per round on a
-# runner that is the binding constraint. And work gets sized against the
-# printed number: the v2.12.2 -> v2.13.2 bump (#189) was scoped against 14
-# SA1019 findings that were themselves capped.
-#
-# Unlimited rather than a larger bound, because any bound reintroduces exactly
-# that failure the moment a family exceeds it, and a number that is sometimes a
-# count and sometimes a floor cannot be reasoned about. Readability is not the
-# constraint worth optimising here: the gate is green, so the everyday output
-# is empty, and the run that prints hundreds is the run that most needs to show
-# them all.
-#
-# uniq-by-line is included for the same reason. It is a different filter --
-# deduplication by location rather than a count -- but it hides a second,
-# DIFFERENT finding on a line that already has one, which is the same defect in
-# a different costume.
-#
-# Measured with the runner's golangci-lint v2.13.2 before changing anything:
-# uncapping reveals no hidden findings. Root, sdk/go and web/desktop each
-# report "0 issues." capped and uncapped; xkey's non-usb subtrees likewise.
-# So this change cannot turn the gate red -- it only makes the next backlog
-# report its true size the first time rather than the third.
+# Issue output caps: unlimited.
 issues:
   max-same-issues: 0
   max-issues-per-linter: 0
@@ -60,27 +8,14 @@ issues:
 
 version: "2"
 
-# Findings report path, line and message only, never the source line: a
-# finding must not echo a credential it matched (handbook ci-standard.md §5).
+# Findings report path, line and message only, never the source line.
 output:
   formats:
     text:
       path: stdout
       print-issued-lines: false
 
-# Lint budget: 30m of WALL CLOCK, set here so `make lint`, the module
-# Makefiles and the golangci-lint-action workflows all share one value (#360,
-# #363). golangci-lint v2 disables the timeout by default; the previous bound
-# was a hard-coded --timeout=10m in the root Makefile. --timeout measures wall
-# clock from process start (golangci-lint's own instance lock included), so on
-# the shared self-hosted fleet it measures fleet load, not linter work: the
-# root module needed 11m57s at load ~30 on 24 cores (PR #351) and was killed
-# at 10m after analysis had effectively completed ("0 issues." printed before
-# the deadline on PR #362, run 11456). 30m clears the worst observed
-# contention (~12m here, ~19m on go-trusted-platform's twin #426) with the
-# same headroom `go test -timeout 30m` already assumes for Unit Tests in
-# ci.yml, chosen for exactly this per-package-default-too-tight reason.
-# Deliberately NOT retry-on-timeout: a retry would hide a genuine slowdown.
+# Lint budget: 30m of wall clock, shared by every caller.
 run:
   timeout: 30m
 
@@ -89,63 +24,28 @@ linters:
   enable:
     - misspell
     - gocritic
-    # forbidigo carries exactly one rule, for go-xkms#1074: see its settings.
+    # forbidigo carries exactly one rule; see its settings.
     - forbidigo
-    # nolintlint (go-xkms#1348): every //nolint directive must name the
-    # linter it silences and carry a reason, so a suppression can be
-    # evaluated for relevance without archaeology. See the settings block
-    # below for require-explanation / require-specific.
+    # nolintlint: every //nolint directive must name its linter and give a reason.
     - nolintlint
-    # err113 was evaluated for #700 (the typed-error migration) and is NOT
-    # enabled repo-wide yet: golangci-lint v2.13.2's err113, run with every
-    # other setting in this file unchanged, reports 107 pre-existing findings
-    # across 41 files outside the 12 packages #700 migrated (pkg/acme/admin,
-    # pkg/acme/audit, pkg/acme/challenges/..., pkg/acme/client/...,
-    # pkg/api/mcp, pkg/api/rest/..., pkg/api/transport/...,
-    # pkg/keyprovider/..., pkg/pkcs11/module, pkg/storage/hardware,
-    # pkg/ssh/..., pkg/tpm2 (multiple files, some under other open PRs),
-    # pkg/xkms/servicer_tenant.go, pkg/server/server.go,
-    # scripts/exportsurface/main.go, cmd/xkmsctl (2 files)). Turning it on
-    # here would fail `make lint` on files #700 never touched, several of
-    # them locked by concurrent PRs (#681 owns pkg/tpm2/key.go and
-    # platform_keystore.go). The two failure modes it finds are real
-    # (inline errors.New/fmt.Errorf returned as a value instead of a
-    # declared sentinel or typed struct; direct == / != against an error
-    # instead of errors.Is) and it correctly leaves sentinel declarations
-    # (`var Err... = errors.New(...)`) alone, so it is the right guard once
-    # a follow-up issue clears the backlog -- see docs/ pointer in the #700
-    # PR description for the full file list.
+    # err113 is not enabled repository-wide yet.
   settings:
     forbidigo:
       forbid:
-        # Identity.HasRole is go-qrdb's, so it cannot be removed here. It
-        # compares a role NAME against Identity.Roles, which holds role
-        # IDENTIFIERS on every authenticated identity: it never matches a
-        # real grant and does match an unverified token claim that spells the
-        # name (go-xkms#1074). Authorize a resource:action through
-        # auth.Authorizer; where the decision genuinely is role membership,
-        # use auth.HoldsSystemRole.
+        # Identity.HasRole is go-qrdb's, so it cannot be removed here.
         - pattern: '\.HasRole$'
           msg: "compares a role name against role identifiers (go-xkms#1074); use auth.Authorizer, or auth.HoldsSystemRole for role membership"
     gocritic:
-      # Diagnostics and performance only. The style and opinionated tags flag
-      # rewrites rather than defects, and at this codebase's size they would
-      # bury the diagnostics this gate exists for.
+      # Diagnostics and performance only.
       enabled-tags:
         - diagnostic
         - performance
       disabled-checks:
-        # Both demand changing exported signatures across the whole API
-        # surface; that is an API decision, not a lint fix.
+        # Both would change exported signatures across the API.
         - hugeParam
         - rangeValCopy
     nolintlint:
-      # A bare //nolint or //nolint:linter with no reason is exactly the
-      # kind of suppression that outlives the issue it was written for --
-      # require-specific forces it to name the linter (so a later config
-      # change can find every site that silences it), and
-      # require-explanation forces the trailing "// reason" comment (so
-      # review does not have to reconstruct why from git blame).
+      # A //nolint must name its linter and explain itself.
       require-explanation: true
       require-specific: true
   exclusions:

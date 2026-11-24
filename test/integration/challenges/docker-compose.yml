@@ -1,33 +1,4 @@
-# Docker Compose stack for the ACME challenge-framework integration lane
-# (make integration-test-challenges).
-#
-# test/integration/challenges/enroll01 and .../endorse01 (build tag
-# `integration`) verify challenge availability/structure against a running
-# ACME server -- no TPM involved (see each package's doc comment: "testing
-# ... without requiring a physical TPM"). dns01 and http01 are NOT part of
-# this lane: they are full multi-service E2E stacks of their own
-# (docker-compose.dns01.yml / docker-compose.http01.yml) that still build
-# against the pre-merge go-trusted-ca sibling checkout and need that
-# migration finished before they can be wired up the same way (see
-# go-xkms's docs/README.md migration notes); tracked separately from #1125.
-#
-# The acme-server service and its config are the acme-tpm lane's, reused
-# as-is rather than duplicated: this suite needs nothing acme-tpm's
-# config.acme-tpm.yaml doesn't already provide (enroll-01/endorse-01 enabled,
-# a working CA, a working ACME listener). That file's own header explains why
-# storage.backend is "qrdb" with barrier.strategy "none" (go-xkms#1125): every
-# ACME-enabled xkmsd boot requires the embedded qrdb node's client for its
-# admin RBAC gate (cmd/xkmsd/admin.go's finalizeAdminModule), and "none" is
-# what lets that node auto-unseal unattended instead of blocking boot behind
-# a sealed-window ceremony nothing in this repository drives. Sharing the
-# file by reference means that fix applies here automatically -- there is
-# nothing else in this compose file that duplicates it.
-#
-# xkmsd reads that file from the source tree the root Dockerfile already
-# COPYs into /workspace, not from a bind mount: the Docker daemon resolves a
-# bind-mount source on its own host, which in CI is not the job container
-# holding the checkout, so a single-file mount there fails with "Are you
-# trying to mount a directory onto a file" (DS-4181).
+# Docker Compose stack for the ACME challenge integration suite (make integration-test-challenges).
 services:
   acme-server:
     build:
@@ -69,16 +40,12 @@ services:
       acme-server:
         condition: service_healthy
     volumes:
-      # Read-only, same reasoning as test/integration/acme-tpm/docker-compose.yml:
-      # acme-server has already generated /data/acme-tls/acme.crt by the time
-      # it reports healthy.
+      # Read-only: acme-server writes its certificate before it turns healthy.
       - acme-data:/data:ro
     environment:
       - CGO_ENABLED=1
       - ACME_SERVER_URL=https://acme-server:8443
-      # Trust the acme-server listener's self-signed certificate explicitly
-      # (test/integration/challenges/helpers.go's GetTLSConfig already reads
-      # this) rather than skip verification.
+      # Trust the acme-server's certificate explicitly.
       - ACME_CA_CERT=/data/acme-tls/acme.crt
     working_dir: /workspace
     command: >
@@ -99,7 +66,6 @@ volumes:
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env
-  # Ruling 888: the pool's LAN package caches as BuildKit secrets, which no
-  # layer and no history entry keeps; unset on a hosted runner, each is empty.
+  # Optional package caches as BuildKit secrets; empty when unset.
   apt_proxy:
     environment: DEVCACHE_APT_PROXY

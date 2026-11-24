@@ -1,40 +1,5 @@
 #!/usr/bin/env bash
-# apk-index-sum: v3 (ci-template v1.29, ruling 220(5); v2 ruling 901) — one
-# checksum of the Alpine package indexes the devcontainer build resolves
-# against.
-#
-# Each ci.yml job that names the integration image puts the printed value in
-# APK_INDEX_SUM, which the integration image's content tag hashes (`make -s
-# it-image`, ci-standard.md §9) and which its build takes as a build argument
-# (devcontainer.md §6). A
-# new Alpine package release, a CVE fix among them, changes an index, so it
-# changes the tag, and the next run rebuilds the image instead of reusing the
-# cached one: before v1.29 a tree whose files had not changed kept its image,
-# and `trivy image` went red on a fixed CVE until some unrelated file moved
-# (go-enclave main fd83b79ce, CVE-2026-92392, libcurl 8.23.0-r0).
-#
-# Usage: scripts/apk-index-sum.sh [Dockerfile]
-#   The Dockerfile defaults to APK_DOCKERFILE, else
-#   build/docker/devcontainer/Dockerfile. Each external base image its FROM
-#   lines name (a global ARG default is substituted; `scratch` and earlier
-#   stages are skipped) is run once, as root with every capability dropped
-#   but the ones apk needs, to read its /etc/apk/repositories and fetch their
-#   APKINDEX files with `apk update`. APK_BASE_IMAGES, space separated,
-#   replaces the FROM parse for a Dockerfile it cannot read.
-#
-# Prints a sha256 over each base image's name, repository list and index
-# checksums, or `none` when no base image has apk. v2: a pool build fetches its
-# packages through the LAN apk mirror (DEVCACHE_APK_MIRROR, ruling 886), so the
-# probe fetches the indexes through it too, with the build's own apk-mirror.sh
-# from beside this script; unset, as on a hosted runner, the
-# indexes come from the public repositories. apk names each index file after
-# its repository URL, so only the files' contents are hashed: a current mirror
-# gives the public sum, a stale one another, and the image is rebuilt once the
-# mirror catches up. v3: the script reaches the probe on its stdin, never as a
-# bind mount: a pool's Docker daemon runs outside the job container and
-# resolves a -v source on its own host, where the checkout does not exist. Exits 1 when a base image
-# cannot be resolved, run or updated: a missing index is never a pass, since
-# the image build then cannot resolve its packages either.
+# apk-index-sum: v3. One checksum of the Alpine package indexes the devcontainer build resolves against.
 set -euo pipefail
 
 dockerfile=${1:-${APK_DOCKERFILE:-build/docker/devcontainer/Dockerfile}}

@@ -1,19 +1,5 @@
 #!/usr/bin/env bash
-# gitea-host.sh prints the in-house Gitea server as host:port of its HTTP
-# API, or nothing when this checkout resolves modules publicly.
-#
-# Resolution order:
-#   1. GITEA_HOST in the environment.
-#   2. GITEA_HOST= in the gitignored build/docker/devcontainer/.env, beside FORGE_MODULE_TOKEN.
-#   3. The repository's own origin remote, which in any real Gitea checkout
-#      names the server. An SSH origin (ssh://git@host:<sshport>/... or
-#      git@host:...) maps its SSH port to the HTTP port (GITEA_HTTP_PORT,
-#      default 3001); an HTTP(S) origin keeps host and port as written.
-#
-# A github.com origin with no override prints nothing and exits 0: that is
-# the public resolution path (no insteadOf rewrite, modules from the proxy),
-# not an error. Anything that needs the host and gets an empty string names
-# GITEA_HOST in its failure.
+# gitea-host.sh: print the module forge as host:port, or nothing when modules resolve publicly.
 set -euo pipefail
 
 if [ -n "${GITEA_HOST:-}" ]; then

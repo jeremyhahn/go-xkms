@@ -529,7 +529,7 @@ and `bootstrap.dane` (`enabled`, `hostname`, `port`, `dns_server`) decode into
 DANE are client-side anchors: the pin and the TLSA lookup are configured on the
 client (`xkmsctl bootstrap` flags, or the resolver's scope), not on the server.
 
-**Sequencing (Ruling 1, go-xkms#35):** the bootstrap listener is a network
+**Sequencing:** the bootstrap listener is a network
 service and so must not bind before the barrier is unsealed. This already
 holds by construction and needs no extra gating here: `s.barrier` is set
 inside `initEmbeddedQRDBNode` (`pkg/server/qrdb_node.go`), which blocks on

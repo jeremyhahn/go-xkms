@@ -81,7 +81,7 @@ signature      = Sign(authority(S), aHash)
 
 ### Composite policies and descriptions
 
-Owner ruling (2026-09-30): named policies can combine conditions beyond
+Named policies can combine conditions beyond
 PCR-or-password, and carry a free-text description.
 
 - A named policy is an **OR of branches**. Each branch is an **AND of
@@ -161,7 +161,7 @@ approval is current". The server makes no software comparison.
      is verified against that Name.
 4. **Signing** happens only inside xkms, on policy create and update. A caller
    never supplies a signature.
-5. **Rotation** is required (owner ruling, 2026-09-29). See
+5. **Rotation** is required. See
    [Authority rotation](#authority-rotation).
 
 ## Authority rotation
@@ -228,7 +228,7 @@ verify or decrypt call selects a version.
 
 ## Key versions
 
-Owner rulings (2026-09-29, 2026-09-30): a service-layer version model on
+A service-layer version model on
 every backend, with interoperability with standard tooling first.
 
 - **A version is its own backend key.** Version 1 is the key as generated,

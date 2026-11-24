@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# Tests that every path a module-fetch credential is written to stays out of
-# git and out of every Docker build context that can reach it (#1600). The
-# pre-#1558 .devcontainer/ paths stay listed: an upgraded checkout keeps its
-# old untracked .devcontainer/.env, and `COPY . .` would bake it into a layer.
-#
-# Usage: bash test/scripts/credential-ignores.test.sh
+# Tests that module-fetch credential files stay out of git and every Docker build context.
 
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)

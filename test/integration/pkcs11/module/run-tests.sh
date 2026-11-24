@@ -1,20 +1,5 @@
 #!/bin/bash
-# run-tests.sh - PKCS#11 module integration test runner
-#
-# This script:
-# 1. Waits for the xkms server to be ready
-# 2. Tests the PKCS#11 module with pkcs11-tool
-# 3. Runs Go integration tests
-# 4. Reports results
-#
-# Environment variables:
-#   PKCS11_MODULE           - Path to PKCS#11 module (default: /usr/local/lib/libxkms_pkcs11.so)
-#   XKMS_UNIX_SOCKET    - Unix socket path (default: /var/run/xkms/xkms.sock)
-#   XKMS_GRPC_ADDR      - gRPC server address (default: xkms-server:9443)
-#   XKMS_CONNECTION_MODE - Connection mode: unix or tcp (default: unix)
-#   SERVER_WAIT_TIMEOUT     - Timeout waiting for server (default: 60)
-#   PKCS11_PIN              - User PIN (default: 1234)
-#   PKCS11_SO_PIN           - Security Officer PIN (default: 12345678)
+# run-tests.sh: PKCS#11 module integration test runner.
 
 set -e
 

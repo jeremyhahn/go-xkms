@@ -1,5 +1,4 @@
-# Dependabot configuration for go-xkms
-# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+# Dependabot configuration for go-xkms.
 
 version: 2
 updates:

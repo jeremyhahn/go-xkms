@@ -2,17 +2,9 @@ name: Docker Integration Tests
 
 on:
   workflow_dispatch:  # Manual trigger only
-  # Disabled automatic triggers - functionality covered by ci.yml
-  # push:
-  #   branches: [ main, develop ]
-  # pull_request:
-  #   branches: [ main, develop ]
+  # Disabled automatic triggers; ci.yml covers this.
 
-# Dormant (workflow_dispatch only). Same reasoning as coverage.yml: the
-# toolchain and linter pins are brought to the values ci.yml gates on, and the
-# GOPROXY/GOSUMDB overrides are removed under the ci-template v1.1 prohibition
-# ci.yml records -- `GOSUMDB: off` disabled checksum verification for every
-# third-party dependency.
+# Manual dispatch only.
 env:
   GO_VERSION: '1.27.4'
 
@@ -47,9 +39,7 @@ jobs:
 
   unit-tests:
     name: Unit Tests
-    # Bigdisk runners on Gitea (Infra m1227, DS-3705): this job builds the
-    # test image (`make docker-build`) and runs the whole unit suite in it,
-    # the same disk load as integration-tests below.
+    # Builds the test image and runs the unit suite in it.
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: lint
     steps:

@@ -1,6 +1,5 @@
 #!/bin/bash
-# Installation script for xkmsd
-# This script installs the xkms daemon and sets up the systemd service
+# Installs the xkms daemon and its systemd service.
 
 set -e
 

@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests that the root Makefile builds xkey with exactly the tags xkey's own
-# Makefile selects for the same WITH_* toggles: XKEY_BUILD_TAGS must forward
-# every toggle to the `make -C xkey print-build-tags` sub-make. Each case is
-# checked twice: with the toggles on the command line, and with them as
-# assignments in a makefile that includes the root one, which a $(shell)
-# child never inherits. The second form is also how a GNU make before 4.4
-# treats command-line variables, which it does not export to $(shell).
+# Tests that the root Makefile builds xkey with the tags xkey's own Makefile selects.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 set +e

@@ -194,7 +194,7 @@ Wails-bound; see [api.md](api.md)):
 
 `resolveNoiseKeyBarrier`/`sealOrWarnLocalNoiseKey`
 (`phone_service.go:387-461`) mirror the CLI's `device_barrier_shared.go`
-behavior documented in phone-hsm's engineering.md (#42 owner ruling): if a barrier is
+behavior documented in phone-hsm's engineering.md: if a barrier is
 initialized on this host but not currently open, `Pair`/`Connect` refuse
 with `ErrPhoneBarrierRequired` rather than falling back to plaintext. A host
 with **no barrier at all** is not refused — the key is written unsealed with

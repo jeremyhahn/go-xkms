@@ -1,10 +1,7 @@
 services:
   # Unified server (all protocols)
   xkms-server:
-    # `docker compose build` is unsupported here — see
-    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
-    # ("Building Images"). Build with `make docker-build-server` (or
-    # `docker-build-all`); this image: tag is what that target produces.
+    # `docker compose build` is unsupported here; see docs/deployment/docker.md.
     build:
       context: .
       dockerfile: Dockerfile.compose-build-unsupported
@@ -26,9 +23,7 @@ services:
     networks:
       - xkms-net
     healthcheck:
-      # curl -k, matching the image HEALTHCHECK: the listener presents the
-      # certificate the daemon mints from its own CA, which no trust store
-      # knows about, and the Debian runtime has no busybox wget.
+      # curl -k: the listener presents a certificate from the daemon's own CA.
       test: ["CMD", "curl", "-fsSk", "https://localhost:8443/health"]
       interval: 30s
       timeout: 5s
@@ -37,10 +32,7 @@ services:
 
   # REST-only server
   xkms-rest:
-    # `docker compose build` is unsupported here — see
-    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
-    # ("Building Images"). Build with `make docker-build-rest` (or
-    # `docker-build-all`); this image: tag is what that target produces.
+    # `docker compose build` is unsupported here; see docs/deployment/docker.md.
     build:
       context: .
       dockerfile: Dockerfile.compose-build-unsupported
@@ -59,9 +51,7 @@ services:
     networks:
       - xkms-net
     healthcheck:
-      # curl -k, matching the image HEALTHCHECK: the listener presents the
-      # certificate the daemon mints from its own CA, which no trust store
-      # knows about, and the Debian runtime has no busybox wget.
+      # curl -k: the listener presents a certificate from the daemon's own CA.
       test: ["CMD", "curl", "-fsSk", "https://localhost:8443/health"]
       interval: 30s
       timeout: 5s
@@ -72,10 +62,7 @@ services:
 
   # gRPC-only server
   xkms-grpc:
-    # `docker compose build` is unsupported here — see
-    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
-    # ("Building Images"). Build with `make docker-build-grpc` (or
-    # `docker-build-all`); this image: tag is what that target produces.
+    # `docker compose build` is unsupported here; see docs/deployment/docker.md.
     build:
       context: .
       dockerfile: Dockerfile.compose-build-unsupported
@@ -104,10 +91,7 @@ services:
 
   # QUIC-only server
   xkms-quic:
-    # `docker compose build` is unsupported here — see
-    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
-    # ("Building Images"). Build with `make docker-build-quic` (or
-    # `docker-build-all`); this image: tag is what that target produces.
+    # `docker compose build` is unsupported here; see docs/deployment/docker.md.
     build:
       context: .
       dockerfile: Dockerfile.compose-build-unsupported
@@ -136,10 +120,7 @@ services:
 
   # MCP-only server
   xkms-mcp:
-    # `docker compose build` is unsupported here — see
-    # Dockerfile.compose-build-unsupported and docs/deployment/docker.md
-    # ("Building Images"). Build with `make docker-build-mcp` (or
-    # `docker-build-all`); this image: tag is what that target produces.
+    # `docker compose build` is unsupported here; see docs/deployment/docker.md.
     build:
       context: .
       dockerfile: Dockerfile.compose-build-unsupported

@@ -2,8 +2,8 @@
 
 > **Status: NORMATIVE** · Feature: `transparency-log` · Repo: `go-xkms` · Last verified: 2026-10-24
 
-This page covers the checkpoint format of the `transparency-log` SPEC row
-(owner ruling 122): `pkg/ca/checkpoint`. The log itself, the append verbs and
+This page covers the checkpoint format of the `transparency-log` SPEC row:
+`pkg/ca/checkpoint`. The log itself, the append verbs and
 the `HeadSignerProvider` wait on go-qrdb's verifiable-log type (go-qrdb #722,
 #912) and are not on main.
 

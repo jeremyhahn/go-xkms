@@ -147,7 +147,7 @@ answer the binding question.
 - **(c) Inline submodule in signed evidence.** The same, with the record
   inside the signed token as a Claims-Set submodule (RFC 9711 §4.2.18.1).
 
-**Ruled: (b)** (owner ruling 7dbbb72, item 181). The record is bound as a
+**Decided: (b).** The record is bound as a
 Detached Submodule Digest inside the device-signed EAT evidence over the
 Verifier's nonce, and the record travels beside the envelope. Putting the
 digest in the signed evidence is trusted-firmware's change (trusted-firmware#335).

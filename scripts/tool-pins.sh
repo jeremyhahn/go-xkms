@@ -1,13 +1,6 @@
 # shellcheck shell=sh disable=SC2034
 #
-# Tool pins: the one place every tool version and download checksum lives
-# (handbook ci-standard.md). The Makefile includes this file and the
-# devcontainer Dockerfile (build/docker/devcontainer/Dockerfile) sources it,
-# so the image CI runs and the tools `make` installs on a host never drift.
-#
-# Plain KEY=value lines only: no quotes, no spaces, no shell expansion. Make
-# and sh must both read the same values. A version bump changes the matching
-# SHA-256 in the same commit; every download is checked against it.
+# Tool pins: the one place every tool version and download checksum lives.
 
 # Base image: the Go toolchain, pinned by digest.
 GO_IMAGE=golang:1.27.4-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea

@@ -1,6 +1,5 @@
 #!/bin/sh
-# Entrypoint script for nginx in HTTP-01 E2E tests
-# Generates a placeholder certificate if none exists
+# Generates a placeholder certificate when none exists.
 
 CERT_PATH=/etc/nginx/certs/server.crt
 KEY_PATH=/etc/nginx/certs/server.key

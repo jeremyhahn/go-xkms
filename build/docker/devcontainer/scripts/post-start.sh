@@ -1,6 +1,5 @@
 #!/bin/bash
-# Post-start script for go-xkms devcontainer
-# This script runs every time the container starts
+# Post-start script for the go-xkms devcontainer; runs every time the container starts.
 
 set -e
 

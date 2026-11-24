@@ -12,10 +12,7 @@ services:
       - AZURE_CLIENT_SECRET=test-secret
     working_dir: /app
 
-# Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
-# gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
-# available, in which case the Dockerfile's optional secret mount falls back
-# to public module resolution.
+# Module credentials staged by `make stage-gomodauth`; empty when none are configured.
 secrets:
   gomodauth:
     file: ../../../build/docker/devcontainer/gomodauth.env

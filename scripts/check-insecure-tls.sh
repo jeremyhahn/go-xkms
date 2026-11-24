@@ -1,41 +1,6 @@
 #!/usr/bin/env bash
 #
-# check-insecure-tls.sh — InsecureSkipVerify / insecure-transport gate
-# (go-xkms#1284).
-#
-# Fails with file:line output if production Go code bypasses TLS server
-# certificate verification, or dials gRPC with no transport security at
-# all, outside a short, reviewed allowlist. Four independent checks:
-#
-#   1. `InsecureSkipVerify: <value>` (struct-literal field) where <value>
-#      is anything but the literal `false`. This covers both
-#      `InsecureSkipVerify: true` and a non-literal value such as a
-#      variable or another struct's field -- either defeats a reviewer
-#      grepping for the literal `true` to confirm the flag is off.
-#   2. The assignment form `.InsecureSkipVerify = <value>`, same
-#      non-`false` rule. `==` (a comparison, e.g. in a test assertion) is
-#      deliberately not matched.
-#   3. `Insecure: true` inside pkg/backend/vault -- HashiCorp Vault's
-#      TLSConfig.Insecure has the same effect as InsecureSkipVerify but a
-#      different field name, so checks 1-2 do not see it. Scoped to the
-#      vault backend because `Insecure`/`AllowInsecure` fields elsewhere in
-#      the tree (transport.Config, gcpkms.Config, KeyProtection) mean a
-#      config choice to skip TLS/authentication entirely, not a bypass of
-#      certificate verification on a connection that claims to be secure --
-#      a materially different risk this check does not attempt to police.
-#   4. `insecure.NewCredentials()` (the grpc-go credentials that skip
-#      transport security entirely) in production code, unless the call
-#      carries a trailing `// insecure-ok: ...` justification comment.
-#      _test.go files are excluded: bufconn and other in-memory test
-#      transports have no network path for a MITM, and are pervasive
-#      enough (see `git grep -l insecure.NewCredentials -- '*_test.go'`)
-#      that policing them here would not be reviewing anything real.
-#
-# The allowlists below are these checks' entire enforcement surface --
-# adding a file/line to one is a security-relevant change and should read
-# like one.
-#
-# Usage: scripts/check-insecure-tls.sh [ROOT]
+# check-insecure-tls.sh: InsecureSkipVerify and insecure-transport gate.
 set -uo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

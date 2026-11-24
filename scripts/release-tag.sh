@@ -1,43 +1,6 @@
 #!/usr/bin/env bash
 #
-# release-tag.sh — TAG a go-xkms release already merged to main. This is step
-# two of the two-step release flow (go-xkms#419, go-xkms#211 "option B"):
-# step one is `scripts/release-alpha.sh` / `make release-alpha`, which
-# prepares a pull request and stops. Run this only after that pull request
-# has been reviewed and merged.
-#
-# Usage:
-#	scripts/release-tag.sh --version X.Y.Z-alpha [--remote NAME] [--branch NAME]
-#
-#	--version   REQUIRED. The exact version to tag, e.g. 0.9.2-alpha. Must
-#	            match what the merged release commit set VERSION to.
-#	--remote    Remote to fetch from and push the tags to (default: dev).
-#	--branch    The branch a release is tagged off (default: main).
-#
-# What this script asserts, fetched fresh every time, before it creates
-# anything (go-xkms#211's "fetch-and-assert" option — a disposable checkout
-# was considered and declined; this still runs in the operator's own
-# checkout, but trusts nothing it did not just fetch):
-#
-#	1. HEAD is --branch, checked out locally, and is BYTE-IDENTICAL to the
-#	   just-fetched --remote/--branch. Not merely a descendant or ancestor —
-#	   equal. Tags are created from that one commit and no other.
-#	2. VERSION at that commit, read from the git object rather than the
-#	   working tree, is exactly --version.
-#	3. A commit reachable from that tip has the exact release-commit message
-#	   scripts/release-alpha.sh produces for --version -- so a VERSION file
-#	   that merely happens to already read the right value (say, because
-#	   nothing has bumped it since a previous release) cannot pass this
-#	   script off as a reviewed release. It came from the documented
-#	   issue -> branch -> PR -> review -> merge flow, or this refuses.
-#	4. The reciprocal pins and the CHANGELOG heading are still exactly what
-#	   release-alpha.sh left them as -- re-checked here, not merely trusted,
-#	   because a tag is immutable and this is the last chance to refuse
-#	   before one exists.
-#
-# Only then does it create the three lockstep tags -- annotated, signed, and
-# confirmed signed on the object before anything is pushed -- and push them
-# atomically. See docs/release-engineering/.
+# release-tag.sh: tag a go-xkms release already merged to main.
 set -euo pipefail
 
 SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

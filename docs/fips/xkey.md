@@ -2,7 +2,7 @@
 
 Under `GODEBUG=fips140=only` the Go Cryptographic Module refuses X25519, SHA-1
 HMAC, HMAC keys under 112 bits and GCM over a caller-chosen IV. xkey refuses
-exactly what the stdlib refuses (owner ruling 116) and keeps no allowlist of its
+exactly what the stdlib refuses and keeps no allowlist of its
 own. This page lists each xkey site that meets one of these refusals and how it
 behaves in that mode (#23). The root-module GCM sites are in
 [gcm-sites.md](gcm-sites.md).

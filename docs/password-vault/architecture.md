@@ -299,7 +299,7 @@ Rejected alternatives:
 
 ## Design decisions (#15): the vault over USB
 
-SPEC row `password-vault-usb` (planned; owner item 148 (a), ruling 130). It
+SPEC row `password-vault-usb`. It
 answers the seven questions of xkey-android #15, which closed at the unlock
 body; xkey-android #55 builds the phone side. The wire table is in
 [api.md](api.md#usb-transport-vault-verbs-planned). The rule throughout is
@@ -320,8 +320,7 @@ one.
    `usb://` scheme that routes `xkey password` commands to
    `sdk/go/transport/usb`. Without that scheme the methods would have no
    caller, which is the gap #15 reported. USB vault traffic stays out of
-   the product until the go-trusted-platform needs are met (owner item
-   148 (a), ruling 130): nothing here is dev-complete before
+   the product until the go-trusted-platform needs are met: nothing here is dev-complete before
    go-trusted-platform, and this decision is the design that ships after
    that.
 3. **A real vault on the phone, not a gate.** The USB transport proxies to

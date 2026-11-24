@@ -1,11 +1,5 @@
 #!/bin/bash
-# Build xKey browser extension for Chrome and/or Firefox.
-#
-# Usage:
-#   ./build.sh              # Build for Chrome (default) → dist/
-#   ./build.sh chrome       # Build for Chrome → dist/
-#   ./build.sh firefox      # Build for Firefox → dist-firefox/ + .xpi
-#   ./build.sh all          # Build for both browsers
+# Build the xKey browser extension for Chrome and Firefox.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

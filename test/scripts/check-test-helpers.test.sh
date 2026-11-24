@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/check-test-helpers.sh: proves the check reports a
-# production package that imports a test-only helper, names the importer,
-# and stays quiet when only helpers and _test.go files import one. Everything
-# runs against scratch Go modules under mktemp, never this repository.
+# Tests for scripts/check-test-helpers.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/check-test-helpers.sh"

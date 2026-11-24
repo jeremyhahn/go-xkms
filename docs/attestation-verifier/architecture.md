@@ -359,7 +359,7 @@ requires go-xkms v0.49.0-alpha, which predates the move).
 A tenant's images and signed CoRIM verify under its release key,
 `appraisal.ReleaseSigningKeyID` (`"release-signing"`,
 `pkg/attestation/appraisal/signing_keys.go:31`), unless a binding names
-another tenant key for the repository (#1697, owner ruling 134). The
+another tenant key for the repository. The
 binding changes which key a signature must be by, not which roots a
 certificate chains to.
 

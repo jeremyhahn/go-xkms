@@ -1,34 +1,5 @@
 #!/bin/sh
-# apt-deps-test.sh — the test suite for apt-deps.sh.
-#
-# The script has three properties worth a test each, because each is a way
-# the step could report success while the job is not in the state it claims:
-#
-#   1. A package that is already present must not reach apt at all. If it
-#      does, the network is back in the loop for every job and the
-#      bake-into-the-image path buys nothing.
-#   2. A transient apt failure must be retried, a persistent one must fail
-#      the step naming the packages, and the attempt count must be the
-#      configured one -- not one, not unbounded.
-#   3. apt's exit status is not the verdict. A package dpkg still does not
-#      have after a "successful" install is a failure.
-#   4. A stalled apt call must not hold the job (#1587). Each call is cut off
-#      at the configured bound, counts as a failed attempt, and the step
-#      still fails naming the packages.
-#
-# apt-get, dpkg and dpkg-query are FAKES on a replaced PATH (dpkg only logs
-# the dpkg --configure -a that opens each retry): dpkg-query answers from
-# a state file, apt-get appends every invocation to a log, fails the first N
-# install calls per a counter file, and on success marks the packages
-# installed -- except when told to lie, which is what case 3 needs, or to
-# stall, which sleeps far past the bound the way main run 55255's mirror did
-# (case 4).
-#
-# MUTATION: run with --mutate to pin the attempt count to one in a COPY of
-# apt-deps.sh and re-run everything. The transient-failure case must go red;
-# if it does not, the retry is not being tested and the suite says so.
-#
-# No network, no host mutation, under a second.
+# apt-deps-test.sh: tests for apt-deps.sh.
 
 set -eu
 

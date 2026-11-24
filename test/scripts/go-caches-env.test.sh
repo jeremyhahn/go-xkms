@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
-# go-caches-env.test.sh: an `env -i` sub-make keeps the caller's Go caches
-# (#2295). With HOME=H and GOMODCACHE=D (both empty temp dirs), neither a bare
-# Makefile parse nor test/scripts/gomodauth.test.sh may create H/go/pkg/mod, and
-# the env -i sub-make must see the caller's GOMODCACHE/GOCACHE as set, unset or
-# empty exactly as the caller had them.
+# go-caches-env.test.sh: an `env -i` sub-make keeps the caller's Go caches.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

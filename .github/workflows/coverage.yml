@@ -2,26 +2,9 @@ name: Coverage
 
 on:
   workflow_dispatch:  # Manual trigger only
-  # Disabled automatic triggers - functionality covered by ci.yml
-  # push:
-  #   branches: [ master, main, develop ]
-  # pull_request:
-  #   branches: [ master, main, develop ]
+  # Disabled automatic triggers; ci.yml covers this.
 
-# Dormant (workflow_dispatch only), which is exactly where toolchain drift
-# hides: nothing exercises these values until someone dispatches the workflow
-# and gets a result from a different Go than the gate uses.
-#
-# `stable` is prohibited portfolio-wide (devops.md): an unpinned toolchain
-# moved a green head to red under ci.yml once already, which is why that
-# workflow pins 1.27.4. This now matches it.
-#
-# GOPROXY/GOSUMDB overrides removed, per the same ci-template v1.1 prohibition
-# ci.yml records: the runners inject GOPRIVATE, which already exempts
-# first-party modules from the proxy and the checksum database, while a blanket
-# `GOSUMDB: off` turned off checksum verification for every THIRD-party
-# dependency, and a pinned GOPROXY breaks the build whenever an upstream
-# re-points a tag.
+# Manual dispatch only.
 env:
   GO_VERSION: '1.27.4'
   COVERAGE_THRESHOLD: 90
@@ -164,10 +147,7 @@ jobs:
       - name: Run integration tests
         run: make compose-integration
 
-      # Unconditional: a failed, timed-out or cancelled job must not leave its
-      # compose stack on the runner host for the next run to collide with.
-      # The project name is namespaced per run (Makefile: COMPOSE_NS), so this
-      # can only remove this run's own containers, networks and volumes.
+      # Always tear down the compose stack.
       - name: Tear down compose stack
         if: always()
         run: |

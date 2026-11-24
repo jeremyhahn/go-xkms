@@ -4,28 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-  # This still fires exactly as before go-xkms#419/#211 split release cutting
-  # into two steps: `scripts/release-alpha.sh` / `make release-alpha` now only
-  # prepares a pull request and pushes a `release/<version>` BRANCH (no `v*`
-  # tag, so this workflow does not see it), and `scripts/release-tag.sh` /
-  # `make release-tag` -- run only after that pull request has merged --
-  # creates and pushes the three lockstep tags this trigger matches. A direct
-  # push to `main` therefore can no longer produce a tag at all: nothing but
-  # release-tag.sh ever creates one, and it refuses to run against anything
-  # but a fetched, reviewed, merged main. See docs/release-engineering/.
-  #
-  # RECOVERY PATH (go-xkms#44). A tag push is the normal trigger, but when the
-  # pipeline itself is broken the tag is already published and CANNOT be moved
-  # to re-fire it -- the module proxy caches a tag and deleting it does not
-  # unpublish it (see the create-release comment below). v0.7.5-alpha and
-  # v0.7.6-alpha were both stranded exactly this way: correct signed tags, no
-  # release object, no binaries, no checksums.
-  #
-  # Dispatching AT the old tag does not work either: the workflow definition
-  # used by a dispatch is the one AT THAT REF, and the stranded tags contain
-  # the broken file with no workflow_dispatch trigger and no setup-go. So the
-  # target tag arrives as an INPUT, dispatched from a branch that carries the
-  # fixed workflow, and every job checks out that tag explicitly.
+  # make release-alpha prepares a release branch; make release-tag pushes the lockstep tags this trigger matches.
   workflow_dispatch:
     inputs:
       tag:
@@ -34,126 +13,31 @@ on:
         type: string
 
 env:
-  # The tag this run is releasing. On a tag push github.ref_name IS the tag; on
-  # a dispatch it is the branch we were dispatched from, so the input wins.
-  # Every version derivation and every checkout below reads THIS, so the two
-  # trigger paths cannot disagree about which tag is being released.
+  # The tag this run is releasing.
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
-  # PINNED (devops.md §9, documented): same reason as ci.yml — Go 1.27.0 broke
-  # github.com/cockroachdb/swiss (undefined fastrand64 / hashFn /
-  # getRuntimeHasher; toolchain-gated runtime hooks the pinned commit predates).
-  # Pinned HERE and not only in ci.yml because a release tag builds through this
-  # workflow: an unpinned toolchain would let a green PR produce a broken
-  # release from the same tree.
-  #
-  # THIS ALSO PINS THE BUILD CONTAINER (go-xkms#50). The binary and docker
-  # jobs compile inside `golang:${GO_VERSION}-bookworm`. They previously used
-  # the FLOATING `golang:bookworm`, which now resolves to 1.27.0 and hits the
-  # same swiss incompatibility -- a third surface for it, after ci.yml and
-  # this workflow's own toolchain. Interpolating GO_VERSION rather than
-  # hardcoding a second literal means the container and the toolchain cannot
-  # drift apart: there is one pin, and unpinning is one edit.
-  #
-  # The image tag must therefore stay a real published tag. go.mod declares
-  # `go 1.27.4`, which this image satisfies, so the GOTOOLCHAIN=auto in the
-  # generated Dockerfile does not fetch anything -- the pin holds.
-  #
-  # Bump together with ci.yml's pin as 1.27.x patch releases ship.
+  # Pinned Go version.
   GO_VERSION: '1.27.4'
-  # BUILD AND SCAN IMAGES BY DIGEST (go-xkms#1332). The runners share one
-  # Docker daemon with pull_request jobs, and `docker create`/`docker run`
-  # use whatever image that daemon has cached under a tag -- a PR's test code
-  # can re-tag a malicious image as golang:1.27.4-bookworm or
-  # aquasec/trivy:0.75.0 and the next release would compile in it, or pass a
-  # fake gate. A digest names content, not a mutable tag: every use below
-  # pulls by digest first and runs by digest, so a re-tagged local image is
-  # never selected. Each value is the multi-arch index digest of the tag in
-  # its comment; bump the digest in the same edit as GO_VERSION (resolve it
-  # with `docker buildx imagetools inspect golang:<GO_VERSION>-bookworm`), and
-  # TRIVY_DIGEST together with ci.yml's copy of it.
-  #
-  # DEBIAN_SLIM_DIGEST is the runtime base of both PUBLISHED images (the
-  # generated server Dockerfile and Dockerfile.cli). Refresh it with
-  # `docker buildx imagetools inspect debian:bookworm-slim` when Debian
-  # rebuilds the tag; the runtime stages still run `apt-get upgrade -y`
-  # (go-xkms#135), so a pinned base is reproducible and still patched.
-  # Dockerfile.cli receives GO_IMAGE/RUNTIME_IMAGE as build args from these
-  # values; its ARG defaults mirror them for ci.yml, so bump both together.
+  # Build and scan images by digest.
   GO_IMAGE_DIGEST: 'sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea' # golang:1.27.4-bookworm
   DEBIAN_SLIM_DIGEST: 'sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587' # debian:bookworm-slim
   TRIVY_DIGEST: 'sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa' # aquasec/trivy:0.75.0
   REGISTRY: ghcr.io
   IMAGE_NAME_SERVER: jeremyhahn/xkms-server
   IMAGE_NAME_CLI: jeremyhahn/xkms-cli
-  # NO GOPROXY / GOSUMDB OVERRIDES HERE (ci-template v1.1 prohibition, go-xkms#112).
-  # ci.yml carries the same prohibition; it lands harder on THIS workflow,
-  # because this is the one that publishes. A release is the one artifact a
-  # consumer cannot re-verify after the fact, so it is the last place to be
-  # resolving modules with the checksum database switched off.
-  #
-  # `GOSUMDB: off` disabled checksum verification for every THIRD-PARTY
-  # dependency in a published build. The exemption it was reaching for is
-  # narrower than that: only `github.com/jeremyhahn/*` is unpublishable to
-  # sum.golang.org, and the runners already inject
-  # `GOPRIVATE=github.com/jeremyhahn/*` (infra runner-config.yaml) alongside
-  # the GIT_CONFIG_* insteadOf rewrite. GOPRIVATE derives GONOPROXY and
-  # GONOSUMDB from that one glob, so first-party modules are exempt from both
-  # the proxy and the checksum database while sum.golang.org stays ACTIVE for
-  # everything else. Verified with `go env`:
-  #
-  #   GOPRIVATE=github.com/jeremyhahn/*  ->  GONOPROXY=github.com/jeremyhahn/*
-  #                                          GONOSUMDB=github.com/jeremyhahn/*
-  #                                          GOSUMDB=sum.golang.org
-  #
-  # That covers every first-party requirement across all four modules:
-  # go-codec, go-enclave, go-frost, go-luks2, go-objstore, go-qrdb (+sdk/go),
-  # go-quicraft, go-truststrap, and this repo's own sdk/go, xkey and
-  # web/desktop. Every other requirement is a public module in the sum db.
-  #
-  # This is not a change of resolution behavior for the compiled artifacts.
-  # The binaries and images are built INSIDE containers that never received
-  # these two variables in the first place -- `docker create` at build-binaries
-  # forwards GOPRIVATE and GIT_CONFIG_* and nothing else, and `docker build`
-  # inherits no job environment at all (the credentials reach it as the
-  # gomodauth secret mount). So the module resolution the release actually
-  # depends on has always run with the checksum database ON. Removing these
-  # two lines makes the job shell agree with the containers it drives.
-  #
-  # A PINNED GOPROXY is the second half of the prohibition: it is the default
-  # value today, so it buys nothing, and it breaks the build whenever an
-  # upstream re-points a tag (go-tpm-tools v0.4.8, 2026-08-14).
-  #
-  # If some future dependency genuinely needs an exemption, scope it to that
-  # module path and record the reason HERE. A blanket `off` is not a scope.
+  # No GOPROXY or GOSUMDB overrides in a publishing workflow.
 
 permissions:
   contents: write
   packages: write
 
 jobs:
-  # Fails a tag whose VERSION file or CHANGELOG heading does not match it
-  # (release-versioning.md P4 Option A; same job go-quicraft carries, kept in
-  # step with it deliberately). Everything else here depends on this, so a
-  # malformed tag fails in seconds rather than after the build matrix.
-  #
-  # This exists because the drift is real and repeated: go-qrdb's VERSION read
-  # 0.5.7-alpha across both v0.5.8-alpha and v0.5.9-alpha, go-quicraft's read
-  # 0.6.1-alpha at tag v0.6.2-alpha, and go-xkms itself published v0.7.0-alpha
-  # through v0.7.4-alpha with no CHANGELOG entry for any of them. Nothing
-  # reconciles VERSION against the tag (release-versioning.md §2 says so
-  # outright), so the only place the mismatch can be caught is here.
-  #
-  # A module tag cannot be retracted -- the proxy caches it and deleting the
-  # tag does not unpublish it -- so this runs before anything is created.
-  # Only the ROOT tag reaches this workflow: the trigger is 'v*', which does
-  # not match refs/tags/sdk/go/v* or refs/tags/xkey/v*.
+  # Fails a tag whose VERSION file or CHANGELOG heading does not match it.
   validate:
     name: Validate tag
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # fetch-depth: 0 -- the cross-pin step reads the tag namespace to decide
-      # which nested modules are released, and a shallow clone has no tags.
+      # fetch-depth: 0, so the tag namespace is available.
       - name: Checkout code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -161,15 +45,7 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.RELEASE_TAG }}
 
-      # THE go-xkms#44 DEFECT. The reciprocal-pin step below shells out to
-      # `go list -m`, but this job never installed Go: it died with
-      # `go: command not found`, exit 127, before any check ran. Because
-      # validate is the first job and everything `needs:` it, the whole
-      # release pipeline stopped there -- silently, for two releases.
-      #
-      # It reproduced clean on every developer machine precisely BECAUSE the
-      # defect is the job environment and not the script: a host with Go on
-      # PATH cannot see it. Do not remove this step to "simplify" the job.
+      # Set up Go.
       - name: Set up Go
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
@@ -194,35 +70,12 @@ jobs:
           fi
           echo "OK: tag v$VERSION matches VERSION and CHANGELOG"
 
-      # The reciprocal cross-module pins are the other thing no in-repo check can
-      # see. In a repo with nested modules, each go.mod requires its siblings BY
-      # VERSION while a local-path `replace` resolves them through the working
-      # tree -- so every in-repo build, and all of CI, uses the right code while
-      # the recorded requirement rots. It survives `go list`, zip inspection and
-      # every local check. go-xkms shipped v0.7.1-alpha pins inside the
-      # v0.7.4-alpha tag exactly this way, and a consumer of
-      # sdk/go@v0.7.4-alpha was handed go-xkms v0.7.1-alpha. A `replace` cannot
-      # hide a grep, so compare the recorded strings.
-      #
-      # PORTFOLIO-PORTABLE: nothing below names this repository. The root module
-      # path comes from `go list -m`, the nested modules are discovered on disk,
-      # and which of them are RELEASED is read from the tag namespace (a
-      # submodule at dir/ is released iff dir/v* tags exist). Copy this step into
-      # any repo with nested modules unchanged; a repo with none passes it
-      # trivially. Requires fetch-depth: 0 so the tags are present.
-      #
-      # Only RELEASED submodules are enforced. An unreleased one is checked out
-      # by path and never resolved by version, so demanding it carry the release
-      # version would be inventing a pin for something nobody can `go get`. It
-      # is still reported, because a v0.0.0-000101... placeholder there is the
-      # go-qrdb defect in miniature: harmless while the local `replace` applies,
-      # fatal the day the module is published or consumed from outside.
+      # Validate the reciprocal cross-module pins.
       - name: Validate reciprocal cross-module pins
         run: |
           set -uo pipefail
           VERSION="${RELEASE_TAG#v}"
-          # GOWORK=off: inside a workspace `go list -m` prints every module in
-          # it and the root path below would be the wrong string.
+          # GOWORK=off so `go list -m` prints only this module.
           ROOT="$(GOWORK=off go list -m)"
           rc=0
           while IFS= read -r modfile; do
@@ -233,7 +86,6 @@ jobs:
               scope="required"
             fi
             # Requirements on the root module or any of its submodules.
-            # `require (` blocks are indented; `=>` lines are replaces.
             while read -r path ver; do
               [ -n "$path" ] || continue
               if [ "$ver" = "v$VERSION" ]; then
@@ -257,11 +109,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       version: ${{ steps.get_version.outputs.version }}
-      # The commit actually being released. NOT github.sha: on a recovery
-      # dispatch github.sha is the HEAD of the branch we were dispatched from
-      # (main), not the tag's commit, so stamping it would brand every binary
-      # with a commit that is not the one it was built from. Resolved from the
-      # checked-out RELEASE_TAG instead, and consumed by every build job.
+      # The commit being released.
       commit: ${{ steps.get_version.outputs.commit }}
     steps:
       - name: Checkout code
@@ -276,8 +124,7 @@ jobs:
         run: |
           VERSION=${RELEASE_TAG#v}
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          # The tag is checked out, so HEAD is the released commit -- true on
-          # both trigger paths, unlike github.sha.
+          # HEAD is the released commit on both trigger paths.
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "Version: ${VERSION} at $(git rev-parse HEAD)"
 
@@ -353,36 +200,16 @@ jobs:
     name: Build Binaries (${{ matrix.platform }}, ${{ matrix.variant }})
     needs: create-release
     runs-on: ubuntu-latest
-    # A leg that hangs must fail loudly, not hold the run open. Without a
-    # limit a leg runs into the runner's default of three hours: v0.9.5-alpha's
-    # two arm64 legs sat from 13:23 to 16:23 after the docker socket stopped
-    # answering, the run showed in_progress for hours, and the release shipped
-    # amd64 only with no master checksums. None of the four legs below touch
-    # QEMU any longer (go-xkms#1032, see the matrix below), so 75 minutes is
-    # generous headroom rather than a measured need -- kept rather than
-    # tightened because a native cross-compile leg failing to build in over an
-    # hour is itself worth surfacing as a hang, not just a slow run.
+    # A hung leg fails rather than holding the run open.
     timeout-minutes: 75
     strategy:
-      # Every leg uploads its own assets and the checksums job verifies the
-      # complete set, so one leg's failure must not cancel the others: the
-      # more legs that finish, the smaller the recovery run.
+      # Legs upload independently; the checksums job verifies the complete set.
       fail-fast: false
-      # go-xkms#1026: caps how many of these four legs a self-hosted runner
-      # host builds at once. The legs were never contending on CPU alone --
-      # each `docker create` also hits that host's shared docker DAEMON, and
-      # the arm64/standard leg below hits it hardest (full apt install plus a
-      # static CGO cross-link). 2 keeps at most one CGO-heavy leg and one
-      # lighter leg in flight together without serialising the whole matrix
-      # (which would double this job's wall time for no reason).
+      # Caps how many legs one self-hosted host builds at once.
       max-parallel: 2
       matrix:
         include:
-          # Standard builds. CGO_ENABLED=1 (tpm2, pkcs11, frost), statically
-          # linked. Neither arch leg below touches QEMU (go-xkms#1032): both
-          # cross-compile natively inside the SAME amd64 golang:bookworm
-          # container, the arm64 leg via CC=aarch64-linux-gnu-gcc -- see
-          # build.sh below.
+          # Standard builds.
           - platform: linux/amd64
             arch: amd64
             variant: standard
@@ -391,12 +218,7 @@ jobs:
             arch: arm64
             variant: standard
             fips: false
-          # FIPS 140-3 compliant builds (Linux only, Go's built-in
-          # GOFIPS140 mode). CGO_ENABLED=0 unconditionally (pure Go crypto,
-          # gms_pure_go instead of the cgo ICU regex engine, tpm2/pkcs11
-          # excluded) -- there is nothing here for a C toolchain to link,
-          # on EITHER architecture, so neither FIPS leg ever needed QEMU
-          # (go-xkms#1026).
+          # FIPS 140-3 builds (Linux only, GOFIPS140).
           - platform: linux/amd64
             arch: amd64
             variant: fips
@@ -412,12 +234,7 @@ jobs:
           persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
-      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
-      # comes from the commit this workflow runs from, not from the tag being
-      # released. A workflow_dispatch repair of an older tag runs this
-      # workflow from main against a checkout that predates the tooling it
-      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
-      # "scripts/retry.sh: No such file or directory").
+      # Release tooling comes from this workflow's commit, not from the tag.
       - name: Checkout release tooling
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -426,15 +243,7 @@ jobs:
           path: .release-tools
           sparse-checkout: scripts
 
-      # No "Set up QEMU" / "Set up Docker Buildx" steps here (go-xkms#1032):
-      # the last leg that needed platform emulation, standard/arm64, now
-      # cross-compiles natively (see build.sh below) the same way the
-      # FIPS/arm64 leg already did (go-xkms#1026). With all four legs native,
-      # a QEMU setup step here would never run -- dead weight and, worse, a
-      # trap for the next person who flips a leg back to needing it without
-      # restoring the step it silently depended on. If a future leg genuinely
-      # needs QEMU, add `docker/setup-qemu-action` and `--platform` back for
-      # that leg alone, and restore a per-leg switch to gate it.
+      # Every leg cross-compiles natively; no QEMU.
       - name: Build binaries in native container
         run: |
           # Create a build script
@@ -569,49 +378,9 @@ jobs:
 
           chmod +x build.sh
 
-          # Run build in a native container for the target architecture.
-          #
-          # NOT `docker run -v $(pwd):/workspace`: $(pwd) here is a path
-          # INSIDE THIS JOB CONTAINER (e.g. /workspace/jeremyhahn/go-xkms),
-          # but act_runner talks to the HOST's docker daemon over the
-          # socket -- the daemon tries to bind-mount that path from ITS OWN
-          # filesystem, where it doesn't exist in that shape. Runner-log-
-          # proven (task 2893 and every other Build Binaries run):
-          #   docker: Error response from daemon: error while creating mount
-          #   source path '/workspace/jeremyhahn/go-xkms': mkdir /workspace:
-          #   file exists
-          # `docker cp` sidesteps this entirely: the CLI (running in this job
-          # container, which does have the files) streams them to the daemon
-          # over the API rather than asking the daemon to resolve a bind-mount
-          # path itself, so it works regardless of where the two filesystems
-          # actually live relative to each other.
-          #
-          # `docker create` (unlike `docker run`) does not reliably forward
-          # bare `-e NAME` host-value passthrough, so each credential var is
-          # explicitly expanded here (empty string when unset, e.g. on
-          # GitHub Actions -- same no-op behavior as before).
-          # No `--platform` is ever passed (go-xkms#1032): every leg now
-          # builds inside the container's OWN (amd64) architecture and
-          # cross-compiles via GOARCH -- the arm64/standard leg via
-          # CC=aarch64-linux-gnu-gcc (see build.sh above), the same way the
-          # FIPS/arm64 leg already did with no C toolchain at all
-          # (go-xkms#1026). Passing `--platform=linux/amd64` explicitly
-          # would be a no-op on an amd64 runner, so it is omitted rather
-          # than asking the daemon to resolve a platform match it already
-          # has.
+          # Run the build in a native container for the target architecture.
 
-          # Bounded retry around the whole create/copy/run/copy sequence
-          # (go-xkms#1026): the failures on record here are runner
-          # infrastructure, not this script -- `docker: Error response from
-          # daemon: error while creating mount` and the docker socket
-          # answering `context deadline exceeded` mid-build (v0.24.0-alpha,
-          # v0.27.0-alpha, v0.30.0-alpha; see the issue). A plain shell loop,
-          # not a marketplace retry action: 3 attempts, linear backoff, and a
-          # failed attempt's container is torn down before the next one
-          # starts so a retry never inherits a half-built /src/dist.
-          # Pull the build image by digest (go-xkms#1332): `docker create`
-          # never pulls, it takes whatever the shared daemon caches, so the
-          # digest is fetched here and the container is created from it.
+          # Bounded retry around the create, copy, run and copy sequence.
           BUILD_IMAGE="golang:${GO_VERSION}-bookworm@${GO_IMAGE_DIGEST}"
           docker image inspect "$BUILD_IMAGE" >/dev/null 2>&1 || \
             .release-tools/scripts/retry.sh --attempts 3 --backoff 15 -- \
@@ -645,20 +414,10 @@ jobs:
               echo "::endgroup::"
               break
             else
-              # rc MUST be captured HERE, inside the else branch: an `if`
-              # whose condition is false and which takes no `then` action
-              # exits 0 by POSIX definition, so `rc=$?` placed after a bare
-              # `if/fi` silently reads 0 on every failure (the same defect
-              # retry.sh's own test suite caught -- see its comment).
+              # rc is captured inside the else branch; after a bare if/fi it would read 0.
               rc=$?
             fi
-            # `|| true`: this step runs under the default `bash -eo
-            # pipefail`, so a FAILING cleanup here (e.g. the daemon that just
-            # timed out on `create`/`start` also refuses `rm`) would trip
-            # errexit and abort the whole retry loop right here -- before the
-            # attempt-budget check below ever runs, turning "retry a flaky
-            # infra failure" into "die on the first one instead". Best-effort
-            # cleanup must never itself end the loop.
+            # `|| true` keeps a failed cleanup from aborting the retry loop.
             { [ -n "$CID" ] && docker rm -f "$CID" >/dev/null 2>&1; } || true
             echo "::endgroup::"
             if [ "$attempt" -ge "$max_attempts" ]; then
@@ -707,13 +466,7 @@ jobs:
           echo "Created release assets:"
           ls -lh xkmsctl-* xkmsd-* xkey-* 2>/dev/null || ls -lh xkmsctl-* xkmsd-*
 
-      # Idempotent on purpose (#447). The generic release action deleted an
-      # existing asset and re-uploaded it, which Gitea answers with 404, so a
-      # re-run of this workflow failed on every leg that had already
-      # succeeded. scripts/release-assets.sh leaves an asset that is already
-      # present with the same SHA-256 alone, replaces one whose digest
-      # differs, and adds one that is absent, so a re-run after one flaked
-      # leg completes the release instead of breaking the rest of it.
+      # Idempotent on purpose.
       - name: Upload release assets
         env:
           RELEASE_API: ${{ github.server_url }}/api/v1
@@ -745,12 +498,7 @@ jobs:
           persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
-      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
-      # comes from the commit this workflow runs from, not from the tag being
-      # released. A workflow_dispatch repair of an older tag runs this
-      # workflow from main against a checkout that predates the tooling it
-      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
-      # "scripts/retry.sh: No such file or directory").
+      # Release tooling comes from this workflow's commit, not from the tag.
       - name: Checkout release tooling
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -759,19 +507,7 @@ jobs:
           path: .release-tools
           sparse-checkout: scripts
 
-      # go-xkms#1026: QEMU/binfmt is needed ONLY by the multi-arch PUSH step
-      # at the bottom of this job (`platforms: linux/amd64,linux/arm64`),
-      # which is itself gated to `github.server_url == 'https://github.com'`
-      # -- on this org's Gitea instance it never runs at all, since
-      # secrets.GITHUB_TOKEN authenticates nothing on ghcr.io (see the login
-      # step below). Before this change QEMU/binfmt still registered on
-      # EVERY release run regardless, for a multi-arch build that could
-      # never execute here -- pure contention for the runner host's docker
-      # daemon and the binfmt image cache, and a plausible contributor to
-      # the v0.24.0-alpha "Docker server image" failure (issue table) since
-      # it ran concurrently with build-binaries' own QEMU legs. Buildx setup
-      # stays unconditional: the amd64-only scan build below needs it
-      # regardless of platform.
+      # QEMU is needed only by the multi-arch push on github.com.
       - name: Set up QEMU
         if: github.server_url == 'https://github.com'
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
@@ -781,13 +517,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      # ghcr.io is GitHub's registry. On Gitea, secrets.GITHUB_TOKEN is the
-      # LOCAL Gitea Actions token -- it authenticates to nothing on ghcr.io
-      # and this step hard-fails the whole job before any Dockerfile is even
-      # built ("denied: denied", runner-log-proven on task 2899). The scan
-      # build below (push: false, load: true) needs no registry auth at all,
-      # so guarding only login + the final push keeps that build+scan
-      # working on Gitea while skipping what only GitHub can do.
+      # ghcr.io is GitHub's registry.
       - name: Log in to GitHub Container Registry
         if: github.server_url == 'https://github.com'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -932,13 +662,7 @@ jobs:
           CMD ["-config", "/etc/xkms/config.yaml"]
           EOF
 
-      # docker build does NOT inherit the job environment
-      # (dependency-resolution.md §6), so the Gitea fetch credentials the
-      # runner injects into this job's shell (GOPRIVATE/GIT_CONFIG_*) have to
-      # be staged into a file and handed to buildx as a secret mount. Empty
-      # on GitHub Actions (those vars are unset there), which is fine: the
-      # Dockerfile's RUN --mount=type=secret is optional and falls back to
-      # public resolution.
+      # docker build does not inherit the job environment, so module credentials are staged as a build secret.
       - name: Stage Gitea module credentials
         run: |
           umask 077
@@ -952,18 +676,7 @@ jobs:
             } > gomodauth.env
           fi
 
-      # devops.md §8: no image reaches a registry unscanned. Built amd64-only
-      # and loaded into the local daemon so Trivy can read it; the multi-arch
-      # push below shares the same buildx cache, so this costs a load rather
-      # than a rebuild.
-      #
-      # A direct `docker buildx build` rather than docker/build-push-action
-      # (go-xkms#1026): this is the step the v0.24.0-alpha "Docker server
-      # image" failure (issue table) actually ran, since the push step below
-      # never executes on Gitea, and a `uses:` step cannot be wrapped in a
-      # plain shell retry loop. Same context/file/platform/tags/build-args/
-      # secret as before; `--cache-from`/`--cache-to` are added only on
-      # GitHub, matching the previous conditional exactly.
+      # No image reaches a registry unscanned.
       - name: Build server image for scanning
         run: |
           set -euo pipefail
@@ -988,13 +701,9 @@ jobs:
           IMAGE_NAME_SERVER: ${{ env.IMAGE_NAME_SERVER }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
-        # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa): base-
-        # image CVEs with no available fix (e.g. zlib1g CVE-2023-45853,
-        # marked will_not_fix upstream) fail this scan every run otherwise
-        # (task 3604). The scanner is pinned to the version nightly.yml
-        # installs (#325); bump every trivy pin together.
+        # --ignore-unfixed matches ci.yml's Docker gate.
         run: |
-          # By digest, pulled first (go-xkms#1332): see TRIVY_DIGEST above.
+          # By digest, pulled first.
           docker pull "aquasec/trivy:0.75.0@${TRIVY_DIGEST}"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -1009,8 +718,7 @@ jobs:
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME_SERVER: ${{ env.IMAGE_NAME_SERVER }}
 
-      # No credentials to push with on Gitea (see the login step above) --
-      # skip the push there rather than fail after a successful scan.
+      # No push credentials off github.com: skip the push there.
       - name: Build and push Docker image
         if: github.server_url == 'https://github.com'
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
@@ -1042,12 +750,7 @@ jobs:
           persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
-      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
-      # comes from the commit this workflow runs from, not from the tag being
-      # released. A workflow_dispatch repair of an older tag runs this
-      # workflow from main against a checkout that predates the tooling it
-      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
-      # "scripts/retry.sh: No such file or directory").
+      # Release tooling comes from this workflow's commit, not from the tag.
       - name: Checkout release tooling
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -1056,8 +759,7 @@ jobs:
           path: .release-tools
           sparse-checkout: scripts
 
-      # See the server-image job's comment: QEMU here is needed only by the
-      # multi-arch push step below, which never runs on Gitea.
+      # QEMU is needed only by the multi-arch push on github.com.
       - name: Set up QEMU
         if: github.server_url == 'https://github.com'
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
@@ -1067,8 +769,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      # See the server-image job's comment: ghcr.io login always fails on
-      # Gitea (no valid credential), so it's guarded to GitHub only.
+      # ghcr.io login runs only on github.com.
       - name: Log in to GitHub Container Registry
         if: github.server_url == 'https://github.com'
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
@@ -1088,9 +789,7 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # docker build does NOT inherit the job environment
-      # (dependency-resolution.md §6); see the server job for why this file
-      # is staged and handed to buildx as a secret.
+      # Module credentials are staged as a build secret, as in the server job.
       - name: Stage Gitea module credentials
         run: |
           umask 077
@@ -1104,10 +803,7 @@ jobs:
             } > gomodauth.env
           fi
 
-      # devops.md §8: no image reaches a registry unscanned. See the server job
-      # for why this builds amd64-only and loads rather than pushing, and why
-      # it is a direct `docker buildx build` wrapped in scripts/retry.sh
-      # rather than docker/build-push-action (go-xkms#1026).
+      # No image reaches a registry unscanned.
       - name: Build CLI image for scanning
         run: |
           set -euo pipefail
@@ -1134,11 +830,9 @@ jobs:
           IMAGE_NAME_CLI: ${{ env.IMAGE_NAME_CLI }}
 
       - name: Trivy image gate (fail on CRITICAL/HIGH)
-        # --ignore-unfixed matches ci.yml's Docker job gate (09abcaa) and the
-        # server image gate above (task 3605). Scanner pinned per #325; bump
-        # every trivy pin together.
+        # --ignore-unfixed matches ci.yml's Docker gate.
         run: |
-          # By digest, pulled first (go-xkms#1332): see TRIVY_DIGEST above.
+          # By digest, pulled first.
           docker pull "aquasec/trivy:0.75.0@${TRIVY_DIGEST}"
           docker run --rm \
             -v /var/run/docker.sock:/var/run/docker.sock \
@@ -1175,27 +869,11 @@ jobs:
           cache-from: ${{ github.server_url == 'https://github.com' && 'type=gha' || '' }}
           cache-to: ${{ github.server_url == 'https://github.com' && 'type=gha,mode=max' || '' }}
 
-  # Runs whenever the release exists, not only when every matrix leg went
-  # green in THIS run (#447): it checks the release for the complete asset
-  # set the matrix produces and fails on what is genuinely missing, so a
-  # re-run that fills in the one leg that flaked gets its master checksums
-  # even though the other legs were uploaded by the previous attempt. The
-  # `gh` CLI it used before does not speak to Gitea, so the download was
-  # silently empty on every release cut here.
+  # Runs whenever the release exists and fails on missing assets, so a re-run can complete it.
   create-checksums:
     name: Create Master Checksums
     needs: [create-release, build-binaries]
-    # This is the run's terminal state: it runs whatever happened to the
-    # build matrix and FAILS naming every expected asset the release lacks,
-    # so a release with a missing leg is a red run, never a green-looking
-    # page with binaries silently absent. The gate is a bare always(): the
-    # one shape this Gitea has been observed to honour after a failed
-    # dependency (ci.yml's CI Gate runs after failed jobs on every red PR).
-    # The compound `always() && needs.x.result == 'success'` form has never
-    # been exercised by a failing release run here -- both failing runs
-    # predate it and had no gate at all, so the job was skipped -- and a
-    # terminal state must not rest on an untested expression. The
-    # create-release check moves into the first step for that reason.
+    # The run's terminal state: fails naming every expected asset the release lacks.
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1217,12 +895,7 @@ jobs:
           persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
-      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
-      # comes from the commit this workflow runs from, not from the tag being
-      # released. A workflow_dispatch repair of an older tag runs this
-      # workflow from main against a checkout that predates the tooling it
-      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
-      # "scripts/retry.sh: No such file or directory").
+      # Release tooling comes from this workflow's commit, not from the tag.
       - name: Checkout release tooling
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -1231,9 +904,7 @@ jobs:
           path: .release-tools
           sparse-checkout: scripts
 
-      # verify exits 1 naming each absent asset, and only when every asset
-      # is present are the master checksums built, so a partial release
-      # never publishes a checksums.txt that vouches for less than the set.
+      # Master checksums are built only when every asset is present.
       - name: Verify the release carries every matrix asset
         run: .release-tools/scripts/release-assets.sh verify "${{ needs.create-release.outputs.version }}"
 
@@ -1252,9 +923,7 @@ jobs:
 
   announce-release:
     name: Announce Release
-    # Gated on the checksums job rather than on this run's build matrix, so
-    # a recovery run whose only job was the flaked leg still announces once
-    # the release is verified complete (#447).
+    # Gated on the checksums job, so a recovery run still announces the release.
     needs: [create-release, create-checksums, build-docker, build-docker-cli]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1330,20 +999,7 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # go-xkms#1026: the run's true terminal state, independent of whether every
-  # upstream job in THIS run went green. It runs whenever a release object
-  # was created at all -- even if build-binaries, build-docker,
-  # build-docker-cli or create-checksums failed outright -- and states plainly
-  # whether the release Gitea is actually serving is complete: exactly the
-  # build matrix's assets plus checksums.txt, nothing missing, nothing extra.
-  #
-  # This is deliberately independent of create-checksums' own "Verify the
-  # release carries every matrix asset" step: that step runs BEFORE
-  # checksums.txt exists (it decides whether creating one is safe), so it
-  # cannot also require it, and it does not check for a stray/misnamed asset.
-  # verify-complete (scripts/release-assets.sh) checks both, reusing the same
-  # `expected` statement of the matrix so there is exactly one place that
-  # lists it.
+  # The run's terminal state.
   verify-release-assets:
     name: Verify Release Assets
     needs:
@@ -1376,12 +1032,7 @@ jobs:
           persist-credentials: false
           ref: ${{ env.RELEASE_TAG }}
 
-      # The release tooling (scripts/retry.sh, scripts/release-assets.sh)
-      # comes from the commit this workflow runs from, not from the tag being
-      # released. A workflow_dispatch repair of an older tag runs this
-      # workflow from main against a checkout that predates the tooling it
-      # calls (go-xkms#1026 follow-up: v0.30.0-alpha's repair failed with
-      # "scripts/retry.sh: No such file or directory").
+      # Release tooling comes from this workflow's commit, not from the tag.
       - name: Checkout release tooling
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -1390,11 +1041,6 @@ jobs:
           path: .release-tools
           sparse-checkout: scripts
 
-      # Fails loudly and names every discrepancy: `missing: NAME` for
-      # anything the matrix expects that Gitea does not have, `unexpected:
-      # NAME` for anything present that the matrix does not expect. A green
-      # run here is the only statement in this workflow that the tag's
-      # release is actually complete, independent of which individual jobs
-      # in THIS run happened to succeed.
+      # Names every missing or unexpected asset.
       - name: Verify the published release is complete
         run: .release-tools/scripts/release-assets.sh verify-complete "${{ needs.create-release.outputs.version }}"

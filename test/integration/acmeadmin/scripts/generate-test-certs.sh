@@ -1,18 +1,5 @@
 #!/bin/sh
-# Generate the TLS certificate the ACME (RFC 8555) protocol listener needs.
-#
-# Executed inside the xkmsd container before the daemon starts. The ACME
-# listener (acme.https_addr in xkmsd.yaml) is a separate, dedicated HTTPS
-# listener that xkmsd does not CA-back the way it does the unified
-# REST/admin listener: acme.tls.cert_file/key_file are required whenever
-# acme.enabled is true (pkg/config/acme.go's ErrACMEMissingTLS). A
-# self-signed certificate is sufficient here — nothing in this suite dials
-# the ACME protocol listener directly, only the admin plane on the unified
-# listener, which self-issues its own certificate from the embedded CA at
-# boot (see xkmsd.yaml's top comment and main_test.go).
-#
-# Output (under $CERT_DIR, default /etc/xkms/certs):
-#   server.crt / server.key - the ACME listener's certificate
+# Generate the TLS certificate the ACME protocol listener needs.
 
 set -eu
 

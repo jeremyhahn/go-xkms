@@ -12,11 +12,6 @@
 #    Contact licensing@automatethethings.com for commercial licensing options.
 
 # FIDO2 hardware-backend integration test suite.
-#
-# Reuses the e2e Dockerfile (which already provides swtpm, SoftHSM2, libfido2,
-# and the full Go + CGO toolchain) but overrides the entrypoint to run the Go
-# keybackend integration tests instead of Playwright. The test binary connects
-# directly to the swtpm process running inside the same container.
 
 services:
   fido2-hardware-test:
@@ -42,14 +37,11 @@ services:
       - GONOSUMDB=*
       - GONOSUMCHECK=*
       - GOTOOLCHAIN=auto
-      # swtpm runs inside this container and is exposed as a unix-socket device;
-      # the entrypoint provisions it and exports TPM_DEVICE for the test.
-      # SoftHSM2 installed by the e2e Dockerfile via apt.
+      # swtpm runs inside this container; the entrypoint exports TPM_DEVICE.
       - PKCS11_LIBRARY=/usr/lib/softhsm/libsofthsm2.so
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
     working_dir: /workspace/xkey
-    # privileged is required for /dev/uhid access by the test build tags;
-    # the FIDO2 keybackend tests themselves do not use kernel gadget devices.
+    # privileged for /dev/uhid access.
     privileged: true
 
 volumes:

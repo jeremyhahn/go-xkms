@@ -1,6 +1,4 @@
 # Grafana dashboard provisioning for go-xkms's ACME dashboard.
-#
-# Auto-provisions deploy/grafana/dashboard.json when Grafana starts.
 
 apiVersion: 1
 

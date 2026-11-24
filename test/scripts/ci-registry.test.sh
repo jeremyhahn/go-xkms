@@ -1,20 +1,5 @@
 #!/bin/bash
-# Shell-level tests for scripts/ci-registry.sh (ruling 169; the go-qrdb #1135
-# pattern): the CI image handoff from the ci-images job to every consumer.
-#
-# These pin what the script may do with a registry and a credential: the
-# registry is the forge's (or GHCR on GitHub), a forge push reads the release
-# runner's RELEASE_REGISTRY* names alone (ruling 173), a forge read is
-# anonymous, a GHCR read takes the run's token, a failed read degrades to a
-# local build, a consumer never rebuilds an image main
-# published, every reference is a digest, and no credential is ever printed.
-#
-# No Docker daemon or registry is involved: a fake `docker`, a fake `make` and
-# a fake `curl` on PATH record every invocation and answer from FAKE_*
-# variables. The fake curl is the registry: it serves the registry API (OCI
-# Distribution Spec v1.1.1, the Distribution token flow) on one scheme,
-# FAKE_SERVES, as a forge does. DOCKER_HOST points at a closed port, so a
-# PATH mistake fails loudly.
+# Tests for scripts/ci-registry.sh.
 
 set -uo pipefail
 

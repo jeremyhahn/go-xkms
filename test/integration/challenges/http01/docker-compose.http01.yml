@@ -1,9 +1,4 @@
-# Docker Compose configuration for HTTP-01 E2E integration testing
-# Tests the complete HTTP-01 challenge flow:
-# 1. Client requests certificate from ACME server
-# 2. Server validates HTTP-01 challenge by making HTTP request to target
-# 3. Certificate is issued and installed on nginx
-# 4. TLS connection is verified
+# HTTP-01 end-to-end challenge flow.
 
 services:
   # ACME Server
@@ -30,8 +25,7 @@ services:
     volumes:
       - acme-data:/app/data
 
-  # Challenge Responder - serves /.well-known/acme-challenge/{token}
-  # This simulates the target domain responding to HTTP-01 challenges
+  # Serves /.well-known/acme-challenge/{token} for HTTP-01.
   challenge-responder:
     build:
       context: .

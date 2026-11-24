@@ -1,6 +1,5 @@
 #!/bin/bash
-# Setup script for xkey OIDC integration tests
-# Creates OAuth2 clients in ORY Hydra for testing
+# Creates the OAuth2 clients in ORY Hydra for the xkey OIDC integration tests.
 set -e
 
 HYDRA_ADMIN_URL="${HYDRA_ADMIN_URL:-http://127.0.0.1:4445}"

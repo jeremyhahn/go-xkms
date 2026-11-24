@@ -77,8 +77,8 @@ credential strategy. See
 for the per-strategy sealer resolution:
 
 - **`tpm2`** seals under the Platform SRK only — go-xkms never seals under
-  the TCG Shared SRK (owner ruling; PR #681 removes every Shared-SRK
-  fallback in `pkg/tpm2`/`pkg/backend/tpm2`). It reuses a single TPM open
+  the TCG Shared SRK, and `pkg/tpm2`/`pkg/backend/tpm2` have no Shared-SRK
+  fallback. It reuses a single TPM open
   with the node-seal flip and the general tpm2 backend rather than opening
   the simulator/device a second time, and fails closed with a typed error
   naming `PlatformKeyStore.EnrollPlatformSRK` when the Platform SRK is not
@@ -93,7 +93,7 @@ for the per-strategy sealer resolution:
 - **`pkcs11`/`vault`** fail closed today (go-xkms#677): the PIN/token is
   only resolvable through the credential service this call itself builds
   storage for.
-- **`passphrase`** fails closed pending an owner ruling on where the
+- **`passphrase`** fails closed pending a decision on where the
   operator passphrase comes from — see Trust boundaries.
 
 ## Data flow

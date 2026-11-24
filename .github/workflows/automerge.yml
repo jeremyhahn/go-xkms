@@ -1,129 +1,19 @@
-# automerge v10: a PR merges itself once CI is green; a `code-review` PR also
-# needs one approval from the reviewer list, by someone other than its
-# author. A restricted repository can replace that list entirely with its
-# own. PRs that are behind main land together as one merge-train PR.
-#
-# Owner rulings (automatethethings#200, #203, #211, #221; handbook#99;
-# go-enclave#118, #122):
-#   2026-10-06 (automatethethings, verbatim in repo-policy.sh) "lets make
-#    sure we are approving with the [software department agent] instead of the\n#    [company agent]. [the software department agent] should be able to approve any PR in gitea\n#    except for the platform-configs and automatethethings repos. The\n#    [infrastructure agent] (department agent) and [the platform-configs agent]\n#    (project agent) should have access to the platform-configs repo.\n#    [the infrastructure agent] can approve. we only want to use the [company agent]\n#    for the automatethethings company repo." APPROVERS below is one fixed\n#    list for every repository and cannot carry the infrastructure agent without
-#    also letting it release every OTHER repo's `code-review` PRs, which the
-#    ruling does not say. v8 ADDED the ruled approver for a repository
-#    outside the fixed six on top of APPROVERS -- but an addition can never
-#    enforce "we only want to use the [company agent] for the automatethethings
-#    company repo" on a restricted repository, where every other name must
-#    be EXCLUDED, not joined. Measured 2026-10-06 on platform-configs PR #3:
-#    a company agent approval (a name APPROVERS already carried) RELEASED a
-#    `code-review` PR there, though the ruling names only
-#    the infrastructure agent for that repo. v9 instead REPLACES APPROVERS
-#    entirely on such a repository, through the repo Actions variable
-#    AUTOMERGE_APPROVERS_ONLY (infra/gitea/scripts/repo-policy.sh's
-#    automerge_approvers_only, applied by setup-pr-sdlc.sh): a JSON array of
-#    logins that, when set, REPLACES APPROVERS entirely as
-#    EFFECTIVE_APPROVERS. Unset on a repo (every repo but platform-configs
-#    today) changes nothing from v7/v8. Set to anything that is not a JSON
-#    array of strings, or to an empty array (nobody could approve), this
-#    FAILS CLOSED -- a malformed or empty variable must never silently change
-#    who can release a PR.
-#   2026-10-04/05 "keep merging its PRs by hand as [the company agent] and leave the
-#    block_on_outdated_branch turned on, we want to make sure we are requiring
-#    the latest from main in all branches before they get merged in" and
-#    "cant we have block_on_outdated_branch turned on for merging into main but
-#    have it off for the merge train?" (reaffirms 2026-09-24, "a PR must carry
-#    the latest main": the train is a PR built on main's tip, so the flag stays
-#    on everywhere)
-#   2026-10-04 "yes lets batch the merges. make sure we are doing things
-#    efficiently!" and "use merge trains where possible if that helps!"
-#   2026-10-04 "instead of using review-bypass, lets use the existing
-#    code-review label. if the label is there, then we require the
-#    review/approval, otherwise it can automerge. one less label to maintain
-#    (review-bypass)"
-#   2026-10-02 "all projects should follow the same automerge convention.
-#    automatically merge to main when CI is green and the PR doesnt have a
-#    code-review label. If it has a code-review label, then we need at least 1
-#    approver, which should be one of - claude, codex, opencode, jeremyhahn,
-#    [the company agent] or [the software department agent]." The two
-#    department agents' logins are not in this file: they come from the
-#    repository Actions variable AUTOMERGE_APPROVERS (see APPROVERS).
-#   2026-10-01 "quicbaas is going to be responsible for running the code review
-#    agents instead of gitea. we only want standard actions in gitea"
-#   2026-10-01 "make sure that the automerge squashes and deletes the remote
-#    branch, we dont want to leave dangling branches"
-#
-#   no `code-review` label -> ready when every required CI check is green
-#   `code-review` label    -> ready when CI is green AND, on the current head,
-#                             one APPROVED review (not stale, not dismissed) by
-#                             one of EFFECTIVE_APPROVERS (APPROVERS, or the
-#                             repo's own AUTOMERGE_APPROVERS_ONLY replacement
-#                             if set) other than the PR's author, and no
-#                             reviewer's latest review is REQUEST_CHANGES
-#
-# BASE-DEFINED ONLY. AGENT_TOKEN reaches only runs whose definition Gitea takes
-# from the base branch: pull_request_target, workflow_run and schedule. A
-# `pull_request` or `pull_request_review` run is defined by the PR head, so a PR
-# could rewrite the merge decision; neither is a trigger here. Reviews have no
-# base-defined event on Gitea, so the schedule sweeps open PRs for them.
-#
-# RESIDUAL RISK. "Green" is the required statuses, and ci.yml (which posts
-# them) runs from the PR head, so an unlabelled PR that rewrites ci.yml can
-# post its own green; `code-review` is the control for such a PR. Gitea also
-# hands repository secrets to same-repo `pull_request` runs, so anyone who can
-# push a branch can read AGENT_TOKEN through a new workflow; closing that needs
-# the token held outside repository secrets (automatethethings#208).
-#
-# Branch protection requires 0 approvals: Gitea cannot make an approval
-# conditional on a label, so this workflow is that gate. QuicBaaS posts the
-# reviews; this workflow only reads them.
-#
-# NO MERGE IS EVER SCHEDULED. Every merge call is made immediately after this
-# run has read CI, the label and the reviews, and is pinned to the head commit
-# whose checks were read; squash, then delete the head branch. Every run also
-# cancels any merge a legacy workflow armed.
-#
-# FAIL CLOSED: nothing merges unless the base branch REQUIRES at least one
-# status check and every required context is `success` on the PR head.
-#
-# MERGE TRAIN (sweeps: schedule and workflow_run). block_on_outdated_branch
-# stays on: what merges into main always contains main's tip. Ready PRs into
-# main, in PR number order:
-#   - a train in flight whose CI is pending -> wait (one train at a time);
-#   - main moved, a train PR changed or is no longer ready, or the train's tree
-#     is not main plus its PRs -> close the train PR, delete the branch, rebuild;
-#   - train CI green -> squash-merge the train PR pinned to its head, then
-#     close each of its PRs with a comment naming the squash commit, and close
-#     the issues their bodies close;
-#   - train CI red -> comment on its PRs, close it, rebuild without the newest;
-#     a one-PR train that fails is left to its author until its head changes;
-#   - otherwise a ready PR already on main's tip merges directly, and the rest
-#     are merged (--no-ff, conflicts skipped with a comment) onto main as a new
-#     branch merge-train/<epoch>-<run id>, whose head commit records the base
-#     and every PR head, and opened as a PR into main. ci.yml runs on that PR.
-# A train branch is pushed once and deleted, never force-updated. A PR from a
-# merge-train/* branch is never a train candidate; only one this agent opened
-# is ever landed. Its job fetches refs and merges them; it runs no PR code.
-#
-# The merge is made as the repository's own agent (AGENT_TOKEN), one of the
-# principals on the merge whitelist (infra/gitea/scripts/setup-repo-guardrails.sh).
+# automerge v10: a PR merges itself once CI is green; a `code-review` PR also needs one approval from the reviewer list by someone other than its author.
 name: Auto Merge
 
 on:
-  # Never `pull_request` or `pull_request_review`: see BASE-DEFINED ONLY. This
-  # job never checks out the PR.
+  # Never `pull_request` or `pull_request_review`: the workflow must be the base branch's copy.
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review, labeled, unlabeled]
   workflow_run:
     # The repository's CI workflow; the documentation repos call theirs Docs.
     workflows: [CI, Docs]
     types: [completed]
-  # v10: every 30 minutes, not 10. Across the fleet the 10-minute sweep made
-  # most of the Actions queue and starved CI (dept-software#59); PR events and
-  # CI completion cover a PR becoming mergeable, and the sweep picks up
-  # approvals and merge-train races.
+  # Every 30 minutes.
   schedule:
     - cron: '*/30 * * * *'
 
-# Runs queue rather than cancel, so a train is never cut off mid-landing where
-# concurrency is honoured. Gitea may not honour it: see train() for the races.
+# Runs queue rather than cancel, so a train is never cut off mid-landing.
 concurrency:
   group: automerge-${{ github.event.pull_request.number || 'sweep' }}
   cancel-in-progress: false
@@ -147,36 +37,23 @@ jobs:
           PR_FROM_EVENT: ${{ github.event.pull_request.number }}
           RUN_ID: ${{ github.run_id }}
           REPOSITORY: ${{ github.repository }}
-          # The repository agent is agent-<repo> (agent-git.sh's format); the
-          # company repo's agent is not merged by this copy. The token
-          # cannot read /user; comment() fails loudly if this is wrong.
+          # The repository agent's login format; the company repository is not merged by this copy.
           AGENT_DOMAIN: example.internal
           TRAIN_BASE: main
           # A train with no CI result after this long is rebuilt.
           TRAIN_TIMEOUT_MIN: '120'
           # Gitea answers "try again later" while it re-tests a PR after main moved.
           RETRY_SLEEP: '3'
-          # The reviewers whose approval releases a `code-review` PR (owner,
-          # 2026-10-02). Logins, exact. A restricted repository replaces
-          # this list entirely via APPROVERS_ONLY below, rather than adding
-          # to it.
-          # The department agents' logins are not written here: the repository
-          # Actions variable AUTOMERGE_APPROVERS carries the full list, and a
-          # repository without it falls back to the four named reviewers.
+          # The reviewers whose approval releases a `code-review` PR.
           APPROVERS: ${{ vars.AUTOMERGE_APPROVERS || '["claude","codex","opencode","jeremyhahn"]' }}
-          # Per-repo REPLACEMENT for APPROVERS (v9; owner ruling 2026-10-06 --
-          # repo-policy.sh's automerge_approvers_only, applied by
-          # setup-pr-sdlc.sh). Gitea 1.27 supports the `vars` context. Unset
-          # on every repo except platform-configs today, so behaviour
-          # elsewhere is unchanged from v7/v8.
+          # Per-repository replacement for APPROVERS.
           APPROVERS_ONLY: ${{ vars.AUTOMERGE_APPROVERS_ONLY }}
         run: |
           set -euo pipefail
           # A read that fails inside $( ) fails the assignment, not just itself.
           shopt -s inherit_errexit
 
-          # A blank token would make Gitea answer as an anonymous caller, which
-          # reads as a permissions bug; it must never fall back to another token.
+          # A blank token must fail rather than call the API anonymously.
           [ -n "${BOT:-}" ] || {
             echo "::error::AGENT_TOKEN is not set on this repository; the merge is made as the project agent."
             exit 1; }
@@ -188,12 +65,7 @@ jobs:
               ${3:+-d "$3"} "$REPO_API$2"
           }
           die() { echo "::error::$*" >&2; exit 1; }
-          # EFFECTIVE_APPROVERS = APPROVERS_ONLY when set and valid, else
-          # APPROVERS (v9). Unset APPROVERS_ONLY changes nothing from v7/v8.
-          # Anything else that is not a JSON array of strings, OR an empty
-          # array (nobody could approve), FAILS CLOSED: a malformed or empty
-          # variable must never silently change who can release a
-          # `code-review` PR.
+          # EFFECTIVE_APPROVERS is APPROVERS_ONLY when set and valid, else APPROVERS.
           EFFECTIVE_APPROVERS=$(jq -nc --argjson base "$APPROVERS" --arg only "${APPROVERS_ONLY:-}" '
               def parsed: if . == "" then "__unset__" else (try fromjson catch "__invalid__") end;
               ($only | parsed) as $o
@@ -224,9 +96,7 @@ jobs:
           }
           review_verdict() { # -> "approved <logins>" | changes | waiting, for $head
             paged "/pulls/$pr/reviews" /tmp/reviews.json
-            # Only reviews ON THIS HEAD count, not stale and not dismissed; each
-            # reviewer's latest decisive review is theirs. Any REQUEST_CHANGES
-            # blocks; one APPROVED from EFFECTIVE_APPROVERS, not the author, releases.
+            # Only reviews on this head count; each reviewer's latest decisive review is theirs.
             jq -r --arg h "$head" --arg author "$author" --argjson ok "$EFFECTIVE_APPROVERS" '
                 [ .[] | select(.commit_id == $h and (.stale | not) and (.dismissed | not)
                                and (.state == "APPROVED" or .state == "REQUEST_CHANGES")) ]
@@ -239,8 +109,7 @@ jobs:
                   else "waiting" end' /tmp/reviews.json
           }
           ci_state() { # sha required.json -> success | failure | pending
-            # The combined status carries the LATEST status per context; page
-            # it to total_count.
+            # The combined status carries the latest status per context; page it to total_count.
             echo '[]' > /tmp/latest.json
             local page=1 total got
             while :; do
@@ -285,14 +154,12 @@ jobs:
           comment() { # pr text
             code=$(api POST "/issues/$1/comments" "$(jq -nc --arg b "$2" '{body: $b}')")
             case "$code" in 200|201) ;; *) die "cannot comment on PR $1 (HTTP $code)" ;; esac
-            # Markers are trusted only from $me: a wrong $me would retry a
-            # failing train forever, so say so loudly.
+            # Markers are trusted only from $me.
             [ "$(jq -r '.user.login' /tmp/api.json)" = "$me" ] ||
               die "comments are posted as $(jq -r '.user.login' /tmp/api.json), not $me: the train cannot recognise its own markers"
           }
           has_marker() { # pr marker -> 0 when this agent already left it
-            # Gitea's issue-comments endpoint has no page/limit parameters and
-            # returns every comment in one response.
+            # The issue-comments endpoint returns every comment in one response.
             code=$(api GET "/issues/$1/comments")
             [ "$code" = "200" ] || die "cannot read the comments of PR $1 (HTTP $code)"
             jq -e --arg me "$me" --arg m "$2" 'any(.[]; .user.login == $me and (.body | contains($m)))' /tmp/api.json >/dev/null
@@ -368,9 +235,7 @@ jobs:
                 | .[0] | tonumber | select(. != $self) ] | unique | .[]' "/tmp/pr-$1.json"
           }
 
-          # Is one PR ready? Runs in a subshell: `exit 0` is "not now",
-          # non-zero is an error for that PR. Ready: appends
-          # "pr head base merge_base held" to /tmp/ready.
+          # Is one PR ready?
           check() {
             pr=$1
             code=$(api GET "/pulls/$pr")
@@ -388,9 +253,7 @@ jobs:
             cp /tmp/pr.json "/tmp/pr-$pr.json"
             protection "$base"
 
-            # A merge armed by a legacy workflow (or a legacy copy still on an
-            # old PR head) must not outlive it: 204 cancelled one, 404 there
-            # was none.
+            # Cancel a merge armed by a legacy workflow: 204 cancelled one, 404 there was none.
             code=$(api DELETE "/pulls/$pr/merge")
             case "$code" in
               204) echo "cancelled a merge armed earlier by a legacy workflow" ;;
@@ -403,8 +266,7 @@ jobs:
               echo "CI is not green on $head yet; CI finishing will run this again."
               exit 0; }
 
-            # Read now, after CI, so neither the label nor the reviews can
-            # change between the check and the merge call unseen.
+            # Read after CI, so neither the label nor the reviews can change unseen before the merge call.
             held=0
             if has_label; then
               held=1
@@ -419,9 +281,7 @@ jobs:
             echo "$pr $head $base $mbase $held" >> /tmp/ready
           }
 
-          # A fresh repository holding $TRAIN_BASE as refs/train/base, each PR
-          # in $1 ("pr head ...") as refs/train/pr/<n>, and any further
-          # refspecs. Fetches refs only; no hooks run.
+          # A fresh repository holding $TRAIN_BASE as refs/train/base and each PR head as refs/train/pr/<n>.
           fetch_train() {
             local list=$1 n auth specs=("+refs/heads/$TRAIN_BASE:refs/train/base")
             shift
@@ -429,8 +289,7 @@ jobs:
             repo=/tmp/train-repo
             rm -rf "$repo"
             git init -q "$repo"
-            # Config by environment keeps the token out of argv; the train is
-            # unprotected, so its commits are unsigned.
+            # Config by environment keeps the token out of argv; train commits are unsigned.
             auth=$(printf '%s:%s' "$me" "$BOT" | base64 -w0)
             export GIT_CONFIG_COUNT=3 \
               GIT_CONFIG_KEY_0=http.extraHeader GIT_CONFIG_VALUE_0="Authorization: Basic $auth" \
@@ -466,8 +325,7 @@ jobs:
             esac
           }
 
-          # Merges the PRs in /tmp/cands ("pr head merge_base held") onto
-          # $base_tip as a new train branch and opens its PR.
+          # Merges the PRs in /tmp/cands onto $base_tip as a new train branch and opens its PR.
           build_train() {
             [ -s /tmp/cands ] || { echo "no PR is waiting for a train"; return 0; }
             local name msg n h ref
@@ -502,8 +360,7 @@ jobs:
             open_train_pr "$name" /tmp/train_in
           }
 
-          # 0 when train $1 at $2 has exactly the tree of $base_tip with the
-          # PRs in /tmp/train_prs merged in order, as build_train makes it.
+          # 0 when train $1 at $2 has exactly the tree build_train makes.
           train_tree_ok() {
             local n h
             fetch_train /tmp/train_prs "+refs/heads/$1:refs/train/tip"
@@ -516,8 +373,7 @@ jobs:
             [ "$(git -C "$repo" rev-parse 'HEAD^{tree}')" = "$(git -C "$repo" rev-parse 'refs/train/tip^{tree}')" ]
           }
 
-          # Squash-merges train PR $3 (branch $1 at $2), then closes its PRs
-          # and their issues. Sets $landed on success.
+          # Squash-merges train PR $3 (branch $1 at $2), then closes its PRs and their issues.
           land() {
             local t_name=$1 t_sha=$2 t_pr=$3 title msg titles squash_sha n h i issues code bad=""
             code=$(api GET "/pulls/$t_pr")
@@ -595,8 +451,7 @@ jobs:
             local t_name t_sha t_born t_pr t_list state n h why count newest extra extras stale current
             base_tip=$(tip "$TRAIN_BASE")
             trains
-            # Lists are read into variables first: a failing read in a `for`
-            # list would not stop the run.
+            # Lists are read into variables first: a failing read in a `for` list would not stop the run.
             extras=$(jq -r '.[1:][].name' /tmp/trains.json)
             for extra in $extras; do
               abandon "$extra" "only one train runs at a time"
@@ -664,8 +519,7 @@ jobs:
               fi
             fi
 
-            # A ready PR already on the tip was tested on exactly the tree a
-            # squash produces: merge it directly.
+            # A ready PR already on the tip is merged directly.
             read -r n h _ held < <(awk -v t="$base_tip" '$3 == t' /tmp/cands; echo) || true
             if [ -n "${n:-}" ]; then
               merge_or_update "$n" "$h" "$TRAIN_BASE" "$held"
@@ -677,8 +531,7 @@ jobs:
 
           : > /tmp/ready
           failed=0
-          # Not `( cmd ) || ...`: bash ignores errexit inside a subshell run
-          # in a condition. An error fails the run but not the sweep.
+          # Not `( cmd ) || ...`: bash ignores errexit inside a subshell run in a condition.
           guard() {
             set +e
             ( set -e; "$@" )

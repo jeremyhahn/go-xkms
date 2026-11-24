@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for the SoftHSM pin (go-xkms#1418).
-#
-# scripts/build-softhsm.sh is the one place SoftHSM's version and archive
-# checksum are pinned. These tests prove the script refuses an archive that
-# does not hash to the pin before anything is extracted or built, and that no
-# image, compose file, workflow or script in the repository installs the
-# distribution's SoftHSM package (2.6.1, which answers an AES-GCM tag mismatch
-# with the ambiguous CKR_GENERAL_ERROR) instead of building the pinned
-# release. Nothing here downloads or compiles SoftHSM; every image build does
-# that, and the PKCS#11 suites run against the result.
+# Tests for the SoftHSM pin.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/build-softhsm.sh"

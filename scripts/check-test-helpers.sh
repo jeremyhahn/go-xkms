@@ -1,23 +1,6 @@
 #!/usr/bin/env bash
 #
-# check-test-helpers.sh — fail when production code depends on a test-only
-# helper package.
-#
-# A test-only helper is a go-xkms package with a path segment ending in
-# "test" (pkcs11test, tpm2test, xkmstest, test/...) or named mocks, testutil
-# or testing. Helpers may import each other and any _test.go file may import
-# them; a production package may not, because its binary would then link the
-# helper (and package testing with it).
-#
-# For each module directory given, every non-helper package of the module is
-# a production root. `go list -deps` walks their closure, and every non-helper
-# package in it that imports a helper directly is reported as
-# "<importer> -> <helper>". Build tags come from GOFLAGS, so
-# `GOFLAGS=-tags=a,b` checks a tagged build.
-#
-# Usage: scripts/check-test-helpers.sh [MODULE_DIR...]
-#   MODULE_DIR defaults to the repository's three modules: ., sdk/go, xkey.
-#   test/scripts/check-test-helpers.test.sh runs it against scratch modules.
+# check-test-helpers.sh: fail when production code depends on a test-only helper package.
 set -uo pipefail
 
 HELPER='^github\.com/jeremyhahn/go-xkms/(.*/)?([a-z0-9]*test|mocks|testutil|testing)(/|$)'

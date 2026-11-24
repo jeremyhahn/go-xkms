@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests for scripts/start-test-xkmsd.sh (DS-3769).
-#
-# The script serves the PKCS#11 suites' Unix socket. While the compose
-# xkms-server runs it must only wait for that server's socket, never unlink it
-# or start a second daemon on the path. Otherwise it starts its own xkmsd the
-# supported way: `xkmsd init` with the SO PIN in the environment, a config with
-# no secret in it, the daemon without the PIN, and an unseal through the real
-# open-server-barrier.sh. These tests run it against fake go, xkmsd, curl
-# (which also answers the real socket-probe.sh), getent and sleep on PATH, and record every call. No Docker, no network.
+# Tests for scripts/start-test-xkmsd.sh.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 SCRIPT="$ROOT/scripts/start-test-xkmsd.sh"

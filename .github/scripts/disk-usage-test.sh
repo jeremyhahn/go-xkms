@@ -1,16 +1,5 @@
 #!/bin/sh
-# Tests for disk-usage.sh (go-xkms#1553). The Lint job reads its disk budget
-# off this script's output, and calls it between passes of the step being
-# measured, so two things must hold:
-#   1. Every cache is reported, by size and path, under the given label --
-#      including golangci-lint's, wherever GOLANGCI_LINT_CACHE or the XDG
-#      default puts it.
-#   2. Measuring never fails the job: a cache not created yet prints
-#      "absent", and so does everything when go itself is missing. Only a
-#      missing label is an error.
-#
-# go is a FAKE on a replaced PATH, answering `go env` from two variables.
-# No network, no host mutation, under a second.
+# Tests for disk-usage.sh.
 
 set -eu
 

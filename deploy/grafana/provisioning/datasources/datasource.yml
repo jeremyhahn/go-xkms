@@ -1,17 +1,9 @@
 # Grafana datasource provisioning for go-xkms's ACME Prometheus metrics.
-#
-# Auto-provisions the Prometheus datasource when Grafana starts. Point the
-# URLs below at whichever instance scrapes go-xkms: the embedded xkmsd
-# /metrics endpoint (pkg/server/server.go, port from metrics.port in
-# config.yaml) already includes the ACME registry (see
-# docs/acme-issuance/engineering.md#observability); the standalone
-# TrustedCA serves its own dedicated /metrics.
 
 apiVersion: 1
 
 datasources:
-  # Prometheus - primary metrics datasource, reached by service name inside
-  # the same Docker network as this Grafana instance.
+  # Prometheus, reached by service name on the same Docker network.
   - name: Prometheus
     type: prometheus
     access: proxy

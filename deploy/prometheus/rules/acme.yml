@@ -1,14 +1,4 @@
-# Prometheus alerting and recording rules for go-xkms's ACME server
-# (pkg/acme/server/metrics). Applies to both compositions that serve this
-# registry: the embedded xkmsd ACME server (whose /metrics gathers this
-# registry alongside the default one, see pkg/server/server.go's
-# serverGatherer) and the standalone TrustedCA. Every metric name below is
-# verified against pkg/acme/server/metrics's actual Prometheus registrations
-# - see docs/acme-issuance/engineering.md#observability for the exact
-# call site each one is recorded from.
-#
-# `job` below is a placeholder label value; set it to whatever job_name your
-# scrape_configs entry for go-xkms actually uses.
+# Prometheus alerting and recording rules for go-xkms's ACME server.
 
 groups:
   - name: acme.availability
@@ -64,9 +54,7 @@ groups:
   - name: acme.certificates
     interval: 30s
     rules:
-      # order_finalize.go's failOrder records acme_errors_total{type="issuance_failed"}
-      # for every finalize failure, whatever the underlying cause (CAA, tenant
-      # CA resolution, CSR signing, verification, hooks).
+      # Counts every finalize failure, whatever the cause.
       - alert: CertificateIssuanceFailures
         expr: |
           rate(acme_errors_total{type="issuance_failed"}[5m]) > 0.1
@@ -90,8 +78,7 @@ groups:
   - name: acme.challenges
     interval: 30s
     rules:
-      # challenge.Status is RFC 8555's "valid"/"invalid" (common.StatusValid /
-      # common.StatusInvalid), not "success"/"failed".
+      # challenge.Status is RFC 8555's "valid"/"invalid".
       - alert: ChallengeValidationFailures
         expr: |
           sum(rate(acme_challenges_completed_total{status="invalid"}[5m])) by (instance, type)
@@ -152,9 +139,7 @@ groups:
           summary: "Critical ACME request latency"
           description: "P99 latency on {{ $labels.instance }} is {{ printf \"%.2f\" $value }}s."
 
-      # acme_certificate_issuance_duration_seconds is observed on both
-      # success (sendFinalizeResponse) and failure (failOrder), so this
-      # covers issuance latency regardless of outcome.
+      # Observed on success and failure.
       - alert: HighCertificateIssuanceLatency
         expr: |
           histogram_quantile(0.95, sum(rate(acme_certificate_issuance_duration_seconds_bucket[5m])) by (le, instance))
@@ -202,10 +187,7 @@ groups:
   - name: acme.resources
     interval: 30s
     rules:
-      # These process_*/go_* series only exist when this registry's
-      # Go/process collectors are registered - metrics.RegisterRuntimeCollectors
-      # (standalone TrustedCA) - or, in the embedded xkmsd case, from xkmsd's
-      # own default-registry collectors gathered into the same /metrics.
+      # These series exist only when the Go and process collectors are registered.
       - alert: HighMemoryUsage
         expr: |
           process_resident_memory_bytes{job="acme"} / 1024 / 1024 / 1024 > 2
@@ -236,8 +218,7 @@ groups:
           summary: "Potential goroutine leak"
           description: "{{ $labels.instance }} has {{ $value }} goroutines."
 
-  # Pre-computed metrics referenced by deploy/grafana/dashboard.json and
-  # useful for other dashboards.
+  # Pre-computed metrics used by deploy/grafana/dashboard.json.
   - name: acme.recording
     interval: 30s
     rules:

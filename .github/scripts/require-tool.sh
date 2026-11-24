@@ -1,51 +1,5 @@
 #!/bin/sh
-# require-tool.sh — make a Go analysis tool available at an EXACT pinned
-# version, or fail the job. Called from .github/workflows/ci.yml.
-#
-#   require-tool.sh <binary> <pin> <module-path> [extra go-install args...]
-#
-# WHY THIS EXISTS (go-xkms #189)
-#
-# ci.yml used to `go install tool@version` at job time. The self-hosted runner
-# image already BAKES these tools at pinned versions in /usr/local/bin, so the
-# install did not add a tool — it OVERWROTE the baked one with a different
-# version. Measured on this repo's CI Lint leg: the image carries
-# golangci-lint v2.13.2 and the job printed "has version 2.12.2". The baked
-# version is the one that can lint Go 1.27, so the workflow was actively
-# undoing the fix that was already sitting on the runner.
-#
-# The install was also a live flake: every host in this fleet resolves an AAAA
-# record for sum.golang.org and none has a default IPv6 route, and runner job
-# containers use host networking, so they inherit that stack exactly. Go
-# usually falls back v6 -> v4, which is why the failure was intermittent
-# rather than constant. A failed install skips the analyser entirely and
-# leaves a red check carrying no verdict on the code.
-#
-# Pinning alone was never enough for gosec: it takes its version string from
-# ldflags rather than from the module path, so `go install ...@v2.29.0` still
-# self-reports `dev`, which means results cannot be attributed to a scanner
-# version and two runs of one commit can disagree. The ASSERTION below is
-# therefore the deliverable, not the pin: whatever the binary is and wherever
-# it came from, this refuses to continue unless it SAYS it is the pinned
-# version.
-#
-# FAIL-CLOSED, in both directions:
-#   - A tool missing on a self-hosted runner is an IMAGE defect. It is not
-#     quietly papered over with a network install, because doing so would
-#     restore precisely the flake this removes while reporting success.
-#   - A tool whose self-report does not match the pin fails, rather than
-#     scanning with an unknown version and calling the result a gate.
-#   - A version that cannot be READ AT ALL fails. An unreadable self-report is
-#     not evidence of a matching version.
-#
-# The github.com fallback is deliberate and narrow: this same workflow file
-# runs on GitHub-hosted runners on the public mirror, where no image of ours
-# exists and there is nothing to bake into. It is the only path here that
-# touches the network, and it still has to satisfy the same assertion
-# afterwards.
-#
-# Derived from the reference implementation in go-luks2, which is the repo
-# that established this pattern.
+# require-tool.sh: make a Go analysis tool available at its exact pinned version, or fail the job.
 
 set -eu
 

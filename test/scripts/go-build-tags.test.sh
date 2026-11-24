@@ -1,17 +1,6 @@
 #!/usr/bin/env bash
 #
-# Tests that every target ci-template calls reads GO_BUILD_TAGS (go-xkms#1603).
-# The template runs `make lint|build|coverage|security|integration-test
-# GO_BUILD_TAGS='a b'`; a target that ignores the variable never builds, lints
-# or covers the code behind those tags.
-#
-# Each target is dry-run (`make -n`) and every build-tag list in its output is
-# compared:
-#   - unset and empty GO_BUILD_TAGS print the same commands;
-#   - with GO_BUILD_TAGS set, every list carries its tags, comma-joined with
-#     no duplicates, and is the list the target already used plus those tags.
-# Lines that call $(MAKE) still execute under -n, so docker, go and the other
-# tools they reach are no-op stand-ins on PATH: nothing is built or started.
+# Tests that every target CI calls reads GO_BUILD_TAGS.
 set -uo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 set +e

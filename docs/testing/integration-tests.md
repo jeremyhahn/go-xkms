@@ -292,8 +292,7 @@ make integration-test-acme-tpm
 ```
 
 **Not** part of the `make integration-test` aggregate: `device-attest-01` has
-no registered server-side challenge verifier yet (go-xkms#737, pending an
-owner ruling on go-xkms#828), so a subset of this suite fails against current
+no registered server-side challenge verifier yet (go-xkms#737), so a subset of this suite fails against current
 `main` for a known, tracked reason rather than a regression. Run it on its
 own; the comment above `Makefile`'s `integration-test-acme-tpm` target
 (`Makefile:2365`) explains where to add it back once #737 lands.

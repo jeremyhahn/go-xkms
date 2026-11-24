@@ -2,7 +2,7 @@
 
 > **Status: NORMATIVE** · Feature: `optee-sealed-blob` · Repo: `go-xkms` · Last verified: 2026-10-31
 
-trusted-firmware's OP-TEE trusted application (TA) seals data under a key rooted in the device's hardware unique key (HUK): OP-TEE derives the TA's unique key from the HUK, and the TA derives the sealing key from that (§1). Its `SEAL` command (`0x00000003`) returns the blob defined here and its `UNSEAL` command (`0x00000004`) accepts it. go-xkms owns the format, the key derivation and the reference codec (owner ruling 251, item 177 (a)); the TA, trusted-firmware #253 slice 5 and #288, is the producer, and go-enclave's arm-trustzone backend is the consumer.
+trusted-firmware's OP-TEE trusted application (TA) seals data under a key rooted in the device's hardware unique key (HUK): OP-TEE derives the TA's unique key from the HUK, and the TA derives the sealing key from that (§1). Its `SEAL` command (`0x00000003`) returns the blob defined here and its `UNSEAL` command (`0x00000004`) accepts it. go-xkms owns the format, the key derivation and the reference codec; the TA, trusted-firmware #253 slice 5 and #288, is the producer, and go-enclave's arm-trustzone backend is the consumer.
 
 Every rule below is one of three standards, adopted as written:
 
@@ -31,7 +31,7 @@ The TA derives one 32-byte AES-256 key from its TA unique key with HKDF-SHA-256 
 
 The info is 45 bytes. The context makes each TA's key its own: two TAs on one device never share a key.
 
-The IKM is never the raw HUK (owner ruling 7dbbb72, item 183 (a); #1783). On OP-TEE 4.11.0 the HUK is read only by OP-TEE's core (`tee_otp_get_hw_unique_key`); no syscall or PTA gives it to a user TA. The system PTA's `PTA_SYSTEM_DERIVE_TA_UNIQUE_KEY` is the only HUK-backed interface a user TA has: OP-TEE derives a subkey from the HUK, the calling TA's UUID and the extra_data (`huk_subkey_derive(HUK_SUBKEY_UNIQUE_TA, uuid ‖ extra_data, …)`) and returns only that subkey, so the HUK never leaves OP-TEE's core (#1783's reading of OP-TEE 4.11.0). go-xkms's derivation starts at the PTA output: OP-TEE's step is OP-TEE's, and neither go-xkms nor its vectors reproduce it.
+The IKM is never the raw HUK. On OP-TEE 4.11.0 the HUK is read only by OP-TEE's core (`tee_otp_get_hw_unique_key`); no syscall or PTA gives it to a user TA. The system PTA's `PTA_SYSTEM_DERIVE_TA_UNIQUE_KEY` is the only HUK-backed interface a user TA has: OP-TEE derives a subkey from the HUK, the calling TA's UUID and the extra_data (`huk_subkey_derive(HUK_SUBKEY_UNIQUE_TA, uuid ‖ extra_data, …)`) and returns only that subkey, so the HUK never leaves OP-TEE's core (#1783's reading of OP-TEE 4.11.0). go-xkms's derivation starts at the PTA output: OP-TEE's step is OP-TEE's, and neither go-xkms nor its vectors reproduce it.
 
 ## 2. The blob
 
@@ -132,4 +132,4 @@ Vector 2, `empty-plaintext`, uses the 32-byte test TA unique key `000102…1f`, 
 - **A version outside the COSE structure** (a prefix byte, or an outer array). The blob would no longer be a COSE object, and the version would not be authenticated unless it were repeated in the AAD. A protected header parameter is both.
 - **A deterministic or counter nonce.** The TA keeps no state across `SEAL` calls that survives a reset, so a counter could repeat; random 96-bit nonces from the TA's generator are the SP 800-38D §8.2.2 construction.
 - **The raw HUK as IKM.** It was §1's IKM as first merged (#1771). OP-TEE 4.11.0 has no syscall or PTA that gives the HUK to a user TA: only its core reads it (#1783), so a user TA cannot meet that rule. `PTA_SYSTEM_DERIVE_TA_UNIQUE_KEY` is the HUK-backed interface the TA has, and its output keeps the key rooted in the HUK.
-- **A producer inside OP-TEE's core** (a pseudo-TA or core patch that reads the HUK). It would need a modified OP-TEE; owner ruling 7dbbb72 item 183 (a) keeps the producer a user TA on stock OP-TEE 4.11.0.
+- **A producer inside OP-TEE's core** (a pseudo-TA or core patch that reads the HUK). It would need a modified OP-TEE; the producer stays a user TA on stock OP-TEE 4.11.0.

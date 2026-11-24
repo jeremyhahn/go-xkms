@@ -136,8 +136,8 @@ refresh fails the revocation itself has already durably recorded (writes are
 ordered so the state enforcement reads lands first), and the next stale read
 repairs the CRL.
 
-There is deliberately **no leader election and no background scheduler**
-(owner ruling, #275, option A). A CRL was never a live query — it is a
+There is deliberately **no leader election and no background scheduler**.
+A CRL was never a live query — it is a
 document with `thisUpdate`/`nextUpdate` — so "regenerate on write, detect
 and repair staleness on read" needs no cluster awareness the CA layer does
 not already have, and is correct on a single node with no configuration
