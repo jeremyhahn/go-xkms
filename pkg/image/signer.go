@@ -17,8 +17,10 @@ import (
 	"context"
 	"crypto"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"slices"
@@ -26,6 +28,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
@@ -49,6 +52,10 @@ type SignerConfig struct {
 	// Timestamper, when set, adds an RFC 3161 timestamp over every
 	// envelope.
 	Timestamper Timestamper
+
+	// Log, when set, receives an image-signed entry for every pushed
+	// signature (docs/SPEC.md, transparency-log). Nil appends nothing.
+	Log tlog.Appender
 }
 
 // Signer signs container images: it attests an image digest in a DSSE
@@ -61,6 +68,8 @@ type Signer struct {
 	chainPEM       []byte
 	registry       RegistryClient
 	timestamper    Timestamper
+	log            tlog.Appender
+	signerID       string
 }
 
 // SignOptions shapes the statement an image is attested with.
@@ -124,6 +133,7 @@ func NewSigner(cfg *SignerConfig) (*Signer, error) {
 			return nil, &errs.Joined{Lead: ErrEncodingFailed, Cause: err}
 		}
 	}
+	signerSum := sha256.Sum256(cfg.Certificate.Raw)
 	return &Signer{
 		signer:         cfg.Signer,
 		certificate:    cfg.Certificate,
@@ -131,6 +141,8 @@ func NewSigner(cfg *SignerConfig) (*Signer, error) {
 		chainPEM:       chainPEM,
 		registry:       cfg.Registry,
 		timestamper:    cfg.Timestamper,
+		log:            cfg.Log,
+		signerID:       hex.EncodeToString(signerSum[:]),
 	}, nil
 }
 
@@ -191,6 +203,16 @@ func (s *Signer) SignImage(ctx context.Context, ref string, opts *SignOptions) (
 		Timestamp:     timestamp,
 	})
 	if err != nil {
+		return nil, err
+	}
+	// The pushed signature is appended to the image-signing transparency
+	// log; a failed append fails the call with a *tlog.AppendError.
+	envelopeSum := sha256.Sum256(envelope)
+	if err := tlog.AppendEntry(ctx, s.log, tlog.ImageSigned{
+		ImageDigest:    subject.Digest,
+		EnvelopeSHA256: hex.EncodeToString(envelopeSum[:]),
+		Signer:         s.signerID,
+	}); err != nil {
 		return nil, err
 	}
 	return &SignResult{Digest: subject.Digest, Envelope: envelope, Timestamp: timestamp, Push: push}, nil
