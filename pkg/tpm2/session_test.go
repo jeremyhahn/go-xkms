@@ -5,7 +5,9 @@ package tpm2
 
 import (
 	"bytes"
+	"context"
 	"crypto"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"sync"
@@ -13,9 +15,11 @@ import (
 	"time"
 
 	"github.com/google/go-tpm/tpm2"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -505,6 +509,76 @@ func TestSaveKeyPair_RecoveryRacingSecondProcessNeverMismatch(t *testing.T) {
 	} else {
 		require.NoError(t, errA)
 	}
+}
+
+// hookedKV runs hook once, just before the first replacing write (Put or
+// CompareAndSwap; a create-only PutIfAbsent never fires) whose value
+// carries one of markers, so a test can let a second writer run at exactly
+// that write of a real store.BlobStore.
+type hookedKV struct {
+	qrdbsdk.AtomicKVStore
+	markers [][]byte
+	once    sync.Once
+	hook    func()
+}
+
+func (k *hookedKV) fire(value []byte) {
+	for _, m := range k.markers {
+		if bytes.Contains(value, m) {
+			k.once.Do(k.hook)
+			return
+		}
+	}
+}
+
+func (k *hookedKV) Put(ctx context.Context, key string, value []byte) error {
+	k.fire(value)
+	return k.AtomicKVStore.Put(ctx, key, value)
+}
+
+func (k *hookedKV) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	k.fire(next)
+	return k.AtomicKVStore.CompareAndSwap(ctx, key, expected, next)
+}
+
+// Two TPM2 instances (two processes) over ONE production store.BlobStore:
+// recovery A compares the private blob, B takes A's fence over and
+// publishes a whole B pair, then A writes its private blob. The store must
+// refuse A's write, so the pair is never public-B/private-A.
+func TestSaveKeyPair_TwoInstancesOnBlobStoreNeverMixPair(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+	other := &TPM2{logger: tpmImpl.logger}
+
+	privA := tpm2.TPM2BPrivate{Buffer: []byte("private-A")}
+	pubA := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-A"))
+	privB := tpm2.TPM2BPrivate{Buffer: []byte("private-B")}
+	pubB := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B"))
+
+	kv := &hookedKV{
+		AtomicKVStore: qrdbsdk.NewMemoryKVStore(),
+		markers:       [][]byte{[]byte("private-A"), []byte(base64.StdEncoding.EncodeToString([]byte("private-A")))},
+	}
+	blobs, err := store.NewBlobStore(slog.Default(), dao.NewStoreFactory(kv))
+	require.NoError(t, err)
+	_, swaps := any(blobs).(KeyBlobSwapper)
+	assert.True(t, swaps, "the production BlobStore must swap key blobs atomically")
+
+	attrs := keyPairRaceAttrs(t, "two-instances-blobstore-key", blobs)
+	var errB error
+	fired := false
+	kv.hook = func() {
+		fired = true
+		errB = other.SaveKeyPair(attrs, privB, pubB, blobs, true)
+	}
+	errA := tpmImpl.SaveKeyPair(attrs, privA, pubA, blobs, false)
+	require.True(t, fired, "the second writer must run at recovery A's private-blob write")
+
+	pair := requireMatchingPair(t, blobs, attrs)
+	require.Equal(t, "public-B/private-B", pair)
+	require.NoError(t, errB)
+	require.ErrorIs(t, errA, store.ErrBlobExists)
 }
 
 func TestSaveKeyPairWithNilBackend(t *testing.T) {
