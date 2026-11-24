@@ -17,8 +17,10 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha512"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -122,13 +124,30 @@ func PAE(payloadType string, payload []byte) []byte {
 }
 
 // signatureInput returns what a key signs for message and the hash to sign
-// it with: the SHA-256 digest for RSA (PKCS#1 v1.5) and ECDSA keys, which is
-// cosign's default signature digest, and message itself for Ed25519, which
-// hashes internally.
+// it with: the SHA-256 digest for RSA (PKCS#1 v1.5) keys; for ECDSA the
+// digest that matches the curve, cosign's per-curve default (SHA-256 for
+// P-256, SHA-384 for P-384, SHA-512 for P-521), so a strict backend such as
+// Azure Key Vault (ES384 for P-384) signs it; and message itself for
+// Ed25519, which hashes internally.
 func signatureInput(publicKey crypto.PublicKey, message []byte) ([]byte, crypto.Hash, error) {
-	switch publicKey.(type) {
-	case *rsa.PublicKey, *ecdsa.PublicKey:
+	switch key := publicKey.(type) {
+	case *rsa.PublicKey:
 		return sha256Sum(message), crypto.SHA256, nil
+	case *ecdsa.PublicKey:
+		switch key.Curve {
+		case elliptic.P256():
+			return sha256Sum(message), crypto.SHA256, nil
+		case elliptic.P384():
+			sum := sha512.Sum384(message)
+			return sum[:], crypto.SHA384, nil
+		case elliptic.P521():
+			return sha512Sum(message), crypto.SHA512, nil
+		}
+		name := "ecdsa: unknown curve"
+		if key.Curve != nil {
+			name = "ecdsa " + key.Curve.Params().Name
+		}
+		return nil, 0, &errs.Detail{Err: ErrUnsupportedKey, Detail: name}
 	case ed25519.PublicKey:
 		return message, crypto.Hash(0), nil
 	}
