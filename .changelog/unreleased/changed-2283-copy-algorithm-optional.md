@@ -1,1 +1,2 @@
 - **`xkmsctl key copy` no longer sends a fixed wrapping algorithm.** Without `--algorithm` the request carries none; REST, gRPC and MCP accept an omitted `algorithm` and the service picks `TPM2_DUPLICATE` for a TPM2 destination and `RSAES_OAEP_SHA_256` otherwise (#2283).
+- **A software key copies to a TPM2 destination without naming an algorithm.** The software backend wraps exportable symmetric keys of up to 128 bytes for the TPM's `TPM2_DUPLICATE` import parameters, which now carry the SRK public area in `import_token` (#2283).
