@@ -284,7 +284,9 @@ func (s *daoCredentialStore) dropClaim(ctx context.Context, userID string) error
 		}
 		return WrapError("read first-credential claim", err)
 	}
-	if err := s.claims.Delete(ctx, claim); err != nil && !qrdbsdk.IsDAONotFound(err) {
+	// Only the claim generation read above: a cleanup that raced another one
+	// must not delete the replacement claim an enrolment committed since.
+	if _, err := s.claims.DeleteIfMatch(ctx, claim); err != nil && !qrdbsdk.IsDAONotFound(err) {
 		return WrapError("drop first-credential claim", err)
 	}
 	return nil
