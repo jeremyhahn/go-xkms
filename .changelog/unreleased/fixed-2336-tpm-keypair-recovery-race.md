@@ -1,0 +1,1 @@
+- **A stalled TPM key pair recovery can no longer overwrite the private blob of a pair another save already finished (#2336).** `SaveKeyPair`, including its recovery of an incomplete pair, and `DeleteKeyPair` now run under a per-key lock, so two writers of one key never leave a mismatched public/private pair.
