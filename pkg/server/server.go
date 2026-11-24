@@ -2700,13 +2700,7 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	// Cross-origin access is opt-in: without an explicit allowlist the REST
 	// router emits no CORS headers and browsers enforce same-origin (the
 	// embedded web UI is served same-origin and needs none).
-	if s.config.CORS.Enabled {
-		restConfig.CORS = &rest.CORSOptions{
-			AllowedOrigins:   s.config.CORS.AllowedOrigins,
-			AllowCredentials: s.config.CORS.AllowCredentials,
-			MaxAgeSeconds:    s.config.CORS.MaxAgeSeconds,
-		}
-	}
+	restConfig.CORS = s.corsOptions()
 
 	// Rate-limit identity: forwarding headers are believed only from the
 	// configured reverse proxies (server.trusted_proxies; none by default).

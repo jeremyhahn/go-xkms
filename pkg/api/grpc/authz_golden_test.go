@@ -243,6 +243,7 @@ var goldenRPCPermissions = map[string]string{
 	"RotateKey":                "keys:rotate",
 	"CreateOTAImageKey":        "keys:create",
 	"RotateOTAImageKey":        "keys:rotate",
+	"ExportOTAImagePublicKey":  "keys:get",
 	"SignOTAImage":             "keys:sign",
 	"ListKeyVersions":          "keys:list",
 	"EnableKeyVersion":         "keys:rotate",
