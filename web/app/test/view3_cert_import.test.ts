@@ -209,6 +209,56 @@ describe("CertImportView", () => {
     expect(exists).toHaveBeenCalledWith("k1", "tpm2");
     expect(save).toHaveBeenCalledWith("k1", "tpm2", { backend: "tpm2", certificate_pem: LEAF });
   });
+
+  // POST /certs needs only certs:enroll, but HEAD /certs/{id} needs
+  // certs:read: a refused overwrite check asks before it may overwrite.
+  it("asks for confirmation and imports after Confirm when the overwrite check is refused", async () => {
+    exists.mockRejectedValue(Object.assign(new Error("403 Forbidden: certs:read"), { status: 403 }));
+    save.mockResolvedValue({ success: true });
+    await mountReady();
+    await fill("k1", "pkcs8", LEAF);
+
+    await fireEvent.click(importButton());
+
+    expect(await screen.findByText(/could not check whether a certificate exists for key "k1"/i)).toBeInTheDocument();
+    expect(screen.queryByText(/403 Forbidden/)).not.toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(save).toHaveBeenCalledWith("k1", "pkcs8", { backend: "pkcs8", certificate_pem: LEAF });
+    await waitFor(() => expect(toasts.some((t) => t.kind === "success")).toBe(true));
+  });
+
+  it("sends nothing and re-enables the inputs when the refused-check confirm is cancelled", async () => {
+    exists.mockRejectedValue(Object.assign(new Error("403 Forbidden: certs:read"), { status: 403 }));
+    await mountReady();
+    await fill("k1", "pkcs8", LEAF, INT1);
+
+    await fireEvent.click(importButton());
+    await screen.findByText(/could not check/i);
+    await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.queryByText(/could not check/i)).not.toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+    expect(saveChain).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Key ID")).not.toBeDisabled();
+    expect(screen.getByLabelText("Backend")).not.toBeDisabled();
+    expect(screen.getByLabelText("Certificate PEM")).not.toBeDisabled();
+    expect(screen.getByLabelText("Chain PEM")).not.toBeDisabled();
+  });
+
+  it("shows any other overwrite-check failure and never saves", async () => {
+    exists.mockRejectedValue(Object.assign(new Error("boom"), { status: 500 }));
+    await mountReady();
+    await fill("k1", "pkcs8", LEAF);
+
+    await fireEvent.click(importButton());
+
+    expect(await screen.findByText(/boom/)).toBeInTheDocument();
+    expect(screen.queryByText(/could not check/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Confirm" })).not.toBeInTheDocument();
+    expect(save).not.toHaveBeenCalled();
+  });
 });
 
 describe("CertImportView frozen target", () => {
