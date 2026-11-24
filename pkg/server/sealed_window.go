@@ -143,7 +143,7 @@ func (s *Server) serveSealedWindow(node *qrdbnode.Node) error {
 	// completing the pending boot (BuildServices + server.New); empty
 	// credentials are correct here.
 	if err := node.Unseal(ctx, seal.Credentials{}); err != nil {
-		return &QRDBNodeError{Stage: StageBootAfterSealedWindow, Err: err}
+		return &QRDBNodeError{Stage: StageBootAfterSealedWindow, Err: err, Resealed: node.IsSealed()}
 	}
 	return nil
 }
@@ -157,17 +157,42 @@ const StageBootAfterSealedWindow = "complete boot after sealed window"
 // boot-completion failure after unseal, and returns that QRDBNodeError. It
 // walks the whole chain: the outer QRDBNodeError is the "sealed window"
 // stage wrapping the boot-completion one. Every other failure (a cancelled
-// or timed-out window, a bind refusal, a TLS build error) returns false.
+// or timed-out window, a bind refusal, a TLS build error) returns false, and
+// so does a boot-completion failure that re-sealed the node (Resealed): the
+// failed-boot listener has nothing to hold there, and exiting lets the
+// supervisor restart reopen the sealed window, where unseal works.
 func BootCompletionFailure(err error) (*QRDBNodeError, bool) {
+	nodeErr := bootStageError(err)
+	if nodeErr == nil || nodeErr.Resealed {
+		return nil, false
+	}
+	return nodeErr, true
+}
+
+// ResealedBootFailure reports whether err (as returned by New) carries a
+// boot-completion failure after unseal on which qrdb re-sealed the barrier,
+// and returns that QRDBNodeError. The daemon exits on it, so the supervisor
+// restart reopens the sealed window.
+func ResealedBootFailure(err error) (*QRDBNodeError, bool) {
+	nodeErr := bootStageError(err)
+	if nodeErr == nil || !nodeErr.Resealed {
+		return nil, false
+	}
+	return nodeErr, true
+}
+
+// bootStageError walks err's QRDBNodeError chain and returns the
+// StageBootAfterSealedWindow one, or nil.
+func bootStageError(err error) *QRDBNodeError {
 	for err != nil {
 		var nodeErr *QRDBNodeError
 		if !errors.As(err, &nodeErr) {
-			return nil, false
+			return nil
 		}
 		if nodeErr.Stage == StageBootAfterSealedWindow {
-			return nodeErr, true
+			return nodeErr
 		}
 		err = nodeErr.Unwrap()
 	}
-	return nil, false
+	return nil
 }

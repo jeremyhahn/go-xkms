@@ -31,7 +31,8 @@ import (
 const bootFailureShutdownTimeout = 15 * time.Second
 
 // bootFailureStatus is the body every request to the failed-boot listener
-// gets: the barrier is unsealed but the node did not complete its boot.
+// gets: the node did not complete its boot after unseal; Sealed reports
+// whether qrdb re-sealed the barrier on that failure.
 type bootFailureStatus struct {
 	Sealed     bool   `json:"sealed"`
 	BootFailed bool   `json:"boot_failed"`
@@ -72,7 +73,7 @@ func ServeBootFailure(ctx context.Context, cfg *config.Config, bootErr *QRDBNode
 	if bootErr.Err != nil {
 		cause = bootErr.Err.Error()
 	}
-	body, err := json.Marshal(bootFailureStatus{BootFailed: true, Stage: bootErr.Stage, Error: cause})
+	body, err := json.Marshal(bootFailureStatus{Sealed: bootErr.Resealed, BootFailed: true, Stage: bootErr.Stage, Error: cause})
 	if err != nil {
 		return fmt.Errorf("server: failed-boot status body: %w", err)
 	}

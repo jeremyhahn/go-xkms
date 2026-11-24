@@ -211,6 +211,13 @@ func run() int {
 	if err != nil {
 		// #2290: the supervisor restart re-seals the barrier, so exiting on a
 		// boot failure after unseal makes a crash loop that needs an unseal per boot.
+		// A failure that already re-sealed the barrier exits: the restart
+		// reopens the sealed window, where unseal works.
+		if nodeErr, ok := server.ResealedBootFailure(err); ok {
+			logger.Error("qrdb boot failed after unseal and re-sealed the barrier; "+
+				"exiting so the restart reopens the sealed window",
+				slog.String("stage", nodeErr.Stage), slog.Any("error", nodeErr.Err))
+		}
 		if nodeErr, ok := server.BootCompletionFailure(err); ok {
 			logger.Error("qrdb boot failed after unseal; staying up and reporting it on the listener "+
 				"(the barrier needs no new unseal until the cause is fixed)",
