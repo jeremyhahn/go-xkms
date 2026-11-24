@@ -84,4 +84,6 @@ export interface WebAuthnCeremonyStart {
   options: unknown;
   /** X-Session-Id header value; echo it back on the finish call. */
   sessionId: string;
+  /** X-Tenant-Id header from add-passkey begin; echo it on registration finish. */
+  tenantId?: string;
 }

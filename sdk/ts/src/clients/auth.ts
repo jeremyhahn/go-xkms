@@ -121,7 +121,8 @@ export class AuthClient {
    * POST /api/v1/webauthn/credentials/begin — start adding a passkey to the
    * signed-in account. Rides the configured TokenProvider: the account is the
    * session's own, never one named in the request. Complete the ceremony with
-   * webAuthnRegisterFinish under the returned session ID.
+   * webAuthnRegisterFinish under the returned session ID and, when the server
+   * returned one, the tenant ID.
    */
   async webAuthnAddCredentialBegin(): Promise<WebAuthnCeremonyStart> {
     const { data, response } = await this.http.requestRaw<unknown>(
@@ -129,25 +130,36 @@ export class AuthClient {
       `${WEBAUTHN_BASE}/credentials/begin`,
       {},
     );
-    return {
+    const start: WebAuthnCeremonyStart = {
       options: data,
       sessionId: response.headers.get(HEADER_SESSION_ID) ?? '',
     };
+    const tenantId = response.headers.get(HEADER_TENANT_ID);
+    if (tenantId) {
+      start.tenantId = tenantId;
+    }
+    return start;
   }
 
   /**
    * POST /api/v1/webauthn/registration/finish — submit the encoded
    * attestation (encodeAttestationResponse) under the session's
-   * X-Session-Id header.
+   * X-Session-Id header. Pass the add-passkey begin's tenantId so the
+   * server finishes on that tenant's relying party (X-Tenant-Id).
    */
   webAuthnRegisterFinish(
     sessionId: string,
     credential: AttestationCredentialJSON,
+    tenantId?: string,
   ): Promise<WebAuthnAuthResponse> {
+    const headers: Record<string, string> = { [HEADER_SESSION_ID]: sessionId };
+    if (tenantId) {
+      headers[HEADER_TENANT_ID] = tenantId;
+    }
     return this.http.request('POST', `${WEBAUTHN_BASE}/registration/finish`, {
       auth: false,
       body: credential,
-      headers: { [HEADER_SESSION_ID]: sessionId },
+      headers,
     });
   }
 
