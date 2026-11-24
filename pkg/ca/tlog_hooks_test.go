@@ -96,7 +96,7 @@ func TestTlogHook_PrecertificateAppendsNothing(t *testing.T) {
 	rec := &tlogRecorder{}
 	c := newTlogHookCA(t, rec)
 	_, err := c.SignCSR(context.Background(), tlogCSR(t, "pre.example.com"),
-		&SignOptions{Precertificate: true})
+		&SignOptions{Precertificate: true, TenantID: "acme"})
 	require.NoError(t, err)
 	require.Empty(t, rec.logs)
 }
@@ -109,7 +109,7 @@ var errTlogDown = &tlog.AppendError{Log: "x", Err: context.DeadlineExceeded}
 
 func TestTlogHook_IssuanceAppendFailureIsAppendError(t *testing.T) {
 	c := newTlogHookCA(t, failingTlog{})
-	_, err := c.SignCSR(context.Background(), tlogCSR(t, "fail.example.com"), nil)
+	_, err := c.SignCSR(context.Background(), tlogCSR(t, "fail.example.com"), &SignOptions{TenantID: "acme"})
 	var ae *tlog.AppendError
 	require.ErrorAs(t, err, &ae)
 	require.Equal(t, tlog.LogIssuance, ae.Log)
