@@ -1,0 +1,1 @@
+- **TPM key-pair recovery is safe across processes sharing a key store.** The fence takeover, private write and publish are compare-and-swap writes in the store instead of an in-process lock, so a recovery that lost its fence can no longer leave a mismatched pair; a backend without compare-and-swap refuses the recovery.

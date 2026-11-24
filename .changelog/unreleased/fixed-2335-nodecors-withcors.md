@@ -1,0 +1,1 @@
+- **NodeCORS carries the WithCORS policy of a self-built REST surface.** A module configured with WithCORS (SDK WithServiceModuleCORS) and no REST server resolver now hands its policy to the node's outer CORS layer, so browsers can read authentication refusals.
