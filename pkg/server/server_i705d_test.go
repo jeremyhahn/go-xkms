@@ -244,14 +244,13 @@ func TestInitializeWebAuthnService_QRDBBacked(t *testing.T) {
 	require.NotNil(t, server.qrdbClient, "fixture setup: this deployment must host the embedded qrdb node")
 	assert.NotNil(t, server.webauthnService)
 
-	// #2541: the WebAuthn user store runs as the node's service principal, so
-	// building the service registers the principal's users grant.
+	// Building WebAuthn grants the service principal no user permission:
+	// the user store reaches users through the node's user service.
 	ctx, err := server.qrdbNode.ServiceContext(context.Background())
 	require.NoError(t, err)
 	_, err = server.qrdbClient.Users().GetUserByEmail(ctx, "system", "nobody@example.com")
-	require.Error(t, err)
 	var denied *qrdbsdk.PermissionDeniedError
-	assert.NotErrorAs(t, err, &denied, "the service principal may read users once WebAuthn is built")
+	assert.ErrorAs(t, err, &denied, "building WebAuthn lets the service principal read users")
 
 	// #2541 third layer: a WebAuthn login is anonymous, so the issuer's qrdb
 	// refresh store persists the pair as the node's service principal.

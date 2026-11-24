@@ -19,8 +19,10 @@
  * LoginView with that passkey.
  *
  * The administrator is the credential `xkmsd init --admin-factor mtls` wrote
- * under .runtime/storage (run-server.sh); it is presented as a Playwright
- * client certificate, which config.yaml's tls.client_auth "verify" accepts.
+ * under <runtime>/storage (run-server.sh; .runtime, or .runtime-node for
+ * playwright.node.config.ts) on the server of the running config; it is
+ * presented as a Playwright client certificate, which the daemon config's
+ * tls.client_auth "verify" accepts.
  * The invitation ceremony runs in the page, same-origin with the daemon, so
  * the virtual authenticator installed on `page` creates the credential.
  */
@@ -28,8 +30,27 @@
 import { expect, request, test, type APIRequestContext, type Page } from '@playwright/test';
 import { loginOperator, type Operator } from './operator.ts';
 
-/** API origin of the daemon run-server.sh boots (playwright.config.ts baseURL). */
-const API_ORIGIN = 'https://localhost:18463';
+/**
+ * apiOrigin is the origin of the daemon the running Playwright config boots:
+ * its project use.baseURL (playwright.config.ts 18463,
+ * playwright.node.config.ts 18464).
+ */
+function apiOrigin(): string {
+  const baseURL = test.info().project.use.baseURL;
+  if (!baseURL) {
+    throw new Error('passkeyAccount: the Playwright project sets no use.baseURL; the administrator API origin is unknown');
+  }
+  return new URL(baseURL).origin;
+}
+
+/**
+ * runtimeDir is the run-server.sh state directory of the running config
+ * (XKMS_E2E_RUNTIME): config metadata.runtime, `.runtime` when absent.
+ */
+function runtimeDir(): string {
+  const runtime = test.info().config.metadata?.runtime;
+  return typeof runtime === 'string' && runtime !== '' ? runtime : '.runtime';
+}
 
 /**
  * OPERATOR_ROLE is the built-in role each operator is provisioned with. Open
@@ -45,21 +66,23 @@ const OPERATOR_PERMISSIONS = ['keys:create', 'keys:sign', 'keys:delete'];
 
 /**
  * adminCredential locates the init-ceremony admin certificate and key.
- * run-server.sh points `xkmsd init --data-dir` at <suite>/.runtime/storage,
- * and the suite's testDir is <suite>/tests.
+ * run-server.sh points `xkmsd init --data-dir` at <suite>/<runtime>/storage,
+ * where <runtime> is the config's metadata.runtime (runtimeDir), and the
+ * suite's testDir is <suite>/tests.
  */
 export function adminCredential(): { certPath: string; keyPath: string } {
-  const storage = `${test.info().project.testDir}/../.runtime/storage`;
+  const storage = `${test.info().project.testDir}/../${runtimeDir()}/storage`;
   return { certPath: `${storage}/admin-cert.pem`, keyPath: `${storage}/admin-key.pem` };
 }
 
 /** adminRequest opens an API context that authenticates as the administrator over mTLS. */
 async function adminRequest(): Promise<APIRequestContext> {
   const { certPath, keyPath } = adminCredential();
+  const origin = apiOrigin();
   return request.newContext({
-    baseURL: API_ORIGIN,
+    baseURL: origin,
     ignoreHTTPSErrors: true,
-    clientCertificates: [{ origin: API_ORIGIN, certPath, keyPath }],
+    clientCertificates: [{ origin, certPath, keyPath }],
   });
 }
 

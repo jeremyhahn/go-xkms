@@ -26,7 +26,8 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	// The go-qrdb SDK does not export the user service's activation and
+	// lifecycle errors yet; internal/buildgates allow-lists this import.
 	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -619,7 +620,7 @@ func bindInviteTenant(ctx context.Context, tenantID string) context.Context {
 	if tenantID == "" {
 		return ctx
 	}
-	return qrdbtenant.WithTenantID(ctx, tenantID)
+	return qrdbsdk.ContextWithTenant(ctx, tenantID)
 }
 
 // inviteStoreContext is the context every invite store call runs on. The
@@ -629,7 +630,7 @@ func bindInviteTenant(ctx context.Context, tenantID string) context.Context {
 // the same request need, must not reach it, or an RBAC-enforcing node
 // refuses the call ("identity not in target tenant").
 func inviteStoreContext(ctx context.Context) context.Context {
-	return qrdbtenant.WithTenantID(ctx, qrdbsdk.SystemTenantID)
+	return qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID)
 }
 
 // ensureInviteTenantServed refuses invitation enrolment for an account

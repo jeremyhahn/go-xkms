@@ -20,7 +20,6 @@ import (
 	"strconv"
 	"strings"
 
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -97,10 +96,10 @@ func (s *qrdbUserStore) scope(ctx context.Context) context.Context {
 	if s.tenantID == "" {
 		return ctx
 	}
-	if id, ok := qrdbtenant.IDFromContext(ctx); ok && id != "" {
+	if id, ok := qrdbsdk.TenantFromContext(ctx); ok && id != "" {
 		return ctx
 	}
-	return qrdbtenant.WithTenantID(ctx, s.tenantID)
+	return qrdbsdk.ContextWithTenant(ctx, s.tenantID)
 }
 
 // TenantID is the tenant the store resolves accounts in when the caller
@@ -116,10 +115,10 @@ func (s *qrdbUserStore) TenantID() string {
 // another tenant. The tenant scope binds for the user service must not
 // reach it.
 func credentialScope(ctx context.Context) context.Context {
-	if _, ok := qrdbtenant.IDFromContext(ctx); !ok {
+	if _, ok := qrdbsdk.TenantFromContext(ctx); !ok {
 		return ctx
 	}
-	return qrdbtenant.WithTenantID(ctx, "")
+	return qrdbsdk.ContextWithTenant(ctx, "")
 }
 
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair

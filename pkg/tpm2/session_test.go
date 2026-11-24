@@ -288,6 +288,13 @@ func (b *crashingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext t
 	return b.KeyBackend.Save(attrs, data, ext, overwrite)
 }
 
+func (b *crashingKeyBackend) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	if ext == store.FSEXT_PRIVATE_BLOB {
+		panic(errPairCrash)
+	}
+	return b.KeyBackend.(store.ConditionalKeyBackend).CompareAndSwap(attrs, ext, expected, next)
+}
+
 // TestSaveKeyPair_RecoveryCrashLeavesNoMismatch: a create-only save that
 // recovers an incomplete pair (private blob A, no public blob) and crashes
 // before its private blob B is durable leaves no apparently complete pair:
@@ -341,6 +348,78 @@ func TestSaveKeyPair_RecoveryCrashLeavesNoMismatch(t *testing.T) {
 	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
 	require.NoError(t, err)
 	require.Equal(t, "public-C/private-C", string(gotPub)+"/"+string(gotPriv))
+}
+
+// fencePausingKeyBackend calls afterFence once, right after its recovery
+// fence is stored as the public blob.
+type fencePausingKeyBackend struct {
+	store.KeyBackend
+	once       sync.Once
+	afterFence func()
+}
+
+func (f *fencePausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
+	err := f.KeyBackend.Save(attrs, data, ext, overwrite)
+	if err == nil && ext == store.FSEXT_PUBLIC_BLOB && isKeyPairRecoveryFence(data) {
+		f.once.Do(f.afterFence)
+	}
+	return err
+}
+
+func (f *fencePausingKeyBackend) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	swapped, err := f.KeyBackend.(store.ConditionalKeyBackend).CompareAndSwap(attrs, ext, expected, next)
+	if err == nil && swapped && ext == store.FSEXT_PUBLIC_BLOB && isKeyPairRecoveryFence(next) {
+		f.once.Do(f.afterFence)
+	}
+	return swapped, err
+}
+
+// Two live recoveries of one incomplete key: A installs its fence and stalls
+// before its private write, B takes the fence over and stores its pair, then
+// A resumes. The stored pair is B's, and A fails without writing.
+func TestSaveKeyPair_ConcurrentRecoveriesLeaveOneMatchingPair(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{CN: "recovered-key", KeyType: types.KeyTypeTPM}
+	require.NoError(t, shared.Save(attrs, []byte("private-stale"), store.FSEXT_PRIVATE_BLOB, false))
+	privA := tpm2.TPM2BPrivate{Buffer: []byte("private-A")}
+	pubA := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-A"))
+	privB := tpm2.TPM2BPrivate{Buffer: []byte("private-B")}
+	pubB := tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B"))
+
+	resumeA := make(chan struct{})
+	aPaused := make(chan struct{})
+	aDone := make(chan error, 1)
+	recoverA := &fencePausingKeyBackend{KeyBackend: shared, afterFence: func() {
+		close(aPaused)
+		<-resumeA
+	}}
+	go func() { aDone <- tpmImpl.SaveKeyPair(attrs, privA, pubA, recoverA, false) }()
+	select {
+	case <-aPaused:
+	case aErr := <-aDone:
+		t.Fatalf("recoverer A returned before installing its fence: %v", aErr)
+	}
+
+	bErr := tpmImpl.SaveKeyPair(attrs, privB, pubB, shared, false)
+	close(resumeA)
+	aErr := <-aDone
+
+	gotPriv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	require.Equal(t, "public-B/private-B", string(gotPub)+"/"+string(gotPriv),
+		"mismatched key pair (A err=%v, B err=%v)", aErr, bErr)
+	require.NoError(t, bErr)
+	require.Error(t, aErr)
 }
 
 func TestSaveKeyPairWithNilBackend(t *testing.T) {

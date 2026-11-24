@@ -282,7 +282,10 @@ func TestModule_SelfBuiltSurfaceOnAnEnforcingNode(t *testing.T) {
 		WithWebAuthnConfig(&config.WebAuthnConfig{
 			RPID:                    "example.com",
 			AllowPublicRegistration: &allow,
-		}))
+		}),
+		// The principal holds no user permission: the ceremonies reach
+		// users through the node's user service.
+		WithNodeUsers(node))
 	require.NoError(t, err)
 
 	reg, recs := newCaptureRegistrar()
@@ -314,15 +317,14 @@ func TestModule_SelfBuiltSurfaceOnAnEnforcingNode(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &refusal))
 	require.Equal(t, webauthnhttp.ErrorCodeRegistrationRefused, refusal.Error)
 
-	ctx, err := node.ServiceContext(context.Background())
-	require.NoError(t, err)
-	_, err = node.Client().Users().GetUserByEmail(ctx, rest.DefaultWebAuthnTenant, "alice@example.com")
+	// Looked up through the node's user service, as the ceremonies do.
+	_, err = auth.NewNodeUserClient(node).GetUserByEmail(context.Background(), rest.DefaultWebAuthnTenant, "alice@example.com")
 	require.Error(t, err, "a refused anonymous begin must leave no user")
 	var denied *qrdbsdk.PermissionDeniedError
 	require.NotErrorAs(t, err, &denied, "the lookup must be authorized, so its failure means no user")
 
 	// An account's own add-a-passkey begin still works on this path: the
-	// principal keeps users:read, so the ceremony enrols the session's user.
+	// ceremony reads the session's user through the node's user service.
 	u, err := node.UserService().CreateUser(context.Background(), &qrdbuser.CreateUserRequest{
 		Username: "carol@example.com",
 		Email:    "carol@example.com",

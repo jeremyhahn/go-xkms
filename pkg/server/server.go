@@ -59,7 +59,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
-	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
@@ -1541,13 +1540,11 @@ func (s *Server) initializeWebAuthnService() error {
 	// The relying party's user store is xkms's own persistence, as the
 	// DAOs are: over the embedded node it runs as the node's service
 	// principal, since a WebAuthn login is anonymous (#2541). The
-	// principal's base grant holds no user permission, so it gains the user
-	// store's users read/update/delete here, only when WebAuthn is built over
-	// the node. It gains no users:create (CA ruling 602): anonymous public
-	// registration is refused with 403 pending the owner's decision
-	// (go-xkms #2202).
+	// principal gains no user permission for it: the ceremonies read,
+	// update and delete users through the node's user service (NodeUsers),
+	// and anonymous public registration is refused with 403 for want of
+	// users:create (CA ruling 602, go-xkms #2202).
 	if s.qrdbNode != nil {
-		serviceprincipal.RegisterWebAuthnGrant()
 		params.CallContext = s.qrdbNode.ServiceContext
 	}
 	svc, err := rest.BuildWebAuthnService(params)

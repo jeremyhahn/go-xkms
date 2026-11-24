@@ -154,7 +154,39 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 	m, err := NewModule(func() *xkms.XKMSService { return nil },
 		WithRESTServer(func() *rest.Server { return srv }))
 	require.NoError(t, err)
+	assertNodeRefusalsCarryCORS(t, m, allowed, http.StatusForbidden)
+}
 
+// TestUnifiedServer_CORSOnAuthRefusalsWithoutRESTResolver: a module given
+// WithCORS (the SDK's WithServiceModuleCORS) and no WithRESTServer still hands
+// the node its policy, so the node's refusals carry it.
+func TestUnifiedServer_CORSOnAuthRefusalsWithoutRESTResolver(t *testing.T) {
+	const allowed = "https://rp.example"
+
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
+	require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+		Backends:       map[string]xkms.Backend{"test": xkmsmocks.NewMockKeyStore()},
+		DefaultBackend: "test",
+	}))
+	svc, err := xkms.Get()
+	require.NoError(t, err)
+	m, err := NewModule(func() *xkms.XKMSService { return svc },
+		WithCORS(&rest.CORSOptions{AllowedOrigins: []string{allowed}, AllowCredentials: true}))
+	require.NoError(t, err)
+
+	got, err := m.NodeCORS()
+	require.NoError(t, err)
+	require.Equal(t, []string{allowed}, got.AllowedOrigins, "NodeCORS must keep the WithCORS policy")
+	// The module's own REST surface answers an unbound certificate 401.
+	assertNodeRefusalsCarryCORS(t, m, allowed, http.StatusUnauthorized)
+}
+
+// assertNodeRefusalsCarryCORS mounts m on a real go-qrdb node configured with
+// m.NodeCORS() and checks that the node's auth refusals and preflights carry
+// the allowed origin's credentialed policy.
+func assertNodeRefusalsCarryCORS(t *testing.T, m *Module, allowed string, strangerStatus int) {
+	t.Helper()
 	certDir := t.TempDir()
 	ca, err := qrdbdharness.NewCA(certDir)
 	require.NoError(t, err)
@@ -234,7 +266,7 @@ func TestUnifiedServer_CORSOnAuthRefusals(t *testing.T) {
 
 	// An authenticated caller without keys:read: 403 with the policy.
 	resp := send(client(strangerCert), "")
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	assert.Equal(t, strangerStatus, resp.StatusCode)
 	assert.Equal(t, allowed, resp.Header.Get("Access-Control-Allow-Origin"), "403")
 	assert.Equal(t, "true", resp.Header.Get("Access-Control-Allow-Credentials"), "credentialed 403")
 

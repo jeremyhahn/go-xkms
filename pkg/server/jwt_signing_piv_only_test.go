@@ -23,12 +23,12 @@ import (
 const pivOnlyRefreshChildEnv = "XKMS_TEST_PIV_ONLY_REFRESH_CHILD"
 
 // TestInitializeTokenIssuer_PIVOnlyRefreshOverNode proves a PIV/mTLS-only
-// deployment (no WebAuthn, so RegisterWebAuthnGrant never runs) refreshes a
-// session over an enforcing embedded node: the issuer's user resolver runs
-// as the service principal, which needs users:read for the current-account
-// check. go-qrdb's role grants are process-global and registered once, so a
-// WebAuthn grant registered by another test in this binary would hide a
-// missing resolver grant; the body therefore runs in a fresh process.
+// deployment (no WebAuthn) refreshes a session over an enforcing embedded
+// node: the issuer's user resolver runs as the service principal, which
+// needs users:read for the current-account check. go-qrdb's role grants are
+// process-global and registered once, so a grant registered by another test
+// in this binary would hide a missing resolver grant; the body therefore
+// runs in a fresh process.
 func TestInitializeTokenIssuer_PIVOnlyRefreshOverNode(t *testing.T) {
 	if os.Getenv(pivOnlyRefreshChildEnv) == "1" {
 		pivOnlyRefreshOverNode(t)

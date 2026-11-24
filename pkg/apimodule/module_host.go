@@ -23,7 +23,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
-	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -149,15 +148,6 @@ func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
 		hc.WebAuthnCallContext = m.serviceContext
-		// The user store runs as the node's service principal here, as it
-		// does in xkmsd (Server.initializeWebAuthnService); the principal's
-		// base grant holds no user permission, so it gains the user store's
-		// users:read/update/delete on this construction path too. It holds
-		// no users:create: anonymous public registration is refused with 403
-		// pending go-xkms #2202 (CA ruling 602).
-		if m.serviceContext != nil {
-			serviceprincipal.RegisterWebAuthnGrant()
-		}
 	}
 	return hc, nil
 }
@@ -193,12 +183,14 @@ func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
 // published, would cache stores without persistence and a server without
 // WebAuthn or the session store.
 func (m *Module) NodeCORS() (qrdbsdk.DaemonCORSConfig, error) {
+	// Without a host REST server the module's own WithCORS policy (the SDK's
+	// WithServiceModuleCORS) is the policy; it needs no lazy REST surface.
 	if m.resolveREST == nil {
-		return qrdbsdk.DaemonCORSConfig{}, nil
+		return DaemonCORS(m.cors), nil
 	}
 	srv := m.resolveREST()
 	if srv == nil {
-		return qrdbsdk.DaemonCORSConfig{}, nil
+		return DaemonCORS(m.cors), nil
 	}
 	return DaemonCORS(srv.CORSOptions()), nil
 }

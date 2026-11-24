@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -305,6 +306,78 @@ func TestRefresh_ExpiredRecordReadsAsRevoked(t *testing.T) {
 	_, err = issuer.Refresh(ctx, pair.RefreshToken)
 	var revokedErr *RefreshRevokedError
 	assert.ErrorAs(t, err, &revokedErr)
+}
+
+// TestRefresh_TenantlessRecordOfNonSystemUserRefused pins issue #2334: a
+// refresh record saved before Record carried a tenant has no TenantID. For a
+// token whose tenant is not the system tenant, Refresh refuses it and revokes
+// its family, so the lineage cannot launder itself into a tenant-scoped
+// successor. A system-tenant token keeps rotating such a record.
+func TestRefresh_TenantlessRecordOfNonSystemUserRefused(t *testing.T) {
+	stores := map[string]func(t *testing.T) RefreshStore{
+		"memory": func(*testing.T) RefreshStore { return NewMemoryRefreshStore() },
+		"qrdb": func(t *testing.T) RefreshStore {
+			store, err := NewQRDBRefreshStore(newGuardedMemoryKV(), WithCallContext(rbacServiceBind))
+			require.NoError(t, err)
+			return store
+		},
+	}
+	tenants := []struct {
+		name    string
+		tenant  string
+		refused bool
+	}{
+		{name: "user tenant", tenant: "tenant-a", refused: true},
+		{name: "empty tenant", tenant: "", refused: false},
+		{name: "system tenant", tenant: qrdbsdk.SystemTenantID, refused: false},
+	}
+	for storeName, newStore := range stores {
+		for _, tc := range tenants {
+			t.Run(storeName+"/"+tc.name, func(t *testing.T) {
+				ctx := context.Background()
+				store := newStore(t)
+				issuer := newIssuerWithStore(t, store)
+
+				pair, err := issuer.Mint(ctx, &auth.Identity{
+					Subject:  "alice",
+					TenantID: tc.tenant,
+					Metadata: map[string]string{"username": "alice"},
+				})
+				require.NoError(t, err)
+
+				claims, err := issuer.verifyRefresh(pair.RefreshToken)
+				require.NoError(t, err)
+				family, _ := claims["fam"].(string)
+				jti, _ := claims["jti"].(string)
+				require.NotEmpty(t, family)
+				require.NotEmpty(t, jti)
+
+				// Rewrite the record as one saved before #2296: no tenant.
+				rec, err := store.Get(ctx, family, jti)
+				require.NoError(t, err)
+				require.NotNil(t, rec)
+				rec.TenantID = ""
+				require.NoError(t, store.Save(ctx, rec))
+
+				next, err := issuer.Refresh(ctx, pair.RefreshToken)
+				if !tc.refused {
+					require.NoError(t, err, "a system-tenant token must keep rotating a tenantless record")
+					require.NotNil(t, next)
+					require.NotEmpty(t, next.RefreshToken)
+					return
+				}
+				var revokedErr *RefreshRevokedError
+				require.ErrorAs(t, err, &revokedErr)
+
+				// The family is revoked, not just skipped.
+				_, err = issuer.Refresh(ctx, pair.RefreshToken)
+				require.ErrorAs(t, err, &revokedErr)
+				got, err := store.Get(ctx, family, jti)
+				require.NoError(t, err)
+				assert.Nil(t, got, "the refused record's family must be revoked")
+			})
+		}
+	}
 }
 
 func TestRevoke_KillsFamilyAndIsIdempotent(t *testing.T) {

@@ -14,6 +14,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"sort"
@@ -80,6 +81,8 @@ func (b *TPMBlob) SetEntityID(id uint64) { b.ID = id }
 // BlobStore persists the blobs of one tenant's TPM objects as TPMBlob
 // entities through a go-qrdb DAO. It implements KeyBackend, keyed by the
 // object's Common Name and the artifact's extension.
+var _ ConditionalKeyBackend = (*BlobStore)(nil)
+
 type BlobStore struct {
 	logger *slog.Logger
 	blobs  qrdbsdk.GenericDAO[*TPMBlob]
@@ -162,6 +165,43 @@ func (s *BlobStore) Save(attrs *types.KeyAttributes, data []byte, ext types.FSEx
 		return err
 	}
 	return s.write(context.Background(), name, string(ext), data, overwrite)
+}
+
+// CompareAndSwap stores next as the ext blob of the key attrs names only while
+// that blob is stored and holds expected. The swap is the DAO's
+// CompareAndSwap against the record just read, so a writer in another process
+// that replaced the blob in between makes it report false. An absent blob is
+// never created.
+func (s *BlobStore) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	name, err := attrsName(attrs)
+	if err != nil {
+		return false, err
+	}
+	key, err := s.blobKey(name, string(ext))
+	if err != nil {
+		return false, err
+	}
+	ctx := context.Background()
+	stored, err := s.blobs.GetByNaturalKey(ctx, key)
+	if qrdbsdk.IsDAONotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, &BlobReadError{Name: key, Cause: err}
+	}
+	if !bytes.Equal(stored.Data, expected) {
+		return false, nil
+	}
+	replacement := *stored
+	replacement.Data = next
+	swapped, err := s.blobs.CompareAndSwap(ctx, stored, &replacement)
+	if qrdbsdk.IsDAONotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, &BlobWriteError{Name: key, Cause: err}
+	}
+	return swapped, nil
 }
 
 // Delete removes every blob of the key attrs names. Blobs the key never had
