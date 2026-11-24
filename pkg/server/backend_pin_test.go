@@ -21,8 +21,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
+	qrdbsecret "github.com/jeremyhahn/go-qrdb/pkg/secret"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -213,6 +215,115 @@ func TestResolveBackendPIN_AutoWithTPMAndBarrierStoreSealsToTPM(t *testing.T) {
 			require.True(t, bytes.Equal(pin, got), "released PIN unsealed from the TPM")
 		})
 	}
+}
+
+// fakeBackendPINCredentials is a barrier-backed credential store: the
+// values resolution reads for credential:// references.
+type fakeBackendPINCredentials struct {
+	mu        sync.Mutex
+	values    map[string][]byte
+	stores    int
+	failStore map[string]bool
+}
+
+func newFakeBackendPINCredentials(values map[string][]byte) *fakeBackendPINCredentials {
+	f := &fakeBackendPINCredentials{values: map[string][]byte{}, failStore: map[string]bool{}}
+	for name, v := range values {
+		f.values[name] = append([]byte(nil), v...)
+	}
+	return f
+}
+
+func (f *fakeBackendPINCredentials) StoreCredential(_ context.Context, name string, value []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stores++
+	if f.failStore[name] {
+		return errors.New("fake credential store: store refused")
+	}
+	f.values[name] = append([]byte(nil), value...)
+	return nil
+}
+
+func (f *fakeBackendPINCredentials) DeleteCredential(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.values, name)
+	return nil
+}
+
+func (f *fakeBackendPINCredentials) value(name string) []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]byte(nil), f.values[name]...)
+}
+
+func (f *fakeBackendPINCredentials) storeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.stores
+}
+
+// resolve returns the SecretValue config resolution yields for
+// credential://name from the store's current value.
+func (f *fakeBackendPINCredentials) resolve(t *testing.T, name string) *types.SecretValue {
+	t.Helper()
+	v, err := qrdbsecret.NewSecretValue(context.Background(), "credential://"+name, f.value(name), qrdbsecret.StrategyCredential)
+	require.NoError(t, err)
+	return v
+}
+
+// With credentials.seal_strategy: barrier and backend_pin.minimum: tpm2 the
+// PIN moves into TPM custody: the barrier credential holds only the
+// TPM-sealed blob after the first start, and a second start unseals that
+// blob without sealing again. A PIN whose weaker copy cannot be removed is
+// refused at start-up.
+func TestResolveBackendPIN_TPM2MinimumLeavesNoBarrierPINCopy(t *testing.T) {
+	pin := []byte("backend-pin-1")
+	s, opened, _ := backendPINTestServer(t, "", nil, true, true)
+	s.config.BackendPIN.Minimum = "tpm2"
+	backendPINSimulatorTPM(t, s)
+	creds := newFakeBackendPINCredentials(map[string][]byte{"pkcs11-pin": pin})
+	s.backendPINCredentials = creds
+	s.config.Backends.PKCS11.Pin = creds.resolve(t, "pkcs11-pin")
+
+	err := s.resolveBackendPIN()
+	skipWithoutTPMSimulator(t, err)
+	require.NoError(t, err)
+	require.NoError(t, s.startPKCS11AfterUnseal())
+	require.Len(t, *opened, 1)
+	require.True(t, bytes.Equal(pin, (*opened)[0]), "backend opened with the configured PIN")
+	require.Equal(t, "tpm2", s.BackendPINStrategy())
+
+	stored := creds.value("pkcs11-pin")
+	require.NotEmpty(t, stored, "the credential holds the TPM-sealed blob")
+	require.False(t, bytes.Contains(stored, pin), "no barrier-stored plaintext PIN copy is left")
+	storesAfterFirst := creds.storeCount()
+
+	// Second start: resolution reads the sealed blob; the release unseals
+	// it from the TPM and seals nothing again.
+	require.NoError(t, s.SealBackendPIN())
+	s.backendPIN = nil
+	delete(s.keyProviders, "pkcs11")
+	s.config.Backends.PKCS11.Pin = creds.resolve(t, "pkcs11-pin")
+	require.NoError(t, s.resolveBackendPIN())
+	require.NoError(t, s.startPKCS11AfterUnseal())
+	require.Len(t, *opened, 2)
+	require.True(t, bytes.Equal(pin, (*opened)[1]), "second start opened with the PIN unsealed from the TPM")
+	require.Equal(t, storesAfterFirst, creds.storeCount(), "no re-seal from a barrier copy")
+	require.Equal(t, stored, creds.value("pkcs11-pin"))
+	require.Equal(t, "tpm2", s.BackendPINStrategy())
+
+	// A PIN that is not a credential:// reference keeps a copy the server
+	// cannot remove: refused at start-up, nothing opened.
+	s2, opened2, _ := backendPINTestServer(t, "", pin, true, true)
+	s2.config.BackendPIN.Minimum = "tpm2"
+	backendPINSimulatorTPM(t, s2)
+	err = s2.resolveBackendPIN()
+	var custody *BackendPINTPMCustodyError
+	require.ErrorAs(t, err, &custody)
+	require.Nil(t, s2.backendPIN)
+	require.Empty(t, *opened2)
 }
 
 // TestResolveBackendPIN_AutoWithTPMWithoutTPMSealerFailsClosed proves a TPM
