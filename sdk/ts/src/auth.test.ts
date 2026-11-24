@@ -228,4 +228,23 @@ describe('AuthClient WebAuthn ceremonies', () => {
     expect(call.headers['X-Session-Id']).toBe('sess-2');
     expect(call.headers['X-User-Id']).toBeUndefined();
   });
+
+  it('login finish sends the login tenant as X-Tenant-Id', async () => {
+    const fake = newFakeFetch({ body: { token: 't', refresh_token: 'r', user_id: 'u' } });
+    const c = client(fake);
+    const cred = {
+      id: 'c',
+      rawId: 'AQ',
+      type: 'public-key',
+      response: { clientDataJSON: 'Ag', authenticatorData: 'Aw', signature: 'BA' },
+      clientExtensionResults: {},
+    } as AssertionCredentialJSON;
+    await c.auth.webAuthnFinishLogin('sess-2', cred, 'tenant-b');
+    const withTenant = fake.calls[0]!;
+    expect(withTenant.headers['X-Tenant-Id']).toBe('tenant-b');
+    expect(withTenant.headers['X-Session-Id']).toBe('sess-2');
+
+    await c.auth.webAuthnFinishLogin('sess-2', cred);
+    expect(fake.calls[1]!.headers['X-Tenant-Id']).toBeUndefined();
+  });
 });

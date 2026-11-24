@@ -284,6 +284,12 @@ describe('LoginPanel', () => {
       email: 'jane@example.com',
       tenant_id: 'acme-typo',
     });
+    // Finish selects the same tenant's relying party (Codex round 2 on #2387).
+    expect(fake.mocks.webAuthnFinishLogin).toHaveBeenCalledWith(
+      'sess-1',
+      assertionJSON,
+      'acme-typo',
+    );
   });
 
   // -------------------------------------------------------------------------
