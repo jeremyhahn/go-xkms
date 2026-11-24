@@ -122,3 +122,58 @@ func TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer(t *testing.T) {
 	})
 	require.NoError(t, err, "the delegated users:invite grant is honoured")
 }
+
+// hostTargetAuthorizer stands in for the host's AuthMiddleware handed over
+// through SetTenantTargetAuthorizer: it decides on the full identity ctx
+// carries (ScopePermissions) and, as users:invite's ScopeSelfStrict does,
+// only within the caller's own tenant.
+type hostTargetAuthorizer struct{}
+
+func (hostTargetAuthorizer) AuthorizeTenantTarget(ctx context.Context, tenantID string, perm qrdbsdk.Permission) error {
+	id := auth.GetIdentity(ctx)
+	if id != nil && id.TenantID == tenantID {
+		for _, p := range id.ScopePermissions {
+			if p == string(perm) {
+				return nil
+			}
+		}
+	}
+	return &qrdbsdk.PermissionDeniedError{Resource: "users", Action: "invite"}
+}
+
+// TestModule_HostMount_DefaultAuthorizerKeepsDelegatedGrants: with no
+// authorizer set by the host, the self-built service decides on the host's
+// target-aware authorizer, so a delegated grant (ScopePermissions) the SDK
+// RBAC projection drops is honoured, and a foreign target tenant is refused
+// with nothing created.
+func TestModule_HostMount_DefaultAuthorizerKeepsDelegatedGrants(t *testing.T) {
+	client := newHostNodeClient(t)
+	h := mountLikeHost(t, client)
+	h.module.SetTenantTargetAuthorizer(hostTargetAuthorizer{})
+	h.svc.SetUserClients(client.Users(), client.Roles())
+	h.module.hostStores(h.svc)
+	require.NotNil(t, h.svc.Authorizer(), "the host wires a default authorizer")
+
+	delegated := &auth.Identity{
+		Subject:          "qrdb-service:onboarder",
+		TenantID:         qrdbsdk.SystemTenantID,
+		ScopePermissions: []string{string(qrdbsdk.PermissionUsersInvite)},
+	}
+	ctx := auth.WithIdentity(context.Background(), delegated)
+	_, err := h.svc.CreateUser(ctx, &transport.CreateUserRequest{
+		Username: "invitee",
+		Email:    "invitee@example.com",
+		TenantID: qrdbsdk.SystemTenantID,
+	})
+	require.NoError(t, err, "the delegated users:invite grant is honoured on the default path")
+
+	_, err = h.svc.CreateUser(ctx, &transport.CreateUserRequest{
+		Username: "foreign",
+		Email:    "foreign@example.com",
+		TenantID: "tenant-b",
+	})
+	var denied *qrdbsdk.PermissionDeniedError
+	require.True(t, errors.As(err, &denied), "want PermissionDeniedError, got %v", err)
+	_, err = client.Users().GetUserByUsername(ctx, "tenant-b", "foreign")
+	require.Error(t, err, "a refused invite leaves no account behind")
+}

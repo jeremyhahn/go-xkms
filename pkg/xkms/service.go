@@ -346,14 +346,21 @@ func (s *XKMSService) SetAuditLogger(sink qrdbsdk.NodeAuditLogger) {
 	s.auditLogger = sink
 }
 
-// authorizeAudited is AuthorizeCaller with the decision recorded on the
-// audit chain, allow or deny (docs/audit-log/engineering.md: denials are
-// logged, always). A failed audit write fails the call with go-qrdb's
-// *AuditGateError rather than let the decision be acted on unaudited; the
-// refusal itself is returned unchanged otherwise.
-func (s *XKMSService) authorizeAudited(ctx context.Context, resource, action string) error {
+// AuditLogger returns the sink SetAuditLogger set, nil when none was.
+func (s *XKMSService) AuditLogger() qrdbsdk.NodeAuditLogger {
+	return s.auditLogger
+}
+
+// authorizeAudited is AuthorizeCaller against tenantID (the tenant the
+// request names; "" is the caller's own, auth.Authorizer.AuthorizeTenant)
+// with the decision recorded on the audit chain, allow or deny
+// (docs/audit-log/engineering.md: denials are logged, always). A failed
+// audit write fails the call with go-qrdb's *AuditGateError rather than let
+// the decision be acted on unaudited; the refusal itself is returned
+// unchanged otherwise.
+func (s *XKMSService) authorizeAudited(ctx context.Context, tenantID, resource, action string) error {
 	identity := auth.GetIdentity(ctx)
-	err := s.authorizer.Authorize(ctx, identity, resource, action)
+	err := s.authorizer.AuthorizeTenant(ctx, identity, tenantID, resource, action)
 
 	event := &audit.Event{
 		Timestamp: time.Now(),
@@ -364,6 +371,9 @@ func (s *XKMSService) authorizeAudited(ctx context.Context, resource, action str
 	}
 	if identity != nil {
 		event.Subject = identity.Subject
+	}
+	if tenantID != "" {
+		event.Details["target_tenant"] = tenantID
 	}
 	if err != nil {
 		event.Outcome = audit.OutcomeDeny

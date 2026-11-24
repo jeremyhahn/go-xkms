@@ -98,6 +98,26 @@ func TestCreateUser_InviteGrantedMintsInvite(t *testing.T) {
 	assert.Equal(t, 1, *created)
 }
 
+// TestCreateUser_InviteForeignTenantRefused: users:invite is decided against
+// the tenant the request names. A system-tenant caller holding users:create
+// and users:invite cannot mint an invitation into another tenant, and no
+// account is created; naming its own tenant still mints one.
+func TestCreateUser_InviteForeignTenantRefused(t *testing.T) {
+	svc, created, _ := inviteAuthzService(t, permUsersCreate, permUsersInvite)
+	system := auth.WithIdentity(context.Background(), &auth.Identity{Subject: "admin", TenantID: qrdbsdk.SystemTenantID})
+
+	resp, err := svc.CreateUser(system, &transport.CreateUserRequest{Username: "erin", Email: "erin@example.com", TenantID: "tenant-b"})
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	var denied *qrdbsdk.PermissionDeniedError
+	assert.True(t, errors.As(err, &denied), "want a PermissionDeniedError, got %v", err)
+	assert.Equal(t, 0, *created, "no user may be left behind")
+
+	resp, err = svc.CreateUser(system, &transport.CreateUserRequest{Username: "erin", Email: "erin@example.com", TenantID: qrdbsdk.SystemTenantID})
+	require.NoError(t, err)
+	assert.NotNil(t, resp.Invite)
+}
+
 // TestCreateUser_WithoutEmailLoginKeyNeedsNoInvite proves the bootstrap path,
 // which mints no invitation, needs only users:create.
 func TestCreateUser_WithoutEmailLoginKeyNeedsNoInvite(t *testing.T) {

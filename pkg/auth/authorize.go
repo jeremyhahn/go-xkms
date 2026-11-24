@@ -36,6 +36,54 @@ type Authorizer struct {
 	// node, when set, makes every Authorize decision on the caller's
 	// original identity (NewNodeAuthorizer); rbac then only lists.
 	node qrdbsdk.Authorizer
+
+	// target, when set, makes every decision through the host's own
+	// target-aware authorizer (NewHostAuthorizer): the AuthMiddleware the
+	// host's transports gate on, which reads the caller's full identity.
+	target qrdbsdk.TenantTargetAuthorizer
+}
+
+// NewHostAuthorizer returns an Authorizer whose decisions are made by the
+// host's TenantTargetAuthorizer (go-qrdb's AuthMiddleware, handed to a
+// ServiceModule through SetTenantTargetAuthorizer) on the caller's full
+// identity, against the tenant each decision names. rbac lists permissions
+// and sets the posture: a nil rbac disables authorization, as
+// NewAuthorizer(nil) does, and a nil target leaves rbac deciding, as
+// NewAuthorizer(rbac) does.
+func NewHostAuthorizer(rbac qrdbtransport.RBACClient, target qrdbsdk.TenantTargetAuthorizer) *Authorizer {
+	return &Authorizer{rbac: rbac, target: target}
+}
+
+// AuthorizeTenant is Authorize against tenantID, a tenant the request names,
+// which may differ from the identity's own tenant ("" means the identity's
+// own). A host target authorizer (NewHostAuthorizer) decides it under
+// go-qrdb's scope rules (ScopeSelf, ScopeSelfStrict, ScopeCross). Without
+// one the decision is confined: a foreign tenant is refused with a
+// *PermissionDeniedError, and the identity's own tenant is decided as
+// Authorize does.
+func (a *Authorizer) AuthorizeTenant(ctx context.Context, identity *Identity, tenantID, resource, action string) error {
+	if !a.Enabled() {
+		return nil
+	}
+	if identity == nil {
+		return ErrUnauthenticated
+	}
+	authzCtx, qid := bindIdentity(ctx, identity)
+	if tenantID == "" {
+		tenantID = qid.TenantID
+	}
+	if a.target != nil {
+		return a.target.AuthorizeTenantTarget(authzCtx, tenantID, qrdbsdk.Permission(resource+":"+action))
+	}
+	if tenantID != qid.TenantID {
+		return &qrdbsdk.PermissionDeniedError{
+			Resource: resource,
+			Action:   action,
+			Subject:  identity.Subject,
+			Reason:   "target tenant is not the caller's tenant",
+		}
+	}
+	return a.Authorize(ctx, identity, resource, action)
 }
 
 // NewNodeAuthorizer returns an Authorizer whose decisions are made by the
@@ -86,6 +134,9 @@ func (a *Authorizer) Authorize(ctx context.Context, identity *Identity, resource
 	}
 
 	authzCtx, qid := bindIdentity(ctx, identity)
+	if a.target != nil {
+		return a.target.AuthorizeTenantTarget(authzCtx, qid.TenantID, qrdbsdk.Permission(resource+":"+action))
+	}
 	if a.node != nil {
 		// Decide on the original identity; only an unset tenant is filled
 		// in, on a copy, as bindIdentity does for the projection.

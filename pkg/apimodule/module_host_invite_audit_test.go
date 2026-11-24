@@ -169,3 +169,62 @@ func TestModule_HostMount_NoNodeAuditLoggerStillInvites(t *testing.T) {
 	var denied *qrdbsdk.PermissionDeniedError
 	require.True(t, errors.As(err, &denied), "want PermissionDeniedError, got %v", err)
 }
+
+// TestModule_HostMount_PreconfiguredAuthorizerIsAudited: a host that set its
+// own authorizer (auth.NewNodeAuthorizer, the delegated-grant path) still
+// gets the node's audit sink, so its invite decisions reach the trail.
+func TestModule_HostMount_PreconfiguredAuthorizerIsAudited(t *testing.T) {
+	client := newHostNodeClient(t)
+	ctx := context.Background()
+	h := mountLikeHost(t, client)
+	preset := auth.NewNodeAuthorizer(client.RBAC(), nodeScopeAuthorizer{})
+	h.svc.SetAuthorizer(preset)
+	h.svc.SetUserClients(client.Users(), client.Roles())
+	h.module.hostStores(h.svc)
+	require.Same(t, preset, h.svc.Authorizer(), "the host's authorizer is kept")
+	require.NotNil(t, h.svc.AuditLogger(), "the node's sink is wired whoever set the authorizer")
+
+	caller := &auth.Identity{Subject: "no-grant", TenantID: qrdbsdk.SystemTenantID}
+	_, err := h.svc.CreateUser(auth.WithIdentity(ctx, caller), &transport.CreateUserRequest{
+		Username: "invitee",
+		Email:    "invitee@example.com",
+		TenantID: qrdbsdk.SystemTenantID,
+	})
+	var denied *qrdbsdk.PermissionDeniedError
+	require.True(t, errors.As(err, &denied), "want PermissionDeniedError, got %v", err)
+
+	page, err := client.Audit().QueryAudit(ctx, qrdbtransport.AuditFilter{Resource: "users", Action: "invite"})
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Events, "the refusal must reach the node's audit trail")
+	require.Equal(t, "no-grant", page.Events[len(page.Events)-1].Actor)
+}
+
+// TestModule_HostMount_PreconfiguredFailingSinkStopsInvite: an audit sink
+// the host set is kept, and when its write fails an allowed invitation is
+// refused with an AuditGateError and no account is created.
+func TestModule_HostMount_PreconfiguredFailingSinkStopsInvite(t *testing.T) {
+	client := newHostNodeClient(t)
+	ctx := context.Background()
+	h := mountLikeHost(t, client)
+	h.svc.SetAuthorizer(auth.NewNodeAuthorizer(client.RBAC(), nodeScopeAuthorizer{}))
+	failing := &clientAuditSink{audit: failingAuditClient{}}
+	h.svc.SetAuditLogger(failing)
+	h.svc.SetUserClients(client.Users(), client.Roles())
+	h.module.hostStores(h.svc)
+	require.Same(t, failing, h.svc.AuditLogger(), "the host's sink is kept")
+
+	delegated := &auth.Identity{
+		Subject:          "qrdb-service:onboarder",
+		TenantID:         qrdbsdk.SystemTenantID,
+		ScopePermissions: []string{string(qrdbsdk.PermissionUsersInvite)},
+	}
+	_, err := h.svc.CreateUser(auth.WithIdentity(ctx, delegated), &transport.CreateUserRequest{
+		Username: "invitee",
+		Email:    "invitee@example.com",
+		TenantID: qrdbsdk.SystemTenantID,
+	})
+	var gate *qrdbsdk.AuditGateError
+	require.True(t, errors.As(err, &gate), "want an AuditGateError, got %v", err)
+	_, err = client.Users().GetUserByUsername(ctx, qrdbsdk.SystemTenantID, "invitee")
+	require.Error(t, err, "an unaudited invite creates nothing")
+}

@@ -162,16 +162,28 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 			// CreateUser, ssh:service, ...). Wire the same RBAC plane
 			// into the service, as pkg/server does with its authorizer,
 			// so those decisions are enforced here too instead of being
-			// allowed by a nil authorizer.
+			// allowed by a nil authorizer. The host's own target-aware
+			// authorizer (SetTenantTargetAuthorizer: the AuthMiddleware
+			// its transports gate on) decides on the caller's full
+			// identity, delegated grants included; without one the SDK
+			// RBAC client decides on its projection.
 			// The host owns the service it resolves: an authorizer it
 			// set already (auth.NewAuthorizer(nil) with authorization
 			// disabled, auth.NewNodeAuthorizer for its node's
 			// full-identity decision) is its choice and is kept.
-			// The decisions it then enforces are audited on the host
-			// node's own audit plane, under the caller's tenant; a node
-			// built without an audit logger leaves auditing off.
 			if x.Authorizer() == nil {
-				x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
+				if m.tenantTarget != nil {
+					x.SetAuthorizer(auth.NewHostAuthorizer(client.RBAC(), m.tenantTarget))
+				} else {
+					x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
+				}
+			}
+			// The decisions the service enforces are audited on the host
+			// node's own audit plane, under the caller's tenant, whoever
+			// set the authorizer; a sink the host set already is kept,
+			// and a node built without an audit logger leaves auditing
+			// off.
+			if x.AuditLogger() == nil {
 				x.SetAuditLogger(hostAuditSink(client.Audit()))
 			}
 			// Without storage compose leaves every store-backed feature
