@@ -25,6 +25,37 @@ func TestCITemplateV151Note(t *testing.T) {
 	}
 }
 
+// TestCodeReviewTemplateV51212 pins code-review.yml to the handbook template
+// v5.12.12: drafts get no scope job (so no review), and a cancelled review
+// job fails the gate closed.
+func TestCodeReviewTemplateV51212(t *testing.T) {
+	const crWorkflow = "../../.github/workflows/code-review.yml"
+	cr, err := os.ReadFile(crWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", crWorkflow, err)
+	}
+	for _, want := range []*regexp.Regexp{
+		regexp.MustCompile(`\A# code-review-template: v5\.12\.12 `),
+		regexp.MustCompile(`(?m)^# v5\.12\.12 also \(Codex's P1 on go-trusted-platform #2227`),
+	} {
+		if !want.Match(cr) {
+			t.Errorf("%s does not match %s", crWorkflow, want)
+		}
+	}
+	scope := regexp.MustCompile(`(?ms)^  scope:\n.*?^    if: >-\n((?:      .*\n)+)`).FindSubmatch(cr)
+	if scope == nil {
+		t.Fatalf("%s: no if: block in the scope: job", crWorkflow)
+	}
+	for _, want := range []string{
+		"github.event.pull_request.draft != true",
+		"github.event.pull_request.state == 'open'",
+	} {
+		if !regexp.MustCompile(regexp.QuoteMeta(want)).Match(scope[1]) {
+			t.Errorf("%s: scope job's if: lacks %q", crWorkflow, want)
+		}
+	}
+}
+
 // TestCITemplateV153MainEventGroup pins ci.yml v1.53 (handbook 88c10e76,
 // ruling 1087), under v1.54's header (its runner selection, handbook
 // 1ad68ab8, ruling 1137): main runs share one concurrency group per event, so a newer
