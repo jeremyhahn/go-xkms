@@ -17,6 +17,7 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"os"
 	"sync"
@@ -105,6 +106,27 @@ func fetchBootstrapKeys(t *testing.T) (*transport.BootstrapListenerKeysResponse,
 
 // newSDKTransport creates a connected REST transport pointing at the
 // integration-test xkms-server. It is closed by t.Cleanup.
+// adminTLSConfig builds the suite's client TLS config. The admin pair is issued
+// by the first-boot TrustedCA, which the server does not advertise when
+// tls.server_cn is unset, so crypto/tls would withhold a pair held in Certificates.
+func adminTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := transport.LoadCertPool(caFile)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    pool,
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return &cert, nil
+		},
+	}, nil
+}
+
 func newSDKTransport(t *testing.T) *rest.Transport {
 	t.Helper()
 
@@ -114,9 +136,14 @@ func newSDKTransport(t *testing.T) *rest.Transport {
 	keyFile := requiredEnv(t, EnvAdminKey)
 	waitForFiles(t, 60*time.Second, certFile, keyFile)
 
+	cfg, err := adminTLSConfig(certFile, keyFile, caFile)
+	if err != nil {
+		t.Fatalf("build admin TLS config: %v", err)
+	}
+
 	tr, err := rest.New(
 		transport.WithAddress(serverURL),
-		transport.WithMTLS(certFile, keyFile, caFile),
+		transport.WithTLSConfig(cfg),
 	)
 	if err != nil {
 		t.Fatalf("create REST transport: %v", err)
