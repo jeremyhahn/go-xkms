@@ -130,6 +130,6 @@ func TestTlogHook_RevokeAppendsRevokedOnce(t *testing.T) {
 	require.Equal(t, map[string]any{
 		"kind":   tlog.KindRevoked,
 		"serial": cert.SerialNumber.Text(16),
-		"reason": "keyCompromise",
+		"reason": RevocationReasonName(ReasonKeyCompromise),
 	}, rec.entries[0])
 }

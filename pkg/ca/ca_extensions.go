@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 
@@ -810,7 +811,13 @@ func (ca *CA) recordRevocation(ctx context.Context, serial *big.Int, reason int,
 		slog.Warn("ca: failed to refresh crl after revocation", "serial", key, "err", err)
 	}
 
-	return nil
+	// Every revocation is appended to the revocation transparency log
+	// (docs/SPEC.md, transparency-log) once it is durable; an
+	// already-revoked serial returned above and appends nothing.
+	return tlog.AppendEntry(ctx, ca.transparencyLog, tlog.Revoked{
+		Serial: serial.Text(16),
+		Reason: RevocationReasonName(reason),
+	})
 }
 
 // alreadyRevokedError renders ErrAlreadyRevoked carrying info's original
