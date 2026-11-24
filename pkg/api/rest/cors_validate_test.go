@@ -36,6 +36,8 @@ func TestCORSOptionsValidate(t *testing.T) {
 		"https://app.example",
 		"http://localhost:8080",
 		"https://[::1]:8443",
+		"https://[::ffff:c000:201]",
+		"https://[::ffff:c000:201]:8443",
 	} {
 		t.Run("valid "+origin, func(t *testing.T) {
 			require.NoError(t, (&CORSOptions{AllowedOrigins: []string{origin}}).Validate())
@@ -59,6 +61,7 @@ func TestCORSOptionsValidate(t *testing.T) {
 		"https://[::1]:",
 		"https://[not-an-ip]",
 		"https://[1.2.3.4]",
+		"https://[192.0.2.1]",
 		"https://[fe80::1%25eth0]",
 		"https://[]",
 		"https://::1",
