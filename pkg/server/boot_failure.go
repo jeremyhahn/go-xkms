@@ -15,14 +15,12 @@ package server
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"time"
 
@@ -45,8 +43,10 @@ type bootFailureStatus struct {
 // failure following unseal (#2290): exiting would make the supervisor
 // restart re-seal the barrier, a crash loop that needs an unseal per boot.
 // It serves HTTPS on Server.Host:RESTPort under the sealed window's bind
-// rule and answers every request, GET /v1/barrier/status included, with 503
-// and the failed stage and cause. It blocks until ctx is done and returns
+// rule with the unified listener's TLS policy (TLS 1.3, tls.client_auth and
+// the configured client CAs, from buildUnifiedTLSConfig), and answers every
+// request, GET /v1/barrier/status included, with 503 and the failed stage
+// and cause. It blocks until ctx is done and returns
 // nil, or an error when the listener cannot be set up.
 func ServeBootFailure(ctx context.Context, cfg *config.Config, bootErr *QRDBNodeError, logger *slog.Logger) error {
 	if cfg == nil || bootErr == nil {
@@ -60,12 +60,10 @@ func ServeBootFailure(ctx context.Context, cfg *config.Config, bootErr *QRDBNode
 		return &SealedWindowBindError{Host: host}
 	}
 
-	certFile, keyFile := cfg.TLS.CertFile, cfg.TLS.KeyFile
-	if certFile == "" || keyFile == "" {
-		dir := filepath.Join(cfg.Datastore.Path, unifiedBootstrapCertDir)
-		certFile, keyFile = filepath.Join(dir, "cert.pem"), filepath.Join(dir, "key.pem")
-	}
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	// The same policy the unified listener serves: TLS 1.3, tls.client_auth
+	// and the configured client CAs, so a boot failure exposes its cause to
+	// no caller that policy would reject.
+	tlsConfig, err := (&Server{config: cfg, logger: logger}).buildUnifiedTLSConfig()
 	if err != nil {
 		return fmt.Errorf("server: failed-boot listener TLS: %w", err)
 	}
@@ -95,10 +93,7 @@ func ServeBootFailure(ctx context.Context, cfg *config.Config, bootErr *QRDBNode
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
-		TLSConfig: &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			Certificates: []tls.Certificate{cert},
-		},
+		TLSConfig:         tlsConfig,
 	}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ServeTLS(ln, "", "") }()
