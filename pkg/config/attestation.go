@@ -14,6 +14,7 @@
 package config
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -36,6 +37,18 @@ var (
 	// ErrAttestationTrustStoreEmpty indicates an attestation format's trust
 	// store loaded successfully but contains no root certificates.
 	ErrAttestationTrustStoreEmpty = errors.New("attestation: trust store contains no roots for format")
+
+	// ErrAndroidApplicationTenantEmpty indicates a blank tenant key in
+	// attestation.android_applications.
+	ErrAndroidApplicationTenantEmpty = errors.New("attestation: empty tenant in android_applications")
+
+	// ErrAndroidApplicationPackageEmpty indicates a blank package key in
+	// attestation.android_applications.
+	ErrAndroidApplicationPackageEmpty = errors.New("attestation: empty package in android_applications")
+
+	// ErrAndroidApplicationDigestInvalid indicates a package with no
+	// digests, or a digest that is not 64 hex characters (SHA-256).
+	ErrAndroidApplicationDigestInvalid = errors.New("attestation: android_applications digest must be 64 hex characters")
 )
 
 // AttestationConfig configures the hardware-attestation trust anchors used to
@@ -57,6 +70,50 @@ type AttestationConfig struct {
 	// the embedder's (server.WithAttestedCallerPolicy); go-xkms ships no
 	// reference values.
 	PeerGate string `yaml:"peer_gate,omitempty"`
+
+	// AndroidApplications is each tenant's Android application allow-list
+	// for the attestation Verifier: tenant ID -> package name -> the hex
+	// SHA-256 signing-certificate digests the package may be signed with.
+	// A tenant absent from it keeps Android appraisal refused
+	// (appraisal.ErrNoApplicationAllowList).
+	AndroidApplications map[string]map[string][]string `yaml:"android_applications,omitempty"`
+}
+
+// ValidateAndroidApplications checks AndroidApplications: no blank tenant
+// or package key, and every digest 64 hex characters (a SHA-256). A nil
+// config or an absent allow-list is valid.
+func (a *AttestationConfig) ValidateAndroidApplications() error {
+	if a == nil {
+		return nil
+	}
+	for tenant, packages := range a.AndroidApplications {
+		if strings.TrimSpace(tenant) == "" {
+			return ErrAndroidApplicationTenantEmpty
+		}
+		for pkg, digests := range packages {
+			if strings.TrimSpace(pkg) == "" {
+				return &errs.Detail{Err: ErrAndroidApplicationPackageEmpty, Detail: tenant}
+			}
+			if len(digests) == 0 {
+				return &errs.Detail{Err: ErrAndroidApplicationDigestInvalid, Detail: tenant + "/" + pkg + ": no digests"}
+			}
+			for _, digest := range digests {
+				if !isSHA256Hex(digest) {
+					return &errs.Detail{Err: ErrAndroidApplicationDigestInvalid, Detail: tenant + "/" + pkg}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// isSHA256Hex reports whether s is 64 hex characters.
+func isSHA256Hex(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(s)
+	return err == nil
 }
 
 // PeerGateMode is the configured attested-caller gate mode. A nil config is

@@ -15,6 +15,7 @@ package server
 
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -39,5 +40,32 @@ func (s *Server) buildAttestationAppraiser() (*appraisal.Appraiser, error) {
 	if svc, err := xkms.Get(); err == nil {
 		opts = append(opts, appraisal.WithSigningKeySource(svc))
 	}
+	// Each tenant's Android application allow-list is server
+	// configuration; a tenant without one keeps Android appraisal refused.
+	if policies, err := s.androidApplicationPolicies(); err != nil {
+		return nil, err
+	} else if policies != nil {
+		opts = append(opts, appraisal.WithAndroidApplications(policies))
+	}
 	return appraisal.NewAppraiser(store, opts...)
+}
+
+// androidApplicationPolicies converts attestation.android_applications to
+// the Appraiser's static per-tenant source; nil when none is configured.
+func (s *Server) androidApplicationPolicies() (appraisal.AndroidApplicationPolicies, error) {
+	if s.config == nil || s.config.Attestation == nil || len(s.config.Attestation.AndroidApplications) == 0 {
+		return nil, nil
+	}
+	if err := s.config.Attestation.ValidateAndroidApplications(); err != nil {
+		return nil, &errs.Wrapped{Msg: "invalid attestation.android_applications", Err: err}
+	}
+	policies := make(appraisal.AndroidApplicationPolicies, len(s.config.Attestation.AndroidApplications))
+	for tenant, packages := range s.config.Attestation.AndroidApplications {
+		allow := make(appraisal.AndroidApplicationAllowList, len(packages))
+		for pkg, digests := range packages {
+			allow[pkg] = append([]string(nil), digests...)
+		}
+		policies[tenant] = allow
+	}
+	return policies, nil
 }

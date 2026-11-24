@@ -117,6 +117,26 @@ USB: a USB device holds no tenant endorsements or reference values, so each
 of the 8 verbs returns `ErrNotSupported`
 (`pkg/api/transport/usb/transport_attestation_appraisal.go:27-67`).
 
+### Android application allow-list
+
+`AppraiseAndroidKeyAttestation` admits only an attested application on the
+tenant's allow-list. The allow-list is server configuration,
+`attestation.android_applications` (`pkg/config/attestation.go:79`): tenant
+ID -> package name -> hex SHA-256 signing-certificate digests. `server.New`
+composes it into the Appraiser
+(`pkg/server/attestation_appraiser.go:55-71`); a blank tenant or package key,
+or a digest that is not 64 hex characters, fails startup. A tenant absent
+from it keeps every Android appraisal refused with
+`ErrNoApplicationAllowList`, even with an `android-root` endorsement stored.
+
+```yaml
+attestation:
+  android_applications:
+    acme:
+      com.example.app:
+        - a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0
+```
+
 ### gRPC and the Unix socket
 
 The gRPC RPCs are declared at `pkg/api/grpc/proto/xkmsv1/xkms.proto:1032-1071`,
