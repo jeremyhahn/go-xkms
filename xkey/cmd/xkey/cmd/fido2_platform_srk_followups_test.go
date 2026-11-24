@@ -63,7 +63,8 @@ func TestFIDO2PlatformSRKPINIsSealed(t *testing.T) {
 
 	pks := &fakeSRKKeyStore{}
 	cfg := &FIDO2Config{PlatformSRKPIN: sealed}
-	require.NoError(t, loadFIDO2PlatformSRKAuth(cfg, func() (xkms.PlatformKeyStorer, error) { return pks, nil }))
+	_, err = loadFIDO2PlatformSRKAuth(cfg, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
+	require.NoError(t, err)
 	assert.Equal(t, testFollowupPIN, pks.verified)
 	assert.Nil(t, cfg.PlatformSRKPIN, "the sealed PIN is destroyed after use")
 }
@@ -76,7 +77,7 @@ func TestFIDO2PlatformSRKAuthRejectedExitCode(t *testing.T) {
 	sealed := mustSealPIN(t, testFollowupPIN)
 	cfg := &FIDO2Config{PlatformSRKPIN: sealed}
 	pks := &fakeSRKKeyStore{verifyErr: fmt.Errorf("%w: TPM_RC_AUTH_FAIL", xkms.ErrTPMAuthFailed)}
-	err := loadFIDO2PlatformSRKAuth(cfg, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
+	_, err := loadFIDO2PlatformSRKAuth(cfg, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
 	require.ErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuth)
 	require.ErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuthRejected)
 	assert.NotContains(t, err.Error(), testFollowupPIN)
@@ -84,7 +85,7 @@ func TestFIDO2PlatformSRKAuthRejectedExitCode(t *testing.T) {
 	assert.Nil(t, cfg.PlatformSRKPIN, "the sealed PIN is destroyed after a failure too")
 
 	attachCfg := &FIDO2Config{PlatformSRKPIN: mustSealPIN(t, testFollowupPIN)}
-	attachErr := loadFIDO2PlatformSRKAuth(attachCfg, func() (xkms.PlatformKeyStorer, error) {
+	_, attachErr := loadFIDO2PlatformSRKAuth(attachCfg, func() (xkms.PlatformKeyStorer, error) {
 		return nil, errors.New("no key store")
 	})
 	require.ErrorIs(t, attachErr, ErrFIDO2TPMPlatformSRKAuth)
@@ -104,7 +105,7 @@ func TestFIDO2PlatformSRKNonAuthErrorKeepsExit1(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := &FIDO2Config{PlatformSRKPIN: mustSealPIN(t, testFollowupPIN)}
 			pks := &fakeSRKKeyStore{verifyErr: verifyErr}
-			err := loadFIDO2PlatformSRKAuth(cfg, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
+			_, err := loadFIDO2PlatformSRKAuth(cfg, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
 			require.ErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuth)
 			require.ErrorIs(t, err, verifyErr)
 			assert.NotErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuthRejected)
@@ -124,7 +125,7 @@ func TestFIDO2PlatformSRKPromptedPINIsWiped(t *testing.T) {
 	promptFIDO2PlatformSRKPIN = func() ([]byte, error) { return prompted, nil }
 
 	pks := &fakeSRKKeyStore{verifyErr: fmt.Errorf("%w: TPM_RC_AUTH_FAIL", xkms.ErrTPMAuthFailed)}
-	err := loadFIDO2PlatformSRKAuth(&FIDO2Config{}, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
+	_, err := loadFIDO2PlatformSRKAuth(&FIDO2Config{}, func() (xkms.PlatformKeyStorer, error) { return pks, nil })
 	require.ErrorIs(t, err, ErrFIDO2TPMPlatformSRKAuthRejected)
 	assert.Equal(t, testFollowupPIN, pks.verified, "the prompted PIN reaches VerifyAuth")
 	assert.Equal(t, make([]byte, len(testFollowupPIN)), prompted, "the prompted PIN is wiped")

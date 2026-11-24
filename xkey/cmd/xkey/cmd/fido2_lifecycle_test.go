@@ -15,7 +15,6 @@ package cmd
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -70,9 +69,7 @@ func TestFido2DeviceClose_ReleasesSubsystems(t *testing.T) {
 		pwStore:  store,
 		notifier: notify.NewLogNotifier(discardLogger()),
 	}
-	socketDir := t.TempDir()
-	require.NoError(t, os.Chmod(socketDir, 0o700))
-	server, err := ipc.NewServer(filepath.Join(socketDir, "fido2.sock"), device, discardLogger())
+	server, err := ipc.NewServer(filepath.Join(privateTempDir(t), "fido2.sock"), device, discardLogger())
 	require.NoError(t, err)
 	device.ipcServer = server
 

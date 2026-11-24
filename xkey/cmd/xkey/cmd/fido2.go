@@ -2028,7 +2028,8 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	attach := func() (xkms.PlatformKeyStorer, error) {
 		return xkms.AttachPlatformKeyStore(logger, tpm, keyBackend)
 	}
-	if err := loadFIDO2PlatformSRKAuth(cfg, attach); err != nil {
+	srkPassword, err := loadFIDO2PlatformSRKAuth(cfg, attach)
+	if err != nil {
 		return nil, errors.Join(err, tpm.Close())
 	}
 
@@ -2038,7 +2039,9 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 		Logger:     logger,
 	})
 	if err != nil {
-		return nil, errors.Join(ErrFIDO2TPMBackendCreationFailed, err, tpm.Close())
+		err = errors.Join(ErrFIDO2TPMBackendCreationFailed, err, tpm.Close())
+		clearFIDO2SRKPassword(srkPassword)
+		return nil, err
 	}
 
 	logger.Info("using TPM2 key backend", slog.String("device", cfg.TPMDevice))
@@ -2053,7 +2056,17 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 	return &ownedTPM2KeyBackend{
 		TPM2AttestingBackend: keybackend.NewTPM2AttestingBackend(adapter, tpm, keyBackend),
 		tpm:                  tpm,
+		srkPassword:          srkPassword,
 	}, nil
+}
+
+// clearFIDO2SRKPassword destroys the Platform SRK password copy
+// loadFIDO2PlatformSRKAuth allocated, releasing its locked buffer. A nil
+// password (no PIN configured) is a no-op.
+func clearFIDO2SRKPassword(password xkms.Password) {
+	if password != nil {
+		password.Clear()
+	}
 }
 
 // ownedTPM2KeyBackend is the fido2 tpm2 key backend that owns the TPM
@@ -2063,8 +2076,11 @@ func createFIDO2TPM2KeyBackend(cfg *FIDO2Config, logger *slog.Logger) (keybacken
 type ownedTPM2KeyBackend struct {
 	// The SDK re-exports the constructor but not the type it returns.
 	*keybackend.TPM2AttestingBackend
-	tpm       xkms.TrustedPlatformModule
-	closeOnce sync.Once
+	tpm xkms.TrustedPlatformModule
+	// srkPassword is the Platform SRK password copy this backend owns (nil
+	// without a PIN); Close destroys it after the TPM is closed.
+	srkPassword xkms.Password
+	closeOnce   sync.Once
 }
 
 // Close closes the backend and the TPM it owns, joining their errors.
@@ -2072,6 +2088,8 @@ func (b *ownedTPM2KeyBackend) Close() error {
 	var err error
 	b.closeOnce.Do(func() {
 		err = errors.Join(b.TPM2AttestingBackend.Close(), b.tpm.Close())
+		clearFIDO2SRKPassword(b.srkPassword)
+		b.srkPassword = nil
 	})
 	return err
 }
@@ -2131,10 +2149,10 @@ var promptFIDO2PlatformSRKPIN = func() ([]byte, error) {
 // and loads it as the SRK auth credential keys are created under. With no
 // PIN supplied it prompts at a terminal (an empty answer keeps an
 // empty-auth SRK working) and otherwise leaves the SRK auth unset.
-func loadFIDO2PlatformSRKAuth(cfg *FIDO2Config, attach func() (xkms.PlatformKeyStorer, error)) error {
+func loadFIDO2PlatformSRKAuth(cfg *FIDO2Config, attach func() (xkms.PlatformKeyStorer, error)) (xkms.Password, error) {
 	pin, err := takeFIDO2PlatformSRKPIN(cfg)
 	if err != nil {
-		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
+		return nil, errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
 	}
 	// The closure wipes whichever slice pin holds at return, so a PIN read
 	// at the prompt below is wiped too.
@@ -2143,16 +2161,16 @@ func loadFIDO2PlatformSRKAuth(cfg *FIDO2Config, attach func() (xkms.PlatformKeyS
 		prompted, promptErr := promptFIDO2PlatformSRKPIN()
 		if promptErr != nil {
 			secure.Wipe(prompted)
-			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, promptErr)
+			return nil, errors.Join(ErrFIDO2TPMPlatformSRKAuth, promptErr)
 		}
 		pin = prompted
 	}
 	if len(pin) == 0 {
-		return nil
+		return nil, nil
 	}
 	pks, err := attach()
 	if err != nil {
-		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
+		return nil, errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
 	}
 	// VerifyAuth is a real TPM auth attempt, counted by the TPM's
 	// dictionary-attack protection. A rejected PIN is
@@ -2162,19 +2180,23 @@ func loadFIDO2PlatformSRKAuth(cfg *FIDO2Config, attach func() (xkms.PlatformKeyS
 	// keeps exit 1, so systemd restarts the service once it clears.
 	if err := pks.VerifyAuth(string(pin)); err != nil {
 		if errors.Is(err, xkms.ErrTPMAuthFailed) {
-			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, ErrFIDO2TPMPlatformSRKAuthRejected, err)
+			return nil, errors.Join(ErrFIDO2TPMPlatformSRKAuth, ErrFIDO2TPMPlatformSRKAuthRejected, err)
 		}
-		return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
+		return nil, errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
 	}
-	if attrs := pks.SRKAttributes(); attrs != nil {
-		// NewPassword copies pin; the deferred wipe clears this one.
-		password, err := xkms.NewPassword(pin)
-		if err != nil {
-			return errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
-		}
-		attrs.Password = password
+	attrs := pks.SRKAttributes()
+	if attrs == nil {
+		return nil, nil
 	}
-	return nil
+	// NewPassword copies pin; the deferred wipe clears this one. The
+	// caller owns the returned password and clears it at shutdown or on a
+	// later failure: the locked buffer otherwise outlives the backend.
+	password, err := xkms.NewPassword(pin)
+	if err != nil {
+		return nil, errors.Join(ErrFIDO2TPMPlatformSRKAuth, err)
+	}
+	attrs.Password = password
+	return password, nil
 }
 
 // takeFIDO2PlatformSRKPIN copies the sealed Platform SRK PIN out of cfg into
