@@ -361,6 +361,9 @@ func TestCIRegistryPoolBuildsOnceAndPushes(t *testing.T) {
 }
 
 func TestCIRegistryPoolRefusesOutsideAPool(t *testing.T) {
+	// The lint-gates job runs these tests with CI_POOL=true in its env on a
+	// same-repo PR (Codex on #2302); the helper must not inherit it.
+	t.Setenv("CI_POOL", "true")
 	_, _, calls, err := runPoolRegistry(t, []string{"CI_IMAGE_REGISTRY=reg.example:5000/ci"}, "pool", "toolchain")
 	if err == nil {
 		t.Errorf("pool ran without CI_POOL=true")
