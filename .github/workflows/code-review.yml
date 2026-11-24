@@ -1,4 +1,4 @@
-# code-review-template: v5.12.4 -- the code review in Gitea or GitHub CI for a pull request
+# code-review-template: v5.12.3 -- the code review in Gitea or GitHub CI for a pull request
 # that carries `code-review` and `task:ready`, routed by its labels through
 # route-labels (labels.md §2). Codex on the `codex` runner reviews every such
 # PR; `agent:opencode` adds an advisory COMMENT review by the opencode job on
@@ -1222,7 +1222,7 @@ jobs:
     concurrency:
       group: ${{ format('code-review-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
       cancel-in-progress: false
-    runs-on: codex  # self-hosted: credential: the reviewer token is mounted on this runner alone (ruling 999 question to the Tenant Agent) # lab-string-ok: the public label of the Codex review runner, read by the review tier only
+    runs-on: codex  # lab-string-ok: the public label of the Codex review runner, read by the review tier only
     # The route, for the opencode job.
     outputs:
       agent: ${{ steps.guard.outputs.agent }}
@@ -3079,7 +3079,7 @@ jobs:
     needs: review
     # Gitea only (v5.9.0): its token check and permission read are Gitea's.
     if: needs.review.outputs.agent == 'opencode' && github.server_url != 'https://github.com'
-    runs-on: qwen  # self-hosted: hardware: the GPU host that serves the model # CUSTOMIZE: the opencode review host's runner label
+    runs-on: qwen  # CUSTOMIZE: the opencode review host's runner label
     # 3300 s >= 1530 + 630 (the two runs, kill grace included) + 2 x 130 (the
     # debug calls) + 880 s for checkout, guard, prepare, post and cleanup.
     timeout-minutes: 55

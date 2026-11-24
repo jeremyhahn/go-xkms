@@ -50,7 +50,7 @@ jobs:
     # Bigdisk runners on Gitea (Infra m1227, DS-3705): this job builds the
     # test image (`make docker-build`) and runs the whole unit suite in it,
     # the same disk load as integration-tests below.
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: lint
     steps:
       - name: Checkout code
@@ -73,7 +73,7 @@ jobs:
 
   integration-tests:
     name: Integration Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: unit-tests
     steps:
       - name: Checkout code
@@ -96,7 +96,7 @@ jobs:
 
   docker-compose-tests:
     name: Docker Compose Tests
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
     needs: lint
     steps:
       - name: Checkout code

@@ -36,9 +36,9 @@ const (
 	// outputs the producer's outputs name.
 	publishStep = "publish"
 	resolveStep = "resolve"
-	// producerRunsOn puts ci-images on GitHub's standard hosted runner
-	// (ruling 999).
-	producerRunsOn   = "ubuntu-latest"
+	// producerRunsOn puts ci-images on the release runner for a push to main
+	// and on the pull-request pool otherwise.
+	producerRunsOn   = "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}"
 	digestRefPattern = `^[^@ ]+@sha256:[0-9a-f]{64}$`
 	// consumerFloor is the number of jobs in ci.yml that run a stage in the
 	// toolchain image; a parse that finds fewer has stopped seeing them.
@@ -457,7 +457,7 @@ env:
   CI_REGISTRY_OWNER: ${{ github.server_url != 'https://github.com' && vars.CI_REGISTRY_OWNER || '' }}
 jobs:
   ci-images:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
     permissions:
       contents: read
       packages: write

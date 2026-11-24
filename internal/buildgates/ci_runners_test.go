@@ -15,7 +15,9 @@ import (
 // for everything possible. Every job of hostedWorkflows runs on hostedRunner;
 // a job that leaves it states a measured reason in a categorised
 // `# self-hosted: <category>: <reason>` comment on its runs-on line. No forge
-// fallback expression is left there: Gitea CI is retired. A pool label no
+// fallback arm runs on github.com, and the ci-template v1.48 overflow (ruling
+// 1024) leaves hostedRunner only when the preflight reports the hosted pool
+// full, never for a fork pull request. A pool label no
 // online runner serves left Preflight queued for over half an hour (ruling
 // 920); a hosted job never waits on one.
 //
@@ -34,9 +36,13 @@ const (
 	// that holds the reviewer token.
 	codexReviewFile  = "code-review.yml"
 	codexRunnerLabel = "codex"
-	// forgeFallbackPrefix is the pinned review template's runs-on form, which
-	// is hostedRunner on github.com; only files outside hostedWorkflows keep it.
+	// forgeFallbackPrefix is the forge-fallback runs-on form, which is
+	// hostedRunner on github.com; its other arm runs on Gitea only.
 	forgeFallbackPrefix = "${{ github.server_url == 'https://github.com' && '" + hostedRunner + "' ||"
+	// overflowPrefix is the ci-template v1.48 overflow form (ruling 1024,
+	// #2320): on github.com the job takes the preflight's runner or
+	// runner_docker output, hostedRunner unless the hosted pool is full.
+	overflowPrefix = "${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner"
 )
 
 var (
@@ -46,8 +52,8 @@ var (
 	bareWaiver = regexp.MustCompile(`#\s*self-hosted:`)
 )
 
-// hostedWorkflows are the workflows ruling 999 puts on hostedRunner with no
-// forge fallback.
+// hostedWorkflows are the workflows ruling 999 puts on hostedRunner; the gate
+// fails when one of them is gone.
 var hostedWorkflows = map[string]bool{
 	"ci.yml":           true,
 	"coverage.yml":     true,
@@ -56,8 +62,16 @@ var hostedWorkflows = map[string]bool{
 }
 
 // runnerExempt are the jobs v1.46 leaves out of the rule: release.yml's
-// release job.
-var runnerExempt = map[string]bool{"release.yml/release": true}
+// release job. The review jobs on the codex (credential: the reviewer token)
+// and qwen (hardware: the GPU model host) runners are exempt until their
+// runs-on lines carry the `# self-hosted:` reason (the ruling 999 question
+// to the Tenant Agent; the workflow change is a protected-path edit).
+var runnerExempt = map[string]bool{
+	"release.yml/release":             true,
+	"code-review.yml/review":          true,
+	"code-review.yml/review-opencode": true,
+	"qwen-review.yml/review":          true,
+}
 
 // runnerProblems lists each job of the workflow file that is neither on
 // hostedRunner nor waived with a categorised reason.
@@ -105,7 +119,11 @@ func runnerProblems(file string, body []byte) []string {
 		switch {
 		case runsOn.Kind == yaml.ScalarNode && runsOn.Value == hostedRunner:
 		case m != nil:
-		case !hostedWorkflows[file] && runsOn.Kind == yaml.ScalarNode && strings.HasPrefix(runsOn.Value, forgeFallbackPrefix):
+		case runsOn.Kind == yaml.ScalarNode && strings.HasPrefix(runsOn.Value, forgeFallbackPrefix):
+		case runsOn.Kind == yaml.ScalarNode && strings.HasPrefix(runsOn.Value, overflowPrefix):
+		// ci_sched_devcontainer_test.go's preflightRunsOn: a fork pull
+		// request never reads CI_PREFLIGHT_RUNS_ON (Codex #2323 P1).
+		case file == "ci.yml" && name == preflightJob && runsOn.Kind == yaml.ScalarNode && runsOn.Value == preflightRunsOn:
 		default:
 			problems = append(problems, "job "+name+" runs on "+strconv.Quote(runsOn.Value)+" without `"+selfHostedWaiver+"<hardware|oversize|credential>: <reason>` on its runs-on line; every other job runs on "+hostedRunner+" (ruling 999, ci-template v1.46)")
 		}
@@ -137,7 +155,9 @@ func TestCIJobsRunHostedFirst(t *testing.T) {
 	job := func(name, runsOn string) string { return "  " + name + ":\n    runs-on: " + runsOn + "\n" }
 	wf := func(jobs ...string) []byte { return []byte("jobs:\n" + strings.Join(jobs, "")) }
 	good := map[string][]byte{
-		"ci.yml": wf(job("preflight", hostedRunner), job("ci-images", hostedRunner),
+		"ci.yml": wf(job("preflight", preflightRunsOn), job("ci-images", hostedRunner),
+			job("build", overflowPrefix+") || 'bigdisk' }}"), job("lint-gates", overflowPrefix+"_docker) || 'bigdisk' }}"),
+			job("coverage", "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}"),
 			job("image", "[self-hosted, linux, x64, bigdisk]  "+selfHostedWaiver+"oversize: 60 GB of layers, measured"),
 			job("tpm", "tpm-host  # self-hosted:hardware:a TPM 2.0 device")),
 		codexReviewFile: wf(job("review-codex", codexRunnerLabel+"  "+selfHostedWaiver+"credential: the reviewer token is mounted there"),
@@ -153,21 +173,23 @@ func TestCIJobsRunHostedFirst(t *testing.T) {
 		file string
 		body []byte
 	}{
-		"a pool expression with no reason": {"ci.yml", wf(job("preflight", "${{ cond && fromJSON('[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]') || 'ubuntu-latest' }}"))},
-		"a forge fallback in ci.yml":       {"ci.yml", wf(job("coverage", "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}"))},
-		"a pool label with no reason":      {"batch.yml", wf(job("bench", "batch"))},
-		"an empty reason":                  {"ci.yml", wf(job("build", "bigdisk  "+strings.TrimSpace(selfHostedWaiver)))},
-		"a bare reason, finding (e)":       {"qwen-review.yml", wf(job("review", "qwen  # self-hosted: x"))},
-		"a category with no reason":        {"ci.yml", wf(job("build", "bigdisk  # self-hosted: oversize:"))},
-		"an unknown category":              {"ci.yml", wf(job("build", "bigdisk  # self-hosted: speed: faster"))},
-		"credential outside Codex":         {"ci.yml", wf(job("build", "bigdisk  # self-hosted: credential: a token"))},
-		"credential on another review job": {codexReviewFile, wf(job("review-opencode", "qwen  # self-hosted: credential: a token"))},
-		"credential on a hosted job":       {"ci.yml", wf(job("build", hostedRunner+"  # self-hosted: credential: a token"))},
-		"a bare reason on a hosted job":    {"ci.yml", wf(job("build", hostedRunner+"  # self-hosted: x"))},
-		"another comment":                  {"ci.yml", wf(job("build", "bigdisk  # pool"))},
-		"a larger hosted runner":           {"ci.yml", wf(job("build", "ubuntu-latest-8-cores"))},
-		"release.yml's other jobs":         {"release.yml", wf(job("publish", "release"))},
-		"no runs-on":                       {"ci.yml", []byte("jobs:\n  build:\n    steps: []\n")},
+		"a pool expression with no reason":         {"ci.yml", wf(job("preflight", "${{ cond && fromJSON('[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]') || 'ubuntu-latest' }}"))},
+		"an overflow with no github.com guard":     {"ci.yml", wf(job("build", "${{ fromJSON(needs.preflight.outputs.runner) }}"))},
+		"a preflight variable with no fork clause": {"ci.yml", wf(job("preflight", "${{ vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"))},
+		"the preflight form on another job":        {"ci.yml", wf(job("build", preflightRunsOn))},
+		"a pool label with no reason":              {"batch.yml", wf(job("bench", "batch"))},
+		"an empty reason":                          {"ci.yml", wf(job("build", "bigdisk  "+strings.TrimSpace(selfHostedWaiver)))},
+		"a bare reason, finding (e)":               {"qwen-review.yml", wf(job("triage", "qwen  # self-hosted: x"))},
+		"a category with no reason":                {"ci.yml", wf(job("build", "bigdisk  # self-hosted: oversize:"))},
+		"an unknown category":                      {"ci.yml", wf(job("build", "bigdisk  # self-hosted: speed: faster"))},
+		"credential outside Codex":                 {"ci.yml", wf(job("build", "bigdisk  # self-hosted: credential: a token"))},
+		"credential on another review job":         {codexReviewFile, wf(job("review-other", "qwen  # self-hosted: credential: a token"))},
+		"credential on a hosted job":               {"ci.yml", wf(job("build", hostedRunner+"  # self-hosted: credential: a token"))},
+		"a bare reason on a hosted job":            {"ci.yml", wf(job("build", hostedRunner+"  # self-hosted: x"))},
+		"another comment":                          {"ci.yml", wf(job("build", "bigdisk  # pool"))},
+		"a larger hosted runner":                   {"ci.yml", wf(job("build", "ubuntu-latest-8-cores"))},
+		"release.yml's other jobs":                 {"release.yml", wf(job("publish", "release"))},
+		"no runs-on":                               {"ci.yml", []byte("jobs:\n  build:\n    steps: []\n")},
 	} {
 		if len(runnerProblems(bad.file, bad.body)) == 0 {
 			t.Errorf("%s passed", name)
