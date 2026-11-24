@@ -3,6 +3,7 @@
 package awskms
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -272,8 +273,15 @@ func TestBackend_AliasOnlyDeleteScheduleFailureKeepsKeyReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Signer() after the failed delete: %v, want the key still reachable", err)
 	}
-	if got := signer.(*kmsSigner).keyID; got != keyID {
-		t.Fatalf("Signer() resolved %q, want %q", got, keyID)
+	der, err := x509.MarshalPKIXPublicKey(signer.Public())
+	if err != nil {
+		t.Fatalf("marshal signer public key: %v", err)
+	}
+	fake.mu.Lock()
+	want := fake.pub[keyID]
+	fake.mu.Unlock()
+	if !bytes.Equal(der, want) {
+		t.Fatalf("Signer() after the failed delete is not over the still-enabled key %q", keyID)
 	}
 }
 
