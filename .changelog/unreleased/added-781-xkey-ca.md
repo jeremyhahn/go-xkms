@@ -1,0 +1,1 @@
+- xkey GUI: the CA service follows the connected xkms server
