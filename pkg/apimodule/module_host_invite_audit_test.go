@@ -3,9 +3,12 @@ package apimodule
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	qrdbaudit "github.com/jeremyhahn/go-qrdb/pkg/audit"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
@@ -13,6 +16,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
@@ -225,6 +230,65 @@ func TestModule_HostMount_PreconfiguredFailingSinkStopsInvite(t *testing.T) {
 	})
 	var gate *qrdbsdk.AuditGateError
 	require.True(t, errors.As(err, &gate), "want an AuditGateError, got %v", err)
+	_, err = client.Users().GetUserByUsername(ctx, qrdbsdk.SystemTenantID, "invitee")
+	require.Error(t, err, "an unaudited invite creates nothing")
+}
+
+// switchableNodeAudit is a node audit sink whose writes fail once fail is set.
+type switchableNodeAudit struct {
+	qrdbsdk.NodeAuditLogger
+	fail atomic.Bool
+}
+
+func (s *switchableNodeAudit) Emit(ctx context.Context, ev qrdbaudit.AuditEvent) error {
+	if s.fail.Load() {
+		return errors.New("node audit plane down")
+	}
+	return s.NodeAuditLogger.Emit(ctx, ev)
+}
+
+// TestModule_HostMount_PreconfiguredAuthorizerNodeSinkFailureStopsInvite: a
+// host that set its own authorizer and no sink gets the node's audit sink
+// from hostStores, and when the node's audit plane fails an allowed
+// invitation is refused with an AuditGateError and no account is created.
+func TestModule_HostMount_PreconfiguredAuthorizerNodeSinkFailureStopsInvite(t *testing.T) {
+	sink := &switchableNodeAudit{NodeAuditLogger: qrdbsdk.NewAuditRingBuffer(64)}
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()}}
+	node, _, err := embeddednode.OpenEmbeddedNode(context.Background(), embeddednode.EmbeddedNodeOptions{
+		Config:    cfg,
+		Logger:    slog.New(slog.DiscardHandler),
+		AuditSink: sink,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = node.Close() })
+	client := node.Client()
+	require.NotNil(t, client.Audit(), "the node exposes its audit client")
+
+	ctx := context.Background()
+	h := mountLikeHost(t, client)
+	preset := auth.NewNodeAuthorizer(client.RBAC(), nodeScopeAuthorizer{})
+	h.svc.SetAuthorizer(preset)
+	h.svc.SetUserClients(client.Users(), client.Roles())
+	h.module.hostStores(h.svc)
+	require.Same(t, preset, h.svc.Authorizer(), "the host's authorizer is kept")
+	require.NotNil(t, h.svc.AuditLogger(), "hostStores wires the node's sink")
+	require.IsType(t, &clientAuditSink{}, h.svc.AuditLogger(), "the sink is the node's, not one the test set")
+
+	sink.fail.Store(true)
+	delegated := &auth.Identity{
+		Subject:          "qrdb-service:onboarder",
+		TenantID:         qrdbsdk.SystemTenantID,
+		ScopePermissions: []string{string(qrdbsdk.PermissionUsersInvite)},
+	}
+	_, err = h.svc.CreateUser(auth.WithIdentity(ctx, delegated), &transport.CreateUserRequest{
+		Username: "invitee",
+		Email:    "invitee@example.com",
+		TenantID: qrdbsdk.SystemTenantID,
+	})
+	var gate *qrdbsdk.AuditGateError
+	require.True(t, errors.As(err, &gate), "want an AuditGateError, got %v", err)
+
+	sink.fail.Store(false)
 	_, err = client.Users().GetUserByUsername(ctx, qrdbsdk.SystemTenantID, "invitee")
 	require.Error(t, err, "an unaudited invite creates nothing")
 }
