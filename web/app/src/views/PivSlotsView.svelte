@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import PageHeader from "$components/PageHeader.svelte";
   import StatusBadge from "$components/StatusBadge.svelte";
   import Modal from "$components/Modal.svelte";
@@ -14,8 +13,13 @@
 
   let slots = $state<PIVSlotStatus[]>([]);
   let error = $state<string | null>(null);
-  let loading = $state(true);
+  let loading = $state(false);
   let busy = $state(false);
+
+  // ListPIVSlotsHandler requires a backend query parameter, so the page
+  // lists nothing until one is typed; reloads reuse the last loaded one.
+  let backend = $state("");
+  let loaded = $state("");
 
   // The PEM dialog shows either a slot certificate (with Export) or a CSR.
   let pemSlot = $state<PIVSlotStatus | null>(null);
@@ -45,7 +49,7 @@
     loading = true;
     error = null;
     try {
-      slots = (await getSDKClient().piv.listSlots()).slots;
+      slots = (await getSDKClient().piv.listSlots(loaded)).slots;
     } catch (e) {
       error = message(e);
     } finally {
@@ -149,14 +153,28 @@
     return s.key_size ? `${s.algorithm} ${s.key_size}` : s.algorithm;
   }
 
-  onMount(() => {
-    void load();
-  });
+  async function loadBackend(): Promise<void> {
+    loaded = backend.trim();
+    if (loaded === "") return;
+    await load();
+  }
 </script>
 
 <PageHeader title="PIV Slots" subtitle="Slot certificates and CSRs from slot keys" />
 
-{#if loading}
+<div class="flex gap-2 mb-4">
+  <input
+    class="input input-bordered input-sm w-64"
+    aria-label="Backend"
+    placeholder="Backend (e.g. yubikey)"
+    bind:value={backend}
+  />
+  <button class="btn btn-primary btn-sm" onclick={loadBackend} disabled={busy || loading || backend.trim() === ""}>Load</button>
+</div>
+
+{#if loaded === ""}
+  <p class="text-sm text-base-content/60">Type a PIV backend and load its slots.</p>
+{:else if loading}
   <div class="flex justify-center py-12"><span class="loading loading-spinner loading-lg"></span></div>
 {:else if error}
   <Alert kind="error"><span>{error}</span></Alert>
