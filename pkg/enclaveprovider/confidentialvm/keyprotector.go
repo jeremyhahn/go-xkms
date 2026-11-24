@@ -253,21 +253,26 @@ func (kp *KeyProtector) blobRequest(blob []byte, keyLen int) (keyRequest, error)
 	return req, nil
 }
 
-// newGCM is AES-256-GCM under dk.
-func newGCM(dk []byte) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(dk)
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
+// withAEAD builds AES-256-GCM under dk and runs fn on it inside secretDo, so
+// no cipher state of dk outlives the call.
+func withAEAD(dk []byte, fn func(cipher.AEAD) error) error {
+	var err error
+	secretDo(func() {
+		var block cipher.Block
+		if block, err = aes.NewCipher(dk); err != nil {
+			return
+		}
+		var aead cipher.AEAD
+		if aead, err = cipher.NewGCM(block); err != nil {
+			return
+		}
+		err = fn(aead)
+	})
+	return err
 }
 
 // sealBlob seals key under dk into a blob whose header is req.
 func sealBlob(dk []byte, req keyRequest, key []byte) ([]byte, error) {
-	aead, err := newGCM(dk)
-	if err != nil {
-		return nil, err
-	}
 	blob := make([]byte, blobHeaderSize, blobHeaderSize+len(key)+gcmTagSize)
 	blob[0] = blobVersion
 	enc := req.encode()
@@ -276,23 +281,28 @@ func sealBlob(dk []byte, req keyRequest, key []byte) ([]byte, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return nil, err
 	}
-	return aead.Seal(blob, nonce, key, blob[:blobHeaderSize]), nil
+	err := withAEAD(dk, func(aead cipher.AEAD) error {
+		blob = aead.Seal(blob, nonce, key, blob[:blobHeaderSize])
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return blob, nil
 }
 
 // openBlob opens blob under dk into key, writing key only once the tag holds.
 func openBlob(dk, blob, key []byte) error {
-	aead, err := newGCM(dk)
-	if err != nil {
-		return err
-	}
-	nonce := blob[1+keyRequestSize : blobHeaderSize]
-	out, err := aead.Open(nil, nonce, blob[blobHeaderSize:], blob[:blobHeaderSize])
-	if err != nil {
-		return errBlob("blob does not authenticate")
-	}
-	copy(key, out)
-	clear(out)
-	return nil
+	return withAEAD(dk, func(aead cipher.AEAD) error {
+		nonce := blob[1+keyRequestSize : blobHeaderSize]
+		out, err := aead.Open(nil, nonce, blob[blobHeaderSize:], blob[:blobHeaderSize])
+		if err != nil {
+			return errBlob("blob does not authenticate")
+		}
+		copy(key, out)
+		clear(out)
+		return nil
+	})
 }
 
 // withKey derives the key req selects into locked memory, runs fn on it and
