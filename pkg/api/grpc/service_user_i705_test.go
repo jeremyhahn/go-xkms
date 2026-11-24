@@ -154,32 +154,6 @@ func (f *grpcFakeUserClient) UnsuspendUser(_ context.Context, id uint64) error {
 	return f.setLifecycle(id, "active")
 }
 
-// ActivatePendingUser is the guarded pending-to-active transition: only a
-// pending account becomes active; any other lifecycle or an unknown id is an
-// error.
-func (f *grpcFakeUserClient) ActivatePendingUser(_ context.Context, userID uint64) (*qrdbtransport.User, error) {
-	u, ok := f.byID[userID]
-	if !ok {
-		return nil, &qrdbtransport.UserNotFoundError{ID: userID}
-	}
-	if u.Lifecycle != string(qrdbsdk.LifecyclePending) {
-		return nil, errors.New("fake: user is not pending")
-	}
-	u.Lifecycle = string(qrdbsdk.LifecycleActive)
-	return u, nil
-}
-
-// ActivateWithCertBinding binds the first certificate of a pending account
-// and activates it, under the same guard as ActivatePendingUser.
-func (f *grpcFakeUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
-	if _, err := f.AddCertBinding(ctx, userID, thumbprint, notAfterUnix); err != nil {
-		return nil, err
-	}
-	return f.ActivatePendingUser(ctx, userID)
-}
-
-var _ xkms.InviteUserClient = (*grpcFakeUserClient)(nil)
-
 func (f *grpcFakeUserClient) setLifecycle(id uint64, lifecycle string) error {
 	u, ok := f.byID[id]
 	if !ok {
