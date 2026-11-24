@@ -322,12 +322,16 @@ func (s *XKMSService) WebAuthnTenantExists(ctx context.Context, tenantID string)
 	return true, nil
 }
 
-// webauthnFor returns the relying party of tenantID.
+// webauthnFor returns the relying party of tenantID, applying the tenant host
+// rule to the host webauthn.ContextWithRequestHost put on ctx (no host and no
+// tenant reaches the system RP).
+// Codex round 2 on #2387: the SDK lane must follow the same host rule as
+// pkg/webauthn/http, so a mapped host decoys a login naming another tenant.
 func (s *XKMSService) webauthnFor(ctx context.Context, tenantID string) (*webauthn.Service, error) {
-	if s.webauthnTenants == nil || tenantID == "" {
+	if s.webauthnTenants == nil {
 		return s.webauthnService, nil
 	}
-	return s.webauthnTenants.For(ctx, tenantID)
+	return s.webauthnTenants.ForRequest(ctx, webauthn.RequestHostFromContext(ctx), tenantID)
 }
 
 // SetInviteStore wires the per-tenant enrollment-invitation store

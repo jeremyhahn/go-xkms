@@ -120,7 +120,10 @@ func (s *Server) handleSDKBeginAuthentication(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	resp, err := svc.BeginAuthentication(r.Context(), &req)
+	if req.TenantID == "" {
+		req.TenantID = r.Header.Get(webauthnhttp.HeaderTenantID)
+	}
+	resp, err := svc.BeginAuthentication(webauthn.ContextWithRequestHost(r.Context(), r.Host), &req)
 	if err != nil {
 		if webauthn.IsSessionLimit(err) {
 			writeSessionLimit(w)
@@ -147,7 +150,10 @@ func (s *Server) handleSDKFinishAuthentication(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	resp, err := svc.FinishAuthentication(r.Context(), &req)
+	if req.TenantID == "" {
+		req.TenantID = r.Header.Get(webauthnhttp.HeaderTenantID)
+	}
+	resp, err := svc.FinishAuthentication(webauthn.ContextWithRequestHost(r.Context(), r.Host), &req)
 	if err != nil {
 		if errors.Is(err, xkms.ErrNotConfigured) {
 			writeError(w, err, http.StatusBadRequest)
