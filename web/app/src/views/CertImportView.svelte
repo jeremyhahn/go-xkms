@@ -21,6 +21,8 @@
 
   let busy = $state(false);
   let confirming = $state(false);
+  // Set when the overwrite check is refused (certs:read missing).
+  let existsUnknown = $state(false);
   let error = $state<string | null>(null);
 
   /** Splits PEM text into certificate blocks on the END marker. */
@@ -74,6 +76,13 @@
         return;
       }
     } catch (e) {
+      // HEAD /certs/{id} needs certs:read but the import needs only
+      // certs:enroll: a refused check asks before it may overwrite.
+      if ((e as { status?: unknown } | null)?.status === 403) {
+        existsUnknown = true;
+        confirming = true;
+        return;
+      }
       error = message(e);
       return;
     } finally {
@@ -84,6 +93,7 @@
 
   function cancel(): void {
     confirming = false;
+    existsUnknown = false;
     pending = null;
   }
 
@@ -91,6 +101,7 @@
     const p = pending;
     if (p === null) return;
     confirming = false;
+    existsUnknown = false;
     busy = true;
     error = null;
     try {
@@ -167,7 +178,14 @@
 
   {#if confirming}
     <Alert kind="warning">
-      <span>A certificate already exists for key "{pending?.id}". Overwrite it?</span>
+      {#if existsUnknown}
+        <span
+          >Could not check whether a certificate exists for key "{pending?.id}" (certs:read is missing). Confirm
+          overwrites any existing certificate.</span
+        >
+      {:else}
+        <span>A certificate already exists for key "{pending?.id}". Overwrite it?</span>
+      {/if}
     </Alert>
     <div class="flex gap-2">
       <button class="btn btn-ghost" onclick={cancel} disabled={busy}>Cancel</button>
