@@ -145,6 +145,7 @@ type App struct {
 	pkcs11Service            *services.PKCS11Service
 	teamService              *services.TeamService
 	certificateService       *services.CertificateService
+	caService                *services.CAService
 	securityFactorService    *services.SecurityFactorService
 
 	// backendRegistry tracks all registered cryptographic backends
@@ -1823,6 +1824,7 @@ func NewApp(cfg *GUIConfig) *App {
 
 	// Create certificate service. Client is set after ConnectionService connects.
 	certSvc := services.NewCertificateService()
+	caSvc := services.NewCAService(nil)
 
 	// Create barrier service for cross-platform encrypted storage.
 	barrierSvc := services.NewBarrierService(cfgDir, log)
@@ -2016,6 +2018,7 @@ func NewApp(cfg *GUIConfig) *App {
 		clipboardService:         clipboardSvc,
 		trustService:             trustSvc,
 		certificateService:       certSvc,
+		caService:                caSvc,
 		securityFactorService:    securityFactorSvc,
 		setupWizardService:       setupWizardSvc,
 		pinService:               pinSvc,
@@ -2660,6 +2663,7 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 		a.pivService.SetClient(client)
 		a.tenantService.SetClient(client)
 		a.certificateService.SetClient(client)
+		a.caService.SetClient(client)
 		a.tpmPolicyService.SetClient(client)
 		a.staticPWService.SetClient(client)
 		a.oidcServerService.SetClient(client)
@@ -2668,6 +2672,7 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 	case events.EventServerDisconnected, events.EventServerError:
 		a.pivService.SetClient(nil)
 		a.certificateService.SetClient(nil)
+		a.caService.SetClient(nil)
 		a.tpmPolicyService.SetClient(nil)
 		a.staticPWService.SetClient(nil)
 		a.oidcServerService.SetClient(nil)
@@ -2820,6 +2825,7 @@ func (a *App) Run() error {
 		a.barrierAutoUnsealService,
 		a.teamService,
 		a.certificateService,
+		a.caService,
 		a.securityFactorService,
 	}
 	// Append optional services that may fail initialization.

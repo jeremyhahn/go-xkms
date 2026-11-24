@@ -18,7 +18,9 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -66,23 +68,47 @@ type IssuedCertInfo struct {
 	PrivateKeyPEM  string `json:"private_key_pem,omitempty"`
 }
 
-// CAService provides CA operations for the GUI frontend.
+// CAService provides CA operations for the GUI frontend. Its client follows
+// the server connection: the App sets it on connect and clears it on
+// disconnect or error.
 type CAService struct {
-	client transport.Client
+	client atomic.Pointer[transport.Client]
 }
 
-// NewCAService creates a new CAService.
+// NewCAService creates a new CAService. A nil client means not connected.
 func NewCAService(client transport.Client) *CAService {
-	return &CAService{client: client}
+	s := &CAService{}
+	s.SetClient(client)
+	return s
+}
+
+// SetClient sets the transport client used to reach the xkms CA; nil
+// detaches it.
+func (s *CAService) SetClient(c transport.Client) {
+	s.client.Store(&c)
+}
+
+// getClient returns the current transport client or ErrCAServiceNilClient.
+// A typed-nil client counts as no client.
+func (s *CAService) getClient() (transport.Client, error) {
+	ptr := s.client.Load()
+	if ptr == nil || *ptr == nil {
+		return nil, ErrCAServiceNilClient
+	}
+	if v := reflect.ValueOf(*ptr); v.Kind() == reflect.Pointer && v.IsNil() {
+		return nil, ErrCAServiceNilClient
+	}
+	return *ptr, nil
 }
 
 // GetCAInfo retrieves the CA certificate and returns its parsed fields.
 func (s *CAService) GetCAInfo() (*CACertInfo, error) {
-	if s.client == nil {
-		return nil, ErrCAServiceNilClient
+	client, err := s.getClient()
+	if err != nil {
+		return nil, err
 	}
 
-	resp, err := s.client.GetCACertificate(context.Background(), &transport.GetCACertificateRequest{})
+	resp, err := client.GetCACertificate(context.Background(), &transport.GetCACertificateRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -114,8 +140,9 @@ func (s *CAService) GetCAInfo() (*CACertInfo, error) {
 // IssueCertificate issues a new certificate with the specified parameters.
 // The sans parameter is a comma-separated list of Subject Alternative Names.
 func (s *CAService) IssueCertificate(profile, commonName, organization, sans string, validityDays int, algorithm string) (*IssuedCertInfo, error) {
-	if s.client == nil {
-		return nil, ErrCAServiceNilClient
+	client, err := s.getClient()
+	if err != nil {
+		return nil, err
 	}
 	if commonName == "" {
 		return nil, ErrCAServiceInvalidCommonName
@@ -123,7 +150,7 @@ func (s *CAService) IssueCertificate(profile, commonName, organization, sans str
 
 	sanList := parseSANs(sans)
 
-	resp, err := s.client.IssueCertificate(context.Background(), &transport.IssueCertificateRequest{
+	resp, err := client.IssueCertificate(context.Background(), &transport.IssueCertificateRequest{
 		Profile:      profile,
 		CommonName:   commonName,
 		Organization: organization,
@@ -156,14 +183,15 @@ func (s *CAService) IssueCertificate(profile, commonName, organization, sans str
 
 // SignCSR signs a PEM-encoded certificate signing request.
 func (s *CAService) SignCSR(csrPEM string, profile string) (*IssuedCertInfo, error) {
-	if s.client == nil {
-		return nil, ErrCAServiceNilClient
+	client, err := s.getClient()
+	if err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(csrPEM) == "" {
 		return nil, ErrCAServiceInvalidCSR
 	}
 
-	resp, err := s.client.SignCSR(context.Background(), &transport.SignCSRRequest{
+	resp, err := client.SignCSR(context.Background(), &transport.SignCSRRequest{
 		CSRPEM:  []byte(csrPEM),
 		Profile: profile,
 	})
@@ -191,14 +219,15 @@ func (s *CAService) SignCSR(csrPEM string, profile string) (*IssuedCertInfo, err
 
 // RevokeCertificate revokes a certificate by serial number with the given RFC 5280 reason code.
 func (s *CAService) RevokeCertificate(serial string, reason int) error {
-	if s.client == nil {
-		return ErrCAServiceNilClient
+	client, err := s.getClient()
+	if err != nil {
+		return err
 	}
 	if serial == "" {
 		return ErrCAServiceInvalidSerial
 	}
 
-	_, err := s.client.RevokeCertificate(context.Background(), &transport.RevokeCertificateRequest{
+	_, err = client.RevokeCertificate(context.Background(), &transport.RevokeCertificateRequest{
 		SerialNumber: serial,
 		Reason:       reason,
 	})
@@ -207,11 +236,12 @@ func (s *CAService) RevokeCertificate(serial string, reason int) error {
 
 // GenerateCRL generates a certificate revocation list and returns it as a PEM string.
 func (s *CAService) GenerateCRL() (string, error) {
-	if s.client == nil {
-		return "", ErrCAServiceNilClient
+	client, err := s.getClient()
+	if err != nil {
+		return "", err
 	}
 
-	resp, err := s.client.GenerateCRL(context.Background(), &transport.GenerateCRLRequest{})
+	resp, err := client.GenerateCRL(context.Background(), &transport.GenerateCRLRequest{})
 	if err != nil {
 		return "", err
 	}
@@ -221,14 +251,15 @@ func (s *CAService) GenerateCRL() (string, error) {
 
 // IsRevoked checks if a certificate with the given serial number has been revoked.
 func (s *CAService) IsRevoked(serial string) (bool, error) {
-	if s.client == nil {
-		return false, ErrCAServiceNilClient
+	client, err := s.getClient()
+	if err != nil {
+		return false, err
 	}
 	if serial == "" {
 		return false, ErrCAServiceInvalidSerial
 	}
 
-	resp, err := s.client.IsRevoked(context.Background(), &transport.IsRevokedRequest{
+	resp, err := client.IsRevoked(context.Background(), &transport.IsRevokedRequest{
 		SerialNumber: serial,
 	})
 	if err != nil {
@@ -240,11 +271,12 @@ func (s *CAService) IsRevoked(serial string) (bool, error) {
 
 // GetCABundle retrieves the CA certificate bundle and returns it as a PEM string.
 func (s *CAService) GetCABundle(storeType, algorithm string) (string, error) {
-	if s.client == nil {
-		return "", ErrCAServiceNilClient
+	client, err := s.getClient()
+	if err != nil {
+		return "", err
 	}
 
-	resp, err := s.client.GetCABundle(context.Background(), &transport.GetCABundleRequest{
+	resp, err := client.GetCABundle(context.Background(), &transport.GetCABundleRequest{
 		StoreType: storeType,
 		Algorithm: algorithm,
 	})

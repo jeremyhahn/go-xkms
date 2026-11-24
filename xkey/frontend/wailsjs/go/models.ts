@@ -1692,6 +1692,30 @@ export namespace services {
 	        this.path = source["path"];
 	    }
 	}
+	export class CACertInfo {
+	    subject: string;
+	    issuer: string;
+	    serial: string;
+	    algorithm: string;
+	    not_before: string;
+	    not_after: string;
+	    is_ca: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new CACertInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.subject = source["subject"];
+	        this.issuer = source["issuer"];
+	        this.serial = source["serial"];
+	        this.algorithm = source["algorithm"];
+	        this.not_before = source["not_before"];
+	        this.not_after = source["not_after"];
+	        this.is_ca = source["is_ca"];
+	    }
+	}
 	export class CSRSubject {
 	    common_name: string;
 	    organization: string;
@@ -2914,6 +2938,34 @@ export namespace services {
 		    }
 		    return a;
 		}
+	}
+	export class IssuedCertInfo {
+	    serial: string;
+	    subject: string;
+	    issuer: string;
+	    algorithm: string;
+	    not_before: string;
+	    not_after: string;
+	    certificate_pem: string;
+	    chain_pem: string;
+	    private_key_pem?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new IssuedCertInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.serial = source["serial"];
+	        this.subject = source["subject"];
+	        this.issuer = source["issuer"];
+	        this.algorithm = source["algorithm"];
+	        this.not_before = source["not_before"];
+	        this.not_after = source["not_after"];
+	        this.certificate_pem = source["certificate_pem"];
+	        this.chain_pem = source["chain_pem"];
+	        this.private_key_pem = source["private_key_pem"];
+	    }
 	}
 	export class KeyViewData {
 	    name: string;
