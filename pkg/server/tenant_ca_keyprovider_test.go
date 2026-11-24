@@ -1088,6 +1088,61 @@ func TestTenantCAKeyFactory_TeardownFencesLateWritesAcrossRevive(t *testing.T) {
 	require.NoError(t, b.EnsureTenant(ctx, "tenant-a"), "the revived tenant stays provisioned")
 }
 
+// pausingLoginCACertBackend runs pause once, inside the first save of the
+// tenant login CA certificate itself (not its provenance or intent), that is
+// after the pass passed its fence check.
+type pausingLoginCACertBackend struct {
+	xkms.Backend
+	pause func()
+	once  sync.Once
+}
+
+func (b *pausingLoginCACertBackend) SaveCert(ctx context.Context, keyID string, cert *x509.Certificate) error {
+	if strings.HasSuffix(keyID, tenantLoginCAKeyCN) {
+		b.once.Do(b.pause)
+	}
+	return b.Backend.SaveCert(ctx, keyID, cert)
+}
+
+func TestTenantCAKeyFactory_LateLoginCACertSaveAfterReviveRestoresPublished(t *testing.T) {
+	ctx := context.Background()
+	baseA, baseB := sharedTenantCABackends(t)
+	claims := storage.New()
+	b := newTenantCAKeyFactory()
+	require.NoError(t, b.Bind(baseB, claims))
+	var removeErr, reviveErr, reprovisionErr error
+	var revivedDER []byte
+	nodeA := &pausingLoginCACertBackend{Backend: baseA}
+	nodeA.pause = func() {
+		removeErr = b.RemoveTenant(ctx, "tenant-a")
+		reviveErr = b.ReviveTenant(ctx, "tenant-a")
+		reprovisionErr = b.EnsureTenant(ctx, "tenant-a")
+		if cert, err := xkms.NewTenantScopedBackend(baseB, "tenant-a").GetCert(ctx, tenantLoginCAKeyCN); err == nil {
+			revivedDER = cert.Raw
+		}
+	}
+	a := newTenantCAKeyFactory()
+	require.NoError(t, a.Bind(nodeA, claims))
+
+	require.ErrorIs(t, a.EnsureTenant(ctx, "tenant-a"), errTenantLoginCARemoved, "a pass of the removed tenant must not report success")
+	require.NoError(t, removeErr)
+	require.NoError(t, reviveErr)
+	require.NoError(t, reprovisionErr)
+	require.NotEmpty(t, revivedDER, "the revived generation must have saved its certificate")
+
+	published, err := claims.Get(ctx, tenantLoginCACertPublishKey("tenant-a"))
+	require.NoError(t, err)
+	require.Equal(t, revivedDER, published, "the revived generation's stored certificate is the published one")
+
+	stored, err := xkms.NewTenantScopedBackend(baseB, "tenant-a").GetCert(ctx, tenantLoginCAKeyCN)
+	require.NoError(t, err)
+	require.Equal(t, published, stored.Raw, "repair must restore the published certificate byte for byte, not sign a new one")
+	require.NoError(t, b.EnsureTenant(ctx, "tenant-a"), "the revived tenant stays provisioned")
+	stored, err = xkms.NewTenantScopedBackend(baseB, "tenant-a").GetCert(ctx, tenantLoginCAKeyCN)
+	require.NoError(t, err)
+	require.Equal(t, published, stored.Raw)
+}
+
 // A pass whose generation moved before a write refuses the write.
 func TestTenantLoginCAFenceWrite_RefusesAfterRevive(t *testing.T) {
 	ctx := context.Background()
