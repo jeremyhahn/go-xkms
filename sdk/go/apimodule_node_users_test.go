@@ -89,7 +89,7 @@ func registrationBegin(t *testing.T, extra func(node ServiceModuleNodeUserSource
 // public WebAuthn routes resolve users through it. Anonymous registration of
 // a nonexistent account is refused (403): the user is created through the
 // authorized client and the xkms service principal holds no users:create
-// grant (serviceprincipal.WebAuthnGrant); accounts are provisioned by an
+// grant; accounts are provisioned by an
 // administrator and enrolled by invitation.
 func TestWithServiceModuleNodeUsers_WiresNodeUserSource(t *testing.T) {
 	users := &countingNodeUsers{}
