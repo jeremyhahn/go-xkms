@@ -2,14 +2,17 @@ package server
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"errors"
 	"log/slog"
 	"testing"
 
 	tenantpkg "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,6 +89,51 @@ func TestProvisioningTenantService_CancelledCreateRollsBackForRetry(t *testing.T
 	var pending *qrdbsdk.TenantUndoPendingError
 	require.ErrorAs(t, err, &pending, "a retry with the same tenant ID must stay possible, got: %v", err)
 	require.Equal(t, "tenant-a", pending.TenantID)
+}
+
+// failingEnsureTenantCAKeys runs the real factory's EnsureTenant and then
+// reports a failure, as a provisioning pass that stopped after its key.
+type failingEnsureTenantCAKeys struct{ *tenantCAKeyFactory }
+
+func (k failingEnsureTenantCAKeys) EnsureTenant(ctx context.Context, tenantID string) error {
+	return errors.Join(k.tenantCAKeyFactory.EnsureTenant(ctx, tenantID), errors.New("provisioning interrupted"))
+}
+
+// A wrapped create whose provisioning fails is undone: the plain tombstone
+// stays and the ID is free. go-qrdb's native onboarding (POST /v1/tenants)
+// may then create the same ID through the unwrapped service and ask for its
+// login CA: the tenant is new, so it must get one.
+func TestProvisioningTenantService_NativeOnboardingAfterUndoneCreateGetsLoginCA(t *testing.T) {
+	ctx := context.Background()
+	_, base := newTenantCAKeyTestFactory(t)
+	f := newTenantCAKeyFactory()
+	native := &fakeTenantService{}
+	s := &Server{
+		config:       &config.Config{},
+		tenantCAKeys: f,
+		backends:     map[string]xkms.Backend{"software": base},
+	}
+	s.adoptTenantService(native)
+	useTenantCAClaimStorage(s)
+	require.NoError(t, s.provisionTenantCAKeys(ctx))
+
+	p := newProvisioningTenantService(native, failingEnsureTenantCAKeys{f})
+	_, err := p.CreateTenant(ctx, "tenant-u", "U", "")
+	var provErr *TenantProvisionError
+	require.ErrorAs(t, err, &provErr)
+	_, err = native.GetTenant(ctx, "tenant-u")
+	require.Error(t, err, "the failed create must be undone")
+
+	_, err = native.CreateTenant(ctx, "tenant-u", "U", qrdbsdk.TenantIsolationType(""))
+	require.NoError(t, err)
+
+	prov, err := f.ProviderForTenant("tenant-u")
+	require.NoError(t, err, "a natively onboarded tenant whose ID was undone must get its login CA")
+	signer, err := prov.Signer(ctx)
+	require.NoError(t, err)
+	cert, err := prov.Certificate(ctx)
+	require.NoError(t, err)
+	require.True(t, signer.Public().(*ecdsa.PublicKey).Equal(cert.PublicKey), "the login CA cert must be over the signer's key")
 }
 
 // pausingTenantCAKeys fails every EnsureTenant and runs onRemove inside
