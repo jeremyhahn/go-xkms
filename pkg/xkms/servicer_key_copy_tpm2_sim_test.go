@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -83,4 +84,73 @@ func TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithm(t *testing.T) {
 		}
 	}
 	require.True(t, found, "the simulated TPM2 destination must hold the copied key")
+}
+
+// TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest pins that a copy onto
+// an existing TPM2 key fails and leaves the existing key's blobs untouched.
+func TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+
+	srcProvider, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
+	require.NoError(t, err)
+	srcBackend, err := New(&BackendConfig{Backend: srcProvider, CertStorage: storage.NewMemory()})
+	require.NoError(t, err)
+
+	dstBackend, dstKeys := newRealTPM2BackendWithKeys(t)
+	require.NoError(t, Initialize(&ServiceConfig{
+		Backends:       map[string]Backend{"software": srcBackend, "tpm2": dstBackend},
+		DefaultBackend: "software",
+	}))
+	svc, err := Get()
+	require.NoError(t, err)
+	ctx := context.Background()
+
+	for _, cn := range []string{"sw-src-first", "sw-src-second"} {
+		_, err = srcProvider.GenerateSymmetricKey(ctx, &types.KeyAttributes{
+			CN:                 cn,
+			KeyType:            types.KeyTypeSecret,
+			StoreType:          types.StoreSoftware,
+			SymmetricAlgorithm: types.SymmetricAES256GCM,
+			Exportable:         true,
+		})
+		require.NoError(t, err)
+	}
+
+	copyTo := func(src string) (*transport.CopyKeyResponse, error) {
+		return svc.CopyKey(ctx, &transport.CopyKeyRequest{
+			SourceBackend: "software",
+			SourceKeyID:   src,
+			DestBackend:   "tpm2",
+			DestKeyID:     "tpm2-existing-dest",
+		})
+	}
+	resp, err := copyTo("sw-src-first")
+	require.NoError(t, err)
+	require.True(t, resp.Success)
+
+	destBlobs := func() ([]byte, []byte) {
+		keys, lerr := dstBackend.ListKeys(ctx)
+		require.NoError(t, lerr)
+		for _, a := range keys {
+			if a != nil && a.CN == "tpm2-existing-dest" {
+				priv, gerr := dstKeys.Get(a, tpmstore.FSEXT_PRIVATE_BLOB)
+				require.NoError(t, gerr)
+				pub, gerr := dstKeys.Get(a, tpmstore.FSEXT_PUBLIC_BLOB)
+				require.NoError(t, gerr)
+				return priv, pub
+			}
+		}
+		t.Fatal("the TPM2 destination key is not listed")
+		return nil, nil
+	}
+	privBefore, pubBefore := destBlobs()
+
+	resp, err = copyTo("sw-src-second")
+	require.Error(t, err, "a copy onto an existing TPM2 key must fail")
+	require.Nil(t, resp)
+
+	privAfter, pubAfter := destBlobs()
+	require.Equal(t, privBefore, privAfter, "the existing private blob was overwritten")
+	require.Equal(t, pubBefore, pubAfter, "the existing public blob was overwritten")
 }

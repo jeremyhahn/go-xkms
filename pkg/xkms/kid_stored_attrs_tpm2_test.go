@@ -26,6 +26,7 @@ import (
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -67,9 +68,18 @@ func setupRealTPM2KID(t *testing.T) {
 // simulator, closed when the test ends.
 func newRealTPM2Backend(t *testing.T) Backend {
 	t.Helper()
+	b, _ := newRealTPM2BackendWithKeys(t)
+	return b
+}
+
+// newRealTPM2BackendWithKeys is newRealTPM2Backend that also returns the
+// backend's blob store, so a test can read the persisted key blobs.
+func newRealTPM2BackendWithKeys(t *testing.T) (Backend, store.KeyBackend) {
+	t.Helper()
+	keys := tpmblobtest.New(t)
 	tpmBackend, err := tpm2backend.NewBackend(&tpm2backend.Config{
 		UseSimulator: true,
-		Keys:         tpmblobtest.New(t),
+		Keys:         keys,
 		CN:           "xkms-925-test",
 	})
 	require.NoError(t, err)
@@ -81,7 +91,7 @@ func newRealTPM2Backend(t *testing.T) Backend {
 
 	b, err := New(&BackendConfig{Backend: tpmBackend, CertStorage: storage.New()})
 	require.NoError(t, err)
-	return b
+	return b, keys
 }
 
 // TestExportKeyByKID_TPM2_ExistingKey_IsFoundNotMissing proves the fix's

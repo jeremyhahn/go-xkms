@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -358,6 +359,50 @@ func TestUnwrapKey_RejectsCorruptBlobs(t *testing.T) {
 // TPM2_Import: it must persist the imported public/private blobs so the key
 // survives a restart. The test asserts the key becomes visible to ListKeys and
 // that the persisted blobs are the ones the TPM produced.
+// TestImportKey_RefusesExistingKey pins that ImportKey never overwrites a key
+// already stored under the same CN: the second import fails with
+// backend.ErrKeyAlreadyExists and the first key's blobs stay byte-identical.
+func TestImportKey_RefusesExistingKey(t *testing.T) {
+	b := newSimBackend(t)
+	ctx := context.Background()
+
+	_, wrappedA := wrapMaterial(t, b, bytes.Repeat([]byte{0x11}, 32))
+	attrsA := &types.KeyAttributes{CN: "existing", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, attrsA, wrappedA); err != nil {
+		t.Fatalf("ImportKey (A): %v", err)
+	}
+	privA, err := b.keyBackend.Get(attrsA, store.FSEXT_PRIVATE_BLOB)
+	if err != nil {
+		t.Fatalf("Get private blob (A): %v", err)
+	}
+	pubA, err := b.keyBackend.Get(attrsA, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		t.Fatalf("Get public blob (A): %v", err)
+	}
+
+	_, wrappedB := wrapMaterial(t, b, bytes.Repeat([]byte{0x22}, 32))
+	attrsB := &types.KeyAttributes{CN: "existing", KeyType: types.KeyTypeStorage}
+	err = b.ImportKey(ctx, attrsB, wrappedB)
+	if !errors.Is(err, backend.ErrKeyAlreadyExists) {
+		t.Fatalf("ImportKey (B) over an existing CN: err = %v, want backend.ErrKeyAlreadyExists", err)
+	}
+
+	privAfter, err := b.keyBackend.Get(attrsA, store.FSEXT_PRIVATE_BLOB)
+	if err != nil {
+		t.Fatalf("Get private blob (after): %v", err)
+	}
+	pubAfter, err := b.keyBackend.Get(attrsA, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		t.Fatalf("Get public blob (after): %v", err)
+	}
+	if !bytes.Equal(privA, privAfter) {
+		t.Error("private blob of the existing key was overwritten")
+	}
+	if !bytes.Equal(pubA, pubAfter) {
+		t.Error("public blob of the existing key was overwritten")
+	}
+}
+
 func TestImportKey_PersistsUnderCN(t *testing.T) {
 	b := newSimBackend(t)
 	ctx := context.Background()
