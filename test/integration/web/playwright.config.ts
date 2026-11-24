@@ -35,6 +35,9 @@ export default defineConfig({
   // first boot; running them out of process order would race that state.
   workers: 1,
   outputDir: 'test-results',
+  // runtime is run-server.sh's state directory (XKMS_E2E_RUNTIME); the
+  // passkey helper reads the admin credential from <runtime>/storage.
+  metadata: { runtime: '.runtime' },
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }],

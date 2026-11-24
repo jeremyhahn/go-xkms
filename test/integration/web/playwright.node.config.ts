@@ -28,6 +28,8 @@ export default defineConfig({
   testMatch: 'passkey-node.spec.ts',
   testIgnore: [],
   outputDir: 'test-results-node',
+  // Must match the webServer's XKMS_E2E_RUNTIME below.
+  metadata: { ...base.metadata, runtime: '.runtime-node' },
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report-node' }],
