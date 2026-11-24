@@ -110,3 +110,18 @@ export function diffMetadata(before: EditableMetadata, after: EditableMetadata):
   if (removed.length > 0) changes.remove_tags = removed;
   return changes;
 }
+
+/** The key a metadata request was sent for, or the one the form shows. */
+export interface MetadataKeyRef {
+  id: string;
+  backend: string;
+}
+
+/**
+ * Reports whether a metadata reply sent for `sent` may be applied to a form
+ * showing `shown`: only when the key ID and the backend are both equal
+ * (exact string comparison, no normalisation).
+ */
+export function metadataReplyMatches(sent: MetadataKeyRef, shown: MetadataKeyRef): boolean {
+  return sent.id === shown.id && sent.backend === shown.backend;
+}

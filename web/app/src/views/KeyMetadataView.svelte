@@ -6,6 +6,7 @@
   import {
     diffMetadata,
     getKeyMetadata,
+    metadataReplyMatches,
     updateKeyMetadata,
     type EditableMetadata,
     type KeyMetadata,
@@ -108,7 +109,7 @@
       const m = await updateKeyMetadata(id, be, changes);
       // Load is disabled while Save runs; still, never show one key's
       // reply over another key's form.
-      if (id === loadedId && be === loadedBackend) show(m);
+      if (metadataReplyMatches({ id, backend: be }, { id: loadedId, backend: loadedBackend })) show(m);
       showToast("success", `Metadata of key "${id}" saved.`);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
