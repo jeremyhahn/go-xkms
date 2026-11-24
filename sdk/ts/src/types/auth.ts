@@ -63,6 +63,8 @@ export interface WebAuthnBeginLoginRequest {
   user_id?: string;
   /** email alternative to user_id */
   email?: string;
+  /** tenant whose relying party the login reaches (optional; omit for the server's default) */
+  tenant_id?: string;
 }
 
 /** Mirrors pkg/webauthn/http/types.go AuthResponse (finish registration/login). */

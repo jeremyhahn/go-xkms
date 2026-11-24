@@ -231,7 +231,7 @@
       // user. Reporting them separately would rebuild an enumeration oracle.
       let begin;
       try {
-        const req: WebAuthnBeginLoginRequest & { tenant_id?: string } = {
+        const req: WebAuthnBeginLoginRequest = {
           email: trimmedIdentifier,
         };
         if (defaultTenant !== undefined && trimmedTenant) {

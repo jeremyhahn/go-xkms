@@ -438,6 +438,7 @@ The PIV path takes none: possession of the slot key is the credential.
 Flags:
   --server    Server URL (required)
   --email     Canonical login key to authenticate (required)
+  --tenant    Tenant whose accounts the login is scoped to (default: the server's system tenant)
   --piv       Authenticate with a PIV slot certificate over mTLS
   --slot      PIV slot to authenticate with (default: 9a, used with --piv)
   --backend   PIV key backend: software or pkcs11 (default: software, used with --piv)
@@ -447,6 +448,9 @@ Flags:
 Examples:
   # Login to a registered server
   xkey auth login --server https://xkms.example.com:8443 --email alice@example.com
+
+  # Login to an account of tenant tenant-b
+  xkey auth login --server https://xkms.example.com:8443 --email alice@example.com --tenant tenant-b
 
   # Login against a PIN-protected authenticator, with no PIN in the process list
   printf '%s' "$PIN" | xkey auth login --pin-stdin \
@@ -526,6 +530,7 @@ func init() {
 	// Login command flags
 	authLoginCmd.Flags().String("server", "", "Server URL (required)")
 	authLoginCmd.Flags().String("email", "", "Canonical email login key to authenticate (required)")
+	authLoginCmd.Flags().String("tenant", "", "tenant whose accounts the login is scoped to (empty: the server's system tenant)")
 	authLoginCmd.Flags().Bool("piv", false, "Authenticate with a PIV slot certificate over mTLS instead of WebAuthn")
 	authLoginCmd.Flags().String("tls-ca", "", "PEM bundle of CA certificates to trust, in addition to the xKey trust store")
 	authLoginCmd.Flags().String("slot", string(PIVSlotAuthentication), "PIV slot to authenticate with (used with --piv)")
@@ -794,7 +799,13 @@ func runAuthLogin(cmd *cobra.Command, args []string) (err error) {
 
 	// WebAuthn authentication ceremony against the account's email, the
 	// login key the server resolves with GetUserByEmail.
-	begin, err := client.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{Email: email})
+	// --tenant names the tenant whose relying party the login reaches;
+	// empty leaves the choice to the server (its system tenant).
+	tenantID := strings.TrimSpace(cmdFlagString(cmd, "tenant"))
+	begin, err := client.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{
+		Email:    email,
+		TenantID: tenantID,
+	})
 	if err != nil {
 		return errors.Join(ErrAuthBeginAuthenticationFailed, err)
 	}
@@ -825,6 +836,7 @@ func runAuthLogin(cmd *cobra.Command, args []string) (err error) {
 		SessionID:     begin.SessionID,
 		Email:         email,
 		AssertionJSON: string(assertion),
+		TenantID:      tenantID,
 	})
 	if err != nil {
 		return errors.Join(ErrAuthFinishAuthenticationFailed, err)
