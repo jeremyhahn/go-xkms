@@ -5030,7 +5030,7 @@ AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/do
 integration-test-bootstrap: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
-	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/bootstrap && trap 'rc=$$?; if [ $$rc -ne 0 ]; then echo "--- xkms-server log ---"; $(call compose,bootstrap) logs --no-color --tail=200 xkms-server; echo "--- xkms-server health ---"; docker inspect --format "{{json .State.Health}}" $$($(call compose,bootstrap) ps -aq xkms-server) || true; fi; $(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1; trap - EXIT; exit $$rc' EXIT INT TERM && \
 		$(call compose,bootstrap) run --build --rm test
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
