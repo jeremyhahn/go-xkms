@@ -152,3 +152,178 @@ func TestFinishInviteRegistration_FailedSaveReleasesFirstCredentialClaim(t *test
 	require.NoError(t, err)
 	assert.Len(t, creds, 1)
 }
+
+// factorRecorder is the side-effect ledger of recordingDecorator: the
+// credential IDs a decorator has turned into authentication factors.
+type factorRecorder struct {
+	mu      sync.Mutex
+	factors map[string]bool
+}
+
+func (r *factorRecorder) ids() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]string, 0, len(r.factors))
+	for id := range r.factors {
+		out = append(out, id)
+	}
+	return out
+}
+
+// recordingDecorator models a composer's credential-store decorator: a
+// successful Save adds an authentication factor, a successful Delete
+// removes it.
+type recordingDecorator struct {
+	CredentialStore
+	rec *factorRecorder
+}
+
+func (d *recordingDecorator) Save(ctx context.Context, cred *Credential) error {
+	if err := d.CredentialStore.Save(ctx, cred); err != nil {
+		return err
+	}
+	d.rec.mu.Lock()
+	d.rec.factors[string(cred.ID)] = true
+	d.rec.mu.Unlock()
+	return nil
+}
+
+func (d *recordingDecorator) Delete(ctx context.Context, credID []byte) error {
+	if err := d.CredentialStore.Delete(ctx, credID); err != nil {
+		return err
+	}
+	d.rec.mu.Lock()
+	delete(d.rec.factors, string(credID))
+	d.rec.mu.Unlock()
+	return nil
+}
+
+// claimHookStore runs onClaim once, right after the first won
+// ClaimFirstCredential, and lets wrap replace the claim it returns.
+type claimHookStore struct {
+	CredentialStore
+	once    sync.Once
+	onClaim func()
+	wrap    func(FirstCredentialClaim) FirstCredentialClaim
+}
+
+func (s *claimHookStore) ClaimFirstCredential(ctx context.Context, userID []byte) (FirstCredentialClaim, error) {
+	claim, err := s.CredentialStore.ClaimFirstCredential(ctx, userID)
+	if err != nil {
+		return claim, err
+	}
+	s.once.Do(func() {
+		if s.wrap != nil {
+			claim = s.wrap(claim)
+		}
+		if s.onClaim != nil {
+			s.onClaim()
+		}
+	})
+	return claim, nil
+}
+
+// crashingClaim simulates a ceremony that dies after its fenced save and
+// before Commit.
+type crashingClaim struct {
+	FirstCredentialClaim
+}
+
+func (c *crashingClaim) Commit(context.Context, *Credential) error {
+	panic("ceremony crashed before commit")
+}
+
+// fencedInviteRig is a slow and a recovering invite ceremony for one pending
+// account, each on its own replica of the credential store (one shared
+// factory), both behind a recording decorator with one shared ledger.
+type fencedInviteRig struct {
+	f      *enrollFixture
+	hook   *claimHookStore
+	slow   *Service
+	winner *Service
+	rec    *factorRecorder
+	user   User
+}
+
+func newFencedInviteRig(t *testing.T) *fencedInviteRig {
+	t.Helper()
+	factory := newTestDAOFactory()
+	users, creds, accounts := newTestAdapterWith(t, factory)
+	f := newEnrollFixture(t, false)
+	f.users, f.creds, f.accounts = users, creds, accounts
+	recoverer := newTestCredentialStore(t, factory)
+	recoverer.now = pastClaimLease()
+
+	rec := &factorRecorder{factors: map[string]bool{}}
+	hook := &claimHookStore{CredentialStore: creds}
+	newSvc := func(store CredentialStore) *Service {
+		svc, err := NewService(ServiceParams{
+			Config:          validTestConfig(),
+			UserStore:       users,
+			SessionStore:    NewMemorySessionStore(),
+			CredentialStore: &recordingDecorator{CredentialStore: store, rec: rec},
+		})
+		require.NoError(t, err)
+		return svc
+	}
+	return &fencedInviteRig{
+		f: f, hook: hook, rec: rec,
+		slow:   newSvc(hook),
+		winner: newSvc(recoverer),
+		user:   f.mustCreatePending(t, "fenced@example.com"),
+	}
+}
+
+// begin opens an invite ceremony on svc and returns its finish.
+func (r *fencedInviteRig) begin(t *testing.T, svc *Service) func() error {
+	t.Helper()
+	ctx := context.Background()
+	options, sessionID, err := svc.BeginInviteRegistration(ctx, r.user.WebAuthnID())
+	require.NoError(t, err)
+	parsed, err := parseAttestationResponse(r.f.inviteAttestation(t, options, newEC2Credential(t)))
+	require.NoError(t, err)
+	return func() error {
+		_, err := svc.FinishInviteRegistration(ctx, sessionID, r.user.WebAuthnID(), parsed)
+		return err
+	}
+}
+
+// assertOnlyStoredFactors: the decorator's factors are exactly the account's
+// readable credentials.
+func (r *fencedInviteRig) assertOnlyStoredFactors(t *testing.T) {
+	t.Helper()
+	stored, err := r.f.creds.GetByUserID(context.Background(), r.user.WebAuthnID())
+	require.NoError(t, err)
+	require.Len(t, stored, 1, "the account keeps only the winner's credential")
+	assert.ElementsMatch(t, []string{string(stored[0].ID)}, r.rec.ids(),
+		"a fenced-out ceremony leaves no decorator factor behind")
+}
+
+// TestFinishInviteRegistration_LostCommitLeavesNoDecoratorFactor: the slow
+// ceremony's claim is recovered and committed by another ceremony before
+// the slow one saves. The slow finish is refused and the decorator holds a
+// factor only for the winner's credential.
+func TestFinishInviteRegistration_LostCommitLeavesNoDecoratorFactor(t *testing.T) {
+	r := newFencedInviteRig(t)
+	slowFinish := r.begin(t, r.slow)
+	winnerFinish := r.begin(t, r.winner)
+	r.hook.onClaim = func() { require.NoError(t, winnerFinish()) }
+
+	require.ErrorIs(t, slowFinish(), ErrRegistrationRefused)
+	r.assertOnlyStoredFactors(t)
+}
+
+// TestFinishInviteRegistration_StaleClaimerCrashLeavesNoDecoratorFactor: the
+// slow ceremony's claim is recovered and committed by another ceremony, then
+// the stale slow one saves under it and dies before Commit. The decorator
+// holds no factor for the crashed credential.
+func TestFinishInviteRegistration_StaleClaimerCrashLeavesNoDecoratorFactor(t *testing.T) {
+	r := newFencedInviteRig(t)
+	slowFinish := r.begin(t, r.slow)
+	winnerFinish := r.begin(t, r.winner)
+	r.hook.wrap = func(c FirstCredentialClaim) FirstCredentialClaim { return &crashingClaim{FirstCredentialClaim: c} }
+	r.hook.onClaim = func() { require.NoError(t, winnerFinish()) }
+
+	assert.Panics(t, func() { _ = slowFinish() }, "the stale ceremony crashes before commit")
+	r.assertOnlyStoredFactors(t)
+}
