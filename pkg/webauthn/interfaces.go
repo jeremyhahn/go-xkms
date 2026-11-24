@@ -122,8 +122,12 @@ type CredentialStore interface {
 	// account's first credential. The claim is a create-if-absent in the
 	// shared store, so across sessions and replicas exactly one caller wins
 	// it; every other caller gets ErrFirstCredentialClaimed and must store
-	// nothing. The winner saves its credential and then calls Commit; if the
-	// save fails it calls Release so a later attempt can claim again. A claim
+	// nothing. The winner saves its credential through the claim
+	// (claim.Save, never a decorated Save) and then calls Commit; if the
+	// save fails it calls Release so a later attempt can claim again. Only
+	// after Commit succeeds does the Service call Save under the
+	// committed-first-credential marker, so a decorator's Save side effects
+	// for an account's first credential run only once its claim commits. A claim
 	// that is neither committed nor released (the ceremony crashed) is
 	// recovered by a later claimer once its lease has expired, provided the
 	// account still has no credential. The committed claim stays in place
@@ -132,24 +136,27 @@ type CredentialStore interface {
 	ClaimFirstCredential(ctx context.Context, userID []byte) (FirstCredentialClaim, error)
 }
 
-// firstCredentialClaimKey is the context key WithFirstCredentialClaim uses.
-type firstCredentialClaimKey struct{}
+// committedFirstCredentialKey is the context key withCommittedFirstCredential
+// uses.
+type committedFirstCredentialKey struct{}
 
-// WithFirstCredentialClaim returns ctx carrying claim. The Service saves an
-// account's first credential with CredentialStore.Save under such a ctx, so a
-// decorator over the store keeps its Save side effects for claimed saves; the
-// store that won the claim then persists through claim.Save, keeping the
-// claim's fence. A store that persists credentials itself, instead of
-// delegating Save, must do the same. A nil claim clears it.
-func WithFirstCredentialClaim(ctx context.Context, claim FirstCredentialClaim) context.Context {
-	return context.WithValue(ctx, firstCredentialClaimKey{}, claim)
+// withCommittedFirstCredential returns ctx marking a Save of an account's
+// first credential that its claim has already persisted (FirstCredentialClaim
+// Save) and committed. The Service calls the configured CredentialStore.Save
+// under such a ctx only after Commit succeeds, so a decorator over the store
+// applies its Save side effects (a composer's auth factor) only to a
+// credential the account keeps: a ceremony fenced out at Commit, or one that
+// crashed before it, leaves no side effect. The underlying store, seeing the
+// marker, confirms the committed record instead of persisting it again.
+func withCommittedFirstCredential(ctx context.Context) context.Context {
+	return context.WithValue(ctx, committedFirstCredentialKey{}, true)
 }
 
-// FirstCredentialClaimFrom returns the claim WithFirstCredentialClaim put in
-// ctx, or nil.
-func FirstCredentialClaimFrom(ctx context.Context) FirstCredentialClaim {
-	claim, _ := ctx.Value(firstCredentialClaimKey{}).(FirstCredentialClaim)
-	return claim
+// isCommittedFirstCredential reports whether ctx carries the
+// withCommittedFirstCredential marker.
+func isCommittedFirstCredential(ctx context.Context) bool {
+	marked, _ := ctx.Value(committedFirstCredentialKey{}).(bool)
+	return marked
 }
 
 // FirstCredentialClaim is a won CredentialStore.ClaimFirstCredential.

@@ -353,6 +353,14 @@ func (a *WebAuthnTokenAdapter) GenerateTokenPair(ctx context.Context, user webau
 // already verified attestation, origin, RP ID, challenge, and user handle
 // before it calls Save, and a decorator cannot reach or relax any of those
 // checks.
+//
+// For an account's first credential the relying party persists the record
+// through its first-credential claim and calls the decorator's Save only
+// after that claim commits, so a ceremony fenced out at Commit, or one that
+// crashed before it, leaves no side effect. That Save delegates to the
+// wrapped store as usual (which then only confirms the committed record); if
+// it fails, the relying party deletes the credential through the decorator,
+// so the decorator must undo its own effect in Delete.
 type WebAuthnCredentialStoreDecorator func(webauthn.CredentialStore) webauthn.CredentialStore
 
 // WebAuthnServiceParams configures BuildWebAuthnService.

@@ -718,31 +718,12 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 			return nil, WrapError("claim first credential", err)
 		}
 	}
-	// A claimed save still goes through the configured store's Save, so a
-	// decorator's side effects (a composer's auth factor) apply to it; the
-	// claim in ctx makes the underlying store persist it fenced by the claim.
-	saveCtx := ctx
-	if claim != nil {
-		saveCtx = WithFirstCredentialClaim(ctx, claim)
-	}
-	if err := s.creds.Save(saveCtx, cred); err != nil {
-		if claim != nil {
-			if relErr := claim.Release(context.WithoutCancel(ctx)); relErr != nil {
-				s.logger.Error("release first-credential claim after a failed save", "error", relErr)
-			}
+	if claim == nil {
+		if err := s.creds.Save(ctx, cred); err != nil {
+			return nil, WrapError("save credential", err)
 		}
-		return nil, WrapError("save credential", err)
-	}
-	if claim != nil {
-		// The claim's lease ran out and another ceremony recovered it:
-		// Commit removed this credential, so the account keeps only the
-		// recoverer's.
-		if err := claim.Commit(context.WithoutCancel(ctx), cred); err != nil {
-			if errors.Is(err, ErrFirstCredentialClaimed) {
-				return nil, ErrRegistrationRefused
-			}
-			return nil, WrapError("commit first credential", err)
-		}
+	} else if err := s.saveFirstCredential(ctx, claim, cred); err != nil {
+		return nil, err
 	}
 
 	// Add credential to user
@@ -752,6 +733,39 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 	}
 
 	return user, nil
+}
+
+// saveFirstCredential stores cred, an account's first credential, under
+// claim. The claim persists it fenced by its token and Commit makes it the
+// account's; only then is the configured store's Save called, under
+// withCommittedFirstCredential, so a decorator's side effects (a composer's
+// auth factor) apply only to a credential the account keeps. A ceremony
+// fenced out at Commit, or one that crashes before it, leaves none. If that
+// decorated Save fails, the credential is deleted through the configured
+// store, so the decorator undoes its own effect and the account may enrol
+// again.
+func (s *Service) saveFirstCredential(ctx context.Context, claim FirstCredentialClaim, cred *Credential) error {
+	if err := claim.Save(ctx, cred); err != nil {
+		if relErr := claim.Release(context.WithoutCancel(ctx)); relErr != nil {
+			s.logger.Error("release first-credential claim after a failed save", "error", relErr)
+		}
+		return WrapError("save credential", err)
+	}
+	// The claim's lease ran out and another ceremony recovered it: Commit
+	// removed this credential, so the account keeps only the recoverer's.
+	if err := claim.Commit(context.WithoutCancel(ctx), cred); err != nil {
+		if errors.Is(err, ErrFirstCredentialClaimed) {
+			return ErrRegistrationRefused
+		}
+		return WrapError("commit first credential", err)
+	}
+	if err := s.creds.Save(withCommittedFirstCredential(ctx), cred); err != nil {
+		if delErr := s.creds.Delete(context.WithoutCancel(ctx), cred.ID); delErr != nil {
+			s.logger.Error("delete first credential after a failed decorated save", "error", delErr)
+		}
+		return WrapError("save credential", err)
+	}
+	return nil
 }
 
 // BeginLogin starts the WebAuthn authentication ceremony.

@@ -294,14 +294,41 @@ func (s *daoCredentialStore) dropClaim(ctx context.Context, userID string) error
 // — to this account or any other — is refused with
 // ErrCredentialAlreadyExists and the stored record is left untouched.
 //
-// A ctx that carries a first-credential claim (WithFirstCredentialClaim)
-// stores cred through that claim instead, bound to its token, so a decorator
-// over this store sees the claimed save in its own Save.
+// A ctx marked withCommittedFirstCredential is the Service's post-Commit
+// Save of an account's first credential, made so a decorator over this store
+// applies its side effects only once the claim has committed: the claim
+// already persisted cred, so Save only confirms that the record is there and
+// readable under the committed claim, and persists nothing.
 func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
-	if claim := FirstCredentialClaimFrom(ctx); claim != nil {
-		return claim.Save(WithFirstCredentialClaim(ctx, nil), cred)
+	if isCommittedFirstCredential(ctx) {
+		return s.confirmCommitted(ctx, cred)
 	}
 	return s.save(ctx, cred, "")
+}
+
+// confirmCommitted reports nil when cred is stored for its account under the
+// account's committed first-credential claim, and ErrCredentialNotFound when
+// it is not (removed, or never committed).
+func (s *daoCredentialStore) confirmCommitted(ctx context.Context, cred *Credential) error {
+	ctx = credentialScope(ctx)
+	if cred == nil || len(cred.ID) == 0 {
+		return ErrInvalidCredential
+	}
+	e, err := s.getRaw(ctx, cred.ID)
+	if err != nil {
+		return err
+	}
+	if e.UserID != encodeID(cred.UserID) || e.ClaimToken == "" {
+		return ErrCredentialNotFound
+	}
+	readable, err := s.visible(ctx, e.UserID, []*credentialEntity{e})
+	if err != nil {
+		return err
+	}
+	if len(readable) == 0 {
+		return ErrCredentialNotFound
+	}
+	return nil
 }
 
 // save persists cred, bound to the first-credential claim token when token
