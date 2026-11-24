@@ -203,6 +203,13 @@ func (b *crashingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, ext t
 	return b.KeyBackend.Save(attrs, data, ext, overwrite)
 }
 
+func (b *crashingKeyBackend) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	if ext == store.FSEXT_PRIVATE_BLOB {
+		panic(errPairCrash)
+	}
+	return b.KeyBackend.(store.ConditionalKeyBackend).CompareAndSwap(attrs, ext, expected, next)
+}
+
 // TestSaveKeyPair_RecoveryCrashLeavesNoMismatch: a create-only save that
 // recovers an incomplete pair (private blob A, no public blob) and crashes
 // before its private blob B is durable leaves no apparently complete pair:
@@ -272,6 +279,14 @@ func (f *fencePausingKeyBackend) Save(attrs *types.KeyAttributes, data []byte, e
 		f.once.Do(f.afterFence)
 	}
 	return err
+}
+
+func (f *fencePausingKeyBackend) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	swapped, err := f.KeyBackend.(store.ConditionalKeyBackend).CompareAndSwap(attrs, ext, expected, next)
+	if err == nil && swapped && ext == store.FSEXT_PUBLIC_BLOB && isKeyPairRecoveryFence(next) {
+		f.once.Do(f.afterFence)
+	}
+	return swapped, err
 }
 
 // Two live recoveries of one incomplete key: A installs its fence and stalls

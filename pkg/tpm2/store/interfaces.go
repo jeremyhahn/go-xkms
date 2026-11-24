@@ -144,6 +144,17 @@ type KeyBackend interface {
 	Delete(attrs *types.KeyAttributes) error
 }
 
+// ConditionalKeyBackend is a KeyBackend that can replace a blob only while it
+// still holds an expected value. Writers in different processes that share
+// one blob store arbitrate through it; an in-process lock cannot order them.
+type ConditionalKeyBackend interface {
+	KeyBackend
+	// CompareAndSwap stores next as the ext blob of attrs only while that
+	// blob is stored and equals expected, and reports whether it did. It
+	// never creates a blob.
+	CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error)
+}
+
 // KeyLister enumerates the objects a KeyBackend holds blobs for.
 type KeyLister interface {
 	KeyNames(ctx context.Context, ext types.FSExtension) ([]string, error)
