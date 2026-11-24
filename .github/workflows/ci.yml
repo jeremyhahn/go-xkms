@@ -1363,7 +1363,9 @@ jobs:
       # reference, or "" and builds the image itself, as before #2299.
       - name: Build the CI images on the pool
         id: pool
-        if: ${{ env.CI_POOL == 'true' && contains(needs.preflight.outputs.runner, 'self-hosted') && contains(needs.preflight.outputs.runner_docker, 'self-hosted') }}
+        # #2302 Codex round 4: off github.com every consumer keeps its fixed self-hosted
+        # label, so preflight's ubuntu-latest output does not describe where it runs.
+        if: ${{ env.CI_POOL == 'true' && (github.server_url != 'https://github.com' || (contains(needs.preflight.outputs.runner, 'self-hosted') && contains(needs.preflight.outputs.runner_docker, 'self-hosted'))) }}
         env:
           CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ steps.resolve.outputs.toolchain_ref }}
@@ -1378,7 +1380,7 @@ jobs:
       # built it; the integration image may be "", no pool job consumes it).
       - name: Validate the image references
         env:
-          POOL_HANDOFF: ${{ env.CI_POOL == 'true' && contains(needs.preflight.outputs.runner, 'self-hosted') && contains(needs.preflight.outputs.runner_docker, 'self-hosted') }}
+          POOL_HANDOFF: ${{ env.CI_POOL == 'true' && (github.server_url != 'https://github.com' || (contains(needs.preflight.outputs.runner, 'self-hosted') && contains(needs.preflight.outputs.runner_docker, 'self-hosted'))) }}
           TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
           IT_REF: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
         run: |
