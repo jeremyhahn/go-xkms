@@ -17,6 +17,7 @@ package xkms
 
 import (
 	"context"
+	"crypto/x509"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -65,18 +66,42 @@ func TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithm(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	plaintext := []byte("copied to the TPM2 and still usable")
-	fromSource, err := svc.Encrypt(ctx, &transport.EncryptRequest{
-		Backend: "software", KeyID: "sw-to-tpm2-kek", Plaintext: plaintext,
-	})
-	require.NoError(t, err)
-
+	// The TPM2 backend stores an imported key as a sealed object only and
+	// cannot yet encrypt or decrypt with it as a symmetric key, so a copy
+	// that would land an unusable key is refused fail-closed.
 	resp, err := svc.CopyKey(ctx, &transport.CopyKeyRequest{
 		SourceBackend: "software",
 		SourceKeyID:   "sw-to-tpm2-kek",
 		DestBackend:   "tpm2",
 		DestKeyID:     "sw-to-tpm2-kek-copy",
 		Algorithm:     "",
+	})
+	require.ErrorIs(t, err, backend.ErrExportToUnsupported,
+		"a symmetric key copy to TPM2 must be refused until the TPM2 copy can decrypt")
+	require.Nil(t, resp)
+
+	dstKeys, err := dstBackend.ListKeys(ctx)
+	require.NoError(t, err)
+	for _, a := range dstKeys {
+		require.False(t, a != nil && a.CN == "sw-to-tpm2-kek-copy",
+			"a refused copy must leave no destination key")
+	}
+}
+
+// TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithmAsymmetric copies an
+// exportable Ed25519 key, whose PKCS#8 encoding fits a TPM sealed object,
+// with no wrapping algorithm named: CopyKey picks TPM2_DUPLICATE and the
+// software source wraps for it.
+func TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithmAsymmetric(t *testing.T) {
+	svc, srcProvider, dstBackend, _ := setupSoftwareToTPM2Copy(t)
+	ctx := context.Background()
+	generateEd25519Source(t, srcProvider, "sw-to-tpm2-ed")
+
+	resp, err := svc.CopyKey(ctx, &transport.CopyKeyRequest{
+		SourceBackend: "software",
+		SourceKeyID:   "sw-to-tpm2-ed",
+		DestBackend:   "tpm2",
+		DestKeyID:     "sw-to-tpm2-ed-copy",
 	})
 	require.NoError(t, err)
 	require.True(t, resp.Success)
@@ -85,39 +110,17 @@ func TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithm(t *testing.T) {
 	require.NoError(t, err)
 	found := false
 	for _, a := range dstKeys {
-		if a != nil && a.CN == "sw-to-tpm2-kek-copy" {
+		if a != nil && a.CN == "sw-to-tpm2-ed-copy" {
 			found = true
-			break
 		}
 	}
 	require.True(t, found, "the simulated TPM2 destination must hold the copied key")
-
-	// The copy must be the same key: it decrypts what the source encrypted,
-	// and the source decrypts what the copy encrypts.
-	dec, err := svc.Decrypt(ctx, &transport.DecryptRequest{
-		Backend: "tpm2", KeyID: "sw-to-tpm2-kek-copy",
-		Ciphertext: fromSource.Ciphertext, Nonce: fromSource.Nonce, Tag: fromSource.Tag,
-		GCMNonceMode: fromSource.GCMNonceMode,
-	})
-	require.NoError(t, err, "the TPM2 copy must decrypt the source's ciphertext")
-	require.Equal(t, plaintext, dec.Plaintext)
-
-	fromCopy, err := svc.Encrypt(ctx, &transport.EncryptRequest{
-		Backend: "tpm2", KeyID: "sw-to-tpm2-kek-copy", Plaintext: plaintext,
-	})
-	require.NoError(t, err, "the TPM2 copy must encrypt")
-	dec, err = svc.Decrypt(ctx, &transport.DecryptRequest{
-		Backend: "software", KeyID: "sw-to-tpm2-kek",
-		Ciphertext: fromCopy.Ciphertext, Nonce: fromCopy.Nonce, Tag: fromCopy.Tag,
-		GCMNonceMode: fromCopy.GCMNonceMode,
-	})
-	require.NoError(t, err, "the source must decrypt the TPM2 copy's ciphertext")
-	require.Equal(t, plaintext, dec.Plaintext)
 }
 
-// TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest pins that a copy onto
-// an existing TPM2 key fails and leaves the existing key's blobs untouched.
-func TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest(t *testing.T) {
+// setupSoftwareToTPM2Copy registers a real software backend as "software"
+// and a simulator TPM2 backend as "tpm2", and returns the service.
+func setupSoftwareToTPM2Copy(t *testing.T) (*XKMSService, types.SymmetricKeyProvider, Backend, tpmstore.KeyBackend) {
+	t.Helper()
 	Reset()
 	t.Cleanup(Reset)
 
@@ -133,18 +136,30 @@ func TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest(t *testing.T) {
 	}))
 	svc, err := Get()
 	require.NoError(t, err)
-	ctx := context.Background()
+	return svc, srcProvider, dstBackend, dstKeys
+}
 
-	for _, cn := range []string{"sw-src-first", "sw-src-second"} {
-		_, err = srcProvider.GenerateSymmetricKey(ctx, &types.KeyAttributes{
-			CN:                 cn,
-			KeyType:            types.KeyTypeSecret,
-			StoreType:          types.StoreSoftware,
-			SymmetricAlgorithm: types.SymmetricAES256GCM,
-			Exportable:         true,
-		})
-		require.NoError(t, err)
-	}
+// generateEd25519Source generates an exportable Ed25519 key on the software
+// backend.
+func generateEd25519Source(t *testing.T, sw types.SymmetricKeyProvider, cn string) {
+	t.Helper()
+	_, err := sw.GenerateKey(context.Background(), &types.KeyAttributes{
+		CN:           cn,
+		KeyType:      types.KeyTypeSigning,
+		StoreType:    types.StoreSoftware,
+		KeyAlgorithm: x509.Ed25519,
+		Exportable:   true,
+	})
+	require.NoError(t, err)
+}
+
+// TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest pins that a copy onto
+// an existing TPM2 key fails and leaves the existing key's blobs untouched.
+func TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest(t *testing.T) {
+	svc, srcProvider, dstBackend, dstKeys := setupSoftwareToTPM2Copy(t)
+	ctx := context.Background()
+	generateEd25519Source(t, srcProvider, "sw-src-first")
+	generateEd25519Source(t, srcProvider, "sw-src-second")
 
 	copyTo := func(src string) (*transport.CopyKeyResponse, error) {
 		return svc.CopyKey(ctx, &transport.CopyKeyRequest{
