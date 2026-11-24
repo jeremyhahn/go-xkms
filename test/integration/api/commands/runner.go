@@ -78,6 +78,11 @@ type TestRunner struct {
 	Timeout        time.Duration
 	Verbose        bool
 	TLSCACert      string
+	// ClientCert, ClientKey and Token identify the caller on every remote
+	// transport: the server refuses anonymous (adaptive) auth.
+	ClientCert string
+	ClientKey  string
+	Token      string
 }
 
 // NewTestRunner creates a new test runner with default configuration
@@ -97,6 +102,9 @@ func NewTestRunner() *TestRunner {
 		Timeout:        30 * time.Second,
 		Verbose:        getEnv("VERBOSE", "") != "",
 		TLSCACert:      getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
+		ClientCert:     getEnv("KEYSTORE_TLS_CERT", ""),
+		ClientKey:      getEnv("KEYSTORE_TLS_KEY", ""),
+		Token:          getEnv("KEYSTORE_TOKEN", ""),
 	}
 }
 
@@ -234,6 +242,18 @@ func (r *TestRunner) protocolArgs(protocol ProtocolType, args []string) []string
 
 	if needsTLS && r.TLSCACert != "" {
 		prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
+	}
+
+	// Client credentials go to every remote transport; a value the
+	// command already carries wins.
+	for _, cred := range []struct{ flag, value string }{
+		{"--tls-cert", r.ClientCert},
+		{"--tls-key", r.ClientKey},
+		{"--token", r.Token},
+	} {
+		if cred.value != "" && !slices.Contains(args, cred.flag) {
+			prefixArgs = append(prefixArgs, cred.flag, cred.value)
+		}
 	}
 
 	return append(prefixArgs, args...)
