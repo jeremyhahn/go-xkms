@@ -226,6 +226,11 @@ func preNodeBackendPINError(err error) error {
 	if errors.As(err, &unavailable) && unavailable.Strategy != pinselect.BackendPINTPM2 {
 		return fmt.Errorf("%w: resolved strategy %q: %w", ErrBackendPINNodeKeyBeforeUnseal, unavailable.Strategy, err)
 	}
+	// Before unseal only a TPM-stored PIN is readable.
+	var storeErr *pinselect.BackendPINStoreError
+	if errors.As(err, &storeErr) {
+		return fmt.Errorf("%w: resolved strategy %q: %w", ErrBackendPINNodeKeyBeforeUnseal, storeErr.Strategy, err)
+	}
 	return err
 }
 

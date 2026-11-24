@@ -202,14 +202,16 @@ func ResolveBackendPIN(cfg BackendPINConfig) (BackendPINStrategy, error) {
 	if err := checkBackendPINAvailable(cfg, chosen); err != nil {
 		return "", err
 	}
+	// The minimum is checked before the store: a strategy below the
+	// minimum is refused as such whatever the store holds.
+	if cfg.Minimum != "" && backendPINRank[chosen] < backendPINRank[cfg.Minimum] {
+		return "", &BackendPINBelowMinimumError{Strategy: chosen, Minimum: cfg.Minimum}
+	}
 	// manual is never stored, so no store provides or contradicts it; tpm2
 	// with a TPM sealer seals the PIN to the TPM whatever the store.
 	tpmSealed := chosen == BackendPINTPM2 && cfg.TPMSealerAvailable
 	if cfg.Store != "" && chosen != BackendPINManual && chosen != cfg.Store && !tpmSealed {
 		return "", &BackendPINStoreError{Strategy: chosen, Store: cfg.Store}
-	}
-	if cfg.Minimum != "" && backendPINRank[chosen] < backendPINRank[cfg.Minimum] {
-		return "", &BackendPINBelowMinimumError{Strategy: chosen, Minimum: cfg.Minimum}
 	}
 	if fresh {
 		if err := SaveBackendPINStrategy(cfg.PINDir, chosen); err != nil {

@@ -268,6 +268,20 @@ func TestResolveBackendPIN_MinimumRefusesBelow(t *testing.T) {
 	assertNoBackendPINRecord(t, cfg.PINDir)
 }
 
+func TestResolveBackendPIN_MinimumRefusedBeforeStoreMismatch(t *testing.T) {
+	cfg := backendPINCfg(t)
+	cfg.Strategy = BackendPINSealed
+	cfg.BarrierAvailable = true
+	cfg.Store = BackendPINManual
+	cfg.Minimum = BackendPINTPM2
+	_, err := ResolveBackendPIN(cfg)
+	var below *BackendPINBelowMinimumError
+	if !errors.As(err, &below) || below.Strategy != BackendPINSealed || below.Minimum != BackendPINTPM2 {
+		t.Fatalf("err = %v, want BackendPINBelowMinimumError sealed<tpm2", err)
+	}
+	assertNoBackendPINRecord(t, cfg.PINDir)
+}
+
 func TestResolveBackendPIN_MinimumRefusesPersistedBelow(t *testing.T) {
 	cfg := backendPINCfg(t)
 	if err := SaveBackendPINStrategy(cfg.PINDir, BackendPINTPM2); err != nil {
