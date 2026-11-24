@@ -325,11 +325,7 @@ func (s *Server) sealerIsPKCS11() bool {
 // releases a PIN whose protection is weaker than the persisted strategy.
 func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy, pinSecret func() backendPINSecret, custody *atomic.Bool) func(context.Context) ([]byte, error) {
 	configured := func(ctx context.Context) ([]byte, error) {
-		p := pinSecret()
-		if p.secret == nil {
-			return nil, errBackendPINNoConfiguredPIN
-		}
-		return secretPIN(ctx, p.secret)
+		return s.configuredBackendPIN(ctx, pinSecret) //secure:unwiped the release slice is consumed by pinselect.BackendPIN.Unseal (secure.NewBufferFromBytes wipes it)
 	}
 	if strategy != pinselect.BackendPINTPM2 && strategy != pinselect.BackendPINSealed {
 		return configured
@@ -345,6 +341,17 @@ func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy, pinSec
 		}
 		return configured(ctx)
 	}
+}
+
+// configuredBackendPIN returns the configured PIN as a slice the holder
+// consumes: pinselect.BackendPIN.Unseal moves it into a secure.Buffer,
+// which wipes it.
+func (s *Server) configuredBackendPIN(ctx context.Context, pinSecret func() backendPINSecret) ([]byte, error) {
+	p := pinSecret()
+	if p.secret == nil {
+		return nil, errBackendPINNoConfiguredPIN
+	}
+	return secretPIN(ctx, p.secret)
 }
 
 // tpmSealedBackendPINRelease releases a tpm2 backend PIN whose storage is
