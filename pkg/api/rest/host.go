@@ -360,7 +360,13 @@ func (a *WebAuthnTokenAdapter) GenerateTokenPair(ctx context.Context, user webau
 // crashed before it, leaves no side effect. That Save delegates to the
 // wrapped store as usual (which then only confirms the committed record); if
 // it fails, the relying party deletes the credential through the decorator,
-// so the decorator must undo its own effect in Delete.
+// so the decorator must undo its own effect in Delete. A crash after the
+// claim commits, or a crashed claimer's claim rolled forward, leaves the
+// credential undecorated; the invite resume repairs it by repeating that
+// Save once possession is proven, so a decorator's Save for a first
+// credential must be idempotent. Once it has completed, the wrapped store
+// refuses a repeat with webauthn.ErrFirstCredentialSettled, and the decorator
+// must add no effect on that error.
 type WebAuthnCredentialStoreDecorator func(webauthn.CredentialStore) webauthn.CredentialStore
 
 // WebAuthnServiceParams configures BuildWebAuthnService.

@@ -130,10 +130,21 @@ type CredentialStore interface {
 	// for an account's first credential run only once its claim commits. A claim
 	// that is neither committed nor released (the ceremony crashed) is
 	// recovered by a later claimer once its lease has expired, provided the
-	// account still has no credential. The committed claim stays in place
+	// account still has no credential; if the crashed claimer had saved its
+	// credential, the claim is rolled forward instead. A credential's claim
+	// commits unsettled, and SettleFirstCredential settles it once the
+	// decorated Save completes. A claim left unsettled by a crash (after
+	// Commit, or rolled forward) is repaired by the invite resume, which
+	// repeats the decorated Save, so a decorator's Save for a first
+	// credential must be idempotent. The committed claim stays in place
 	// while the account holds credentials; removing its last credential
 	// drops it.
 	ClaimFirstCredential(ctx context.Context, userID []byte) (FirstCredentialClaim, error)
+
+	// SettleFirstCredential records that the decorated Save of userID's
+	// first credential has completed, so it is never repeated. It is a
+	// no-op when the account's committed claim is already settled or absent.
+	SettleFirstCredential(ctx context.Context, userID []byte) error
 }
 
 // committedFirstCredentialKey is the context key withCommittedFirstCredential
@@ -147,7 +158,11 @@ type committedFirstCredentialKey struct{}
 // applies its Save side effects (a composer's auth factor) only to a
 // credential the account keeps: a ceremony fenced out at Commit, or one that
 // crashed before it, leaves no side effect. The underlying store, seeing the
-// marker, confirms the committed record instead of persisting it again.
+// marker, confirms the committed record instead of persisting it again, and
+// refuses with ErrFirstCredentialSettled once the claim is settled. A crash
+// after Commit, or a roll-forward of a crashed claimer, leaves the claim
+// unsettled: the invite resume repeats the Save under this marker to repair
+// the decorator's effect, so that Save must be idempotent.
 func withCommittedFirstCredential(ctx context.Context) context.Context {
 	return context.WithValue(ctx, committedFirstCredentialKey{}, true)
 }

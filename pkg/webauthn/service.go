@@ -627,6 +627,11 @@ func (s *Service) FinishInviteResume(ctx context.Context, sessionID string, invi
 	if !bytes.Equal(credential.ID, stored.ID) {
 		return nil, NewVerificationError("validate invite resume", nil)
 	}
+	// Possession is proven: repair a first credential a crash left
+	// undecorated before the resume records its use.
+	if err := s.reconcileFirstCredential(ctx, stored); err != nil {
+		return nil, err
+	}
 	if err := s.recordAssertion(ctx, user, credential, response); err != nil {
 		return nil, err
 	}
@@ -743,7 +748,10 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 // fenced out at Commit, or one that crashes before it, leaves none. If that
 // decorated Save fails, the credential is deleted through the configured
 // store, so the decorator undoes its own effect and the account may enrol
-// again.
+// again. Once it succeeds the claim is settled. A crash between Commit and
+// the settle leaves the claim unsettled; the invite resume repeats the
+// decorated Save (reconcileFirstCredential), so a decorator's Save for a
+// first credential must be idempotent.
 func (s *Service) saveFirstCredential(ctx context.Context, claim FirstCredentialClaim, cred *Credential) error {
 	if err := claim.Save(ctx, cred); err != nil {
 		if relErr := claim.Release(context.WithoutCancel(ctx)); relErr != nil {
@@ -760,10 +768,38 @@ func (s *Service) saveFirstCredential(ctx context.Context, claim FirstCredential
 		return WrapError("commit first credential", err)
 	}
 	if err := s.creds.Save(withCommittedFirstCredential(ctx), cred); err != nil {
+		// A concurrent resume already completed and settled it.
+		if errors.Is(err, ErrFirstCredentialSettled) {
+			return nil
+		}
 		if delErr := s.creds.Delete(context.WithoutCancel(ctx), cred.ID); delErr != nil {
 			s.logger.Error("delete first credential after a failed decorated save", "error", delErr)
 		}
 		return WrapError("save credential", err)
+	}
+	if err := s.creds.SettleFirstCredential(context.WithoutCancel(ctx), cred.UserID); err != nil {
+		// The credential and its decorator effect are in place; the claim
+		// stays unsettled and a resume repeats the idempotent Save.
+		s.logger.Error("settle first credential", "error", err)
+	}
+	return nil
+}
+
+// reconcileFirstCredential completes the decorated Save of stored, an
+// account's first credential, when a crash left its committed claim
+// unsettled (after Commit, or rolled forward from a crashed claimer). A
+// settled credential is not decorated again. Any other failure fails the
+// resume and keeps the credential, so a later resume retries.
+func (s *Service) reconcileFirstCredential(ctx context.Context, stored *Credential) error {
+	err := s.creds.Save(withCommittedFirstCredential(ctx), stored)
+	if errors.Is(err, ErrFirstCredentialSettled) {
+		return nil
+	}
+	if err != nil {
+		return WrapError("reconcile first credential", err)
+	}
+	if err := s.creds.SettleFirstCredential(ctx, stored.UserID); err != nil {
+		return WrapError("settle first credential", err)
 	}
 	return nil
 }

@@ -129,6 +129,10 @@ func (s *faultyCredStore) ClaimFirstCredential(ctx context.Context, userID []byt
 	return &faultyClaim{FirstCredentialClaim: claim, store: s}, nil
 }
 
+func (s *faultyCredStore) SettleFirstCredential(ctx context.Context, userID []byte) error {
+	return s.inner.SettleFirstCredential(ctx, userID)
+}
+
 // faultyClaim fails a claim-bound save with its store's saveErr.
 type faultyClaim struct {
 	FirstCredentialClaim

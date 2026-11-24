@@ -79,6 +79,12 @@ type firstCredentialClaimEntity struct {
 	Pending   bool   `json:"pending,omitempty"`
 	Token     string `json:"token,omitempty"`
 	ExpiresAt int64  `json:"expires_at,omitempty"`
+	// Unsettled marks a committed claim whose first credential has not had
+	// its decorated Save completed (the ceremony crashed after Commit, or a
+	// crashed claimer's claim was rolled forward). The invite resume repairs
+	// it. Claims committed before the mark existed, and claims committed with
+	// no credential (PIV), read as settled.
+	Unsettled bool `json:"unsettled,omitempty"`
 }
 
 // EntityID returns the entity's ID.
@@ -176,7 +182,9 @@ func (s *daoCredentialStore) ClaimFirstCredential(ctx context.Context, userID []
 		case held.Token:
 			// The crashed claimer saved its credential but never committed:
 			// roll its claim forward so the account keeps that credential.
-			committed := &firstCredentialClaimEntity{ID: held.ID, UserID: held.UserID, Token: held.Token}
+			// Its decorated Save never ran: the claim commits unsettled, so
+			// the invite resume repairs it.
+			committed := &firstCredentialClaimEntity{ID: held.ID, UserID: held.UserID, Token: held.Token, Unsettled: true}
 			if _, err := s.claims.CompareAndSwap(ctx, held, committed); err != nil && !qrdbsdk.IsDAONotFound(err) {
 				return nil, WrapError("commit first-credential claim", err)
 			}
@@ -208,8 +216,10 @@ type daoFirstCredentialClaim struct {
 func (c *daoFirstCredentialClaim) Commit(ctx context.Context, cred *Credential) error {
 	ctx = credentialScope(ctx)
 	// The committed claim keeps the token: it is what makes the credential
-	// saved under this claim readable.
-	committed := &firstCredentialClaimEntity{ID: c.claim.ID, UserID: c.claim.UserID, Token: c.claim.Token}
+	// saved under this claim readable. A credential's claim commits unsettled
+	// until the Service's decorated Save completes and settles it; a claim
+	// with no credential (PIV) has no decorated Save and commits settled.
+	committed := &firstCredentialClaimEntity{ID: c.claim.ID, UserID: c.claim.UserID, Token: c.claim.Token, Unsettled: cred != nil}
 	swapped, err := c.store.claims.CompareAndSwap(ctx, c.claim, committed)
 	if err != nil && !qrdbsdk.IsDAONotFound(err) {
 		return WrapError("commit first-credential claim", err)
@@ -298,7 +308,11 @@ func (s *daoCredentialStore) dropClaim(ctx context.Context, userID string) error
 // Save of an account's first credential, made so a decorator over this store
 // applies its side effects only once the claim has committed: the claim
 // already persisted cred, so Save only confirms that the record is there and
-// readable under the committed claim, and persists nothing.
+// readable under the committed claim, and persists nothing. It returns
+// ErrFirstCredentialSettled when the claim is settled (the decorated Save
+// already completed), so a decorator adds no effect again. The Save is
+// repeated, by the invite resume, for a claim left unsettled by a crash, so a
+// decorator's Save for a first credential must be idempotent.
 func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
 	if isCommittedFirstCredential(ctx) {
 		return s.confirmCommitted(ctx, cred)
@@ -307,8 +321,10 @@ func (s *daoCredentialStore) Save(ctx context.Context, cred *Credential) error {
 }
 
 // confirmCommitted reports nil when cred is stored for its account under the
-// account's committed first-credential claim, and ErrCredentialNotFound when
-// it is not (removed, or never committed).
+// account's committed first-credential claim and that claim is unsettled,
+// ErrFirstCredentialSettled when the claim is settled, and
+// ErrCredentialNotFound when cred is not stored under it (removed, or never
+// committed).
 func (s *daoCredentialStore) confirmCommitted(ctx context.Context, cred *Credential) error {
 	ctx = credentialScope(ctx)
 	if cred == nil || len(cred.ID) == 0 {
@@ -318,8 +334,12 @@ func (s *daoCredentialStore) confirmCommitted(ctx context.Context, cred *Credent
 	if err != nil {
 		return err
 	}
-	if e.UserID != encodeID(cred.UserID) || e.ClaimToken == "" {
+	if e.UserID != encodeID(cred.UserID) {
 		return ErrCredentialNotFound
+	}
+	if e.ClaimToken == "" {
+		// Saved outside any claim: its own Save was the decorated one.
+		return ErrFirstCredentialSettled
 	}
 	readable, err := s.visible(ctx, e.UserID, []*credentialEntity{e})
 	if err != nil {
@@ -327,6 +347,43 @@ func (s *daoCredentialStore) confirmCommitted(ctx context.Context, cred *Credent
 	}
 	if len(readable) == 0 {
 		return ErrCredentialNotFound
+	}
+	claim, err := s.claims.GetByNaturalKey(ctx, e.UserID)
+	if err != nil {
+		if qrdbsdk.IsDAONotFound(err) {
+			return ErrCredentialNotFound
+		}
+		return WrapError("read first-credential claim", err)
+	}
+	if !claim.Unsettled {
+		return ErrFirstCredentialSettled
+	}
+	return nil
+}
+
+// SettleFirstCredential clears the unsettled mark of the account's committed
+// first-credential claim, once the decorated Save of its credential has
+// completed. The swap compares against the exact record read; it is a no-op
+// when the claim is absent, pending or already settled.
+func (s *daoCredentialStore) SettleFirstCredential(ctx context.Context, userID []byte) error {
+	ctx = credentialScope(ctx)
+	if len(userID) == 0 {
+		return ErrInvalidCredential
+	}
+	held, err := s.claims.GetByNaturalKey(ctx, encodeID(userID))
+	if err != nil {
+		if qrdbsdk.IsDAONotFound(err) {
+			return nil
+		}
+		return WrapError("read first-credential claim", err)
+	}
+	if held.Pending || !held.Unsettled {
+		return nil
+	}
+	settled := *held
+	settled.Unsettled = false
+	if _, err := s.claims.CompareAndSwap(ctx, held, &settled); err != nil && !qrdbsdk.IsDAONotFound(err) {
+		return WrapError("settle first-credential claim", err)
 	}
 	return nil
 }
