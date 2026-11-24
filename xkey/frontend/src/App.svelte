@@ -56,6 +56,7 @@
   import TrustStore from './views/TrustStore.svelte';
   import OIDC from './views/OIDC.svelte';
   import Certificates from './views/Certificates.svelte';
+  import CA from './views/CA.svelte';
   import APIExplorer from './views/APIExplorer.svelte';
   import Browser from './views/Browser.svelte';
   import SSH from './views/SSH.svelte';
@@ -75,6 +76,7 @@
     { id: 'ssh', label: 'SSH', icon: mdiSsh, section: 'applications' },
     { id: 'trust-store', label: 'Trust Store', icon: mdiShieldLockOutline, section: 'store' },
     { id: 'certificates', label: 'Certificates', icon: mdiCertificate, section: 'store' },
+    { id: 'ca', label: 'Certificate Authority', icon: mdiCertificate, section: 'store' },
     { id: 'fido2', label: 'FIDO2', icon: mdiShieldCheckOutline, section: 'applications' },
     { id: 'oath', label: 'OATH', icon: mdiNumeric, section: 'applications' },
     { id: 'piv', label: 'PIV', icon: mdiCreditCardOutline, section: 'applications' },
@@ -460,6 +462,8 @@
         <TrustStore />
       {:else if view === 'certificates'}
         <Certificates />
+      {:else if view === 'ca'}
+        <CA />
       {:else if view === 'api-explorer'}
         <APIExplorer />
       {:else if view === 'browser'}
