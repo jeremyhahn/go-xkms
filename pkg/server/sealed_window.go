@@ -15,6 +15,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -142,7 +143,31 @@ func (s *Server) serveSealedWindow(node *qrdbnode.Node) error {
 	// completing the pending boot (BuildServices + server.New); empty
 	// credentials are correct here.
 	if err := node.Unseal(ctx, seal.Credentials{}); err != nil {
-		return &QRDBNodeError{Stage: "complete boot after sealed window", Err: err}
+		return &QRDBNodeError{Stage: StageBootAfterSealedWindow, Err: err}
 	}
 	return nil
+}
+
+// StageBootAfterSealedWindow is the QRDBNodeError stage of a boot-completion
+// failure after the barrier was unsealed through the sealed-window listener
+// (for example a pebble WAL that fails to replay).
+const StageBootAfterSealedWindow = "complete boot after sealed window"
+
+// BootCompletionFailure reports whether err (as returned by New) carries a
+// boot-completion failure after unseal, and returns that QRDBNodeError. It
+// walks the whole chain: the outer QRDBNodeError is the "sealed window"
+// stage wrapping the boot-completion one. Every other failure (a cancelled
+// or timed-out window, a bind refusal, a TLS build error) returns false.
+func BootCompletionFailure(err error) (*QRDBNodeError, bool) {
+	for err != nil {
+		var nodeErr *QRDBNodeError
+		if !errors.As(err, &nodeErr) {
+			return nil, false
+		}
+		if nodeErr.Stage == StageBootAfterSealedWindow {
+			return nodeErr, true
+		}
+		err = nodeErr.Unwrap()
+	}
+	return nil, false
 }
