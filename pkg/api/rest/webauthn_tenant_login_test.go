@@ -14,8 +14,12 @@
 package rest
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -25,7 +29,9 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
 const (
@@ -232,6 +238,62 @@ func TestTenantLogin_CrossTenantIsDecoy(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, f.router.CachedTenants())
+}
+
+// TestTenantLogin_AddCredentialUsesIdentityTenant pins Codex round 2 on
+// #2387: a tenant user signed in through the tenant login adds a second
+// passkey on its own tenant's RP, while the system RP still refuses the
+// tenant account (qrdbUserStore.GetByID isolation).
+func TestTenantLogin_AddCredentialUsesIdentityTenant(t *testing.T) {
+	f := newTenantLoginFixture(t)
+	h := webauthnhttp.NewHandler(f.router.System()).WithTenants(f.router)
+
+	identity := func(tenantID string) *auth.Identity {
+		return &auth.Identity{
+			Subject:  base64.RawURLEncoding.EncodeToString(f.handle),
+			TenantID: tenantID,
+			Metadata: map[string]string{"email": tenantLoginEmail},
+		}
+	}
+	post := func(handler http.HandlerFunc, path string, body []byte, id *auth.Identity, sessionID string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		if sessionID != "" {
+			req.Header.Set(webauthnhttp.HeaderSessionID, sessionID)
+		}
+		req = req.WithContext(auth.WithIdentity(req.Context(), id))
+		rec := httptest.NewRecorder()
+		handler(rec, req)
+		return rec
+	}
+
+	t.Run("signed-in tenant adds a passkey", func(t *testing.T) {
+		id := identity(tenantLoginTenantB)
+		rec := post(h.BeginAddCredential, "/credentials/begin", nil, id, "")
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		sessionID := rec.Header().Get(webauthnhttp.HeaderSessionID)
+		require.NotEmpty(t, sessionID)
+
+		var opts protocol.CredentialCreation
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &opts))
+		raw, err := json.Marshal(opts.Response)
+		require.NoError(t, err)
+		attOpts, err := virtualwebauthn.ParseAttestationOptions(string(raw))
+		require.NoError(t, err)
+		second := virtualwebauthn.NewCredential(virtualwebauthn.KeyTypeEC2)
+		att := virtualwebauthn.CreateAttestationResponse(f.rp, f.authn, second, *attOpts)
+
+		rec = post(h.FinishRegistration, "/register/finish", []byte(att), id, sessionID)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	})
+
+	t.Run("system RP still refuses the tenant account", func(t *testing.T) {
+		rec := post(h.BeginAddCredential, "/credentials/begin", nil, identity("system"), "")
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		require.Equal(t, webauthnhttp.ErrorCodeSessionAccountMismatch, body["error"])
+	})
 }
 
 func newTenantLoginDAOFactory() *qrdbsdk.DAOFactory {
