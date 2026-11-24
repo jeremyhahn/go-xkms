@@ -495,6 +495,20 @@ func commandOverrides(cmd CommandDefinition, protocol ProtocolType, runID int64,
 			overrides[key] = strings.ReplaceAll(arg.Value, MatrixWorkDir, workDir)
 		}
 	}
+	// Create-chain identifiers get a per-transport name, keyed the way
+	// BuildCommandArgs reads overrides (positional by description).
+	names := perTransportNames(protocol, runID)
+	for _, arg := range append(slices.Clone(cmd.RequiredArgs), cmd.OptionalArgs...) {
+		name, ok := names[arg.Value]
+		if !ok {
+			continue
+		}
+		key := arg.Flag
+		if arg.IsPositional {
+			key = arg.Description
+		}
+		overrides[key] = name
+	}
 	return overrides
 }
 
@@ -553,4 +567,18 @@ func uniqueKeyIDs(runID int64) map[string]string {
 		"test-symmetric-sensitive":  fmt.Sprintf("test-symmetric-sensitive-%d", runID),
 		"test-import-key":           fmt.Sprintf("test-import-key-%d", runID),
 	}
+}
+
+// perTransportNames maps each literal create-chain identifier (tenant,
+// user, OIDC credential, backend credential) to a name unique to the
+// protocol and run, so the chains of two transports never collide on the
+// shared server. The email keeps its domain.
+func perTransportNames(protocol ProtocolType, runID int64) map[string]string {
+	names := map[string]string{
+		"it-user@example.com": fmt.Sprintf("it-user-%s-%d@example.com", protocol, runID),
+	}
+	for _, base := range []string{"it-tenant", "it-user", "it-oidc", "it-credential"} {
+		names[base] = fmt.Sprintf("%s-%s-%d", base, protocol, runID)
+	}
+	return names
 }

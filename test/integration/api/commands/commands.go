@@ -1037,77 +1037,68 @@ func pos(value, description string) ArgDefinition {
 }
 
 // TenantCommands returns the tenant family (cmd/xkmsctl/tenant.go). The
-// create -> show -> update-* -> delete chain mutates one fixed tenant id, so
-// it is RequiresSetup: running it on six transports against one server needs
-// a per-transport id, which the runner does not derive yet.
+// create -> show -> update-* -> delete chain runs on every server transport:
+// commandOverrides gives the tenant id a per-transport name
+// (perTransportNames), and each later verb has tenant-create as SetupSteps.
 func TenantCommands() []CommandDefinition {
 	id := ArgDefinition{Flag: "id", Value: "it-tenant", Description: "Tenant ID"}
+	chain := func(name string, command []string, desc string, args ...ArgDefinition) CommandDefinition {
+		return limitToServer(CommandDefinition{
+			Name: name, Category: CategoryTenant, Command: command, Description: desc,
+			RequiresServer: true, RequiresSetup: true, SetupSteps: []string{"tenant-create"},
+			RequiredArgs: append([]ArgDefinition{id}, args...),
+		}, ReasonEmbeddedNoTenant)
+	}
+	show := chain("tenant-show", []string{"tenant", "show"}, "Show a tenant")
+	show.ExpectedOutputContains = []string{"it-tenant"}
 	return []CommandDefinition{
-		{
+		limitToServer(CommandDefinition{
 			Name: "tenant-create", Category: CategoryTenant,
 			Command:        []string{"tenant", "create"},
 			Description:    "Create a tenant",
-			RequiresServer: true, RequiresSetup: true,
+			RequiresServer: true,
 			RequiredArgs: []ArgDefinition{id,
 				{Flag: "name", Value: "IT tenant", Description: "Tenant display name"}},
 			OptionalArgs: []ArgDefinition{{Flag: "isolation", Value: "prefix", Description: "Isolation mode"}},
-		},
+		}, ReasonEmbeddedNoTenant),
 		limitToServer(CommandDefinition{
 			Name: "tenant-list", Category: CategoryTenant,
 			Command:        []string{"tenant", "list"},
 			Description:    "List tenants",
 			RequiresServer: true,
 		}, ReasonEmbeddedNoTenant),
-		{
-			Name: "tenant-show", Category: CategoryTenant,
-			Command:        []string{"tenant", "show"},
-			Description:    "Show a tenant",
-			RequiresServer: true, RequiresSetup: true,
-			RequiredArgs:           []ArgDefinition{id},
-			ExpectedOutputContains: []string{"it-tenant"},
-		},
-		{
-			Name: "tenant-update-entitlements", Category: CategoryTenant,
-			Command:        []string{"tenant", "update-entitlements"},
-			Description:    "Update a tenant's entitlements",
-			RequiresServer: true, RequiresSetup: true,
-			RequiredArgs: []ArgDefinition{id,
-				{Flag: "isolation-modes", Value: "prefix,barrier", Description: "Permitted isolation modes"}},
-		},
-		{
-			Name: "tenant-update-quotas", Category: CategoryTenant,
-			Command:        []string{"tenant", "update-quotas"},
-			Description:    "Update a tenant's quotas",
-			RequiresServer: true, RequiresSetup: true,
-			RequiredArgs: []ArgDefinition{id,
-				{Flag: "max-keys", Value: "100", Description: "Max keys"}},
-		},
-		{
-			Name: "tenant-delete", Category: CategoryTenant,
-			Command:        []string{"tenant", "delete"},
-			Description:    "Delete a tenant",
-			RequiresServer: true, RequiresSetup: true,
-			RequiredArgs: []ArgDefinition{id},
-		},
+		show,
+		chain("tenant-update-entitlements", []string{"tenant", "update-entitlements"}, "Update a tenant's entitlements",
+			ArgDefinition{Flag: "isolation-modes", Value: "prefix,barrier", Description: "Permitted isolation modes"}),
+		chain("tenant-update-quotas", []string{"tenant", "update-quotas"}, "Update a tenant's quotas",
+			ArgDefinition{Flag: "max-keys", Value: "100", Description: "Max keys"}),
+		chain("tenant-delete", []string{"tenant", "delete"}, "Delete a tenant"),
 	}
 }
 
 // UserCommands returns the user family (cmd/xkmsctl/user.go, user_invite.go).
 // The register -> get -> update -> disable -> enable -> delete chain is
-// RequiresSetup for the same per-transport naming reason as the tenant chain.
+// per-transport named like the tenant chain (username and email), and each
+// later verb has user-register as SetupSteps.
 func UserCommands() []CommandDefinition {
 	user := pos("it-user", "Username")
 	chain := func(name string, command []string, desc string, args ...ArgDefinition) CommandDefinition {
-		return CommandDefinition{
+		return limitToServer(CommandDefinition{
 			Name: name, Category: CategoryUser, Command: command, Description: desc,
-			RequiresServer: true, RequiresSetup: true,
+			RequiresServer: true, RequiresSetup: true, SetupSteps: []string{"user-register"},
 			RequiredArgs: append([]ArgDefinition{user}, args...),
-		}
+		}, ReasonEmbeddedNoUser)
 	}
 	return []CommandDefinition{
-		chain("user-register", []string{"user", "register"}, "Register a user",
-			ArgDefinition{Flag: "email", Value: "it-user@example.com", Description: "Login email"},
-			ArgDefinition{Flag: "role", Value: "user", Description: "User role"}),
+		limitToServer(CommandDefinition{
+			Name: "user-register", Category: CategoryUser,
+			Command:        []string{"user", "register"},
+			Description:    "Register a user",
+			RequiresServer: true,
+			RequiredArgs: []ArgDefinition{user,
+				{Flag: "email", Value: "it-user@example.com", Description: "Login email"},
+				{Flag: "role", Value: "user", Description: "User role"}},
+		}, ReasonEmbeddedNoUser),
 		{
 			Name: "user-login", Category: CategoryUser,
 			Command:        []string{"user", "login"},
@@ -1183,16 +1174,16 @@ func AuthCommands() []CommandDefinition {
 // and the verbs augmentCanonicalCredentialCmd adds in canonical.go).
 func CredentialCommands() []CommandDefinition {
 	return []CommandDefinition{
-		{
+		limitToServer(CommandDefinition{
 			Name: "credential-submit", Category: CategoryCredential,
 			Command:        []string{"credential", "submit"},
 			Description:    "Submit a backend credential",
-			RequiresServer: true, RequiresSetup: true,
+			RequiresServer: true,
 			RequiredArgs: []ArgDefinition{
 				{Flag: "name", Value: "it-credential", Description: "Credential name"},
 				{Flag: "value", Value: "it-secret", Description: "Credential value"},
 			},
-		},
+		}, ReasonEmbeddedNoCredential),
 		limitToServer(CommandDefinition{
 			Name: "credential-list", Category: CategoryCredential,
 			Command:        []string{"credential", "list"},
@@ -1216,32 +1207,40 @@ func CredentialCommands() []CommandDefinition {
 }
 
 // OIDCCommands returns the oidc family (cmd/xkmsctl/oidc.go). The stack has
-// no identity provider, so the chain imports a static token
-// (import -> get -> token -> delete); refresh and the browser login are skipped.
+// no identity provider, so the chain creates a per-transport credential and
+// imports a static token into it (create -> import -> get -> token -> delete);
+// refresh and the browser login are skipped.
 func OIDCCommands() []CommandDefinition {
 	name := pos("it-oidc", "Credential name")
-	chain := func(cmdName, verb, desc string, args ...ArgDefinition) CommandDefinition {
-		return CommandDefinition{
+	// Every verb acts on the credential oidc-create made; oidc-import adds
+	// its token (no --create, so the pass never creates one name twice) and
+	// the later verbs run after it, so oidc-token has a token to print.
+	chain := func(cmdName, verb, desc string, setup []string, args ...ArgDefinition) CommandDefinition {
+		return limitToServer(CommandDefinition{
 			Name: cmdName, Category: CategoryOIDC, Command: []string{"oidc", verb}, Description: desc,
-			RequiresServer: true, RequiresSetup: true,
+			RequiresServer: true, RequiresSetup: true, SetupSteps: setup,
 			RequiredArgs: append([]ArgDefinition{name}, args...),
-		}
+		}, ReasonEmbeddedNoOIDC)
 	}
+	created := []string{"oidc-create"}
+	imported := []string{"oidc-create", "oidc-import"}
 	return []CommandDefinition{
 		{
 			Name: "oidc-templates", Category: CategoryOIDC,
 			Command:     []string{"oidc", "templates"},
 			Description: "List the OIDC provider templates",
 		},
-		chain("oidc-create", "create", "Create an OIDC credential",
-			ArgDefinition{Flag: "issuer", Value: "https://idp.example.com", Description: "Issuer URL"},
-			ArgDefinition{Flag: "client-id", Value: "it-client", Description: "Client ID"},
-			ArgDefinition{Flag: "token-endpoint", Value: "https://idp.example.com/token", Description: "Token endpoint"}),
-		chain("oidc-import", "import", "Import a static token into a new OIDC credential",
-			ArgDefinition{Flag: "create", Description: "Create the credential first", IsBoolean: true},
-			ArgDefinition{Flag: "issuer", Value: "https://idp.example.com", Description: "Issuer URL"},
-			ArgDefinition{Flag: "client-id", Value: "it-client", Description: "Client ID"},
-			ArgDefinition{Flag: "token-endpoint", Value: "https://idp.example.com/token", Description: "Token endpoint"},
+		limitToServer(CommandDefinition{
+			Name: "oidc-create", Category: CategoryOIDC,
+			Command:        []string{"oidc", "create"},
+			Description:    "Create an OIDC credential",
+			RequiresServer: true,
+			RequiredArgs: []ArgDefinition{name,
+				{Flag: "issuer", Value: "https://idp.example.com", Description: "Issuer URL"},
+				{Flag: "client-id", Value: "it-client", Description: "Client ID"},
+				{Flag: "token-endpoint", Value: "https://idp.example.com/token", Description: "Token endpoint"}},
+		}, ReasonEmbeddedNoOIDC),
+		chain("oidc-import", "import", "Import a static token into the OIDC credential", created,
 			ArgDefinition{Flag: "access-token", Value: "it-access-token", Description: "Access token"},
 			ArgDefinition{Flag: "expires-at", Value: "2099-01-01T00:00:00Z", Description: "Token expiry"}),
 		limitToServer(CommandDefinition{
@@ -1250,8 +1249,8 @@ func OIDCCommands() []CommandDefinition {
 			Description:    "List OIDC credentials",
 			RequiresServer: true,
 		}, ReasonEmbeddedNoOIDC),
-		chain("oidc-get", "get", "Show an OIDC credential"),
-		chain("oidc-token", "token", "Print an OIDC credential's access token"),
+		chain("oidc-get", "get", "Show an OIDC credential", created),
+		chain("oidc-token", "token", "Print an OIDC credential's access token", imported),
 		{
 			Name: "oidc-refresh", Category: CategoryOIDC,
 			Command:        []string{"oidc", "refresh"},
@@ -1267,7 +1266,7 @@ func OIDCCommands() []CommandDefinition {
 			Skip:           "browser/device login flow with no headless path; " + skipNoOIDCProvider,
 			RequiredArgs:   []ArgDefinition{name},
 		},
-		chain("oidc-delete", "delete", "Delete an OIDC credential"),
+		chain("oidc-delete", "delete", "Delete an OIDC credential", created),
 	}
 }
 
