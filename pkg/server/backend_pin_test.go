@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // fakePKCS11Provider stands in for the PKCS#11 backend: only Close is used.
@@ -231,10 +232,12 @@ type fakeBackendPINCredentials struct {
 	values    map[string][]byte
 	stores    int
 	failStore map[string]bool
+	// failDelete makes DeleteCredential of a name fail, leaving it stored.
+	failDelete map[string]bool
 }
 
 func newFakeBackendPINCredentials(values map[string][]byte) *fakeBackendPINCredentials {
-	f := &fakeBackendPINCredentials{values: map[string][]byte{}, failStore: map[string]bool{}}
+	f := &fakeBackendPINCredentials{values: map[string][]byte{}, failStore: map[string]bool{}, failDelete: map[string]bool{}}
 	for name, v := range values {
 		f.values[name] = append([]byte(nil), v...)
 	}
@@ -255,8 +258,39 @@ func (f *fakeBackendPINCredentials) StoreCredential(_ context.Context, name stri
 func (f *fakeBackendPINCredentials) DeleteCredential(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failDelete[name] {
+		return errors.New("fake credential store: delete refused")
+	}
 	delete(f.values, name)
 	return nil
+}
+
+func (f *fakeBackendPINCredentials) ListCredentials(context.Context) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	names := make([]string, 0, len(f.values))
+	for name := range f.values {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+func (f *fakeBackendPINCredentials) RetrieveCredentialBuffer(_ context.Context, name string) (*secure.Buffer, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	v, ok := f.values[name]
+	if !ok {
+		return nil, errors.New("fake credential store: not found")
+	}
+	return secure.NewBufferFromBytes(append([]byte(nil), v...))
+}
+
+// has reports whether name is stored.
+func (f *fakeBackendPINCredentials) has(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.values[name]
+	return ok
 }
 
 func (f *fakeBackendPINCredentials) value(name string) []byte {
@@ -305,6 +339,7 @@ func TestResolveBackendPIN_TPM2MinimumLeavesNoBarrierPINCopy(t *testing.T) {
 	stored := creds.value("pkcs11-pin")
 	require.NotEmpty(t, stored, "the credential holds the TPM-sealed blob")
 	require.False(t, bytes.Contains(stored, pin), "no barrier-stored plaintext PIN copy is left")
+	require.False(t, creds.has("pkcs11-pin-tpm2-staged"), "no staging credential is left after the migration")
 	storesAfterFirst := creds.storeCount()
 
 	// Second start: resolution reads the sealed blob; the release unseals
@@ -332,6 +367,67 @@ func TestResolveBackendPIN_TPM2MinimumLeavesNoBarrierPINCopy(t *testing.T) {
 	require.ErrorAs(t, err, &custody)
 	require.Nil(t, s2.backendPIN)
 	require.Empty(t, *opened2)
+}
+
+// The TPM custody migration replaces the barrier-stored plaintext PIN with
+// its TPM-sealed envelope. Interrupted at any write, the PIN stays
+// recoverable (the plaintext under name, or the envelope under name or the
+// staging credential), and the start-up recovery completes the migration
+// without any plaintext copy left.
+func TestReplaceBackendPINCredential_InterruptedMigrationRecoverable(t *testing.T) {
+	const name = "pkcs11-pin"
+	const staging = name + "-tpm2-staged"
+	pin := []byte("backend-pin-1")
+	blob := &types.SealedData{Backend: types.BackendType("tpm2"), TPMPublic: []byte("dummy-public"), TPMPrivate: []byte("dummy-private")}
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name       string
+		failStore  string
+		failDelete string
+	}{
+		{name: "store of name fails (and the restore with it)", failStore: name},
+		{name: "delete of name fails", failDelete: name},
+		{name: "store of staging fails", failStore: staging},
+		{name: "delete of staging fails", failDelete: staging},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _, _ := backendPINTestServer(t, "", nil, true, true)
+			creds := newFakeBackendPINCredentials(map[string][]byte{name: pin})
+			s.backendPINCredentials = creds
+			s.config.Backends.PKCS11.Pin = creds.resolve(t, name)
+			p := s.primaryBackendPINSecret()
+			if tc.failStore != "" {
+				creds.failStore[tc.failStore] = true
+			}
+			if tc.failDelete != "" {
+				creds.failDelete[tc.failDelete] = true
+			}
+
+			_ = s.replaceBackendPINCredential(ctx, p, append([]byte(nil), pin...), blob)
+
+			recoverable := bytes.Equal(creds.value(name), pin) ||
+				bytes.HasPrefix(creds.value(name), []byte(backendPINTPMEnvelope)) ||
+				bytes.HasPrefix(creds.value(staging), []byte(backendPINTPMEnvelope))
+			require.True(t, recoverable, "the PIN must stay recoverable after an interrupted migration")
+			require.False(t, creds.has(staging) && bytes.Contains(creds.value(staging), pin),
+				"the staging credential never holds the plaintext PIN")
+
+			creds.failStore = map[string]bool{}
+			creds.failDelete = map[string]bool{}
+			require.NoError(t, s.recoverBackendPINCustody(ctx))
+			if bytes.Equal(creds.value(name), pin) {
+				// Interrupted before the plaintext was removed: the next
+				// release migrates it again from the start.
+				require.NoError(t, s.replaceBackendPINCredential(ctx, p, append([]byte(nil), pin...), blob))
+			}
+			require.True(t, bytes.HasPrefix(creds.value(name), []byte(backendPINTPMEnvelope)), "name holds the TPM-sealed envelope")
+			require.False(t, creds.has(staging), "the staging credential is removed")
+			for _, n := range []string{name, staging} {
+				require.False(t, bytes.Contains(creds.value(n), pin), "no stored value holds the plaintext PIN")
+			}
+		})
+	}
 }
 
 // distinctPINsServer is a tpm2 server with distinct key backend and RNG

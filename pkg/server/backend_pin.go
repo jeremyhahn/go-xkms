@@ -492,6 +492,12 @@ func (s *Server) replaceBackendPINCredential(ctx context.Context, p backendPINSe
 	return nil
 }
 
+// recoverBackendPINCustody completes an interrupted TPM custody migration.
+// Stub: replaced by the staging-credential recovery.
+func (s *Server) recoverBackendPINCustody(_ context.Context) error {
+	return nil
+}
+
 // backendPINTPMSealer returns the Platform SRK sealer the backend PIN is
 // sealed to. It reuses the TPM an earlier call (or the platform store)
 // opened, so the TPM is opened at most once.
