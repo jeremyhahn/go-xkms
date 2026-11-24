@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
 // ErrBackendPINNotConfigured reports a backend PIN operation on a server
@@ -395,7 +397,14 @@ type backendPINSecret struct {
 type backendPINCredentialStore interface {
 	StoreCredential(ctx context.Context, name string, value []byte) error
 	DeleteCredential(ctx context.Context, name string) error
+	ListCredentials(ctx context.Context) ([]string, error)
+	RetrieveCredentialBuffer(ctx context.Context, name string) (*secure.Buffer, error)
 }
+
+// backendPINStagingSuffix names the staging credential of a TPM custody
+// migration (the migration journal). It only ever holds the TPM-sealed
+// envelope, never the plaintext PIN.
+const backendPINStagingSuffix = "-tpm2-staged"
 
 // backendPINCredentialStore returns the injected store, else the server's
 // credential service, else nil.
@@ -469,9 +478,19 @@ func (s *Server) tpmCustodyBlob(ctx context.Context, sealer types.Sealer, p back
 }
 
 // replaceBackendPINCredential replaces the plaintext PIN credential with
-// its TPM-sealed blob. When the blob cannot be stored the PIN is put back,
-// so a later start migrates it, and the release fails closed.
-func (s *Server) replaceBackendPINCredential(ctx context.Context, p backendPINSecret, pin []byte, blob *types.SealedData) error {
+// its TPM-sealed envelope, crash-safe through a staging credential
+// (<name>-tpm2-staged) that serves as the migration journal:
+//
+//  1. store the envelope under staging (on failure the plaintext is untouched);
+//  2. delete name, which also drops its plaintext history;
+//  3. store the envelope under name;
+//  4. delete staging.
+//
+// At every point the PIN is recoverable: name holds the plaintext, or
+// staging or name holds the envelope. An interruption after step 1 is
+// completed by recoverBackendPINCustody at the next start; the release
+// fails closed. pin is not used: the plaintext is never written back.
+func (s *Server) replaceBackendPINCredential(ctx context.Context, p backendPINSecret, _ []byte, blob *types.SealedData) error {
 	name, ok := backendPINCredentialName(p.secret.Raw)
 	store := s.backendPINCredentialStore()
 	if !ok || store == nil {
@@ -482,20 +501,92 @@ func (s *Server) replaceBackendPINCredential(ctx context.Context, p backendPINSe
 		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the TPM-sealed blob does not encode", Err: err}
 	}
 	envelope := append([]byte(backendPINTPMEnvelope), encoded...)
-	if err := store.DeleteCredential(ctx, name); err != nil {
-		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the barrier-stored PIN could not be deleted", Err: err}
+	staging := name + backendPINStagingSuffix
+	if err := store.StoreCredential(ctx, staging, envelope); err != nil {
+		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the TPM-sealed blob could not be staged", Err: err}
+	}
+	return s.completeBackendPINCustody(ctx, store, p.field, name, envelope, true)
+}
+
+// completeBackendPINCustody runs steps 2-4 of the custody migration once
+// the envelope is staged: delete name (when present), store the envelope
+// under name, delete staging last. Each step is idempotent.
+func (s *Server) completeBackendPINCustody(ctx context.Context, store backendPINCredentialStore, field, name string, envelope []byte, present bool) error {
+	if present {
+		if err := store.DeleteCredential(ctx, name); err != nil {
+			return &BackendPINTPMCustodyError{Field: field, Reason: "the barrier-stored PIN could not be deleted", Err: err}
+		}
 	}
 	if err := store.StoreCredential(ctx, name, envelope); err != nil {
-		restoreErr := store.StoreCredential(ctx, name, pin)
-		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the TPM-sealed blob could not be stored", Err: errors.Join(err, restoreErr)}
+		return &BackendPINTPMCustodyError{Field: field, Reason: "the TPM-sealed blob could not be stored", Err: err}
+	}
+	if err := store.DeleteCredential(ctx, name+backendPINStagingSuffix); err != nil {
+		return &BackendPINTPMCustodyError{Field: field, Reason: "the staged TPM-sealed blob could not be removed", Err: err}
 	}
 	return nil
 }
 
-// recoverBackendPINCustody completes an interrupted TPM custody migration.
-// Stub: replaced by the staging-credential recovery.
-func (s *Server) recoverBackendPINCustody(_ context.Context) error {
+// recoverBackendPINCustody completes a TPM custody migration interrupted
+// after its envelope was staged. It runs before config secret resolution,
+// which must find credential://name. For each active PIN that is a
+// credential:// reference under barrier credential storage and has a
+// staging credential, the staged value must be the TPM-sealed envelope;
+// it then replaces name and staging is deleted last. Any store error fails
+// start-up closed; with no staging credential it is a no-op.
+func (s *Server) recoverBackendPINCustody(ctx context.Context) error {
+	if !s.pkcs11Enabled() && !s.rngPKCS11PINActive() {
+		return nil
+	}
+	if s.backendPINStore() != pinselect.BackendPINSealed {
+		return nil
+	}
+	store := s.backendPINCredentialStore()
+	if store == nil {
+		return nil
+	}
+	var names []string
+	listed := false
+	for _, p := range s.activeBackendPINSecrets() {
+		if p.secret == nil {
+			continue
+		}
+		name, ok := backendPINCredentialName(p.secret.Raw)
+		if !ok {
+			continue
+		}
+		if !listed {
+			var err error
+			if names, err = store.ListCredentials(ctx); err != nil {
+				return &BackendPINTPMCustodyError{Field: p.field, Reason: "the credentials could not be listed", Err: err}
+			}
+			listed = true
+		}
+		if !slices.Contains(names, name+backendPINStagingSuffix) {
+			continue
+		}
+		if err := s.recoverStagedBackendPIN(ctx, store, p.field, name, slices.Contains(names, name)); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// recoverStagedBackendPIN moves the staged envelope of name into name.
+func (s *Server) recoverStagedBackendPIN(ctx context.Context, store backendPINCredentialStore, field, name string, present bool) error {
+	buf, err := store.RetrieveCredentialBuffer(ctx, name+backendPINStagingSuffix)
+	if err != nil {
+		return &BackendPINTPMCustodyError{Field: field, Reason: "the staged TPM-sealed blob could not be read", Err: err}
+	}
+	staged, err := secure.CopyOut(buf)
+	buf.Destroy()
+	if err != nil {
+		return &BackendPINTPMCustodyError{Field: field, Reason: "the staged TPM-sealed blob could not be read", Err: err}
+	}
+	defer secure.Wipe(staged)
+	if !bytes.HasPrefix(staged, []byte(backendPINTPMEnvelope)) {
+		return &BackendPINTPMCustodyError{Field: field, Reason: "the staged credential is not a TPM-sealed blob"}
+	}
+	return s.completeBackendPINCustody(ctx, store, field, name, staged, present)
 }
 
 // backendPINTPMSealer returns the Platform SRK sealer the backend PIN is

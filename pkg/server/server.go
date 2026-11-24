@@ -771,7 +771,12 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// for what this does and does not cover.
 	// The backend PIN policy checks that need no secret run first (#2262):
 	// a refused strategy never waits on a PIN reference resolution cannot
-	// serve.
+	// serve. An interrupted TPM custody migration of the PIN is completed
+	// before, so resolution finds credential://name.
+	if err := s.recoverBackendPINCustody(s.ctx); err != nil {
+		abortAfterStorage("backend PIN custody recovery")
+		return nil, &ErrServiceInit{Service: "backend PIN custody recovery", Err: err}
+	}
 	if err := s.backendPINPolicyPreflight(); err != nil {
 		abortAfterStorage("backend PIN strategy")
 		return nil, &ErrServiceInit{Service: "backend PIN strategy", Err: err}
