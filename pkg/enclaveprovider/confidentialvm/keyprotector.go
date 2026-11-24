@@ -218,7 +218,15 @@ func (kp *KeyProtector) Unprotect(ctx context.Context, blob []byte, key []byte) 
 	if err != nil {
 		return err
 	}
-	return kp.withKey(ctx, req, func(dk []byte) error { return openBlob(dk, blob, key) })
+	// The plaintext is staged and reaches key only after withKey's fallible
+	// cleanup succeeded: a refusal leaves key unchanged.
+	stage := make([]byte, len(key))
+	defer clear(stage)
+	if err := kp.withKey(ctx, req, func(dk []byte) error { return openBlob(dk, blob, stage) }); err != nil {
+		return err
+	}
+	copy(key, stage)
+	return nil
 }
 
 // errBlob is the refusal of a blob this guest's Protect did not make.
@@ -290,7 +298,7 @@ func openBlob(dk, blob, key []byte) error {
 // withKey derives the key req selects into locked memory, runs fn on it and
 // wipes and frees it on every path.
 func (kp *KeyProtector) withKey(ctx context.Context, req keyRequest, fn func(dk []byte) error) (err error) {
-	mem, err := enclave.NewMemoryEnclaveSized(derivedKeySize)
+	mem, err := newLockedMemory(derivedKeySize)
 	if err != nil {
 		return &DerivedKeyError{Op: opMemory, Cause: err}
 	}
@@ -301,12 +309,31 @@ func (kp *KeyProtector) withKey(ctx context.Context, req keyRequest, fn func(dk 
 	}()
 	return mem.WithBytes(func(dk []byte) error {
 		defer clear(dk)
-		if err := deriveKey(ctx, sevGuestDevice, req, dk); err != nil {
+		if err := deriveFn(ctx, sevGuestDevice, req, dk); err != nil {
 			return err
 		}
 		return fn(dk)
 	})
 }
+
+// lockedMemory is the part of enclave.MemoryEnclave withKey uses.
+type lockedMemory interface {
+	WithBytes(fn func([]byte) error) error
+	Destroy() error
+}
+
+// deriveFn and newLockedMemory are the firmware and locked-memory seams;
+// tests replace them to reach the cleanup paths without SEV-SNP hardware.
+var (
+	deriveFn        = deriveKey
+	newLockedMemory = func(n int) (lockedMemory, error) {
+		m, err := enclave.NewMemoryEnclaveSized(n)
+		if err != nil {
+			return nil, err
+		}
+		return m, nil
+	}
+)
 
 // receiveKey runs fill on a response buffer in locked memory, then copies
 // the derived key into dst; the buffer is wiped and freed on every path.

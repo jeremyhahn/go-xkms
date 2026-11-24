@@ -224,6 +224,57 @@ func TestBlobRequest_RefusesABlobThisGuestDidNotMake(t *testing.T) {
 	}
 }
 
+// failingDestroy is locked memory whose Destroy reports a failure, as
+// munlock, munmap or a detected corruption can in go-enclave.
+type failingDestroy struct{ lockedMemory }
+
+func (f failingDestroy) Destroy() error {
+	_ = f.lockedMemory.Destroy()
+	return errors.New("munlock failed")
+}
+
+func TestUnprotect_LeavesTheKeyUnchangedWhenCleanupFails(t *testing.T) {
+	ctx := context.Background()
+	dk := testKey(t)
+	oldDerive, oldMem := deriveFn, newLockedMemory
+	t.Cleanup(func() { deriveFn, newLockedMemory = oldDerive, oldMem })
+	deriveFn = func(_ context.Context, _ string, _ keyRequest, dst []byte) error {
+		copy(dst, dk)
+		return nil
+	}
+	kp := &KeyProtector{req: testRequest}
+	secret := testKey(t)
+	blob, err := kp.Protect(ctx, secret)
+	if err != nil {
+		t.Fatalf("Protect = %v", err)
+	}
+	got := make([]byte, len(secret))
+	if err := kp.Unprotect(ctx, blob, got); err != nil || !bytes.Equal(got, secret) {
+		t.Fatalf("Unprotect = %v, key recovered %t", err, bytes.Equal(got, secret))
+	}
+
+	newLockedMemory = func(n int) (lockedMemory, error) {
+		m, err := oldMem(n)
+		if err != nil {
+			return nil, err
+		}
+		return failingDestroy{m}, nil
+	}
+	dst := bytes.Repeat([]byte{0xA5}, len(secret))
+	want := bytes.Clone(dst)
+	err = kp.Unprotect(ctx, blob, dst)
+	var dke *DerivedKeyError
+	if !errors.As(err, &dke) || dke.Op != opMemory {
+		t.Fatalf("Unprotect with a failing cleanup = %v, want a DerivedKeyError on %s", err, opMemory)
+	}
+	if !bytes.Equal(dst, want) {
+		t.Fatal("Unprotect with a failing cleanup changed the destination key")
+	}
+	if _, err := kp.Protect(ctx, secret); !errors.As(err, &dke) || dke.Op != opMemory {
+		t.Fatalf("Protect with a failing cleanup = %v, want a DerivedKeyError on %s", err, opMemory)
+	}
+}
+
 func TestNewKeyProtector_RefusesWithoutTheGuestDevice(t *testing.T) {
 	useDevice(t, filepath.Join(t.TempDir(), "sev-guest"))
 	kp, err := NewKeyProtector()
