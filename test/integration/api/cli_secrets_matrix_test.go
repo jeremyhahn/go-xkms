@@ -164,15 +164,22 @@ func skipCell(t *testing.T, name, reason string) {
 // silent loss of coverage. A cell that failed already failed its subtest.
 func (w *secretsWorkflow) setupID(t *testing.T, name, out string, passed bool) string {
 	t.Helper()
+	return w.setupField(t, name, "id", out, passed)
+}
+
+// setupField is setupID for any JSON field: a passing producer cell must
+// print the field nonempty, or the workflow fails here with its stdout.
+func (w *secretsWorkflow) setupField(t *testing.T, name, field, out string, passed bool) string {
+	t.Helper()
 	if !passed {
 		return ""
 	}
-	id := jsonValue(out, "id")
-	if id == "" {
-		t.Errorf("[%s] %s exited zero without a JSON response carrying a nonempty id\nstdout: %s",
-			w.protocol, name, out)
+	value := jsonValue(out, field)
+	if value == "" {
+		t.Errorf("[%s] %s exited zero without a JSON response carrying a nonempty %s\nstdout: %s",
+			w.protocol, name, field, out)
 	}
-	return id
+	return value
 }
 
 func (w *secretsWorkflow) password(t *testing.T) {
@@ -190,7 +197,7 @@ func (w *secretsWorkflow) password(t *testing.T) {
 		if !result.Passed {
 			t.Fatalf("[%s] vault initialization failed: %s", w.protocol, result.Message)
 		}
-		w.state.recoveryCode = jsonValue(result.Stdout, "recoverycode")
+		w.state.recoveryCode = w.setupField(t, "password-vault-enroll", "recoverycode", result.Stdout, true)
 	}
 	skipCell(t, "password-unlock-passkey", skipPasskey)
 	if _, ok := w.cell(t, "password-unlock"); !ok {
@@ -233,7 +240,7 @@ func (w *secretsWorkflow) password(t *testing.T) {
 	} else if out, ok := w.cell(t, "password-vault-recover",
 		map[string]string{"recovery-code": w.state.recoveryCode}); ok {
 		// The old code stops working; the next transport uses the new one.
-		w.state.recoveryCode = jsonValue(out, "recoverycode")
+		w.state.recoveryCode = w.setupField(t, "password-vault-recover", "recoverycode", out, true)
 		if recoveredID := jsonValue(out, "id"); recoveredID != "" {
 			w.exec(t, w.command(t, "password-vault-remove"), map[string]string{"factor-id": recoveredID})
 		}
