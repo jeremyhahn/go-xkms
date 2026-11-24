@@ -1,0 +1,1 @@
+- **One main-fix PR carries the bootstrap server start, the short socket-dir and go-jose fixes and the #2183 main fix.** #2348, #2249 and #2183 merge into #2377; root unix-socket tests share one short-TMPDIR helper, `internal/testsupport.RunWithShortTempDir`, which now restores `TMPDIR` and `GOTMPDIR` after the run (`internal/testtmp` is gone).
