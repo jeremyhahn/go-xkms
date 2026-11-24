@@ -234,6 +234,49 @@ func TestBackend_DeleteAliasFailureIsReturned(t *testing.T) {
 	}
 }
 
+// denyScheduleKMS refuses ScheduleKeyDeletion with an access-denied error.
+type denyScheduleKMS struct{ *aliasKMS }
+
+func (d *denyScheduleKMS) ScheduleKeyDeletion(ctx context.Context, params *kms.ScheduleKeyDeletionInput, optFns ...func(*kms.Options)) (*kms.ScheduleKeyDeletionOutput, error) {
+	return nil, errors.New("AccessDeniedException: kms:ScheduleKeyDeletion denied")
+}
+
+func TestBackend_AliasOnlyDeleteScheduleFailureKeepsKeyReachable(t *testing.T) {
+	ctx := context.Background()
+	fake := newAliasKMS(t)
+	b := newAliasReleaseBackend(t, &denyScheduleKMS{aliasKMS: fake})
+	attrs := &types.KeyAttributes{CN: "qrdb-login-ca-tenant-d", KeyType: backend.KEY_TYPE_SIGNING, KeyAlgorithm: x509.ECDSA, StoreType: backend.STORE_AWSKMS}
+
+	keyID, err := b.CreateKey(attrs)
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+	// No local metadata: getKeyID falls back to alias/<cn>.
+	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil {
+		t.Fatalf("remove metadata: %v", err)
+	}
+	if err := b.DeleteKey(ctx, attrs); err == nil {
+		t.Fatal("DeleteKey() error = nil, want the ScheduleKeyDeletion failure returned")
+	}
+	fake.mu.Lock()
+	target, ok := fake.aliases["alias/"+attrs.CN]
+	pending := fake.pending[keyID]
+	fake.mu.Unlock()
+	if !ok || target != keyID {
+		t.Fatalf("alias/%s -> %q (present=%v), want it still on the enabled key %q", attrs.CN, target, ok, keyID)
+	}
+	if pending {
+		t.Fatalf("key %q went pending deletion although scheduling failed", keyID)
+	}
+	signer, err := b.Signer(ctx, attrs)
+	if err != nil {
+		t.Fatalf("Signer() after the failed delete: %v, want the key still reachable", err)
+	}
+	if got := signer.(*kmsSigner).keyID; got != keyID {
+		t.Fatalf("Signer() resolved %q, want %q", got, keyID)
+	}
+}
+
 // failingDeleteAliasKMS refuses every alias deletion with an access denial.
 type failingDeleteAliasKMS struct{ *aliasKMS }
 
