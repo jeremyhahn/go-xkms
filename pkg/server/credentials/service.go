@@ -54,6 +54,20 @@ func InNamespace(name string) bool {
 	return strings.HasPrefix(path.Clean("/"+name), "/"+credentialPrefix)
 }
 
+// InternalPrefix starts the names the server reserves for its own
+// credential records (for example the backend PIN TPM custody journal).
+// Operators cannot submit a credential under it (SubmitCredential refuses
+// it with ErrReservedCredentialName); the server writes it through
+// StoreCredential. It holds neither "#" (go-qrdb's barrier listing drops
+// every name containing "#") nor "/" (nested barrier keys are not known to
+// list like flat names).
+const InternalPrefix = "xkms-internal."
+
+// Internal reports whether name lies in the reserved internal namespace.
+func Internal(name string) bool {
+	return strings.HasPrefix(strings.TrimSpace(name), InternalPrefix)
+}
+
 // validStrategies maps all supported strategy names to true for O(1) validation.
 // The cloud-KMS names match the seal layer's StrategyID constants
 // (awskms/gcpkms/azurekv, no underscores); there is no underscored alias.
@@ -160,6 +174,9 @@ func (s *Service) RetrieveCredentialBuffer(ctx context.Context, name string) (*s
 func (s *Service) SubmitCredential(ctx context.Context, name string, value []byte) error {
 	if err := validateInput(name, value); err != nil {
 		return err
+	}
+	if Internal(name) {
+		return ErrReservedCredentialName
 	}
 	if s.strategy == StrategyManual {
 		names, err := s.store.ListCredentials(ctx)

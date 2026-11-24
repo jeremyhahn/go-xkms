@@ -30,6 +30,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
+	credentialspkg "github.com/jeremyhahn/go-xkms/pkg/server/credentials"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -408,12 +409,14 @@ type backendPINCredentialStore interface {
 	RetrieveCredentialBuffer(ctx context.Context, name string) (*secure.Buffer, error)
 }
 
-// backendPINStagingSuffix names the staging credential of a TPM custody
-// migration (the migration journal). It only ever holds the TPM-sealed
-// envelope, never the plaintext PIN.
-const backendPINStagingSuffix = "-tpm2-staged"
-
-func backendPINCustodyJournal(name string) string { return name + backendPINStagingSuffix }
+// backendPINCustodyJournal names the staging credential of a TPM custody
+// migration of the PIN credential name (the migration journal). It lies in
+// the reserved credentials.InternalPrefix namespace, which operators cannot
+// submit into, so no operator credential collides with it. It only ever
+// holds the TPM-sealed envelope, never the plaintext PIN.
+func backendPINCustodyJournal(name string) string {
+	return credentialspkg.InternalPrefix + "backend-pin-custody." + name
+}
 
 // backendPINCredentialStore returns the injected store, else the server's
 // credential service, else nil.
@@ -488,7 +491,8 @@ func (s *Server) tpmCustodyBlob(ctx context.Context, sealer types.Sealer, p back
 
 // replaceBackendPINCredential replaces the plaintext PIN credential with
 // its TPM-sealed envelope, crash-safe through a staging credential
-// (<name>-tpm2-staged) that serves as the migration journal:
+// (xkms-internal.backend-pin-custody.<name>, see backendPINCustodyJournal)
+// that serves as the migration journal:
 //
 //  1. store the envelope under staging (on failure the plaintext is untouched);
 //  2. delete name, which also drops its plaintext history;
@@ -510,7 +514,7 @@ func (s *Server) replaceBackendPINCredential(ctx context.Context, p backendPINSe
 		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the TPM-sealed blob does not encode", Err: err}
 	}
 	envelope := append([]byte(backendPINTPMEnvelope), encoded...)
-	staging := name + backendPINStagingSuffix
+	staging := backendPINCustodyJournal(name)
 	if err := store.StoreCredential(ctx, staging, envelope); err != nil {
 		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the TPM-sealed blob could not be staged", Err: err}
 	}
@@ -529,7 +533,7 @@ func (s *Server) completeBackendPINCustody(ctx context.Context, store backendPIN
 	if err := store.StoreCredential(ctx, name, envelope); err != nil {
 		return &BackendPINTPMCustodyError{Field: field, Reason: "the TPM-sealed blob could not be stored", Err: err}
 	}
-	if err := store.DeleteCredential(ctx, name+backendPINStagingSuffix); err != nil {
+	if err := store.DeleteCredential(ctx, backendPINCustodyJournal(name)); err != nil {
 		return &BackendPINTPMCustodyError{Field: field, Reason: "the staged TPM-sealed blob could not be removed", Err: err}
 	}
 	return nil
@@ -539,9 +543,12 @@ func (s *Server) completeBackendPINCustody(ctx context.Context, store backendPIN
 // after its envelope was staged. It runs before config secret resolution,
 // which must find credential://name. For each active PIN that is a
 // credential:// reference under barrier credential storage and has a
-// staging credential, the staged value must be the TPM-sealed envelope;
-// it then replaces name and staging is deleted last. Any store error fails
-// start-up closed; with no staging credential it is a no-op.
+// staging credential (its journal in the reserved xkms-internal. namespace),
+// the staged value must be the TPM-sealed envelope: only the server writes
+// that namespace, so any other value fails closed. It then replaces name
+// and staging is deleted last. A PIN reference that itself names a reserved
+// internal credential is refused. Any store error fails start-up closed;
+// with no staging credential it is a no-op.
 func (s *Server) recoverBackendPINCustody(ctx context.Context) error {
 	if !s.pkcs11Enabled() && !s.rngPKCS11PINActive() {
 		return nil
@@ -563,6 +570,9 @@ func (s *Server) recoverBackendPINCustody(ctx context.Context) error {
 		if !ok {
 			continue
 		}
+		if credentialspkg.Internal(name) {
+			return &BackendPINTPMCustodyError{Field: p.field, Reason: "the PIN references a reserved internal credential"}
+		}
 		if !listed {
 			var err error
 			if names, err = store.ListCredentials(ctx); err != nil {
@@ -570,7 +580,7 @@ func (s *Server) recoverBackendPINCustody(ctx context.Context) error {
 			}
 			listed = true
 		}
-		if !slices.Contains(names, name+backendPINStagingSuffix) {
+		if !slices.Contains(names, backendPINCustodyJournal(name)) {
 			continue
 		}
 		if err := s.recoverStagedBackendPIN(ctx, store, p.field, name, slices.Contains(names, name)); err != nil {
@@ -582,7 +592,7 @@ func (s *Server) recoverBackendPINCustody(ctx context.Context) error {
 
 // recoverStagedBackendPIN moves the staged envelope of name into name.
 func (s *Server) recoverStagedBackendPIN(ctx context.Context, store backendPINCredentialStore, field, name string, present bool) error {
-	buf, err := store.RetrieveCredentialBuffer(ctx, name+backendPINStagingSuffix)
+	buf, err := store.RetrieveCredentialBuffer(ctx, backendPINCustodyJournal(name))
 	if err != nil {
 		return &BackendPINTPMCustodyError{Field: field, Reason: "the staged TPM-sealed blob could not be read", Err: err}
 	}

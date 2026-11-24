@@ -441,8 +441,12 @@ func TestSubmitCredential_RefusesInternalNamespace(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			svc := tc.svc(t)
 			ctx := context.Background()
-			if err := svc.SubmitCredential(ctx, reserved, []byte("value")); err == nil {
+			err := svc.SubmitCredential(ctx, reserved, []byte("value"))
+			if err == nil {
 				t.Fatalf("SubmitCredential(%q) succeeded, want a refusal", reserved)
+			}
+			if !errors.Is(err, ErrReservedCredentialName) {
+				t.Fatalf("SubmitCredential(%q) = %v, want ErrReservedCredentialName", reserved, err)
 			}
 			names, err := svc.ListCredentials(ctx)
 			if err != nil {

@@ -86,6 +86,7 @@ var credentialErrorStatusMap = map[error]int{
 	credentials.ErrCredentialNotFound:         http.StatusNotFound,
 	credentials.ErrCredentialAlreadySubmitted: http.StatusConflict,
 	credentials.ErrInvalidStrategy:            http.StatusBadRequest,
+	credentials.ErrReservedCredentialName:     http.StatusBadRequest,
 	xkms.ErrInvalidEncoding:                   http.StatusBadRequest,
 	xkms.ErrNotConfigured:                     http.StatusServiceUnavailable,
 	// The platform-scope refusal (xkms.TenantBindingError) unwraps to
