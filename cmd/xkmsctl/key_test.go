@@ -25,6 +25,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/pflag"
+
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -2743,6 +2745,50 @@ func TestKeyCopyCmd_HasFlags(t *testing.T) {
 	for _, flag := range removedFlags {
 		if flags.Lookup(flag) != nil {
 			t.Errorf("flag %q should have been removed from keyCopyCmd", flag)
+		}
+	}
+}
+
+// TestKeyCopyCmd_ParsesIntegrationArgs guards the flag contract the CLI
+// integration suite (test/integration/api/cli_complete_test.go key_copy and
+// key_copy_default_algorithm) relies on: those exact argument lists parse,
+// and the key-template flags key copy does not register are rejected.
+func TestKeyCopyCmd_ParsesIntegrationArgs(t *testing.T) {
+	parse := func(args []string) error {
+		fs := pflag.NewFlagSet("key copy", pflag.ContinueOnError)
+		fs.SetOutput(new(bytes.Buffer))
+		fs.AddFlagSet(keyCopyCmd.LocalFlags())
+		fs.AddFlagSet(keyCopyCmd.InheritedFlags())
+		return fs.Parse(args)
+	}
+
+	cases := map[string][]string{
+		"key_copy": {
+			"src-key", "dst-key",
+			"--backend", "software",
+			"--key-dir", "/tmp/keys",
+			"--dest-backend", "software",
+			"--dest-keydir", "/tmp/dest",
+			"--algorithm", "RSAES_OAEP_SHA_256",
+		},
+		"key_copy_default_algorithm": {
+			"src-key", "dst-key-default-alg",
+			"--backend", "software",
+			"--key-dir", "/tmp/keys",
+			"--dest-backend", "software",
+			"--dest-keydir", "/tmp/dest",
+		},
+	}
+	for name, args := range cases {
+		if err := parse(args); err != nil {
+			t.Errorf("%s: parse %v: %v", name, args, err)
+		}
+	}
+
+	for _, flag := range []string{"--key-type", "--key-algorithm", "--curve"} {
+		err := parse([]string{"src-key", "dst-key", flag, "signing"})
+		if err == nil || !strings.Contains(err.Error(), "unknown flag") {
+			t.Errorf("%s: err = %v, want an unknown flag error", flag, err)
 		}
 	}
 }
