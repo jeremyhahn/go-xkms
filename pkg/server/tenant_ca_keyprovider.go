@@ -614,7 +614,12 @@ func (f *tenantCAKeyFactory) repairRevivedTenantLoginCA(ctx context.Context, ten
 			if pub, ok := cert.PublicKey.(interface{ Equal(crypto.PublicKey) bool }); ok && pub.Equal(signer.Public()) {
 				continue
 			}
-			fixed, err := selfSignTenantLoginCA(tenantID, signer)
+			var fixed *x509.Certificate
+			if certID == tenantLoginCAKeyCN {
+				fixed, err = f.publishedTenantLoginCACert(ctx, tenantID, signer)
+			} else {
+				fixed, err = selfSignTenantLoginCA(tenantID, signer)
+			}
 			if err == nil {
 				err = scoped.SaveCert(ctx, certID, fixed)
 			}
@@ -628,6 +633,30 @@ func (f *tenantCAKeyFactory) repairRevivedTenantLoginCA(ctx context.Context, ten
 		}
 	}
 	return errs
+}
+
+// publishedTenantLoginCACert returns the login CA certificate the live
+// generation of tenantID published (the DER go-qrdb registers as the tenant's
+// issuer). A repair writes it back rather than signing a new one, since a
+// fresh certificate would not be the registered issuer. It fails closed when
+// no certificate over signer's key is published.
+func (f *tenantCAKeyFactory) publishedTenantLoginCACert(ctx context.Context, tenantID string, signer crypto.Signer) (*x509.Certificate, error) {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return nil, err
+	}
+	held, err := claims.Get(ctx, tenantLoginCACertPublishKey(tenantID))
+	if err != nil {
+		return nil, fmt.Errorf("tenant login CA key factory: read published certificate for tenant %q: %w", tenantID, err)
+	}
+	cert, err := x509.ParseCertificate(held)
+	if err != nil {
+		return nil, fmt.Errorf("tenant login CA key factory: parse published certificate for tenant %q: %w", tenantID, err)
+	}
+	if !tenantLoginCACertFor(cert, signer.Public()) {
+		return nil, fmt.Errorf("tenant login CA key factory: published certificate of tenant %q is not over its stored key", tenantID)
+	}
+	return cert, nil
 }
 
 // ensureTenant is one provisioning pass of EnsureTenant.
