@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -132,7 +133,7 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 	}
 	r := resolveSSHConsole(cmd, target)
 	host, user, port := r.host, r.user, r.port
-	keyName, keyScope, keyOwner := r.keyName, r.keyScope, r.keyOwner
+	keyScope, keyOwner := r.keyScope, r.keyOwner
 	identity, local := r.identity, r.local
 
 	// Initial terminal size + type.
@@ -170,20 +171,43 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 		return runConsoleSession(cons, fd)
 	}
 
-	client, closer, err := sshClient(cmd)
-	if err != nil {
-		return err
-	}
-	defer closer()
-
-	cons, err = client.Console(context.Background(), sshsdk.ConsoleConnectRequest{
-		KeyScope: keyScope, KeyOwner: keyOwner, KeyName: keyName,
-		Host: host, Port: port, User: user,
-	}, consoleCfg)
+	cons, err := openSSHConsole(cmd, r, consoleCfg)
 	if err != nil {
 		return err
 	}
 	return runConsoleSession(cons, fd)
+}
+
+// openSSHConsole opens the console for a managed (xkey-held) key r names.
+// The returned session releases the client when it is closed.
+func openSSHConsole(cmd *cobra.Command, r sshConsoleResolved, cfg sshsdk.ConsoleConfig) (sshsdk.ConsoleSession, error) {
+	client, closer, err := sshClient(cmd)
+	if err != nil {
+		return nil, err
+	}
+	cons, err := client.Console(context.Background(), sshsdk.ConsoleConnectRequest{
+		KeyScope: r.keyScope, KeyOwner: r.keyOwner, KeyName: r.keyName,
+		Host: r.host, Port: r.port, User: r.user,
+	}, cfg)
+	if err != nil {
+		closer()
+		return nil, err
+	}
+	return &closingConsole{ConsoleSession: cons, release: closer}, nil
+}
+
+// closingConsole runs release once after the wrapped session closes, so the
+// client the session signs through outlives it.
+type closingConsole struct {
+	sshsdk.ConsoleSession
+	release func()
+	once    sync.Once
+}
+
+func (c *closingConsole) Close() error {
+	err := c.ConsoleSession.Close()
+	c.once.Do(c.release)
+	return err
 }
 
 // runConsoleSession bridges a live console session to the current terminal:
