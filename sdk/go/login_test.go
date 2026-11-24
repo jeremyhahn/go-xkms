@@ -33,7 +33,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 )
 
 // newLoginTestServer serves the session-plane routes over TLS, asserting a
@@ -198,8 +198,7 @@ func TestLoginClient_SPKIPin(t *testing.T) {
 	_ = pool // the SPKI-pinned config never consults a CA pool
 
 	leaf := srv.Certificate()
-	pin, err := spki.ComputePin(leaf)
-	require.NoError(t, err)
+	pin := spkipin.ComputeSPKIPin(leaf)
 
 	c, err := NewLoginClient(LoginClientConfig{BaseURL: srv.URL, SPKIPin: pin})
 	require.NoError(t, err)

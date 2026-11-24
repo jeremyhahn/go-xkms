@@ -37,8 +37,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 )
 
 // ============================================================================
@@ -374,8 +374,7 @@ func TestBuildTLSConfig_CallerConfigWithSPKIPinIsAdditive(t *testing.T) {
 	peerLeaf, err := x509.ParseCertificate(peer.Certificate[0])
 	require.NoError(t, err)
 
-	pin, err := spki.ComputePin(peerLeaf)
-	require.NoError(t, err)
+	pin := spkipin.ComputeSPKIPin(peerLeaf)
 
 	cfg := transport.DefaultConfig()
 	cfg.SPKIPin = pin

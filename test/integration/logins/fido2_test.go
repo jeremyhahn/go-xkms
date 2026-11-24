@@ -18,6 +18,7 @@ package logins
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -31,7 +32,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 	"github.com/jeremyhahn/go-xkms/test/integration/xkeytest"
 )
 
@@ -145,8 +146,12 @@ func TestFIDO2Login_RegisterAndLogin(t *testing.T) {
 			bin := xkeyBinary(t)
 			home := t.TempDir()
 
-			pin, _, err := spki.FetchServerPinWithCA(hostPort(t, tgt.BaseURL), loadCAPool(t, tgt))
+			// go-truststrap spkipin has no dial-and-read helper: dial with the
+			// CA pool and pin the leaf the server presents.
+			conn, err := tls.Dial("tcp", hostPort(t, tgt.BaseURL), &tls.Config{RootCAs: loadCAPool(t, tgt), MinVersion: tls.VersionTLS13})
 			require.NoError(t, err, "compute the server's SPKI pin for trust-on-first-use registration")
+			pin := spkipin.ComputeSPKIPin(conn.ConnectionState().PeerCertificates[0])
+			require.NoError(t, conn.Close())
 
 			startVirtualAuthenticator(t, bin, home)
 

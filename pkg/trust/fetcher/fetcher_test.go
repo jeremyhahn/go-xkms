@@ -32,6 +32,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 )
 
 // makeTestCA creates a self-signed CA cert and returns the cert + PEM bytes.
@@ -104,7 +106,7 @@ func serverPin(t *testing.T, srv *httptest.Server) string {
 	t.Helper()
 	cert, err := x509.ParseCertificate(srv.Certificate().Raw)
 	require.NoError(t, err)
-	return SPKIHash(cert)
+	return spkipin.ComputeSPKIPin(cert)
 }
 
 func TestFetch_PEM_HappyPath(t *testing.T) {
@@ -291,59 +293,4 @@ func TestNormalizePin(t *testing.T) {
 			assert.Equal(t, tc.want, got)
 		})
 	}
-}
-
-func TestSPKIHash_Stable(t *testing.T) {
-	t.Parallel()
-	cert, _ := makeTestCA(t)
-	h1 := SPKIHash(cert)
-	h2 := SPKIHash(cert)
-	assert.Equal(t, h1, h2)
-	assert.Len(t, h1, 64)
-}
-
-func TestSPKIHash_Nil(t *testing.T) {
-	t.Parallel()
-	assert.Equal(t, "", SPKIHash(nil))
-}
-
-func TestPinVerifier_NoCerts(t *testing.T) {
-	t.Parallel()
-	verify := PinVerifier(strings.Repeat("a", 64))
-	err := verify(nil, nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNoLeafCert))
-}
-
-func TestPinVerifier_ParseError(t *testing.T) {
-	t.Parallel()
-	verify := PinVerifier(strings.Repeat("a", 64))
-	err := verify([][]byte{{0x00, 0x01, 0x02}}, nil)
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrPinMismatch))
-}
-
-func TestBuildTLSConfig_Pin(t *testing.T) {
-	t.Parallel()
-	cfg, err := BuildTLSConfig(strings.Repeat("a", 64))
-	require.NoError(t, err)
-	// Pin mode disables system chain validation; PinVerifier is the sole gate.
-	assert.NotNil(t, cfg.VerifyPeerCertificate)
-	// SessionTicketsDisabled must be true to prevent session resumption from
-	// bypassing PinVerifier (CWE-295).
-	assert.True(t, cfg.SessionTicketsDisabled)
-}
-
-func TestBuildTLSConfig_PinRequired(t *testing.T) {
-	t.Parallel()
-	_, err := BuildTLSConfig("")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrPinRequired))
-}
-
-func TestBuildTLSConfig_BadPin(t *testing.T) {
-	t.Parallel()
-	_, err := BuildTLSConfig("deadbeef")
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrInvalidPin))
 }

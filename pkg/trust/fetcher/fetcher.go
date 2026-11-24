@@ -25,17 +25,23 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
+
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // DefaultTimeout is the HTTP timeout applied when Options.Timeout is zero.
@@ -210,15 +216,17 @@ func Fetch(ctx context.Context, rawURL string, opts Options) (*Bundle, error) {
 // returns a leafObserver that records the SPKI of the leaf cert presented
 // during the handshake so callers can audit/log the matched value.
 func newClient(opts Options, timeout time.Duration) (*http.Client, *leafObserver, error) {
-	tlsConfig, err := BuildTLSConfig(opts.SPKIPin)
+	if opts.SPKIPin == "" {
+		return nil, nil, ErrPinRequired
+	}
+	clean, err := NormalizePin(opts.SPKIPin)
 	if err != nil {
 		return nil, nil, err
 	}
+	tlsConfig := bootstrap.PinTLSConfig(&tls.Config{MinVersion: tls.VersionTLS13}, clean)
 
 	observer := newLeafObserver()
-	wrapped := observer.wrap(tlsConfig.VerifyPeerCertificate)
-	// #nosec G123 -- resumption disabled via SessionTicketsDisabled in BuildTLSConfig, so VerifyPeerCertificate is never bypassed on a resumed session.
-	tlsConfig.VerifyPeerCertificate = wrapped //nolint:gosec // G123 handled by SessionTicketsDisabled in BuildTLSConfig
+	tlsConfig.VerifyConnection = observer.wrap(clean, tlsConfig.VerifyConnection)
 
 	transport := &http.Transport{
 		TLSClientConfig:       tlsConfig,
@@ -331,19 +339,53 @@ func newLeafObserver() *leafObserver { return &leafObserver{} }
 
 func (l *leafObserver) SPKI() string { return l.hash }
 
-func (l *leafObserver) wrap(inner func([][]byte, [][]*x509.Certificate) error) func([][]byte, [][]*x509.Certificate) error {
-	return func(rawCerts [][]byte, chains [][]*x509.Certificate) error {
-		if len(rawCerts) > 0 && l.hash == "" {
-			if cert, err := x509.ParseCertificate(rawCerts[0]); err == nil {
-				l.hash = SPKIHash(cert)
+// wrap records the leaf SPKI of the first handshake and maps the go-truststrap
+// spkipin sentinels returned by inner onto this package's sentinels, so
+// callers keep matching ErrPinMismatch and ErrNoLeafCert.
+func (l *leafObserver) wrap(pin string, inner func(tls.ConnectionState) error) func(tls.ConnectionState) error {
+	return func(cs tls.ConnectionState) error {
+		var got string
+		if len(cs.PeerCertificates) > 0 {
+			got = spkipin.ComputeSPKIPin(cs.PeerCertificates[0])
+			if l.hash == "" {
+				l.hash = got
 			}
 		}
 		if inner == nil {
 			return nil
 		}
-		return inner(rawCerts, chains)
+		err := inner(cs)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, spkipin.ErrNoCertificates):
+			return ErrNoLeafCert
+		case errors.Is(err, spkipin.ErrSPKIPinMismatch):
+			return &errs.Detail{Err: ErrPinMismatch, Detail: fmt.Sprintf("expected %s, got %s", pin, got)}
+		default:
+			return &errs.Detail{Err: ErrPinMismatch, Detail: fmt.Sprintf("%v", err)}
+		}
 	}
 }
+
+// NormalizePin lowercases an SPKI pin, strips colons and whitespace, and
+// checks it is 64 hex characters. go-truststrap spkipin v0.6.0-alpha only
+// lowercases, so this stays here until it gains colon/whitespace handling.
+func NormalizePin(pin string) (string, error) {
+	clean := strings.ToLower(strings.TrimSpace(pin))
+	clean = strings.ReplaceAll(clean, ":", "")
+	clean = strings.ReplaceAll(clean, " ", "")
+	if len(clean) != spkiHexLength {
+		return "", &errs.Detail{Err: ErrInvalidPin, Detail: fmt.Sprintf("expected %d hex chars, got %d", spkiHexLength, len(clean))}
+	}
+	if _, err := hex.DecodeString(clean); err != nil {
+		return "", &errs.Detail{Err: ErrInvalidPin, Detail: fmt.Sprintf("%v", err)}
+	}
+	return clean, nil
+}
+
+// spkiHexLength is the hex length of a SHA-256 SPKI pin.
+const spkiHexLength = 64
 
 // CompileTimeChecks ensures the package compiles against the expected types.
 var _ = (*tls.Config)(nil)

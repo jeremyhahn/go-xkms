@@ -30,7 +30,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport/grpcauth"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/grpc/pbconv"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
@@ -130,7 +130,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 
 			// SPKI pin verification
 			if t.config.SPKIPin != "" {
-				tlsConfig = spki.PinTLSConfig(tlsConfig, t.config.SPKIPin)
+				tlsConfig = bootstrap.PinTLSConfig(tlsConfig, t.config.SPKIPin)
 			}
 		}
 

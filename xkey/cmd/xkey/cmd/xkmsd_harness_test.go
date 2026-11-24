@@ -37,6 +37,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	restapi "github.com/jeremyhahn/go-xkms/pkg/api/rest"
@@ -45,7 +46,6 @@ import (
 	pkgca "github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -283,7 +283,7 @@ func waitForSocket(t *testing.T, path string) {
 // constructor pkg/apimodule's newModuleRESTServer test helper uses — wired
 // with a self-signed server certificate. It returns the https:// base URL,
 // the hex-encoded SPKI pin of that certificate (computed with the real
-// pkg/crypto/spki.ComputePin, the same helper xkey's own trust-bootstrap
+// go-truststrap spkipin.ComputeSPKIPin, the same helper xkey's own trust-bootstrap
 // commands use), and a cleanup func; cleanup also runs via t.Cleanup.
 func startTestXKMSdREST(t *testing.T) (baseURL, spkiPin string) {
 	t.Helper()
@@ -291,8 +291,7 @@ func startTestXKMSdREST(t *testing.T) (baseURL, spkiPin string) {
 	svc := newTestXKMSService(t)
 
 	cert, leaf := newTestServerCertificate(t)
-	pin, err := spki.ComputePin(leaf)
-	require.NoError(t, err)
+	pin := spkipin.ComputeSPKIPin(leaf)
 
 	swBackend, err := software.NewBackend(&software.Config{KeyStorage: storage.NewMemory()})
 	require.NoError(t, err)

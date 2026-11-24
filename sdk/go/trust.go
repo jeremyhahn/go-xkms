@@ -14,6 +14,7 @@
 package xkms
 
 import (
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 	"github.com/jeremyhahn/go-truststrap/pkg/truststrap"
 	trustbootstrap "github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	trustfetcher "github.com/jeremyhahn/go-xkms/pkg/trust/fetcher"
@@ -100,7 +101,7 @@ const TrustFetcherDefaultTimeout = trustfetcher.DefaultTimeout
 var TrustFetcherFetch = trustfetcher.Fetch
 
 // TrustFetcherSPKIHash computes the SPKI SHA-256 pin for a certificate.
-var TrustFetcherSPKIHash = trustfetcher.SPKIHash
+var TrustFetcherSPKIHash = spkipin.ComputeSPKIPin
 
 // --- Trust resolver (pkg/trust/resolver) ---
 

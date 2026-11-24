@@ -21,8 +21,8 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 )
 
@@ -520,10 +520,7 @@ func TestClient_ConnectAndCall_TLSSuccess(t *testing.T) {
 	defer testServer.Close()
 
 	leaf := testServer.Certificate()
-	pin, err := spki.ComputePin(leaf)
-	if err != nil {
-		t.Fatalf("ComputePin: %v", err)
-	}
+	pin := spkipin.ComputeSPKIPin(leaf)
 
 	cfg := transport.DefaultConfig()
 	cfg.Address = strings.TrimPrefix(testServer.URL, "https://")
