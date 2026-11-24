@@ -78,6 +78,10 @@ func allTenantAwareRequestTypes() []tenantIDSpec {
 		{"RevokeCertificateRequest", RevokeCertificateRequest{}},
 		{"GenerateCRLRequest", GenerateCRLRequest{}},
 		{"IsRevokedRequest", IsRevokedRequest{}},
+
+		// Passkey login (the login tenant, #2319)
+		{"BeginAuthenticationRequest", BeginAuthenticationRequest{}},
+		{"FinishAuthenticationRequest", FinishAuthenticationRequest{}},
 	}
 }
 
@@ -182,8 +186,8 @@ func TestTenantID_SystemTypesExcluded(t *testing.T) {
 		{"ResetLockoutRequest", ResetLockoutRequest{}},
 		{"BeginRegistrationRequest", BeginRegistrationRequest{}},
 		{"FinishRegistrationRequest", FinishRegistrationRequest{}},
-		{"BeginAuthenticationRequest", BeginAuthenticationRequest{}},
-		{"FinishAuthenticationRequest", FinishAuthenticationRequest{}},
+		// BeginAuthenticationRequest and FinishAuthenticationRequest carry
+		// the login tenant (#2319): see allTenantAwareRequestTypes.
 	}
 
 	for _, st := range systemTypes {

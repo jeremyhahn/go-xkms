@@ -194,6 +194,16 @@ describe('AuthClient WebAuthn ceremonies', () => {
     expect(fake.calls[0]?.body).toEqual({});
   });
 
+  it('login begin posts the login tenant_id in the body', async () => {
+    const fake = newFakeFetch({
+      body: optionsEnvelope,
+      headers: { 'X-Session-Id': 'sess-4' },
+    });
+    const c = client(fake);
+    await c.auth.webAuthnBeginLogin({ email: 'a@example.com', tenant_id: 'tenant-b' });
+    expect(fake.calls[0]?.body).toEqual({ email: 'a@example.com', tenant_id: 'tenant-b' });
+  });
+
   it('login begin defaults sessionId to "" when the header is absent', async () => {
     const fake = newFakeFetch({ body: optionsEnvelope });
     const c = client(fake);
