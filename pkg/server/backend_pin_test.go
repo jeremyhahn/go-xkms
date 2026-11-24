@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -391,42 +392,49 @@ func TestReplaceBackendPINCredential_InterruptedMigrationRecoverable(t *testing.
 		{name: "store of staging fails", failStore: staging},
 		{name: "delete of staging fails", failDelete: staging},
 	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s, _, _ := backendPINTestServer(t, "", nil, true, true)
-			creds := newFakeBackendPINCredentials(map[string][]byte{name: pin})
-			s.backendPINCredentials = creds
-			s.config.Backends.PKCS11.Pin = creds.resolve(t, name)
-			p := s.primaryBackendPINSecret()
-			if tc.failStore != "" {
-				creds.failStore[tc.failStore] = true
-			}
-			if tc.failDelete != "" {
-				creds.failDelete[tc.failDelete] = true
-			}
+		for _, shared := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/shared=%t", tc.name, shared), func(t *testing.T) {
+				s, _, _ := backendPINTestServer(t, "", nil, true, true)
+				creds := newFakeBackendPINCredentials(map[string][]byte{name: pin})
+				s.backendPINCredentials = creds
+				s.config.Backends.PKCS11.Pin = creds.resolve(t, name)
+				if shared {
+					// The key backend and the RNG reference one PIN credential.
+					s.config.RNG.Mode = "pkcs11"
+					s.config.RNG.PKCS11 = &config.RNGPKCS11Config{PINRequired: true, PIN: creds.resolve(t, name)}
+				}
+				p := s.primaryBackendPINSecret()
+				if tc.failStore != "" {
+					creds.failStore[tc.failStore] = true
+				}
+				if tc.failDelete != "" {
+					creds.failDelete[tc.failDelete] = true
+				}
 
-			_ = s.replaceBackendPINCredential(ctx, p, append([]byte(nil), pin...), blob)
+				_ = s.replaceBackendPINCredential(ctx, p, append([]byte(nil), pin...), blob)
 
-			recoverable := bytes.Equal(creds.value(name), pin) ||
-				bytes.HasPrefix(creds.value(name), []byte(backendPINTPMEnvelope)) ||
-				bytes.HasPrefix(creds.value(staging), []byte(backendPINTPMEnvelope))
-			require.True(t, recoverable, "the PIN must stay recoverable after an interrupted migration")
-			require.False(t, creds.has(staging) && bytes.Contains(creds.value(staging), pin),
-				"the staging credential never holds the plaintext PIN")
+				recoverable := bytes.Equal(creds.value(name), pin) ||
+					bytes.HasPrefix(creds.value(name), []byte(backendPINTPMEnvelope)) ||
+					bytes.HasPrefix(creds.value(staging), []byte(backendPINTPMEnvelope))
+				require.True(t, recoverable, "the PIN must stay recoverable after an interrupted migration")
+				require.False(t, creds.has(staging) && bytes.Contains(creds.value(staging), pin),
+					"the staging credential never holds the plaintext PIN")
 
-			creds.failStore = map[string]bool{}
-			creds.failDelete = map[string]bool{}
-			require.NoError(t, s.recoverBackendPINCustody(ctx))
-			if bytes.Equal(creds.value(name), pin) {
-				// Interrupted before the plaintext was removed: the next
-				// release migrates it again from the start.
-				require.NoError(t, s.replaceBackendPINCredential(ctx, p, append([]byte(nil), pin...), blob))
-			}
-			require.True(t, bytes.HasPrefix(creds.value(name), []byte(backendPINTPMEnvelope)), "name holds the TPM-sealed envelope")
-			require.False(t, creds.has(staging), "the staging credential is removed")
-			for _, n := range []string{name, staging} {
-				require.False(t, bytes.Contains(creds.value(n), pin), "no stored value holds the plaintext PIN")
-			}
-		})
+				creds.failStore = map[string]bool{}
+				creds.failDelete = map[string]bool{}
+				require.NoError(t, s.recoverBackendPINCustody(ctx))
+				if bytes.Equal(creds.value(name), pin) {
+					// Interrupted before the plaintext was removed: the next
+					// release migrates it again from the start.
+					require.NoError(t, s.replaceBackendPINCredential(ctx, p, append([]byte(nil), pin...), blob))
+				}
+				require.True(t, bytes.HasPrefix(creds.value(name), []byte(backendPINTPMEnvelope)), "name holds the TPM-sealed envelope")
+				require.False(t, creds.has(staging), "the staging credential is removed")
+				for _, n := range []string{name, staging} {
+					require.False(t, bytes.Contains(creds.value(n), pin), "no stored value holds the plaintext PIN")
+				}
+			})
+		}
 	}
 }
 
