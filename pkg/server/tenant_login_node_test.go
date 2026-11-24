@@ -43,14 +43,22 @@ func publicKeyOptions(t *testing.T, optionsJSON string) string {
 	return string(inner)
 }
 
-// TestTenantLogin_EmbeddedNodeInvitation is the go-xkms#2319 acceptance test
-// over a real embedded qrdb node with RBAC on: a tenant-b invitation enrols
-// through tenant-b's relying party, an email login naming tenant-b (as
-// xkmsctl and xkey send it) mints a tenant-b token, and the same login
-// naming another tenant gets decoy options whose finish fails.
-func TestTenantLogin_EmbeddedNodeInvitation(t *testing.T) {
+// tenantLoginNode is a running embedded RBAC node with tenants tenant-b and
+// tenant-c and a pending tenant-b user "bea" holding an invitation.
+type tenantLoginNode struct {
+	server      *Server
+	svc         *xkms.XKMSService
+	inviteToken string
+}
+
+const tenantLoginEmail = "bea@example.com"
+
+// newTenantLoginNode starts the embedded node of the go-xkms#2319
+// acceptance tests and mints the tenant-b invitation.
+func newTenantLoginNode(t *testing.T) *tenantLoginNode {
+	t.Helper()
 	xkms.Reset()
-	defer xkms.Reset()
+	t.Cleanup(xkms.Reset)
 
 	cfg := qrdbBarrierConfig(t)
 	cfg.Barrier = config.BarrierConfig{Enabled: true, Strategy: "none"}
@@ -64,15 +72,13 @@ func TestTenantLogin_EmbeddedNodeInvitation(t *testing.T) {
 
 	server, err := New(cfg)
 	require.NoError(t, err)
-	defer func() { _ = server.Shutdown() }()
+	t.Cleanup(func() { _ = server.Shutdown() })
 	require.True(t, server.nodeSealEnabled, "node-seal flip must engage so tenant lookups are real")
 
 	svc := server.XKMSService()
 	require.NotNil(t, svc)
 
-	// The login and invite verbs are unauthenticated and run on a plain
-	// context; tenant and user creation need a system administrator under
-	// RBAC.
+	// Tenant and user creation need a system administrator under RBAC.
 	ctx := context.Background()
 	adminCtx := qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(ctx, &qrdbsdk.Identity{
 		Subject:  "e2e-operator",
@@ -84,7 +90,6 @@ func TestTenantLogin_EmbeddedNodeInvitation(t *testing.T) {
 		require.NoError(t, err, "CreateTenant %s", id)
 	}
 
-	const email = "bea@example.com"
 	// A system caller may not create users inside another tenant, so the
 	// invitation is minted by tenant-b's own administrator.
 	tenantAdminCtx := qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(ctx, &qrdbsdk.Identity{
@@ -94,13 +99,49 @@ func TestTenantLogin_EmbeddedNodeInvitation(t *testing.T) {
 	}), "tenant-b")
 	created, err := svc.CreateUser(tenantAdminCtx, &transport.CreateUserRequest{
 		Username:    "bea",
-		Email:       email,
+		Email:       tenantLoginEmail,
 		DisplayName: "Bea",
 		TenantID:    "tenant-b",
 	})
 	require.NoError(t, err)
 	require.NotNil(t, created.Invite, "a tenant user is created pending with an invitation")
-	inviteToken := created.Invite.Token
+	return &tenantLoginNode{server: server, svc: svc, inviteToken: created.Invite.Token}
+}
+
+// TestTenantLogin_EmbeddedNodeCeremonyLookups pins the ceremony identity
+// (Codex round 2 on #2387): the unauthenticated invite verbs read the
+// tenant-b account on an RBAC node, while an admin verb on the same plain
+// context stays refused, so the ceremony identity never reaches it.
+func TestTenantLogin_EmbeddedNodeCeremonyLookups(t *testing.T) {
+	node := newTenantLoginNode(t)
+	ctx := context.Background()
+
+	invite, err := node.svc.GetInvite(ctx, &transport.GetInviteRequest{TenantID: "tenant-b", Token: node.inviteToken})
+	require.NoError(t, err)
+	require.Equal(t, tenantLoginEmail, invite.Email)
+
+	begin, err := node.svc.BeginInviteRegistration(ctx, &transport.BeginInviteRegistrationRequest{
+		TenantID: "tenant-b",
+		Token:    node.inviteToken,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, begin.SessionID)
+
+	_, err = node.svc.GetUser(ctx, "bea")
+	require.Error(t, err, "an admin verb on an unauthenticated context must stay refused")
+}
+
+// TestTenantLogin_EmbeddedNodeInvitation is the go-xkms#2319 acceptance test
+// over a real embedded qrdb node with RBAC on: a tenant-b invitation enrols
+// through tenant-b's relying party, an email login naming tenant-b (as
+// xkmsctl and xkey send it) mints a tenant-b token, and the same login
+// naming another tenant gets decoy options whose finish fails.
+func TestTenantLogin_EmbeddedNodeInvitation(t *testing.T) {
+	node := newTenantLoginNode(t)
+	server, svc, inviteToken := node.server, node.svc, node.inviteToken
+	const email = tenantLoginEmail
+	// The login and invite verbs are unauthenticated and run on a plain context.
+	ctx := context.Background()
 
 	rp := virtualwebauthn.RelyingParty{Name: "Test", ID: "localhost", Origin: "https://localhost"}
 	authn := virtualwebauthn.NewAuthenticator()
