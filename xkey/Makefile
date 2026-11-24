@@ -1,12 +1,8 @@
-# Makefile for xKey Desktop GUI
-# Wails v2 desktop application with Svelte 4 + TypeScript + TailwindCSS frontend
+# Makefile for the xKey desktop GUI (Wails v2, Svelte 4, TypeScript, TailwindCSS).
 
-# ==============================================================================
 # Configuration
-# ==============================================================================
 
-# Builds never resolve through a workspace: modules come from Gitea tags
-# (dependency-resolution.md §2). Immunizes against stray go.work files.
+# Builds never resolve through a workspace.
 export GOWORK=off
 
 # go_tags: the one GO_BUILD_TAGS join, shared with the root Makefile.
@@ -23,18 +19,10 @@ LDFLAGS := -X $(LDFLAGS_PKG).Version=$(VERSION) \
            -X $(LDFLAGS_PKG).Commit=$(GIT_COMMIT) \
            -X $(LDFLAGS_PKG).Date=$(BUILD_DATE)
 
-# Build tags:
-#   production  - required by Wails v2 for a working GUI binary
-#   ble         - enables real BLE transport (requires BlueZ/D-Bus)
-#   pkcs11      - enables PKCS#11/HSM support (requires pkcs11 C headers)
-#   codec_json  - enables JSON codec for go-qrdb (required for TPM blob store)
-#   webkit2_41  - use webkit2gtk-4.1 (Ubuntu 24.04+ dropped 4.0)
-# Auto-detect: use webkit2_41 only if 4.0 is not available
+# Build tags
 WEBKIT_TAG := $(shell pkg-config --exists webkit2gtk-4.0 2>/dev/null && echo "" || echo " webkit2_41")
 
-# Optional features (handbook conventions/build-tags.md). Every feature is
-# compiled in by default; opt out with WITH_X=0. build-full sets every toggle
-# in FEATURE_TOGGLES to 1 and build-minimal every one to 0.
+# Optional features
 WITH_PKCS11 ?= 1
 ifeq ($(WITH_PKCS11),0)
   PKCS11_TAG :=
@@ -42,8 +30,7 @@ else
   PKCS11_TAG := pkcs11
 endif
 
-# Object-storage (go-objstore) cloud backends for the embedded qrdb datastore.
-# Tag names match go-objstore.
+# Object-storage cloud backends for the embedded qrdb datastore.
 WITH_AWS_S3        ?= 1
 WITH_MINIO         ?= 1
 WITH_GCP_STORAGE   ?= 1
@@ -53,8 +40,7 @@ WITH_AZURE_ARCHIVE ?= 1
 FEATURE_TOGGLES := WITH_PKCS11 WITH_AWS_S3 WITH_MINIO WITH_GCP_STORAGE \
 	WITH_AZURE_BLOB WITH_GLACIER WITH_AZURE_ARCHIVE
 
-# Provider umbrellas: unset by default. WITH_AWS=0 (or 1) sets the provider's
-# whole object-storage family, overriding the individual toggles.
+# Provider umbrellas: unset by default.
 WITH_AWS   ?=
 WITH_GCP   ?=
 WITH_AZURE ?=
@@ -89,23 +75,13 @@ ifeq ($(WITH_AZURE_ARCHIVE),1)
   OBJSTORE_TAGS += azurearchive
 endif
 
-# ble and usb are the phone's BLE and USB (AOA) transports. The root
-# Makefile reads this list through print-build-tags, so it is the only one.
+# ble and usb are the phone's BLE and USB (AOA) transports.
 BUILD_TAGS := ble usb production codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
-# Development tags: exclude "production" because the Wails CLI injects the
-# "dev" tag automatically during `wails dev`, and wails's internal app
-# package has separate files guarded by //go:build dev and //go:build
-# production that each declare App.Run and CreateApp. Including both tags
-# produces "method App.Run already declared" at link time.
+# Development tags omit "production"; wails dev adds "dev".
 DEV_TAGS := ble usb codec_json $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
-# Unit test tags: exclude "ble" so BLE stub is used (fast, no hardware).
-# The ble tag enables real bluetooth.DefaultAdapter.Enable() which blocks
-# ~25s on machines without BLE hardware. Integration tests use BUILD_TAGS
-# (with ble) for real hardware testing in the devcontainer.
-# Note: PKCS#11 is included in test tags since it doesn't require hardware for unit tests.
-# tpm_simulator runs the TPM tests on the in-process simulator (no device).
+# Unit test tags omit "ble" so the BLE stub is used.
 TEST_TAGS := production codec_json tpm_simulator $(PKCS11_TAG)$(WEBKIT_TAG) $(OBJSTORE_TAGS)
 
 # Go parameters
@@ -125,15 +101,11 @@ FRONTEND_DIR := $(PROJECT_ROOT)/frontend
 
 # Build artifacts
 BUILD_DIR := build
-# The xkey binary is written directly to the top-level go-xkms build/bin/
-# directory so there is a single authoritative output location for the
-# whole project (overridable via `make BIN_DIR=...`). BUILD_DIR itself
-# stays under xkey/ for coverage and benchmark artefacts.
+# The xkey binary goes to the top-level build/bin (override with BIN_DIR).
 BIN_DIR ?= $(WORKSPACE_ROOT)/build/bin
 COVERAGE_DIR := $(BUILD_DIR)/coverage
 
-# Docker builder image — all CGO deps (webkit, libusb, bluetooth, Node.js)
-# are baked in so builds work on any machine with Docker.
+# Docker builder image with every cgo dependency.
 BUILDER_IMAGE := go-xkms-xkey-builder:latest
 
 # Tool binaries
@@ -141,8 +113,7 @@ WAILS := $(shell command -v wails 2>/dev/null)
 NPM := $(shell command -v npm 2>/dev/null)
 GOLANGCI_LINT := $(shell command -v golangci-lint 2>/dev/null || echo "$(HOME)/go/bin/golangci-lint")
 
-# Frontend tool paths — invoke via node directly to avoid Node.js ESM symlink
-# resolution bugs in .bin/ shims (affects Node 24.13+).
+# Frontend tools are run through node directly.
 VITE := node $(FRONTEND_DIR)/node_modules/vite/bin/vite.js
 SVELTE_CHECK := node $(FRONTEND_DIR)/node_modules/svelte-check/bin/svelte-check
 VITEST := node $(FRONTEND_DIR)/node_modules/vitest/vitest.mjs
@@ -153,19 +124,10 @@ COVERAGE_FILE := $(COVERAGE_DIR)/coverage.out
 COVERAGE_HTML := $(COVERAGE_DIR)/coverage.html
 COVERAGE_THRESHOLD := 90
 
-# Integration test flags include tpm_simulator so the in-process TPM
-# simulator (CGO, MS TPM reference implementation) is available for tests.
-# This is NOT included in BUILD_TAGS because it requires OpenSSL headers.
+# Integration tests include tpm_simulator for the in-process TPM simulator.
 INTEGRATION_TEST_FLAGS := -v -tags="integration linux tpm_simulator $(BUILD_TAGS)"
 
-# Export the production tag set for tests that build the CLI binary
-# themselves (test/integration buildBinary). Without it the test-built
-# binary lacks codec_json and the go-codec based DAOs fail at runtime.
-# tpm_simulator is appended (never added to BUILD_TAGS itself) so the
-# CLI-under-test can open the in-process TPM simulator, matching the test
-# binary's own INTEGRATION_TEST_FLAGS above. Without this, "xkey barrier
-# init --strategy tpm2 --tpm-simulator" would fail to link the simulator
-# and integration tests would silently fall through to the real host TPM.
+# The production tag set for tests that build the CLI binary.
 export XKEY_CLI_BUILD_TAGS := $(BUILD_TAGS) tpm_simulator
 
 # Color output (ANSI escape codes)
@@ -177,19 +139,14 @@ YELLOW := \033[33m
 BLUE := \033[34m
 CYAN := \033[36m
 
-# ==============================================================================
-# Default Target
-# ==============================================================================
+# Default target
 
 .DEFAULT_GOAL := build
 
-# ==============================================================================
-# Primary Build Targets
-# ==============================================================================
+# Primary build targets
 
 .PHONY: build
-## build: Build the xkey binary with embedded frontend (GUI + CLI in one)
-## Uses Docker to ensure all CGO dependencies (webkit, libusb, bluetooth) are available.
+## build: Build the xkey binary with the embedded frontend, in Docker.
 build: builder-image
 	@echo "$(CYAN)$(BOLD)Building xKey frontend...$(RESET)"
 	@docker run --rm \
@@ -245,9 +202,7 @@ build-full:
 build-minimal:
 	@$(MAKE) --no-print-directory build-profile BUILD_PROFILE=minimal $(addsuffix =0,$(FEATURE_TOGGLES))
 
-# build-profile compiles the module and links xkey under the feature toggles
-# its caller sets, embedding the committed frontend/dist; build-local rebuilds
-# the frontend first.
+# build-profile builds xkey under the caller's feature toggles with the committed frontend/dist.
 .PHONY: build-profile
 build-profile:
 	@echo "$(CYAN)$(BOLD)Building the $(BUILD_PROFILE) profile [tags: $(strip $(BUILD_TAGS))]$(RESET)"
@@ -274,22 +229,18 @@ dev-browser: frontend-install
 	@# Gitea tags (dependency-resolution.md); no workspace is used.
 	@GODEBUG=gotypesalias=1 wails dev -browser -nosyncgomod -m -tags "$(DEV_TAGS)" -ldflags "$(LDFLAGS)"
 
-# Hermetic sandbox dirs used by dev-browser-e2e. Override on the command line
-# if you want a different location, e.g. make dev-browser-e2e E2E_HOME=/mnt/...
+# Hermetic sandbox directories for dev-browser-e2e.
 E2E_HOME        ?= /tmp/xkey-e2e-home
 E2E_CONFIG      ?= /tmp/xkey-e2e-config
 E2E_SOFTHSM_DIR ?= /tmp/xkey-e2e-softhsm
 
 .PHONY: e2e-softhsm-setup
-## e2e-softhsm-setup: Idempotently provision a sandboxed SoftHSM2 token (e2e-piv-test) with PIV certs for dev-browser-e2e
-## Entirely isolated under $(E2E_SOFTHSM_DIR) via a dedicated SOFTHSM2_CONF — never reads/writes the host ~/.config/softhsm2.
+## e2e-softhsm-setup: provision an isolated SoftHSM2 token with PIV certificates for dev-browser-e2e.
 e2e-softhsm-setup:
 	@E2E_SOFTHSM_DIR="$(E2E_SOFTHSM_DIR)" bash scripts/e2e-softhsm-setup.sh
 
 .PHONY: dev-browser-e2e
-## dev-browser-e2e: Hermetic browser-mode server for Playwright live-backend tests (isolated XKEY_HOME + XDG_CONFIG_HOME + SOFTHSM2_CONF)
-## Uses /tmp/xkey-e2e-home, /tmp/xkey-e2e-config, and /tmp/xkey-e2e-softhsm so the real ~/.config/xkey and ~/.config/softhsm2 are never touched.
-## Run dev-browser-e2e-clean first to reset the sandbox to a fresh first-run state.
+## dev-browser-e2e: hermetic browser-mode server for the Playwright live-backend tests.
 dev-browser-e2e: frontend-install e2e-softhsm-setup
 	@echo "$(CYAN)$(BOLD)Starting xKey dev (e2e hermetic mode) on :34115...$(RESET)"
 	@echo "$(YELLOW)XKEY_HOME=$(E2E_HOME)  XDG_CONFIG_HOME=$(E2E_CONFIG)  SOFTHSM2_CONF=$(E2E_SOFTHSM_DIR)/softhsm2.conf$(RESET)"
@@ -305,9 +256,7 @@ dev-browser-e2e-clean:
 	@rm -rf "$(E2E_HOME)" "$(E2E_CONFIG)/xkey"
 	@echo "$(GREEN)E2E sandbox cleared. Next dev-browser-e2e run starts fresh.$(RESET)"
 
-# ==============================================================================
-# Frontend Targets
-# ==============================================================================
+# Frontend targets
 
 .PHONY: frontend-install
 ## frontend-install: Install frontend npm dependencies
@@ -350,9 +299,7 @@ frontend-test-coverage: frontend-install
 	@cd $(FRONTEND_DIR) && $(VITEST) run --coverage
 	@echo "$(GREEN)Frontend unit test coverage report generated$(RESET)"
 
-# ==============================================================================
-# Extension Targets
-# ==============================================================================
+# Extension targets
 
 EXTENSION_DIR := $(PROJECT_ROOT)/extension
 
@@ -372,15 +319,10 @@ extension-build-firefox:
 	@cd $(EXTENSION_DIR) && ./build.sh firefox
 	@echo "$(GREEN)Firefox extension built: extension/dist-firefox/ + extension/xkey-autofill.xpi$(RESET)"
 
-# ==============================================================================
-# Test Targets
-# ==============================================================================
+# Test targets
 
 .PHONY: test
-## test: Run all unit tests with coverage
-# Unit tests never reach the host's hardware TPM (go-xkms pkg/tpm2/tpmdev):
-# this flag holds every process a test runs to that rule too. Opt in with
-# XKMS_TEST_HARDWARE_TPM=1.
+## test: Run all unit tests with coverage; tests never reach the host's hardware TPM.
 test: export XKMS_DENY_HARDWARE_TPM := 1
 test:
 	@echo "$(CYAN)$(BOLD)Running unit tests...$(RESET)"
@@ -477,7 +419,7 @@ playwright-test-vite:
 	@echo "$(GREEN)Playwright tests passed$(RESET)"
 
 .PHONY: integration-test
-## integration-test: Run ALL integration tests (requires devcontainer)
+## integration-test: Run all integration tests (requires the devcontainer)
 integration-test: integration-test-cli integration-test-fido2 integration-test-uhid \
 	integration-test-phone integration-test-oath integration-test-password \
 	integration-test-piv integration-test-ssh integration-test-touch \
@@ -487,10 +429,6 @@ integration-test: integration-test-cli integration-test-fido2 integration-test-u
 
 .PHONY: integration-test-tpm
 ## integration-test-tpm: Run TPMService integration tests against the in-process TPM simulator
-# The suite lives beside the service it exercises (pkg/gui/services) and is
-# guarded by `//go:build integration && tpm_simulator`. INTEGRATION_TEST_FLAGS
-# supplies both tags plus CGO, so the simulator links in and NO host TPM
-# character device is opened.
 integration-test-tpm:
 	@echo "$(CYAN)$(BOLD)Running TPM service integration tests (simulator)...$(RESET)"
 	@$(GO) test $(INTEGRATION_TEST_FLAGS) -timeout=15m -run 'TestIntegration_TPMService' ./pkg/gui/services/
@@ -571,18 +509,10 @@ integration-test-piv-yubikey:
 	@$(GO) test -v -tags="integration pkcs11 yubikey $(BUILD_TAGS)" -count=1 -timeout=60m ./test/integration/piv/... -run 'TestYubiKey'
 	@echo "$(GREEN)PIV YubiKey integration tests passed$(RESET)"
 
-# NOTE: There are no OATH or FIDO2 YubiKey integration targets because xkey has
-# no YubiKey backend for either capability yet:
-#   - xkey oath routes every command through oath.NewFileStore; there is no
-#     CCID OATH applet client and no --backend yubikey flag.
-#   - xkey fido2 is a virtual CTAP2 authenticator over UHID; --backend accepts
-#     only software/tpm2/phone, with no pass-through to a physical YubiKey.
-# The placeholder suites that used to sit here contained only unconditional
-# t.Skip calls, so they asserted nothing while implying YubiKey coverage
-# existed. Add the backends first, then add real suites and targets.
+# There are no OATH or FIDO2 YubiKey integration targets; xkey has no YubiKey backend for them.
 
 .PHONY: integration-test-yubikey
-## integration-test-yubikey: Run ALL YubiKey hardware integration tests (PIV) — NOT part of global integration-test
+## integration-test-yubikey: Run all YubiKey hardware integration tests (PIV), not part of integration-test
 integration-test-yubikey: integration-test-piv-yubikey
 	@echo "$(GREEN)$(BOLD)All YubiKey hardware integration tests passed$(RESET)"
 
@@ -649,9 +579,7 @@ integration-test-ble:
 	@docker compose -f test/integration/ble/docker-compose.yml up --build --abort-on-container-exit --exit-code-from ble-tests
 	@echo "$(GREEN)BLE integration tests passed$(RESET)"
 
-# ==============================================================================
-# Coverage Targets
-# ==============================================================================
+# Coverage targets
 
 .PHONY: coverage
 ## coverage: Generate aggregate coverage report for all xkey packages
@@ -776,9 +704,7 @@ coverage-%:
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/$*.out | tail -1
 	@echo "$(GREEN)Coverage report: $(COVERAGE_DIR)/$*-coverage.html$(RESET)"
 
-# ==============================================================================
-# Lint / Format Targets
-# ==============================================================================
+# Lint and format targets
 
 .PHONY: fmt
 ## fmt: Format Go source code with gofmt
@@ -836,9 +762,7 @@ lint-frontend: frontend-check
 lint-all: lint lint-frontend
 	@echo "$(GREEN)$(BOLD)All lint checks passed$(RESET)"
 
-# ==============================================================================
-# Dependency Targets
-# ==============================================================================
+# Dependency targets
 
 .PHONY: deps
 ## deps: Install all dependencies (Go modules + npm packages)
@@ -866,9 +790,7 @@ deps-gui: frontend-install
 	fi
 	@echo "$(GREEN)GUI dependencies ready$(RESET)"
 
-# ==============================================================================
-# Clean Targets
-# ==============================================================================
+# Clean targets
 
 .PHONY: clean
 ## clean: Remove all build artifacts and test outputs
@@ -893,9 +815,7 @@ clean-frontend:
 clean-all: clean clean-frontend
 	@echo "$(GREEN)$(BOLD)Full clean complete$(RESET)"
 
-# ==============================================================================
-# Benchmark Targets
-# ==============================================================================
+# Benchmark targets
 
 .PHONY: bench-gui
 ## bench-gui: Run GUI service benchmarks
@@ -920,9 +840,7 @@ test-%:
 	@$(GOTEST) $(TEST_FLAGS) ./pkg/$*/...
 	@echo "$(GREEN)Tests passed for pkg/$*$(RESET)"
 
-# ==============================================================================
-# Docker E2E Targets
-# ==============================================================================
+# Docker E2E targets
 
 .PHONY: playwright-test-docker
 ## playwright-test-docker: Run Playwright GUI tests in Docker with swtpm and headless browser
@@ -948,7 +866,7 @@ test-fido2-pkcs11:
 	@echo "$(GREEN)FIDO2 PKCS#11 composite backend tests passed$(RESET)"
 
 .PHONY: integration-test-fido2-adapter
-## integration-test-fido2-adapter: FIDO2 adapter integration tests with ALL backends (software + TPM2 + PKCS#11)
+## integration-test-fido2-adapter: FIDO2 adapter integration tests with all backends (software, TPM2, PKCS#11)
 integration-test-fido2-adapter:
 	@echo "$(CYAN)$(BOLD)Setting up SoftHSM PIV test certificates...$(RESET)"
 	@bash test/e2e/setup-softhsm-piv.sh
@@ -966,7 +884,7 @@ integration-test-piv-pkcs11:
 	@echo "$(GREEN)PKCS#11 PIV integration tests passed$(RESET)"
 
 .PHONY: integration-test-pkcs11
-## integration-test-pkcs11: Run all PKCS#11 integration tests (FIDO2 adapter + PIV certs)
+## integration-test-pkcs11: Run all PKCS#11 integration tests (FIDO2 adapter and PIV certificates)
 integration-test-pkcs11: integration-test-fido2-adapter integration-test-piv-pkcs11
 	@echo "$(GREEN)$(BOLD)All PKCS#11 integration tests passed$(RESET)"
 
@@ -984,9 +902,7 @@ integration-test-fido2-hardware:
 playwright-test-shell:
 	@cd test/e2e && docker compose run --rm --entrypoint bash e2e
 
-# ==============================================================================
-# Skill Generation Targets
-# ==============================================================================
+# Skill generation targets
 
 SKILL_REFERENCE := skills/xkey-agent/reference/cli.md
 SKILLGEN_TAGS   := ble codec_json
@@ -1012,9 +928,7 @@ check-skill-reference:
 	GOWORK=off $(GO) run -tags '$(SKILLGEN_TAGS)' ./tools/skillgen -check skills/xkey-agent/SKILL.md || { echo "$(RED)✗ SKILL.md cites a command or flag xkey does not have$(RESET)"; exit 1; }; \
 	echo "$(GREEN)✓ skill reference is current and SKILL.md matches the command tree$(RESET)"
 
-# ==============================================================================
-# Help Target
-# ==============================================================================
+# Help target
 
 .PHONY: help
 ## help: Display this help message
