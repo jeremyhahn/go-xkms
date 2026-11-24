@@ -1785,13 +1785,12 @@ jobs:
   # compose stack on the runner host started by `make integration-test`. The
   # stack is named per run under the repo's prefix, the job reaps stale stacks
   # first (v1.18) and keeps its own teardown last under `if: always()`.
-  # v1.23: full tier only (CI_FULL_TIER's expression); never on a plain PR.
+  # Every event but a docs-only PR (CI Gate `code`); never on a draft PR.
+  # v1.29.3: on a schedule run, only on the schedule guard's `run`.
   integration:
     name: Integration [integration image]
-    # v1.26: never on a draft PR, ci:full or not. v1.29.3: on a schedule run,
-    # only on the schedule guard's `run`.
     needs: preflight   # v1.34
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
+    if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
     # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing):
     # ubuntu-latest, or the bigdisk-docker pool when the preflight's
     # `runner_docker` reports the hosted pool full.
@@ -3058,7 +3057,7 @@ jobs:
           check preflight   "${{ needs.preflight.result }}" pr
           check image       "${{ needs.image.result }}" pr
           check lint-gates  "${{ needs.lint-gates.result }}" scoped
-          check integration "${{ needs.integration.result }}" full
+          check integration "${{ needs.integration.result }}" code
           check soak        "${{ needs.soak.result }}" nightly
           # >>> CUSTOMIZE (go-xkms)
           check static-analysis    "${{ needs.static-analysis.result }}" pr
