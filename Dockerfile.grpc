@@ -60,7 +60,7 @@ COPY . .
 RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
     -buildvcs=false \
     -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,vault,pkcs11" \
-    -ldflags="-w -s -X main.version=${VERSION:-dev} -X main.commit=${COMMIT:-unknown} -X main.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    -ldflags="-w -s -X main.Version=${VERSION:-dev} -X main.GitCommit=${COMMIT:-unknown} -X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     -o /build/xkms-grpc-server \
     ./cmd/xkmsd/
 
