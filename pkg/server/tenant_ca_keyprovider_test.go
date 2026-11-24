@@ -1143,6 +1143,36 @@ func TestTenantCAKeyFactory_LateLoginCACertSaveAfterReviveRestoresPublished(t *t
 	require.Equal(t, published, stored.Raw)
 }
 
+// A stale pass whose late SaveCert lands after its fence check but stops
+// before its compensating repair leaves a cert over its old key beside the
+// live key's provenance. The provider read path must not serve that pair: it
+// restores the published certificate over the live key.
+func TestTenantCAKeyFactory_ProviderRepairsSavedLoginCACertNotOverLiveKey(t *testing.T) {
+	ctx := context.Background()
+	f, base := newTenantCAKeyTestFactory(t, "tenant-a")
+	scoped := xkms.NewTenantScopedBackend(base, "tenant-a")
+
+	stale, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	staleCert, err := selfSignTenantLoginCA("tenant-a", stale)
+	require.NoError(t, err)
+	require.NoError(t, scoped.SaveCert(ctx, tenantLoginCAKeyCN, staleCert))
+
+	p, err := f.ProviderForTenant("tenant-a")
+	require.NoError(t, err)
+	signer, err := p.Signer(ctx)
+	require.NoError(t, err)
+	cert, err := p.Certificate(ctx)
+	require.NoError(t, err)
+
+	claims, err := f.claimStorage()
+	require.NoError(t, err)
+	published, err := claims.Get(ctx, tenantLoginCACertPublishKey("tenant-a"))
+	require.NoError(t, err)
+	require.Equal(t, published, cert.Raw, "the served login CA must be the published certificate")
+	require.True(t, signer.Public().(*ecdsa.PublicKey).Equal(cert.PublicKey), "the served login CA must be over the live signer's key")
+}
+
 // A pass whose generation moved before a write refuses the write.
 func TestTenantLoginCAFenceWrite_RefusesAfterRevive(t *testing.T) {
 	ctx := context.Background()
