@@ -78,7 +78,7 @@ ARG TARGETARCH
 RUN CGO_ENABLED=1 GOOS=linux go build \
         -buildvcs=false \
         -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault" \
-        -ldflags="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
+        -ldflags="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -s -w" \
         -o /build/xkms-cli \
         ./cmd/xkmsctl
 
