@@ -287,6 +287,11 @@ Rules (`pkg/webauthn/tenant_router.go:122`):
 - The account lookup is scoped to the tenant (`pkg/webauthn/qrdb_userstore.go:119`),
   so another tenant's account reads as unknown.
 - The minted token carries the tenant.
+- The SDK routes `/api/v1/webauthn/sdk/authentication/*` follow the same host
+  rule, with the same `tenant_id` and `X-Tenant-Id` fallback
+  (`pkg/xkms/service.go`, `webauthnFor`).
+- Adding a passkey (`BeginAddCredential`, then `FinishRegistration`) uses the
+  signed-in identity's tenant (`pkg/webauthn/http/handler.go`, `enrolService`).
 
 The SDK verbs `BeginAuthentication` and `FinishAuthentication` take the same
 optional `tenant_id` (`pkg/api/transport/types.go:1014`, `:1048`). On the
