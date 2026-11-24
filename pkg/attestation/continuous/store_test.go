@@ -176,6 +176,70 @@ func TestStore_ListVerdictsPage(t *testing.T) {
 	}
 }
 
+// countingRecords counts the stored records a read loads through the
+// store's DAO seam.
+type countingRecords struct {
+	verdictRecords
+	reads int
+}
+
+func (c *countingRecords) GetByNaturalKey(ctx context.Context, key string) (*verdictEntity, error) {
+	c.reads++
+	return c.verdictRecords.GetByNaturalKey(ctx, key)
+}
+
+func TestStore_PageAndLatestReadBoundedRecords(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 12, 1, 0, 0, 0, time.UTC)
+	const n = 300
+	for i := range n {
+		v := Verdict{Tenant: "acme", DeviceID: "dev-1", Verified: true, At: at.Add(time.Duration(i) * time.Second)}
+		if err := store.SaveVerdict(ctx, v); err != nil {
+			t.Fatalf("SaveVerdict %d: %v", i, err)
+		}
+	}
+	counter := &countingRecords{verdictRecords: store.records}
+	store.records = counter
+
+	const limit, offset = 10, 120
+	page, err := store.ListVerdictsPage(ctx, "acme", "dev-1", offset, limit)
+	if err != nil {
+		t.Fatalf("ListVerdictsPage: %v", err)
+	}
+	if counter.reads > limit+1 {
+		t.Fatalf("page read %d records, want at most %d", counter.reads, limit+1)
+	}
+	if page.Total != n || len(page.Verdicts) != limit {
+		t.Fatalf("page: %d verdicts, total %d", len(page.Verdicts), page.Total)
+	}
+	for j, v := range page.Verdicts {
+		if want := at.Add(time.Duration(offset+j) * time.Second); !v.At.Equal(want) {
+			t.Fatalf("page item %d at %v, want %v", j, v.At, want)
+		}
+	}
+
+	counter.reads = 0
+	latest, err := store.LatestVerdict(ctx, "acme", "dev-1")
+	if err != nil {
+		t.Fatalf("LatestVerdict: %v", err)
+	}
+	if counter.reads > 2 {
+		t.Fatalf("latest read %d records, want at most 2", counter.reads)
+	}
+	if want := at.Add((n - 1) * time.Second); !latest.At.Equal(want) {
+		t.Fatalf("latest at %v, want %v", latest.At, want)
+	}
+
+	counter.reads = 0
+	if _, err := store.LatestVerdict(ctx, "acme", "dev-2"); err == nil {
+		t.Fatal("LatestVerdict of an unknown device: want VerdictNotFoundError")
+	}
+	if counter.reads > 1 {
+		t.Fatalf("unknown device read %d records, want at most 1", counter.reads)
+	}
+}
+
 // scanGuardKV is the backing store of a test that must not walk a
 // collection: once armed, every Scan or List through it fails the test. It
 // embeds the memory store so the index, atomic and batch capabilities the
