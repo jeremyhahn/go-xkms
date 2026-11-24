@@ -188,14 +188,17 @@ func TestResolveBackendPIN_AutoWithTPMAndBarrierStoreSealsToTPM(t *testing.T) {
 		t.Run(strategy, func(t *testing.T) {
 			ctx := context.Background()
 			pin := []byte("backend-pin-1")
-			s, opened, _ := backendPINTestServer(t, strategy, pin, true, true)
+			s, opened, _ := backendPINTestServer(t, strategy, nil, true, true)
 			require.Equal(t, "barrier", s.config.Credentials.SealStrategy)
 			backendPINSimulatorTPM(t, s)
+			creds := newFakeBackendPINCredentials(map[string][]byte{"pkcs11-pin": pin})
+			s.backendPINCredentials = creds
+			s.config.Backends.PKCS11.Pin = creds.resolve(t, "pkcs11-pin")
 
 			err := s.resolveBackendPIN()
 			skipWithoutTPMSimulator(t, err)
 			require.NoError(t, err)
-			require.Equal(t, "tpm2", s.BackendPINStrategy())
+			require.Empty(t, s.BackendPINStrategy(), "tpm2 is not reported while the barrier copy exists")
 			persisted, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
 			require.NoError(t, err)
 			require.Equal(t, pinselect.BackendPINTPM2, persisted)
@@ -203,6 +206,7 @@ func TestResolveBackendPIN_AutoWithTPMAndBarrierStoreSealsToTPM(t *testing.T) {
 			require.NoError(t, s.startPKCS11AfterUnseal())
 			require.Len(t, *opened, 1)
 			require.True(t, bytes.Equal(pin, (*opened)[0]), "backend opened with the configured PIN")
+			require.Equal(t, "tpm2", s.BackendPINStrategy())
 
 			// The server keeps the TPM-sealed copy, not the plaintext: with
 			// the configured PIN gone, the next release still unseals the
@@ -318,7 +322,8 @@ func TestResolveBackendPIN_TPM2MinimumLeavesNoBarrierPINCopy(t *testing.T) {
 	// cannot remove: refused at start-up, nothing opened.
 	s2, opened2, _ := backendPINTestServer(t, "", pin, true, true)
 	s2.config.BackendPIN.Minimum = "tpm2"
-	backendPINSimulatorTPM(t, s2)
+	s2.logger = s.logger
+	s2.platformStoreTPM = s.platformStoreTPM // the simulator s opened
 	err = s2.resolveBackendPIN()
 	var custody *BackendPINTPMCustodyError
 	require.ErrorAs(t, err, &custody)

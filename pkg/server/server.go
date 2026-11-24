@@ -148,7 +148,13 @@ type Server struct {
 	// pkcs11PINOpener opens the PKCS#11 backend with a released PIN; nil
 	// uses the build's PKCS#11 opener.
 	pkcs11PINOpener func(pin []byte) (types.KeyProvider, error)
-	logger          *slog.Logger
+	// backendPINCredentials stores the backend PIN credentials; nil uses
+	// the credential service.
+	backendPINCredentials backendPINCredentialStore
+	// backendPINTPMCustody reports the backend PIN in TPM custody: its
+	// credential holds only the TPM-sealed blob.
+	backendPINTPMCustody atomic.Bool
+	logger               *slog.Logger
 
 	// sshClient is the shared SSH SDK client wired into every transport. It
 	// is built once, lazily, via ensureSSHClient.

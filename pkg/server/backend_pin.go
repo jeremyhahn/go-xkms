@@ -14,11 +14,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
@@ -87,6 +91,13 @@ func (s *Server) resolveBackendPIN() error {
 	strategy, err := s.resolveBackendPINStrategy(false)
 	if err != nil {
 		return err
+	}
+	// tpm2 over a PIN not stored in the TPM moves the PIN into TPM custody
+	// (tpmCustodyBlob); a PIN whose weaker copy cannot be removed is refused.
+	if strategy == pinselect.BackendPINTPM2 && s.backendPINStore() != pinselect.BackendPINTPM2 {
+		if err := s.checkBackendPINTPMCustody(); err != nil {
+			return err
+		}
 	}
 	s.installBackendPIN(strategy)
 	return nil
@@ -235,7 +246,7 @@ func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy) func(c
 	if strategy != pinselect.BackendPINTPM2 && strategy != pinselect.BackendPINSealed {
 		return s.releaseConfiguredPKCS11PIN
 	}
-	tpmSealed := s.tpmSealedBackendPINRelease()
+	tpmSealed := s.tpmSealedBackendPINRelease(s.primaryBackendPINSecret, &s.backendPINTPMCustody)
 	return func(ctx context.Context) ([]byte, error) {
 		if store := s.backendPINStore(); store != strategy {
 			if strategy == pinselect.BackendPINTPM2 {
@@ -253,7 +264,7 @@ func (s *Server) backendPINRelease(strategy pinselect.BackendPINStrategy) func(c
 // seals it to the TPM and wipes the plaintext; that release and every later
 // one unseal the PIN from the TPM-sealed copy, the only copy kept. Any TPM
 // failure fails closed with BackendPINTPMSealerError.
-func (s *Server) tpmSealedBackendPINRelease() func(context.Context) ([]byte, error) {
+func (s *Server) tpmSealedBackendPINRelease(pinSecret func() backendPINSecret, custody *atomic.Bool) func(context.Context) ([]byte, error) {
 	var (
 		mu     sync.Mutex
 		sealed *types.SealedData
@@ -266,16 +277,12 @@ func (s *Server) tpmSealedBackendPINRelease() func(context.Context) ([]byte, err
 			return nil, &BackendPINTPMSealerError{Err: err}
 		}
 		if sealed == nil {
-			pin, err := s.releaseConfiguredPKCS11PIN(ctx)
+			blob, err := s.tpmCustodyBlob(ctx, sealer, pinSecret())
 			if err != nil {
 				return nil, err
 			}
-			blob, err := sealer.Seal(ctx, pin, nil)
-			clear(pin)
-			if err != nil {
-				return nil, &BackendPINTPMSealerError{Err: err}
-			}
 			sealed = blob
+			custody.Store(true)
 		}
 		pin, err := sealer.Unseal(ctx, sealed, nil)
 		if err != nil {
@@ -283,6 +290,120 @@ func (s *Server) tpmSealedBackendPINRelease() func(context.Context) ([]byte, err
 		}
 		return pin, nil
 	}
+}
+
+// backendPINTPMEnvelope marks a credential value that is the TPM-sealed
+// backend PIN blob, not the PIN: the credential holds it after the PIN
+// moved into TPM custody (#2262).
+const backendPINTPMEnvelope = "xkms-backend-pin-tpm2-sealed:v1:"
+
+// backendPINSecret is one configured PKCS#11 PIN field and its value.
+type backendPINSecret struct {
+	field  string
+	secret *types.SecretValue
+}
+
+// backendPINCredentialStore is the credential storage a backend PIN
+// credential:// reference resolves from; the PIN moves into TPM custody
+// by replacing the stored PIN with its TPM-sealed blob.
+type backendPINCredentialStore interface {
+	StoreCredential(ctx context.Context, name string, value []byte) error
+	DeleteCredential(ctx context.Context, name string) error
+}
+
+// backendPINCredentialStore returns the injected store, else the server's
+// credential service, else nil.
+func (s *Server) backendPINCredentialStore() backendPINCredentialStore {
+	if s.backendPINCredentials != nil {
+		return s.backendPINCredentials
+	}
+	if svc := s.CredentialService(); svc != nil {
+		return svc
+	}
+	return nil
+}
+
+// backendPINCredentialName returns the credential name of a credential://
+// reference.
+func backendPINCredentialName(raw string) (string, bool) {
+	name, ok := strings.CutPrefix(raw, "credential://")
+	return name, ok && name != ""
+}
+
+// checkBackendPINTPMCustody refuses a tpm2 PIN the server cannot move into
+// TPM custody: only a credential:// reference under barrier credential
+// storage can have its weaker copy replaced by the TPM-sealed blob.
+func (s *Server) checkBackendPINTPMCustody() error {
+	for _, p := range s.activeBackendPINSecrets() {
+		if p.secret == nil {
+			continue
+		}
+		if _, ok := backendPINCredentialName(p.secret.Raw); !ok {
+			return &BackendPINTPMCustodyError{Field: p.field, Reason: "the PIN is not a credential:// reference, so its copy outside the TPM cannot be removed"}
+		}
+		if store := s.backendPINStore(); store != pinselect.BackendPINSealed {
+			return &BackendPINTPMCustodyError{Field: p.field, Reason: fmt.Sprintf("credentials.seal_strategy stores the PIN under %q, not barrier", store)}
+		}
+		if s.backendPINCredentialStore() == nil {
+			return &BackendPINTPMCustodyError{Field: p.field, Reason: "no credential service"}
+		}
+	}
+	return nil
+}
+
+// tpmCustodyBlob returns the TPM-sealed blob of a PIN. A credential that
+// already holds the blob is read as is (never sealed again); a PIN still
+// stored in plaintext under the barrier is sealed, and the credential is
+// replaced by the blob, so the datastore and barrier credentials alone no
+// longer recover it.
+func (s *Server) tpmCustodyBlob(ctx context.Context, sealer types.Sealer, p backendPINSecret) (*types.SealedData, error) {
+	if p.secret == nil {
+		return nil, errBackendPINNoConfiguredPIN
+	}
+	value, err := secretPIN(ctx, p.secret)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(value)
+	if envelope, ok := bytes.CutPrefix(value, []byte(backendPINTPMEnvelope)); ok {
+		var blob types.SealedData
+		if err := json.Unmarshal(envelope, &blob); err != nil {
+			return nil, &BackendPINTPMCustodyError{Field: p.field, Reason: "the stored TPM-sealed blob does not decode", Err: err}
+		}
+		return &blob, nil
+	}
+	blob, err := sealer.Seal(ctx, value, nil)
+	if err != nil {
+		return nil, &BackendPINTPMSealerError{Err: err}
+	}
+	if err := s.replaceBackendPINCredential(ctx, p, value, blob); err != nil {
+		return nil, err
+	}
+	return blob, nil
+}
+
+// replaceBackendPINCredential replaces the plaintext PIN credential with
+// its TPM-sealed blob. When the blob cannot be stored the PIN is put back,
+// so a later start migrates it, and the release fails closed.
+func (s *Server) replaceBackendPINCredential(ctx context.Context, p backendPINSecret, pin []byte, blob *types.SealedData) error {
+	name, ok := backendPINCredentialName(p.secret.Raw)
+	store := s.backendPINCredentialStore()
+	if !ok || store == nil {
+		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the PIN credential cannot be replaced"}
+	}
+	encoded, err := json.Marshal(blob)
+	if err != nil {
+		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the TPM-sealed blob does not encode", Err: err}
+	}
+	envelope := append([]byte(backendPINTPMEnvelope), encoded...)
+	if err := store.DeleteCredential(ctx, name); err != nil {
+		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the barrier-stored PIN could not be deleted", Err: err}
+	}
+	if err := store.StoreCredential(ctx, name, envelope); err != nil {
+		restoreErr := store.StoreCredential(ctx, name, pin)
+		return &BackendPINTPMCustodyError{Field: p.field, Reason: "the TPM-sealed blob could not be stored", Err: errors.Join(err, restoreErr)}
+	}
+	return nil
 }
 
 // backendPINTPMSealer returns the Platform SRK sealer the backend PIN is
@@ -326,17 +447,33 @@ func (s *Server) probeBackendPIN() (bool, bool) {
 // backends.pkcs11.pin, readable only after unseal (resolveConfigSecrets
 // runs after the barrier is unsealed). The copy is owned by the holder.
 func (s *Server) releaseConfiguredPKCS11PIN(ctx context.Context) ([]byte, error) {
-	// The key backend's PIN when it is enabled, otherwise the active RNG PIN.
-	var secret *types.SecretValue
-	switch {
-	case s.pkcs11Enabled():
-		secret = s.config.Backends.PKCS11.Pin
-	case s.rngPKCS11PINActive():
-		secret = s.config.RNG.PKCS11.PIN
-	}
-	if secret == nil {
+	p := s.primaryBackendPINSecret()
+	if p.secret == nil {
 		return nil, errBackendPINNoConfiguredPIN
 	}
+	return secretPIN(ctx, p.secret)
+}
+
+// primaryBackendPINSecret is the key backend's PIN when it is enabled,
+// otherwise the active RNG PIN.
+func (s *Server) primaryBackendPINSecret() backendPINSecret {
+	switch {
+	case s.pkcs11Enabled():
+		return backendPINSecret{field: "backends.pkcs11.pin", secret: s.config.Backends.PKCS11.Pin}
+	case s.rngPKCS11PINActive():
+		return backendPINSecret{field: "rng.pkcs11.pin", secret: s.config.RNG.PKCS11.PIN}
+	}
+	return backendPINSecret{}
+}
+
+// activeBackendPINSecrets lists every configured PIN the backend PIN
+// policy protects.
+func (s *Server) activeBackendPINSecrets() []backendPINSecret {
+	return []backendPINSecret{s.primaryBackendPINSecret()}
+}
+
+// secretPIN copies a secret's bytes into a slice the caller wipes.
+func secretPIN(ctx context.Context, secret *types.SecretValue) ([]byte, error) {
 	var pin []byte
 	err := secret.WithBytes(ctx, func(b []byte) error {
 		pin = append([]byte(nil), b...)
@@ -431,5 +568,12 @@ func (s *Server) BackendPINStrategy() string {
 	if s.backendPIN == nil {
 		return ""
 	}
-	return string(s.backendPIN.Strategy())
+	strategy := s.backendPIN.Strategy()
+	// tpm2 over a PIN not stored in the TPM is reported only once the PIN
+	// is in TPM custody: never while a barrier-stored copy exists.
+	if strategy == pinselect.BackendPINTPM2 && s.backendPINStore() != pinselect.BackendPINTPM2 &&
+		!s.backendPINTPMCustody.Load() {
+		return ""
+	}
+	return string(strategy)
 }
