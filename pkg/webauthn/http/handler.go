@@ -53,6 +53,19 @@ func (h *Handler) loginService(r *http.Request, tenantID string) (*webauthn.Serv
 	return h.tenants.ForRequest(r.Context(), r.Host, tenantID)
 }
 
+// enrolService returns the relying party that enrols a credential for the
+// identity on r: that identity's tenant when tenants are routed, otherwise
+// (or for public registration with no identity) the system RP.
+// Codex round 2 on #2387: a tenant user adding a passkey must reach its own
+// tenant's RP; the system RP's GetByID isolation check still refuses it.
+func (h *Handler) enrolService(r *http.Request) (*webauthn.Service, error) {
+	identity := auth.GetIdentity(r.Context())
+	if h.tenants == nil || identity == nil {
+		return h.service, nil
+	}
+	return h.tenants.For(r.Context(), identity.TenantID)
+}
+
 // NewHandler creates a new WebAuthn HTTP handler.
 func NewHandler(service *webauthn.Service) *Handler {
 	return &Handler{
@@ -149,7 +162,12 @@ func (h *Handler) BeginAddCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	options, sessionID, err := h.service.BeginAddCredential(r.Context(), acct)
+	svc, err := h.enrolService(r)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+	options, sessionID, err := svc.BeginAddCredential(r.Context(), acct)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -183,7 +201,12 @@ func (h *Handler) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, user, err := h.service.FinishRegistrationPair(r.Context(), sessionID, response)
+	svc, err := h.enrolService(r)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+	pair, user, err := svc.FinishRegistrationPair(r.Context(), sessionID, response)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
