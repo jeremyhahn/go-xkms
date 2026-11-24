@@ -20,8 +20,10 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
+	"net/http"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -151,5 +153,55 @@ func TestDelete_ClientErrorStillClearsMetadata(t *testing.T) {
 	}
 	if exists {
 		t.Error("Delete() did not remove metadata despite client error")
+	}
+}
+
+// TestDelete_RemoteDeleteFailureKeepsMetadata verifies that a Key Vault
+// delete that fails for any reason but a 404 is reported and leaves the
+// key's metadata, so the key stays discoverable until it is really gone.
+func TestDelete_RemoteDeleteFailureKeepsMetadata(t *testing.T) {
+	b, mockClient := testBackend(t)
+	ctx := context.Background()
+
+	attrs := &types.KeyAttributes{CN: "delete-denied-key", KeyAlgorithm: x509.RSA}
+	if _, err := b.CreateKey(attrs); err != nil {
+		t.Fatalf("CreateKey() error = %v", err)
+	}
+
+	mockClient.SetDeleteError(&azcore.ResponseError{StatusCode: http.StatusForbidden, ErrorCode: "Forbidden"})
+	if err := b.Delete(attrs); err == nil {
+		t.Fatal("Delete() returned nil for a denied Key Vault delete")
+	}
+	exists, err := storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("storage.KeyExists() error = %v", err)
+	}
+	if !exists {
+		t.Error("Delete() removed metadata although Key Vault kept the key")
+	}
+	keys, err := b.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListKeys() error = %v", err)
+	}
+	listed := false
+	for _, k := range keys {
+		if k.CN == attrs.CN {
+			listed = true
+		}
+	}
+	if !listed {
+		t.Error("ListKeys() no longer lists a key Key Vault kept")
+	}
+
+	mockClient.SetDeleteError(&azcore.ResponseError{StatusCode: http.StatusNotFound, ErrorCode: "KeyNotFound"})
+	if err := b.Delete(attrs); err != nil {
+		t.Errorf("Delete() of a key Key Vault no longer has: error = %v", err)
+	}
+	exists, err = storage.KeyExists(ctx, b.config.KeyStorage, attrs.CN)
+	if err != nil {
+		t.Fatalf("storage.KeyExists() error = %v", err)
+	}
+	if exists {
+		t.Error("Delete() kept metadata of a key Key Vault no longer has")
 	}
 }
