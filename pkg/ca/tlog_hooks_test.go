@@ -114,3 +114,22 @@ func TestTlogHook_IssuanceAppendFailureIsAppendError(t *testing.T) {
 	require.ErrorAs(t, err, &ae)
 	require.Equal(t, tlog.LogIssuance, ae.Log)
 }
+
+func TestTlogHook_RevokeAppendsRevokedOnce(t *testing.T) {
+	rec := &tlogRecorder{}
+	c := newTlogHookCA(t, rec)
+	cert, err := c.SignCSR(context.Background(), tlogCSR(t, "rev.example.com"),
+		&SignOptions{TenantID: "acme"})
+	require.NoError(t, err)
+	rec.logs, rec.entries = nil, nil
+
+	require.NoError(t, c.Revoke(context.Background(), cert.SerialNumber, 1))
+	require.ErrorIs(t, c.Revoke(context.Background(), cert.SerialNumber, 1), ErrAlreadyRevoked)
+
+	require.Equal(t, []string{tlog.LogRevocation}, rec.logs)
+	require.Equal(t, map[string]any{
+		"kind":   tlog.KindRevoked,
+		"serial": cert.SerialNumber.Text(16),
+		"reason": "keyCompromise",
+	}, rec.entries[0])
+}
