@@ -1,0 +1,1 @@
+- **gRPC invite registration for a tenant the node does not serve answers `PermissionDenied`.** `BeginInviteRegistration` and `FinishInviteRegistration` mapped `ErrInviteTenantNotServed` to `Internal`; they now answer `PermissionDenied` with the same fixed message, as REST answers 403, on TCP and the Unix transport the CLI uses.
