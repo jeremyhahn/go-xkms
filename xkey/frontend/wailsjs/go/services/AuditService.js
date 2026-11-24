@@ -10,6 +10,10 @@ export function GetEntries(arg1) {
   return window['go']['services']['AuditService']['GetEntries'](arg1);
 }
 
+export function SetAuthorizer(arg1) {
+  return window['go']['services']['AuditService']['SetAuthorizer'](arg1);
+}
+
 export function SetContext(arg1) {
   return window['go']['services']['AuditService']['SetContext'](arg1);
 }
