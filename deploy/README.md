@@ -127,6 +127,8 @@ sudo systemctl stop xkmsd
    sudo cp deploy/openrc/xkms /etc/init.d/
    sudo chmod 755 /etc/init.d/xkms
    ```
+   The script starts xkmsd in `/var/lib/xkms`, so relative paths in
+   `xkmsd.yaml` (`xkms-data/...`) resolve under `/var/lib/xkms`.
 
 3. Install the configuration file:
    ```bash

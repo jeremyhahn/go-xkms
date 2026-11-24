@@ -11,6 +11,8 @@ description="Go xKMS - Cryptographic Key Management Service"
 command="/usr/bin/xkmsd"
 command_args="--config ${XKMS_CONFIG:-/etc/xkms/xkmsd.yaml}"
 command_user="xkms:xkms"
+# Relative paths in xkmsd.yaml (xkms-data/...) resolve under the data directory
+directory="/var/lib/xkms"
 command_background="yes"
 pidfile="/run/xkms/xkms.pid"
 start_stop_daemon_args="--stdout /var/log/xkms/xkms.log --stderr /var/log/xkms/xkms.log"
