@@ -817,6 +817,11 @@ run_script 1 use toolchain "" -- "${RUN_TOKEN[@]}" "${POOL_ENV[@]}" RUNNER_ENVIR
 stderr_has "same-repo pull request"
 not_called "make "
 
+start_case "use: the pool reference on a self-hosted forge runner pulls the pool digest, with no build (#2302 Codex round 4)"
+run_script 0 use toolchain "$POOL_REF" -- "${RUN_TOKEN[@]}" "${POOL_ENV[@]}" RUNNER_ENVIRONMENT=self-hosted
+called "docker pull --quiet reg.example:5000/ci/$POOL_REF"
+not_called "make "
+
 start_case "use: no reference on a push to main fails rather than rebuild"
 run_script 1 use toolchain "" -- CI_PUBLISH=true
 stderr_has "a consumer runs the image ci-images published and never builds its own"

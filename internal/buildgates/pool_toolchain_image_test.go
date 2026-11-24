@@ -10,6 +10,7 @@ package buildgates
 // for hours (PR #2183, run 44546824321).
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -440,6 +441,224 @@ func TestPoolToolchainHandoffReachesOnlyPoolConsumers(t *testing.T) {
 	}
 	if !strings.Contains(validate[0], `"$POOL_HANDOFF" != true`) {
 		t.Errorf("the validate step does not allow an empty TOOLCHAIN_REF by POOL_HANDOFF")
+	}
+}
+
+// stepExpr returns the ${{ }} expression of the first line of step that
+// starts with key (after trimming), or "".
+func stepExpr(step, key string) string {
+	for _, line := range strings.Split(step, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), key)
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		if i := strings.Index(rest, " #"); i >= 0 {
+			rest = strings.TrimSpace(rest[:i])
+		}
+		rest, _ = strings.CutPrefix(rest, "${{")
+		rest, _ = strings.CutSuffix(rest, "}}")
+		return strings.TrimSpace(rest)
+	}
+	return ""
+}
+
+// actionsExpr evaluates the subset of the GitHub Actions expression language
+// the pool gate uses: ||, &&, !, ==, !=, parentheses, 'strings', contains()
+// and context paths looked up in ctx (a missing path is the empty string).
+type actionsExpr struct {
+	toks []string
+	pos  int
+	ctx  map[string]string
+}
+
+var actionsExprToken = regexp.MustCompile(`\s*('(?:[^']|'')*'|\|\||&&|==|!=|!|\(|\)|,|[A-Za-z_][A-Za-z0-9_.-]*)`)
+
+func evalActionsExpr(t *testing.T, src string, ctx map[string]string) bool {
+	t.Helper()
+	e := &actionsExpr{ctx: ctx}
+	rest := src
+	for strings.TrimSpace(rest) != "" {
+		m := actionsExprToken.FindStringSubmatchIndex(rest)
+		if m == nil || m[0] != 0 {
+			t.Fatalf("cannot tokenize %q at %q", src, rest)
+		}
+		e.toks = append(e.toks, rest[m[2]:m[3]])
+		rest = rest[m[1]:]
+	}
+	v := e.or(t)
+	if e.pos != len(e.toks) {
+		t.Fatalf("trailing tokens in %q: %v", src, e.toks[e.pos:])
+	}
+	return truthy(v)
+}
+
+func truthy(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case string:
+		return x != ""
+	}
+	return false
+}
+
+func (e *actionsExpr) peek() string {
+	if e.pos < len(e.toks) {
+		return e.toks[e.pos]
+	}
+	return ""
+}
+
+func (e *actionsExpr) next(t *testing.T, want string) {
+	t.Helper()
+	if e.peek() != want {
+		t.Fatalf("expression: want %q, got %q", want, e.peek())
+	}
+	e.pos++
+}
+
+func (e *actionsExpr) or(t *testing.T) any {
+	v := e.and(t)
+	for e.peek() == "||" {
+		e.pos++
+		r := e.and(t)
+		if !truthy(v) {
+			v = r
+		}
+	}
+	return v
+}
+
+func (e *actionsExpr) and(t *testing.T) any {
+	v := e.cmp(t)
+	for e.peek() == "&&" {
+		e.pos++
+		r := e.cmp(t)
+		if truthy(v) {
+			v = r
+		}
+	}
+	return v
+}
+
+func (e *actionsExpr) cmp(t *testing.T) any {
+	v := e.unary(t)
+	if op := e.peek(); op == "==" || op == "!=" {
+		e.pos++
+		r := e.unary(t)
+		eq := strings.EqualFold(fmt.Sprint(v), fmt.Sprint(r))
+		return eq == (op == "==")
+	}
+	return v
+}
+
+func (e *actionsExpr) unary(t *testing.T) any {
+	if e.peek() == "!" {
+		e.pos++
+		return !truthy(e.unary(t))
+	}
+	return e.primary(t)
+}
+
+func (e *actionsExpr) primary(t *testing.T) any {
+	tok := e.peek()
+	switch {
+	case tok == "(":
+		e.pos++
+		v := e.or(t)
+		e.next(t, ")")
+		return v
+	case strings.HasPrefix(tok, "'"):
+		e.pos++
+		return strings.ReplaceAll(tok[1:len(tok)-1], "''", "'")
+	case tok == "contains":
+		e.pos++
+		e.next(t, "(")
+		hay := fmt.Sprint(e.or(t))
+		e.next(t, ",")
+		needle := fmt.Sprint(e.or(t))
+		e.next(t, ")")
+		return strings.Contains(strings.ToLower(hay), strings.ToLower(needle))
+	case tok == "true" || tok == "false":
+		e.pos++
+		return tok == "true"
+	case tok != "" && tok != ")" && tok != ",":
+		e.pos++
+		return e.ctx[tok]
+	}
+	t.Fatalf("expression: unexpected token %q", tok)
+	return nil
+}
+
+// TestPoolToolchainBuildRunsOnTheSelfHostedForge: off github.com (the
+// self-hosted forge) preflight emits "ubuntu-latest" for both runner
+// outputs, yet every toolchain consumer keeps its fixed self-hosted label
+// there, so the pool step must still build the image once and hand it over
+// (#2302 Codex round 4). On github.com the round-3 rule stays: the pool
+// builds only when preflight puts both runner outputs on the pool.
+func TestPoolToolchainBuildRunsOnTheSelfHostedForge(t *testing.T) {
+	src := readWorkflow(t)
+	job := jobBlock(src, "ci-images")
+	pool := stepBlocks(job, "- name: Build the CI images on the pool")
+	validate := stepBlocks(job, "- name: Validate the image references")
+	if len(pool) != 1 || len(validate) != 1 {
+		t.Fatalf("ci-images has %d pool build and %d validate steps, want 1 and 1", len(pool), len(validate))
+	}
+	poolIf := stepExpr(pool[0], "if:")
+	handoff := stepExpr(validate[0], "POOL_HANDOFF:")
+	if poolIf == "" || handoff == "" {
+		t.Fatalf("pool step if: %q, POOL_HANDOFF: %q; want both", poolIf, handoff)
+	}
+	if poolIf != handoff {
+		t.Errorf("the pool step's if: and POOL_HANDOFF differ:\n if:           %s\n POOL_HANDOFF: %s", poolIf, handoff)
+	}
+	const hosted = `"ubuntu-latest"`
+	const selfHosted = `["self-hosted","linux","x64","bigdisk"]`
+	cases := []struct {
+		name, server, pool, runner, docker string
+		want                               bool
+	}{
+		{"forge same-repo PR, preflight ubuntu-latest", "https://forge.example", "true", hosted, hosted, true},
+		{"forge without the pool", "https://forge.example", "false", hosted, hosted, false},
+		{"github.com, both outputs on the pool", "https://github.com", "true", selfHosted, selfHosted, true},
+		{"github.com, docker output hosted", "https://github.com", "true", selfHosted, hosted, false},
+		{"github.com, runner output hosted", "https://github.com", "true", hosted, selfHosted, false},
+		{"github.com, both hosted", "https://github.com", "true", hosted, hosted, false},
+		{"github.com without the pool", "https://github.com", "false", selfHosted, selfHosted, false},
+	}
+	for _, c := range cases {
+		ctx := map[string]string{
+			"github.server_url":                     c.server,
+			"env.CI_POOL":                           c.pool,
+			"needs.preflight.outputs.runner":        c.runner,
+			"needs.preflight.outputs.runner_docker": c.docker,
+		}
+		for name, expr := range map[string]string{"if:": poolIf, "POOL_HANDOFF": handoff} {
+			if got := evalActionsExpr(t, expr, ctx); got != c.want {
+				t.Errorf("%s: pool step %s %s = %v, want %v", c.name, name, expr, got, c.want)
+			}
+		}
+	}
+	// Off github.com every consumer must run on a fixed self-hosted label,
+	// which is what makes the forge case above true.
+	fixed := regexp.MustCompile(`github\.server_url == 'https://github\.com' && .*\|\| '([A-Za-z0-9_-]+)' \}\}`)
+	for _, name := range workflowJobs(src) {
+		block := jobBlock(src, name)
+		if !strings.Contains(block, "needs.ci-images.outputs.toolchain_ref") {
+			continue
+		}
+		for _, line := range strings.Split(block, "\n") {
+			trim := strings.TrimSpace(line)
+			if !strings.HasPrefix(trim, "runs-on:") {
+				continue
+			}
+			m := fixed.FindStringSubmatch(trim)
+			if m == nil || strings.HasPrefix(m[1], "ubuntu") {
+				t.Errorf("consumer %s does not keep a fixed self-hosted label off github.com: %s", name, trim)
+			}
+			break
+		}
 	}
 }
 
