@@ -62,15 +62,13 @@ var hostedWorkflows = map[string]bool{
 }
 
 // runnerExempt are the jobs v1.46 leaves out of the rule: release.yml's
-// release job. The review jobs on the codex (credential: the reviewer token)
-// and qwen (hardware: the GPU model host) runners are exempt until their
-// runs-on lines carry the `# self-hosted:` reason (the ruling 999 question
+// release job. The review jobs on the codex runner (credential: the reviewer
+// token) are exempt until their runs-on lines carry the `# self-hosted:` reason (the ruling 999 question
 // to the Tenant Agent; the workflow change is a protected-path edit).
 var runnerExempt = map[string]bool{
 	"release.yml/release":             true,
 	"code-review.yml/review":          true,
 	"code-review.yml/review-opencode": true,
-	"qwen-review.yml/review":          true,
 }
 
 // runnerProblems lists each job of the workflow file that is neither on
