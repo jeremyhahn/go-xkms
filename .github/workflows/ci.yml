@@ -26,8 +26,7 @@
 #   - ci-images publishes images to the registry and stays on ubuntu-latest on
 #     github.com (the template's publish-images never overflows either);
 #   - the v1.43-v1.47 `Runner labels (ruling 633)` preflight step is not taken:
-#     code-review.yml's codex and qwen jobs carry no v1.46 category and
-#     qwen-review.yml names `qwen` outside code-review.yml (v1.47 finding (f)),
+#     code-review.yml's codex and qwen jobs carry no v1.46 category,
 #     so the step would fail CI on files this one-file bump leaves alone; it
 #     comes with those files, in the full catch-up below.
 # v1.49 (handbook 83), one deviation line: preflight runs-on reads
