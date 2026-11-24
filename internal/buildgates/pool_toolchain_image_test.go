@@ -298,7 +298,10 @@ func runPoolRegistry(t *testing.T, extraEnv []string, args ...string) (stdout, s
 	cmd.Env = append(stubEnv(stub),
 		"GITHUB_SERVER_URL=https://github.com", "GITHUB_REPOSITORY_OWNER=example",
 		"GITHUB_RUN_ID=1", "GITHUB_RUN_ATTEMPT=1", "CI_STACK_PREFIX=xkmsci",
-		"CI_PUBLISH=false", "CI_REGISTRY_BACKOFF=0", "RUNNER_TEMP="+stub)
+		"CI_PUBLISH=false", "CI_REGISTRY_BACKOFF=0", "RUNNER_TEMP="+stub,
+		// The lint-gates job sets CI_POOL=true on same-repo PRs; a test
+		// opts in through extraEnv (the last value of a key wins).
+		"CI_POOL=false")
 	cmd.Env = append(cmd.Env, extraEnv...)
 	var out, errb strings.Builder
 	cmd.Stdout, cmd.Stderr = &out, &errb
