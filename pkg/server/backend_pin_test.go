@@ -339,7 +339,7 @@ func TestResolveBackendPIN_TPM2MinimumLeavesNoBarrierPINCopy(t *testing.T) {
 	stored := creds.value("pkcs11-pin")
 	require.NotEmpty(t, stored, "the credential holds the TPM-sealed blob")
 	require.False(t, bytes.Contains(stored, pin), "no barrier-stored plaintext PIN copy is left")
-	require.False(t, creds.has("pkcs11-pin-tpm2-staged"), "no staging credential is left after the migration")
+	require.False(t, creds.has(backendPINCustodyJournal("pkcs11-pin")), "no staging credential is left after the migration")
 	storesAfterFirst := creds.storeCount()
 
 	// Second start: resolution reads the sealed blob; the release unseals
@@ -376,7 +376,7 @@ func TestResolveBackendPIN_TPM2MinimumLeavesNoBarrierPINCopy(t *testing.T) {
 // without any plaintext copy left.
 func TestReplaceBackendPINCredential_InterruptedMigrationRecoverable(t *testing.T) {
 	const name = "pkcs11-pin"
-	const staging = name + "-tpm2-staged"
+	staging := backendPINCustodyJournal(name)
 	pin := []byte("backend-pin-1")
 	blob := &types.SealedData{Backend: types.BackendType("tpm2"), TPMPublic: []byte("dummy-public"), TPMPrivate: []byte("dummy-private")}
 	ctx := context.Background()
@@ -441,6 +441,44 @@ func distinctPINsServer(t *testing.T, keyPIN, rngPIN []byte) (*Server, *fakeBack
 	s.config.RNG.Mode = "pkcs11"
 	s.config.RNG.PKCS11 = &config.RNGPKCS11Config{PINRequired: true, PIN: creds.resolve(t, "rng-pin")}
 	return s, creds, opened
+}
+
+// TestRecoverBackendPINCustody_IgnoresOperatorCredentialNamedLikeTheJournal
+// proves the custody journal lives outside the operator credential
+// namespace: an operator credential that happens to be named like the old
+// journal is neither treated as an interrupted migration nor overwritten.
+func TestRecoverBackendPINCustody_IgnoresOperatorCredentialNamedLikeTheJournal(t *testing.T) {
+	const name = "pkcs11-pin"
+	const operatorName = "pkcs11-pin-tpm2-staged"
+	pin := []byte("backend-pin-1")
+	operatorValue := []byte("operator-value")
+	blob := &types.SealedData{Backend: types.BackendType("tpm2"), TPMPublic: []byte("dummy-public"), TPMPrivate: []byte("dummy-private")}
+	ctx := context.Background()
+
+	newServer := func(t *testing.T) (*Server, *fakeBackendPINCredentials) {
+		t.Helper()
+		s, _, _ := backendPINTestServer(t, "sealed", nil, false, true)
+		s.config.Credentials.SealStrategy = "barrier"
+		creds := newFakeBackendPINCredentials(map[string][]byte{
+			name:         append([]byte(nil), pin...),
+			operatorName: append([]byte(nil), operatorValue...),
+		})
+		s.backendPINCredentials = creds
+		s.config.Backends.PKCS11.Pin = creds.resolve(t, name)
+		return s, creds
+	}
+
+	s, creds := newServer(t)
+	require.NoError(t, s.recoverBackendPINCustody(ctx))
+	require.Equal(t, pin, creds.value(name), "recovery leaves the PIN credential unchanged")
+	require.Equal(t, operatorValue, creds.value(operatorName), "recovery leaves the operator credential unchanged")
+
+	s, creds = newServer(t)
+	p := s.primaryBackendPINSecret()
+	require.NoError(t, s.replaceBackendPINCredential(ctx, p, append([]byte(nil), pin...), blob))
+	require.True(t, bytes.HasPrefix(creds.value(name), []byte(backendPINTPMEnvelope)), "name holds the TPM-sealed envelope")
+	require.Equal(t, operatorValue, creds.value(operatorName), "the migration leaves the operator credential unchanged")
+	require.False(t, creds.has(backendPINCustodyJournal(name)), "no custody journal is left after the migration")
 }
 
 // Distinct backends.pkcs11.pin and rng.pkcs11.pin both enter the PIN

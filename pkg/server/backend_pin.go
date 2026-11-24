@@ -413,6 +413,8 @@ type backendPINCredentialStore interface {
 // envelope, never the plaintext PIN.
 const backendPINStagingSuffix = "-tpm2-staged"
 
+func backendPINCustodyJournal(name string) string { return name + backendPINStagingSuffix }
+
 // backendPINCredentialStore returns the injected store, else the server's
 // credential service, else nil.
 func (s *Server) backendPINCredentialStore() backendPINCredentialStore {
