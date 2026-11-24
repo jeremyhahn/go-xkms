@@ -383,6 +383,39 @@ func TestResolveBackendPIN_DistinctBackendAndRNGPINsBothEnterLifecycle(t *testin
 	require.Empty(t, s2.BackendPINStrategy(), "status not satisfied while the RNG PIN is not in TPM custody")
 }
 
+// auto reads TPM 2.0 presence from the hardware probe, not from
+// backends.tpm2.enabled: a TPM host with the tpm2 key backend disabled
+// selects and persists tpm2, and a detected TPM that cannot seal the PIN
+// fails closed with nothing persisted (never sealed).
+func TestResolveBackendPIN_AutoSelectsTPM2OnTPMPresenceWithTPM2BackendDisabled(t *testing.T) {
+	s, _, _ := backendPINTestServer(t, "auto", []byte("backend-pin-1"), false, true)
+	s.backendPINProbe = nil
+	s.barrier = backendPINUnsealedBarrier(t)
+	s.config.Backends.TPM2 = &config.TPM2Config{Enabled: false}
+	s.tpmDeviceProbe = func() bool { return true }
+	s.config.Credentials.SealStrategy = "tpm2"
+	require.NoError(t, s.resolveBackendPIN())
+	require.Equal(t, "tpm2", s.BackendPINStrategy())
+	persisted, err := pinselect.LoadBackendPINStrategy(s.backendPINDir())
+	require.NoError(t, err)
+	require.Equal(t, pinselect.BackendPINTPM2, persisted)
+
+	// Detected TPM, PIN under the barrier, but no usable TPM sealer.
+	s2, opened, _ := backendPINTestServer(t, "auto", []byte("backend-pin-1"), false, true)
+	s2.logger = slog.New(slog.DiscardHandler)
+	s2.backendPINProbe = nil
+	s2.barrier = backendPINUnsealedBarrier(t)
+	s2.config.Backends.TPM2 = &config.TPM2Config{Enabled: false}
+	s2.tpmDeviceProbe = func() bool { return true }
+	err = s2.resolveBackendPIN()
+	var sealerErr *BackendPINTPMSealerError
+	require.ErrorAs(t, err, &sealerErr)
+	require.Nil(t, s2.backendPIN)
+	require.Empty(t, *opened)
+	_, statErr := os.Stat(pinselect.BackendPINStrategyPath(s2.backendPINDir()))
+	require.ErrorIs(t, statErr, os.ErrNotExist, "nothing persisted")
+}
+
 // TestResolveBackendPIN_AutoWithTPMWithoutTPMSealerFailsClosed proves a TPM
 // the PIN cannot be sealed to refuses start-up with a typed error, never
 // falling back to sealed, and persists nothing.
