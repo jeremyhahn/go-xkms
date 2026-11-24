@@ -42,13 +42,25 @@ type pinOwnerClient struct {
 
 func (c pinOwnerClient) Keys() sshsdk.KeysClient { return c.keys }
 
+// shortSocketTempDir returns a fresh directory directly under the system
+// temp dir. The ssh agent binds a unix socket under TMPDIR, and sun_path
+// holds 108 bytes (104 on macOS): a t.TempDir() nests the test name and
+// overflowed it in CI ("bind: invalid argument").
+func shortSocketTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "xs")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // withServerBackedConnect points connect at a stand-in xkmsd server paired
 // with the real local pin store, and returns the owners its Signer saw.
 func withServerBackedConnect(t *testing.T) *[]string {
 	t.Helper()
 	withEmbeddedSSHStore(t)
 	t.Setenv(envXKMSdURL, "https://xkmsd.example.test:8443")
-	t.Setenv("TMPDIR", t.TempDir())
+	t.Setenv("TMPDIR", shortSocketTempDir(t))
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	signer, err := gossh.NewSignerFromKey(priv)
