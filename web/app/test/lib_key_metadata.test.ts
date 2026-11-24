@@ -18,7 +18,7 @@ vi.mock("../src/stores/sdkClient.ts", () => ({
   resetSDKClient: () => {},
 }));
 
-import { diffMetadata } from "../src/lib/keyMetadata.ts";
+import { diffMetadata, metadataReplyMatches } from "../src/lib/keyMetadata.ts";
 
 const base = { name: "n", description: "d" };
 
@@ -39,5 +39,24 @@ describe("diffMetadata", () => {
     const changes = diffMetadata(before, after);
     expect(Object.hasOwn(changes.tags ?? {}, "__proto__")).toBe(true);
     expect(JSON.stringify(changes)).toBe('{"tags":{"__proto__":"b"}}');
+  });
+});
+
+describe("metadataReplyMatches", () => {
+  it("applies a reply sent for the same key ID and backend", () => {
+    expect(metadataReplyMatches({ id: "k1", backend: "pkcs11" }, { id: "k1", backend: "pkcs11" })).toBe(true);
+  });
+
+  it("refuses a reply sent for a different key ID", () => {
+    expect(metadataReplyMatches({ id: "k1", backend: "pkcs11" }, { id: "k2", backend: "pkcs11" })).toBe(false);
+  });
+
+  it("refuses a reply for the same key ID on a different backend", () => {
+    expect(metadataReplyMatches({ id: "k1", backend: "pkcs11" }, { id: "k1", backend: "tpm2" })).toBe(false);
+  });
+
+  it("refuses an empty backend against a set one (exact comparison, no normalisation)", () => {
+    expect(metadataReplyMatches({ id: "k1", backend: "" }, { id: "k1", backend: "pkcs11" })).toBe(false);
+    expect(metadataReplyMatches({ id: "k1", backend: "pkcs11" }, { id: "k1", backend: "" })).toBe(false);
   });
 });
