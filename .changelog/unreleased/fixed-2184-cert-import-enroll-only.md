@@ -1,0 +1,1 @@
+- **Web console Certificate Import with certs:enroll only.** When the overwrite check (`HEAD /certs/{id}`, certs:read) is refused with 403, Import now asks for confirmation, warning that an existing certificate could not be checked and may be overwritten, instead of failing; any other check error still stops the import.
