@@ -262,7 +262,15 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 		return err
 	}
 
-	// Schedule key deletion in KMS first (7 day minimum waiting period).
+	// Release the alias before the key goes pending deletion: KMS keeps an
+	// alias pointing at a pending-deletion key, and getKeyID resolves a CN
+	// without metadata through it, so a reused CN would hit
+	// KMSInvalidStateException for the whole waiting period.
+	if keyID, err = b.releaseAlias(ctx, attrs.CN, keyID); err != nil {
+		return err
+	}
+
+	// Schedule key deletion in KMS (7 day minimum waiting period).
 	// Only "already gone" outcomes (the key does not exist, or it is
 	// already pending deletion) count as success; any other failure
 	// (access denial, outage) is returned and the metadata is kept, so the
@@ -299,6 +307,39 @@ func isKeyAlreadyGone(err error) bool {
 		return strings.Contains(strings.ToLower(invalidState.ErrorMessage()), "pending deletion")
 	}
 	return false
+}
+
+// releaseAlias deletes alias/<cn> when it targets keyID, the key Delete is
+// about to schedule for deletion, and returns the key ID to schedule (the
+// alias's target when keyID is the alias itself). An alias that targets
+// another key (a newer generation's) is left in place. A missing alias is
+// success; any other failure is returned, since a kept alias blocks the CN.
+func (b *Backend) releaseAlias(ctx context.Context, cn, keyID string) (string, error) {
+	aliasName := fmt.Sprintf("alias/%s", cn)
+	described, err := b.client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(aliasName)})
+	if err != nil {
+		var notFound *awstypes.NotFoundException
+		if errors.As(err, &notFound) {
+			return keyID, nil
+		}
+		return keyID, &errs.Wrapped{Msg: "failed to resolve KMS key alias", Err: err}
+	}
+	if described == nil || described.KeyMetadata == nil || described.KeyMetadata.KeyId == nil {
+		return keyID, nil
+	}
+	target := aws.ToString(described.KeyMetadata.KeyId)
+	if keyID == aliasName {
+		keyID = target
+	} else if keyID != target && keyID != aws.ToString(described.KeyMetadata.Arn) {
+		return keyID, nil
+	}
+	if _, err := b.client.DeleteAlias(ctx, &kms.DeleteAliasInput{AliasName: aws.String(aliasName)}); err != nil {
+		var notFound *awstypes.NotFoundException
+		if !errors.As(err, &notFound) {
+			return keyID, &errs.Wrapped{Msg: "failed to delete KMS key alias", Err: err}
+		}
+	}
+	return keyID, nil
 }
 
 // Close releases any resources held by the backend. Config.KeyStorage's
