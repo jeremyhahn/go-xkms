@@ -179,7 +179,7 @@ func (s *Service) SSHSign(ctx context.Context, req *pb.SSHSignRequest) (*pb.SSHS
 	if err != nil {
 		return nil, sshStatus(err)
 	}
-	sig, err := signer.Sign(rand.Reader, req.GetDigest())
+	sig, err := sdkssh.SignWithAlgorithm(signer, rand.Reader, req.GetDigest(), req.GetAlgorithm())
 	if err != nil {
 		return nil, sshStatus(err)
 	}

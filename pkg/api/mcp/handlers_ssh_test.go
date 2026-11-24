@@ -189,6 +189,45 @@ func TestSSHKeys_Sign(t *testing.T) {
 	}))
 }
 
+// TestSSHKeys_SignAlgorithm proves ssh.keys.sign carries the requested SSH
+// signature algorithm: an RSA key signs rsa-sha2-512 when asked, and an
+// algorithm the key cannot produce is refused as invalid params rather than
+// silently signed as legacy ssh-rsa (Codex round 5 on #2360).
+func TestSSHKeys_SignAlgorithm(t *testing.T) {
+	server := newSSHServer(t)
+	ctx := context.Background()
+
+	genResult, err := server.handleSSHKeysGenerate(ctx, sshRequest(t, "ssh.keys.generate",
+		sdkssh.GenerateRequest{Scope: "user", Owner: "alice", Name: "rsa-key", Algorithm: "rsa"}))
+	require.NoError(t, err)
+	key := genResult.(*sdkssh.Key)
+	pub, _, _, _, err := gossh.ParseAuthorizedKey([]byte(key.PublicKey))
+	require.NoError(t, err)
+	digest := []byte("payload")
+
+	t.Run("rsa-sha2-512", func(t *testing.T) {
+		result, err := server.handleSSHKeysSign(ctx, sshRequest(t, "ssh.keys.sign",
+			SSHSignParams{Scope: "user", Owner: "alice", Name: "rsa-key", Digest: digest,
+				Algorithm: gossh.KeyAlgoRSASHA512}))
+		require.NoError(t, err)
+		sig := result.(SSHSignResult)
+		require.Equal(t, gossh.KeyAlgoRSASHA512, sig.Format)
+		require.NoError(t, pub.Verify(digest, &gossh.Signature{Format: sig.Format, Blob: sig.Blob, Rest: sig.Rest}))
+	})
+
+	t.Run("wrong algorithm refused", func(t *testing.T) {
+		_, err := server.handleSSHKeysSign(ctx, sshRequest(t, "ssh.keys.sign",
+			SSHSignParams{Scope: "user", Owner: "alice", Name: "rsa-key", Digest: digest,
+				Algorithm: gossh.KeyAlgoED25519}))
+		require.Error(t, err)
+		var opErr *KeyOpError
+		require.ErrorAs(t, err, &opErr)
+		assert.Equal(t, ErrCodeInvalidParams, opErr.Code)
+		var unsupported *sdkssh.UnsupportedSignatureAlgorithmError
+		require.ErrorAs(t, err, &unsupported)
+	})
+}
+
 // TestSSHKeys_SignRejectsEmptyDigest proves the handler refuses to sign
 // nothing rather than passing an empty digest to the enclave signer.
 func TestSSHKeys_SignRejectsEmptyDigest(t *testing.T) {

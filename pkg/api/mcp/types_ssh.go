@@ -22,6 +22,10 @@ type SSHSignParams struct {
 	Owner  string `json:"owner"`
 	Name   string `json:"name"`
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm: empty or the key type for
+	// the key's default format, rsa-sha2-256/512 for RSA keys. Anything
+	// else is refused as invalid params.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // SSHSignResult carries the signature returned by ssh.keys.sign.

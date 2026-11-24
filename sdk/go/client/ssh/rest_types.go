@@ -32,6 +32,9 @@ type restImportRequest struct {
 // restSignRequest is the JSON body of POST /keys/.../sign.
 type restSignRequest struct {
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm; empty means the key's
+	// default format.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // restSignResponse is the JSON body returned by the sign endpoint. It

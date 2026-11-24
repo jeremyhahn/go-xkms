@@ -185,6 +185,8 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 // unless --key-owner gave one) and the host is verified against this
 // machine's pin store under sshHostPinOwner, like `xkey ssh connect`.
 // The returned session releases the client when it is closed.
+// The remote signer is an ssh.AlgorithmSigner, so a server-held RSA key
+// negotiates rsa-sha2-256/512 rather than ssh-rsa (Codex round 5 on #2360).
 func openSSHConsole(cmd *cobra.Command, r sshConsoleResolved, cfg sshsdk.ConsoleConfig) (sshsdk.ConsoleSession, error) {
 	client, hostKeys, closer, err := sshConnectClient(cmd)
 	if err != nil {

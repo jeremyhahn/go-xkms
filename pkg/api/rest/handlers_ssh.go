@@ -237,7 +237,7 @@ func (h *SSHHandlers) handleSign(w http.ResponseWriter, r *http.Request) {
 	}
 	defer closer()
 
-	sig, err := signer.Sign(rand.Reader, req.Digest)
+	sig, err := sdkssh.SignWithAlgorithm(signer, rand.Reader, req.Digest, req.Algorithm)
 	if err != nil {
 		writeSSHError(w, err)
 		return
@@ -494,6 +494,10 @@ func (p *buffersProvider) Passphrase(_ context.Context, _ string) (*secure.Buffe
 // POST /keys/.../sign. Digest is the raw bytes to sign.
 type restSignRequestDTO struct {
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm: empty or the key type for
+	// the key's default format, rsa-sha2-256/512 for RSA keys. Anything
+	// else is refused with 400.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // restSignResponseDTO mirrors *ssh.Signature.

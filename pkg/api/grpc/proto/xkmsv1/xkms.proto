@@ -4829,6 +4829,9 @@ message SSHPublicKeyResponse {
 message SSHSignRequest {
   SSHKeyRef key = 1;
   bytes digest = 2;
+  // SSH signature algorithm (rsa-sha2-256 or rsa-sha2-512 for RSA keys).
+  // Empty means the key's default format.
+  string algorithm = 3;
 }
 
 message SSHSignResponse {

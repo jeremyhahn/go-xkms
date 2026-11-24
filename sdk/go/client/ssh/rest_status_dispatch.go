@@ -156,6 +156,10 @@ func isBadRequest(err error) bool {
 	if errors.As(err, &algoErr) {
 		return true
 	}
+	var sigAlgoErr *UnsupportedSignatureAlgorithmError
+	if errors.As(err, &sigAlgoErr) {
+		return true
+	}
 	var nilErr *NilInputError
 	if errors.As(err, &nilErr) {
 		return true

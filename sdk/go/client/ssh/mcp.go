@@ -256,6 +256,9 @@ type mcpSignParams struct {
 	Owner  string `json:"owner"`
 	Name   string `json:"name"`
 	Digest []byte `json:"digest"`
+	// Algorithm is the SSH signature algorithm; empty means the key's
+	// default format.
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 // mcpSignResult mirrors SSHSignResult / gossh.Signature fields.
@@ -436,14 +439,21 @@ func (s *mcpSigner) PublicKey() gossh.PublicKey { return s.pub }
 
 // Sign forwards the digest to the server and returns the assembled
 // gossh.Signature. The rand parameter is ignored — signing is
-// performed server-side.
-func (s *mcpSigner) Sign(_ io.Reader, data []byte) (*gossh.Signature, error) {
+// performed server-side, in the key's default format.
+func (s *mcpSigner) Sign(rand io.Reader, data []byte) (*gossh.Signature, error) {
+	return s.SignWithAlgorithm(rand, data, "")
+}
+
+// SignWithAlgorithm forwards the digest and the requested SSH signature
+// algorithm (empty for the key's default, rsa-sha2-256/512 for RSA keys).
+func (s *mcpSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
 	var result mcpSignResult
 	if err := s.c.call(context.Background(), "ssh.keys.sign", mcpSignParams{
-		Scope:  s.scope,
-		Owner:  s.owner,
-		Name:   s.name,
-		Digest: data,
+		Scope:     s.scope,
+		Owner:     s.owner,
+		Name:      s.name,
+		Digest:    data,
+		Algorithm: algorithm,
 	}, &result); err != nil {
 		return nil, err
 	}
@@ -632,5 +642,5 @@ var (
 	_ KnownHostsClient     = (*mcpKnownHostsClient)(nil)
 	_ AuthorizedKeysClient = (*mcpAuthorizedKeysClient)(nil)
 	_ SessionClient        = (*mcpSessionClient)(nil)
-	_ gossh.Signer         = (*mcpSigner)(nil)
+	_ gossh.AlgorithmSigner = (*mcpSigner)(nil)
 )
