@@ -34,7 +34,7 @@ import (
 var NewSPKIPinnedTLSConfig = func(pin string) *tls.Config {
 	return &tls.Config{
 		MinVersion:             tls.VersionTLS13,
-		InsecureSkipVerify:     true, // #nosec G402 -- CA chain skipped; VerifyConnection is sole verifier
+		InsecureSkipVerify:     true, // #nosec G402 -- CA chain skipped; VerifyConnection is sole verifier. Allowlisted in Makefile check-insecure-tls
 		SessionTicketsDisabled: true,
 		VerifyConnection:       VerifySPKIPinnedConnection(pin),
 	}

@@ -71,8 +71,8 @@ strip_comment_lines() {
 # VerifyConnection), and carries an in-file `#nosec G402` + "Allowlisted in
 # Makefile check-insecure-tls" comment:
 allow_skipverify=(
-	'pkg/crypto/spki/spki.go'
-	'pkg/trust/fetcher/spki.go'
+	'pkg/trust/bootstrap/spki_pin.go'
+	'sdk/go/tls.go'
 	'pkg/trust/bootstrap/tofu_tls.go'
 )
 

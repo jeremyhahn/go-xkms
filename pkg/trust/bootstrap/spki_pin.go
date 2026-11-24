@@ -45,7 +45,7 @@ func PinTLSConfig(cfg *tls.Config, pin string) *tls.Config {
 	// InsecureSkipVerify bypasses CA chain validation, which is impossible
 	// during trust bootstrap (the CA cert is what we are trying to fetch).
 	// VerifyConnection provides the actual peer authentication via SPKI pin.
-	pinned.InsecureSkipVerify = true // #nosec G402 -- CA chain skipped; VerifyConnection is sole verifier
+	pinned.InsecureSkipVerify = true // #nosec G402 -- CA chain skipped; VerifyConnection is sole verifier. Allowlisted in Makefile check-insecure-tls
 	// SessionTicketsDisabled forces a full handshake every time so the pin
 	// check is never skipped by session resumption (CWE-295).
 	pinned.SessionTicketsDisabled = true
