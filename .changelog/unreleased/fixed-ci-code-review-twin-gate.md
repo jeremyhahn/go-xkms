@@ -1,1 +1,0 @@
-CI: code-review.yml v5.12.6 then v5.12.7 (handbook template). v5.12.6: the Code Review (codex) gate no longer waits for a twin run's Codex review (ruling 1046). v5.12.7: GitHub reads the required context from the newest check suite, so after a pass the gate re-runs the red gate of every newer run of the PR on the head (the gate job now has `actions: write` for that re-run only).
