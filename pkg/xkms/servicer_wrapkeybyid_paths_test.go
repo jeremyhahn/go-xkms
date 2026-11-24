@@ -50,7 +50,7 @@ func currentKeyMaterial(t *testing.T, svc *XKMSService, tenantID, keyID string) 
 // new key holds the target's material.
 func assertWrapRoundTrip(t *testing.T, svc *XKMSService, tenantID, targetKeyID string) {
 	t.Helper()
-	ctx := context.Background()
+	ctx := ctxFor(tenantID)
 
 	const kekID = "paths-kek"
 	_, err := svc.GenerateKey(ctx, &transport.GenerateKeyRequest{

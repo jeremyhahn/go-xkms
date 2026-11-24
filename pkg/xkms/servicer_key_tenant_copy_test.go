@@ -93,7 +93,7 @@ func TestCopyKeyTenantScoped(t *testing.T) {
 	svc := setupDeriveService(t)
 	source := storeExportableRSAKey(t, svc, "acme", "payments-kek")
 
-	resp, err := svc.CopyKey(context.Background(), &transport.CopyKeyRequest{
+	resp, err := svc.CopyKey(identityCtx("acme"), &transport.CopyKeyRequest{
 		SourceBackend: "software",
 		SourceKeyID:   "payments-kek",
 		DestBackend:   "software",
@@ -147,7 +147,7 @@ func TestCopyKeyRefusesAnotherTenantsKey(t *testing.T) {
 	svc := setupDeriveService(t)
 	storeExportableRSAKey(t, svc, "acme", "payments-kek")
 
-	_, err := svc.CopyKey(context.Background(), &transport.CopyKeyRequest{
+	_, err := svc.CopyKey(identityCtx("globex"), &transport.CopyKeyRequest{
 		SourceBackend: "software",
 		SourceKeyID:   "payments-kek",
 		DestBackend:   "software",
@@ -173,7 +173,7 @@ func TestCopyKeyRejectsAnInvalidTenant(t *testing.T) {
 	svc := setupDeriveService(t)
 	storeExportableRSAKey(t, svc, "", "shared-kek")
 
-	_, err := svc.CopyKey(context.Background(), &transport.CopyKeyRequest{
+	_, err := svc.CopyKey(identityCtx("acme"), &transport.CopyKeyRequest{
 		SourceBackend: "software",
 		SourceKeyID:   "shared-kek",
 		DestBackend:   "software",
@@ -182,7 +182,10 @@ func TestCopyKeyRejectsAnInvalidTenant(t *testing.T) {
 		TenantID:      "acme:evil",
 	})
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrTenantIDRequired), "unexpected error: %v", err)
+	// The malformed tenant is never the caller's own, so the tenant binding
+	// refuses it before any backend view is built.
+	var refused *TenantBindingError
+	assert.True(t, errors.Is(err, ErrTenantIDRequired) || errors.As(err, &refused), "unexpected error: %v", err)
 	assert.Nil(t, listedKey(t, svc, "shared-kek-copy", ""))
 }
 
