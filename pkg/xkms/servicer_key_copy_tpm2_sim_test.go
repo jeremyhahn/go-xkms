@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
@@ -148,6 +149,7 @@ func TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest(t *testing.T) {
 
 	resp, err = copyTo("sw-src-second")
 	require.Error(t, err, "a copy onto an existing TPM2 key must fail")
+	require.ErrorIs(t, err, backend.ErrKeyAlreadyExists)
 	require.Nil(t, resp)
 
 	privAfter, pubAfter := destBlobs()

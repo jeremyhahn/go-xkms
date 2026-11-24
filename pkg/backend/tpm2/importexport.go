@@ -16,6 +16,7 @@ package tpm2
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/tpmdup"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -201,18 +203,25 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 		return err
 	}
 
-	public, outPrivate, err := b.importDuplicate(wrapped.WrappedKey)
-	if err != nil {
-		return err
-	}
-
 	if attrs.Parent == nil {
 		attrs.Parent = b.srkAttrs
 	}
 	attrs.StoreType = types.StoreTPM2
 
+	// An import never replaces a stored key: refuse before the TPM work.
+	if _, err := b.keyBackend.Get(attrs, store.FSEXT_PRIVATE_BLOB); err == nil {
+		return &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: attrs.CN}
+	} else if !errors.Is(err, store.ErrBlobNotFound) {
+		return err
+	}
+
+	public, outPrivate, err := b.importDuplicate(wrapped.WrappedKey)
+	if err != nil {
+		return err
+	}
+
 	publicBlob := tpm2.New2B(*public)
-	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, true); err != nil {
+	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, false); err != nil {
 		return &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to persist imported key: %v", err)}
 	}
 	return nil
