@@ -82,6 +82,10 @@ func validateCORSOrigin(origin string) error {
 		if ip == nil || ip.To4() != nil || strings.Contains(u.Host, "%") {
 			return refuse("bracketed host must be an IPv6 literal")
 		}
+	} else if strings.Contains(u.Hostname(), ":") {
+		// An IPv6 literal must be bracketed; do not rely on url.Parse
+		// (or its GODEBUG settings) to refuse scheme://::1.
+		return refuse("IPv6 host must be bracketed (scheme://[addr][:port])")
 	}
 	if strings.HasSuffix(u.Host, ":") {
 		return refuse("port must be 1-65535 (empty port after \":\")")
