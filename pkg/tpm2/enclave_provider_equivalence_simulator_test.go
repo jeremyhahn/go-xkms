@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
@@ -20,6 +21,7 @@ import (
 	enclave "github.com/jeremyhahn/go-enclave"
 
 	"github.com/jeremyhahn/go-xkms/pkg/enclaveprovider"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -151,4 +153,88 @@ func TestEnclaveProvider_AuthenticationFailure_Simulator(t *testing.T) {
 			require.Equal(t, baseline, countHandles(t, h))
 		})
 	}
+}
+
+// cancelAfterTransport forwards every command to inner and, once it has
+// forwarded the k-th, calls cancel. k == 0 never cancels; sent counts the
+// commands forwarded.
+type cancelAfterTransport struct {
+	inner  transport.TPM
+	k      int
+	sent   int
+	cancel context.CancelFunc
+}
+
+func (c *cancelAfterTransport) Send(input []byte) ([]byte, error) {
+	out, err := c.inner.Send(input)
+	c.sent++
+	if c.k > 0 && c.sent == c.k {
+		c.cancel()
+	}
+	return out, err
+}
+
+// withCancelAfter routes the TPM through a cancelAfterTransport for the
+// duration of fn.
+func withCancelAfter(h *simHarness, k int, fn func(ctx context.Context)) int {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	original := h.TPM.transport
+	wrapper := &cancelAfterTransport{inner: original, k: k, cancel: cancel}
+	h.TPM.transport = wrapper
+	defer func() { h.TPM.transport = original }()
+	fn(ctx)
+	return wrapper.sent
+}
+
+// TestEnclaveProvider_CancelBetweenCommands_Simulator: a context that ends
+// after any TPM command of Protect or Unprotect but the last fails the call
+// with the context's error, leaves the destination untouched, persists no
+// key pair, and leaves no TPM handle behind (tpm-equivalence.md row 18).
+func TestEnclaveProvider_CancelBetweenCommands_Simulator(t *testing.T) {
+	h := newSimHarness(t, nil)
+	p, _ := newEquivalenceProtector(t, h, "enclave-cancel")
+	key, blob := protectKey(t, p)
+	baseline := countHandles(t, h)
+
+	t.Run("Unprotect", func(t *testing.T) {
+		n := withCancelAfter(h, 0, func(ctx context.Context) {
+			dst := make([]byte, enclave.RootKeyBytes)
+			require.NoError(t, p.Unprotect(ctx, blob, dst))
+			require.Equal(t, key, dst)
+		})
+		require.Greater(t, n, 1)
+		for k := 1; k < n; k++ {
+			dst := bytes.Repeat([]byte{0xA5}, enclave.RootKeyBytes)
+			var err error
+			withCancelAfter(h, k, func(ctx context.Context) { err = p.Unprotect(ctx, blob, dst) })
+			require.ErrorIs(t, err, context.Canceled, "cancelled after command %d of %d", k, n)
+			require.False(t, errors.Is(err, enclave.ErrSealedAuthentication), "cancellation is not authentication")
+			require.Equal(t, bytes.Repeat([]byte{0xA5}, enclave.RootKeyBytes), dst, "command %d", k)
+			require.Equal(t, baseline, countHandles(t, h), "command %d", k)
+		}
+	})
+
+	t.Run("Protect", func(t *testing.T) {
+		counted, countedAttrs := newEquivalenceProtector(t, h, "enclave-cancel-count")
+		n := withCancelAfter(h, 0, func(ctx context.Context) {
+			_, err := counted.Protect(ctx, key)
+			require.NoError(t, err)
+		})
+		require.Greater(t, n, 1)
+		_, err := h.Backend.Get(countedAttrs, store.FSEXT_PRIVATE_BLOB)
+		require.NoError(t, err, "a completed Protect persists the key pair")
+		require.Equal(t, baseline, countHandles(t, h))
+
+		for k := 1; k < n; k++ {
+			cp, attrs := newEquivalenceProtector(t, h, "enclave-cancel-protect-"+string(rune('a'+k)))
+			var got []byte
+			withCancelAfter(h, k, func(ctx context.Context) { got, err = cp.Protect(ctx, key) })
+			require.ErrorIs(t, err, context.Canceled, "cancelled after command %d of %d", k, n)
+			require.Nil(t, got, "command %d", k)
+			_, getErr := h.Backend.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+			require.Error(t, getErr, "command %d: no key pair may be persisted", k)
+			require.Equal(t, baseline, countHandles(t, h), "command %d", k)
+		}
+	})
 }
