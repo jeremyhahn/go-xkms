@@ -169,17 +169,22 @@ func TestOpenPreNodePKCS11Backend_SealedStrategyRefusedBeforeOpen(t *testing.T) 
 
 	err := s.openPreNodePKCS11Backend()
 	requirePreNodePolicyRefusal(t, s, err, pinselect.BackendPINSealed)
+	var below *pinselect.BackendPINBelowMinimumError
+	require.True(t, errors.As(err, &below), "error = %v, want BackendPINBelowMinimumError (the pre-node minimum)", err)
 	requireNoBackendPINRecord(t, s)
 }
 
-// auto with no TPM-sealed credentials resolves to sealed: refused the same.
-func TestOpenPreNodePKCS11Backend_AutoToSealedRefusedBeforeOpen(t *testing.T) {
+// auto with a TPM 2.0 present selects tpm2 (docs/SPEC.md:78); the PIN is not
+// TPM-stored, so the pre-node open is refused with a store mismatch.
+func TestOpenPreNodePKCS11Backend_AutoTPMWithoutTPMStoreRefusedBeforeOpen(t *testing.T) {
 	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
 	// A TPM is present, but the credentials are not sealed to it.
 	s.backendPINProbe = func() (bool, bool) { return true, false }
 
 	err := s.openPreNodePKCS11Backend()
-	requirePreNodePolicyRefusal(t, s, err, pinselect.BackendPINSealed)
+	requirePreNodePolicyRefusal(t, s, err, pinselect.BackendPINTPM2)
+	var storeErr *pinselect.BackendPINStoreError
+	require.ErrorAs(t, err, &storeErr)
 	requireNoBackendPINRecord(t, s)
 }
 
@@ -239,6 +244,7 @@ func TestOpenPreNodePKCS11Backend_NoNodeKeyKeepsSealed(t *testing.T) {
 	s := preNodeServer(t, "/nonexistent/libsofthsm2.so", "token")
 	s.config.Cluster.RaftEnrollment.KeyBackend = ""
 	s.config.BackendPIN.Strategy = string(pinselect.BackendPINSealed)
+	s.config.Credentials.SealStrategy = "barrier"
 	s.backendPINProbe = func() (bool, bool) { return false, true }
 
 	require.NoError(t, s.openPreNodePKCS11Backend())
