@@ -27,10 +27,12 @@ import (
 	"encoding/pem"
 	"fmt"
 	"math/big"
+	"net/http"
 	"sync"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys"
 	"github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets"
 )
@@ -352,7 +354,8 @@ func (m *MockKeyVaultClient) DeleteKey(ctx context.Context, name string, options
 
 	mock, exists := m.keys[name]
 	if !exists {
-		return azkeys.DeleteKeyResponse{}, &errs.Message{Msg: fmt.Sprintf("key not found: %s", name)}
+		// Key Vault answers a delete of a missing key with a 404.
+		return azkeys.DeleteKeyResponse{}, &azcore.ResponseError{StatusCode: http.StatusNotFound, ErrorCode: "KeyNotFound"}
 	}
 
 	delete(m.keys, name)

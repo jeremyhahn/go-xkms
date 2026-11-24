@@ -131,9 +131,10 @@ func TestSignVerifyDecryptRotate_ClientErrors(t *testing.T) {
 }
 
 // TestDelete_ClientErrorStillClearsMetadata verifies Delete's documented
-// idempotent behavior: even when the underlying DeleteKey call fails (for
-// example because the key was already gone), Delete still reports success
-// after removing the local metadata entry.
+// idempotent behavior: when the underlying DeleteKey call fails because the
+// key was already gone (Key Vault's 404, the only failure that counts as
+// gone), Delete still reports success after removing the local metadata
+// entry.
 func TestDelete_ClientErrorStillClearsMetadata(t *testing.T) {
 	b, mockClient := testBackend(t)
 
@@ -142,7 +143,7 @@ func TestDelete_ClientErrorStillClearsMetadata(t *testing.T) {
 		t.Fatalf("CreateKey() error = %v", err)
 	}
 
-	mockClient.SetDeleteError(errors.New("mock: key not found"))
+	mockClient.SetDeleteError(&azcore.ResponseError{StatusCode: http.StatusNotFound, ErrorCode: "KeyNotFound"})
 	if err := b.Delete(attrs); err != nil {
 		t.Errorf("Delete() unexpected error = %v", err)
 	}
