@@ -4,7 +4,7 @@
 # #174) to this job by labelling it `agent:opencode` + `task:ready`. The job
 # runs on the `qwen` runner (role: ci-runner), whose label maps to the
 # qwen-review image pinned by digest: opencode at go-quicbaas's toolchain.mk
-# pin, provider Ollama on the GPU host (role: gpu-host.internal; the image's
+# pin, provider Ollama on the review host (the image's
 # OLLAMA_URL), model review-q8 with thinking off.
 #
 # ADVISORY ONLY (Codex review 6149 on #1619; DS-2946 keeps this file on
