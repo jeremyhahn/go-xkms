@@ -188,13 +188,13 @@ func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
 // and the module's routes answer with one policy.
 //
 // It reads configuration only. A host-supplied server reports its own policy;
-// a self-built surface carries no CORS policy, so the zero config is returned
+// a self-built surface reports the WithCORS policy it will be built with,
 // without building the surface. Building it here, before the node client is
 // published, would cache stores without persistence and a server without
 // WebAuthn or the session store.
 func (m *Module) NodeCORS() (qrdbsdk.DaemonCORSConfig, error) {
 	if m.resolveREST == nil {
-		return qrdbsdk.DaemonCORSConfig{}, nil
+		return DaemonCORS(m.cors), nil
 	}
 	srv := m.resolveREST()
 	if srv == nil {
