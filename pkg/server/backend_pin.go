@@ -108,7 +108,10 @@ func (s *Server) resolveBackendPIN() error {
 // backendPINPolicyPreflight runs the backend PIN policy checks that need
 // no secret, before config secret resolution: a refused strategy never
 // waits on a PIN reference resolution cannot serve (manual credential
-// retrieval blocks until an operator submits it).
+// retrieval blocks until an operator submits it). It checks the effective
+// strategy (configured, auto-selected or persisted) through
+// pinselect.CheckBackendPIN. Invariant: the preflight never refuses a
+// configuration resolveBackendPIN accepts, and it persists nothing.
 func (s *Server) backendPINPolicyPreflight() error {
 	if !s.pkcs11Enabled() && !s.rngPKCS11PINActive() {
 		return nil
@@ -119,18 +122,52 @@ func (s *Server) backendPINPolicyPreflight() error {
 		return ErrBackendPINManualUnavailable
 	}
 	store := s.backendPINStore()
-	if strategy == pinselect.BackendPINSealed {
-		if s.barrier == nil {
-			return &pinselect.BackendPINUnavailableError{Strategy: strategy, Reason: "no barrier"}
-		}
-		if store != pinselect.BackendPINSealed {
-			return &pinselect.BackendPINStoreError{Strategy: strategy, Store: store}
+	// An explicit tpm2 with the PIN outside TPM custody is refused by
+	// resolveBackendPIN whether or not a TPM is present.
+	if (strategy == pinselect.BackendPINTPM2 || minimum == pinselect.BackendPINTPM2) && store != pinselect.BackendPINTPM2 {
+		if err := s.checkBackendPINTPMCustody(); err != nil {
+			return err
 		}
 	}
-	if (strategy == pinselect.BackendPINTPM2 || minimum == pinselect.BackendPINTPM2) && store != pinselect.BackendPINTPM2 {
+	// The effective strategy: what auto, or a persisted record, selects.
+	// No TPM is opened here; a TPM present is taken to offer a sealer, so
+	// the preflight is never stricter than resolveBackendPIN, which still
+	// refuses a sealer that fails to open.
+	tpmPresent, barrierAvailable := s.probeBackendPIN()
+	chosen, err := pinselect.CheckBackendPIN(s.backendPINConfig(minimum, tpmPresent, barrierAvailable, store,
+		tpmPresent && store != pinselect.BackendPINTPM2))
+	if err != nil {
+		return err
+	}
+	if chosen == pinselect.BackendPINManual {
+		return ErrBackendPINManualUnavailable
+	}
+	if chosen == pinselect.BackendPINTPM2 && store != pinselect.BackendPINTPM2 {
 		return s.checkBackendPINTPMCustody()
 	}
 	return nil
+}
+
+// backendPINConfig is the pinselect configuration both the preflight and
+// resolveBackendPINStrategy check the backend PIN strategy against.
+func (s *Server) backendPINConfig(minimum pinselect.BackendPINStrategy, tpmPresent, barrierAvailable bool,
+	store pinselect.BackendPINStrategy, tpmSealerAvailable bool) pinselect.BackendPINConfig {
+	return pinselect.BackendPINConfig{
+		PINDir:   s.backendPINDir(),
+		Strategy: pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy),
+		Minimum:  minimum,
+		// auto selects tpm2 whenever a TPM 2.0 is present (docs/SPEC.md:78).
+		// Store makes the strategy match the PIN's actual storage
+		// (credentials.seal_strategy): tpm2 needs a PIN sealed to the TPM,
+		// sealed a PIN stored under the barrier. Any other storage is
+		// refused before a record is persisted, and a persisted record is
+		// refused when the storage changed since (fail closed).
+		TPMPresent:         tpmPresent,
+		BarrierAvailable:   barrierAvailable,
+		SealerIsPKCS11:     s.sealerIsPKCS11(),
+		Store:              store,
+		TPMSealerAvailable: tpmSealerAvailable,
+	}
 }
 
 // resolveBackendPINStrategy resolves (and on a fresh install persists) the
@@ -160,22 +197,7 @@ func (s *Server) resolveBackendPINStrategy(preNode bool) (pinselect.BackendPINSt
 			tpmSealerAvailable = true
 		}
 	}
-	strategy, err := pinselect.ResolveBackendPIN(pinselect.BackendPINConfig{
-		PINDir:   s.backendPINDir(),
-		Strategy: pinselect.BackendPINStrategy(s.config.BackendPIN.Strategy),
-		Minimum:  minimum,
-		// auto selects tpm2 whenever a TPM 2.0 is present (docs/SPEC.md:78).
-		// Store makes the strategy match the PIN's actual storage
-		// (credentials.seal_strategy): tpm2 needs a PIN sealed to the TPM,
-		// sealed a PIN stored under the barrier. Any other storage is
-		// refused before a record is persisted, and a persisted record is
-		// refused when the storage changed since (fail closed).
-		TPMPresent:         tpmPresent,
-		BarrierAvailable:   barrierAvailable,
-		SealerIsPKCS11:     s.sealerIsPKCS11(),
-		Store:              store,
-		TPMSealerAvailable: tpmSealerAvailable,
-	})
+	strategy, err := pinselect.ResolveBackendPIN(s.backendPINConfig(minimum, tpmPresent, barrierAvailable, store, tpmSealerAvailable))
 	if err != nil && tpmSealerErr != nil {
 		var storeErr *pinselect.BackendPINStoreError
 		if errors.As(err, &storeErr) && storeErr.Strategy == pinselect.BackendPINTPM2 {

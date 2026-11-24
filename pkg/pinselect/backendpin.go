@@ -161,33 +161,59 @@ func (e *BackendPINStoreError) Error() string {
 // disagrees with it, an unavailable strategy, a self-store and a strategy
 // below the minimum are refused, and nothing is persisted on refusal.
 func ResolveBackendPIN(cfg BackendPINConfig) (BackendPINStrategy, error) {
+	chosen, fresh, err := checkBackendPIN(cfg)
+	if err != nil {
+		return "", err
+	}
+	if fresh {
+		if err := SaveBackendPINStrategy(cfg.PINDir, chosen); err != nil {
+			return "", err
+		}
+	}
+	return chosen, nil
+}
+
+// CheckBackendPIN runs every check ResolveBackendPIN runs (strategy names,
+// a persisted record, availability, minimum and store) and returns the
+// strategy it would choose, but persists nothing.
+func CheckBackendPIN(cfg BackendPINConfig) (BackendPINStrategy, error) {
+	chosen, _, err := checkBackendPIN(cfg)
+	if err != nil {
+		return "", err
+	}
+	return chosen, nil
+}
+
+// checkBackendPIN chooses the strategy and reports whether no record is
+// persisted yet (fresh).
+func checkBackendPIN(cfg BackendPINConfig) (BackendPINStrategy, bool, error) {
 	configured := cfg.Strategy
 	if configured == "" {
 		configured = BackendPINAuto
 	}
 	if err := checkBackendPINName(configured, true); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if cfg.Minimum != "" {
 		if err := checkBackendPINName(cfg.Minimum, false); err != nil {
-			return "", err
+			return "", false, err
 		}
 	}
 
 	persisted, err := LoadBackendPINStrategy(cfg.PINDir)
 	fresh := errors.Is(err, ErrBackendPINStrategyNotPersisted)
 	if err != nil && !fresh {
-		return "", err
+		return "", false, err
 	}
 
 	var chosen BackendPINStrategy
 	switch {
 	case !fresh:
 		if err := checkBackendPINName(persisted, false); err != nil {
-			return "", err
+			return "", false, err
 		}
 		if configured != BackendPINAuto && configured != persisted {
-			return "", &BackendPINMismatchError{Configured: configured, Persisted: persisted}
+			return "", false, &BackendPINMismatchError{Configured: configured, Persisted: persisted}
 		}
 		chosen = persisted
 	case configured == BackendPINAuto:
@@ -200,25 +226,20 @@ func ResolveBackendPIN(cfg BackendPINConfig) (BackendPINStrategy, error) {
 	}
 
 	if err := checkBackendPINAvailable(cfg, chosen); err != nil {
-		return "", err
+		return "", false, err
 	}
 	// The minimum is checked before the store: a strategy below the
 	// minimum is refused as such whatever the store holds.
 	if cfg.Minimum != "" && backendPINRank[chosen] < backendPINRank[cfg.Minimum] {
-		return "", &BackendPINBelowMinimumError{Strategy: chosen, Minimum: cfg.Minimum}
+		return "", false, &BackendPINBelowMinimumError{Strategy: chosen, Minimum: cfg.Minimum}
 	}
 	// manual is never stored, so no store provides or contradicts it; tpm2
 	// with a TPM sealer seals the PIN to the TPM whatever the store.
 	tpmSealed := chosen == BackendPINTPM2 && cfg.TPMSealerAvailable
 	if cfg.Store != "" && chosen != BackendPINManual && chosen != cfg.Store && !tpmSealed {
-		return "", &BackendPINStoreError{Strategy: chosen, Store: cfg.Store}
+		return "", false, &BackendPINStoreError{Strategy: chosen, Store: cfg.Store}
 	}
-	if fresh {
-		if err := SaveBackendPINStrategy(cfg.PINDir, chosen); err != nil {
-			return "", err
-		}
-	}
-	return chosen, nil
+	return chosen, fresh, nil
 }
 
 func checkBackendPINName(s BackendPINStrategy, allowAuto bool) error {
