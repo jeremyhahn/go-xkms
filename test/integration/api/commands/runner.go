@@ -77,6 +77,9 @@ type TestRunner struct {
 	Timeout        time.Duration
 	Verbose        bool
 	TLSCACert      string
+	// TLSCert and TLSKey are the client mTLS credential, the init admin's in the compose stack.
+	TLSCert string
+	TLSKey  string
 }
 
 // NewTestRunner creates a new test runner with default configuration
@@ -96,6 +99,8 @@ func NewTestRunner() *TestRunner {
 		Timeout:        30 * time.Second,
 		Verbose:        getEnv("VERBOSE", "") != "",
 		TLSCACert:      getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
+		TLSCert:        getEnv("KEYSTORE_TLS_CERT", ""),
+		TLSKey:         getEnv("KEYSTORE_TLS_KEY", ""),
 	}
 }
 
@@ -130,7 +135,7 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(r.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + r.MCPAddr
+		return "mcps://" + r.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""
@@ -208,14 +213,18 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
 
-		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-		// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-		needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
+		// Add TLS options for protocols that use TLS (Unix socket, REST with HTTPS, gRPC, QUIC)
+		needsTLS := protocol == ProtocolUnix ||
+			protocol == ProtocolMCP ||
+			protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
 			protocol == ProtocolGRPC ||
 			protocol == ProtocolQUIC
 
 		if needsTLS && r.TLSCACert != "" {
 			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
+		}
+		if needsTLS && r.TLSCert != "" && r.TLSKey != "" {
+			prefixArgs = append(prefixArgs, "--tls-cert", r.TLSCert, "--tls-key", r.TLSKey)
 		}
 	}
 
@@ -390,6 +399,10 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 			// already exists". Including the protocol prevents collisions when two
 			// RunAllCommandsForProtocol calls share a runID (coarse clock).
 			if arg.Flag == "cn" && cmd.Category == CategoryCA {
+				overrides[arg.Flag] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
+			}
+			// A TPM policy name is unique per tenant, so it is made unique per protocol+run.
+			if arg.IsPositional && cmd.Name == "tpm-policy-create" {
 				overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
 			}
 		}
