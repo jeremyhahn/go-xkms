@@ -34,8 +34,9 @@ services:
     # job's checkout (DS-4181).
     environment:
       - XKMS_CONFIG=/workspace/test/integration/api/config.test.yaml
-      # The harness runs barrier/auth disabled by design (tests drive the
-      # API surface directly); opt out of the refuse-to-start security gate.
+      # Throwaway test SO PIN: `xkmsd init` makes it the barrier passphrase.
+      - XKMS_SO_PIN=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
+      - XKMS_STATE_DIR=/data
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       # TPM configuration
@@ -63,7 +64,7 @@ services:
     # The barrier boots sealed, so /health answers only after the suite's
     # TestMain unseals it; integration-tests waits for service_started.
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
       timeout: 5s
       retries: 15
@@ -229,7 +230,7 @@ services:
       ls -la /etc/xkms/certs/ || true &&
       echo 'Building CLI binary...' &&
       mkdir -p /app/build/bin &&
-      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
+      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go codec_cbor codec_json codec_msgpack' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
       echo 'Running integration tests...' &&
       go test -v -tags=integration,frost,codec_cbor,codec_json,codec_msgpack ./test/integration/api/... -timeout 15m
       "

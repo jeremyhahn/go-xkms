@@ -505,7 +505,7 @@ func createTLSClient() *http.Client {
 	return &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+			TLSClientConfig: clientTLSConfig(),
 		},
 	}
 }

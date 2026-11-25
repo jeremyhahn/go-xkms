@@ -1534,6 +1534,7 @@ func (s *Server) initializeWebAuthnService() error {
 		NodeUsers:   s.nodeUserSource(),
 		DAOFactory:  ds.DAOFactory(),
 		TenantID:    webAuthnSystemTenant,
+		CallContext: s.serviceCallContext(),
 		TokenIssuer: s.tokenIssuer,
 		Logger:      s.logger,
 		AuditLogger: s.auditLogger,
@@ -1548,7 +1549,6 @@ func (s *Server) initializeWebAuthnService() error {
 	// (go-xkms #2202).
 	if s.qrdbNode != nil {
 		serviceprincipal.RegisterWebAuthnGrant()
-		params.CallContext = s.qrdbNode.ServiceContext
 	}
 	svc, err := rest.BuildWebAuthnService(params)
 	if err != nil {
@@ -1557,6 +1557,14 @@ func (s *Server) initializeWebAuthnService() error {
 	s.webauthnService = svc
 	s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID)
 	return nil
+}
+
+// serviceCallContext binds WebAuthn and token-store calls to the embedded node's service principal.
+func (s *Server) serviceCallContext() webauthn.CallContext {
+	if s.qrdbNode == nil {
+		return nil
+	}
+	return s.qrdbNode.ServiceContext
 }
 
 // initializeAuthorization sets up the authorization subsystem. All transports
