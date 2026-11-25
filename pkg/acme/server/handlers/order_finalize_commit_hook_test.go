@@ -10,11 +10,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,7 +54,7 @@ const (
 // go-trusted-platform does) and then sendFinalizeResponse against the
 // given store. It returns the response, the commit hook record, the
 // finalize hook's recorded state and the IDevID DER the CA issued.
-func runTCGFinalizeWithCommitHook(t *testing.T, store commitHookStore) (*httptest.ResponseRecorder, *commitRecorder, int, []byte) {
+func runTCGFinalizeWithCommitHook(t *testing.T, store commitHookStore, extra ...commitHookFactory) (*httptest.ResponseRecorder, *commitRecorder, int, []byte) {
 	t.Helper()
 	service, _, cleanup := setupTestService(t)
 	t.Cleanup(cleanup)
@@ -89,6 +91,9 @@ func runTCGFinalizeWithCommitHook(t *testing.T, store commitHookStore) (*httptes
 	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
 	require.NoError(t, err)
 	require.NoError(t, orderDAO.Save(ctx, order))
+	for _, mk := range extra {
+		service.params.OrderFinalizeCommitHooks.Register(mk(service, account, order, idevidDER))
+	}
 
 	csrDER := packTCGCSR(t, prodModel, prodSerial, selfSignedDER(t, "ek-"+prodSerial, big.NewInt(43), 365*24*time.Hour))
 	req := httptest.NewRequest("POST", fmt.Sprintf("%s/acme/order/%d/finalize", service.baseRESTURI, order.ID), nil)
@@ -207,6 +212,106 @@ func TestOrderFinalizeHandler_StandardCommitHookAfterSuccess(t *testing.T) {
 	require.NotNil(t, rec.ctxs[0])
 	assert.False(t, rec.ctxs[0].IsTCGCSR)
 	assert.NotNil(t, rec.ctxs[0].Certificate)
+}
+
+// commitHookFactory builds a commit hook for a service, account and order;
+// wantDER is the issued certificate's DER, or nil to take it from the hook context.
+type commitHookFactory func(service *RestService, account *entities.ACMEAccount, order *entities.ACMEOrder, wantDER []byte) OrderFinalizeCommitHook
+
+// persistedStateHook returns a factory for a commit hook that reloads the
+// finalized order and its certificate through their DAOs before recording.
+func persistedStateHook(t *testing.T, rec *commitRecorder) commitHookFactory {
+	return func(service *RestService, account *entities.ACMEAccount, order *entities.ACMEOrder, wantDER []byte) OrderFinalizeCommitHook {
+		return func(hctx *OrderFinalizeHookContext, persistErr error) {
+			require.NoError(t, persistErr)
+			if wantDER == nil {
+				require.NotNil(t, hctx.Certificate)
+				wantDER = hctx.Certificate.Raw
+			}
+			ctx := context.Background()
+
+			orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+			require.NoError(t, err)
+			stored, err := orderDAO.Get(ctx, order.ID)
+			require.NoError(t, err, "the order is saved before the commit hook runs")
+			assert.Equal(t, common.StatusValid, stored.Status)
+			prefix := fmt.Sprintf("%s/acme/cert/", service.baseRESTURI)
+			require.True(t, strings.HasPrefix(stored.Certificate, prefix), "order certificate URL %q", stored.Certificate)
+			serial := strings.TrimPrefix(stored.Certificate, prefix)
+			require.NotEmpty(t, serial)
+
+			certDAO, err := service.storageFactory.CertificateDAO()
+			require.NoError(t, err)
+			cert, err := certDAO.Get(ctx, entities.StringToEntityID(serial))
+			require.NoError(t, err, "the certificate is saved before the commit hook runs")
+			assert.Equal(t, stored.Certificate, cert.CertURL)
+			var ders [][]byte
+			for rest := []byte(cert.PEM); ; {
+				var block *pem.Block
+				block, rest = pem.Decode(rest)
+				if block == nil {
+					break
+				}
+				ders = append(ders, block.Bytes)
+			}
+			assert.Contains(t, ders, wantDER, "the stored PEM holds the issued certificate")
+
+			rec.hook(hctx, persistErr)
+		}
+	}
+}
+
+func TestSendFinalizeResponse_TCGCommitHookSeesPersistedState(t *testing.T) {
+	seen := &commitRecorder{}
+	w, rec, _, _ := runTCGFinalizeWithCommitHook(t, commitStoreWorking, persistedStateHook(t, seen))
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Len(t, rec.errs, 1)
+	require.Len(t, seen.errs, 1, "the persisted-state hook ran once")
+	assert.True(t, seen.ctxs[0].IsTCGCSR)
+}
+
+func TestOrderFinalizeHandler_StandardCommitHookSeesPersistedState(t *testing.T) {
+	service, _, cleanup := setupTestServiceWithMockCA(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+	order := createTestOrderSimple(t, service, account.ID)
+	order.Status = common.StatusReady
+
+	seen := &commitRecorder{}
+	commitHooks := NewOrderFinalizeCommitHookRegistry()
+	commitHooks.Register(persistedStateHook(t, seen)(service, account, order, nil))
+	service.params = &Params{
+		OrderFinalizeHooks:       NewOrderFinalizeHookRegistry(),
+		OrderFinalizeCommitHooks: commitHooks,
+	}
+
+	ctx := context.Background()
+	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	require.NoError(t, err)
+	require.NoError(t, orderDAO.Save(ctx, order))
+
+	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	csrDER, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+		Subject:  pkix.Name{CommonName: "example.com"},
+		DNSNames: []string{"example.com"},
+	}, csrKey)
+	require.NoError(t, err)
+
+	payload := OrderFinalizeRequest{CSR: base64.RawURLEncoding.EncodeToString(csrDER)}
+	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
+
+	resp := httptest.NewRecorder()
+	service.OrderFinalizeHandler(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	require.Len(t, seen.errs, 1, "the persisted-state hook ran once")
+	assert.False(t, seen.ctxs[0].IsTCGCSR)
 }
 
 // stagingThenVetoHooks registers a finalize hook that stages state and a
