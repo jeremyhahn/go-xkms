@@ -321,17 +321,14 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 					"--key-dir", suite.keyDir,
 				}
 
-				// RSA decrypt through the CLI is PKCS#1 v1.5, refused by
-				// policy (see legacyWrapRefusal); the refusal is the result.
+				// key decrypt sends RSA-OAEP with --hash (default sha256), matching encrypt-asym.
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
-				if err == nil {
-					t.Fatalf("key decrypt (RSA PKCS#1 v1.5) succeeded with legacy key wrap off; stdout: %s", stdout)
+				if err != nil {
+					t.Fatalf("key decrypt (RSA-OAEP) failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 				}
-				if !strings.Contains(stderr+stdout, legacyWrapRefusal) {
-					t.Fatalf("key decrypt failed for another reason than the legacy-wrap policy: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
-				}
+				assertNotEmpty(t, strings.TrimSpace(stdout), "Decrypted output should not be empty")
 
-				t.Logf("[%s] key decrypt refused by the legacy-wrap policy as expected", proto)
+				t.Logf("[%s] key decrypt passed", proto)
 			})
 
 			// Test key rotate
@@ -746,14 +743,6 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 }
 
 // TestCLICompleteKeyCopy tests key copy between backends
-// legacyWrapRefusal is the policy refusal xkmsctl's `key decrypt` meets on an
-// RSA key: the command has no padding flag, so it asks for Decrypt's
-// asymmetric fallback, RSA PKCS#1 v1.5, which authenticates nothing and is
-// refused while crypto.allow_legacy_key_wrap is off (pkg/xkms/errors.go
-// ErrLegacyWrapDisabled, pkg/xkms/servicer_crypto.go legacyRSAPKCS1v15Refusal).
-// The suite keeps the policy on and proves the refusal.
-const legacyWrapRefusal = "unauthenticated key wrapping is disabled by policy"
-
 func TestCLICompleteKeyCopy(t *testing.T) {
 	suite := NewCLITestSuite(t)
 	defer suite.Cleanup()

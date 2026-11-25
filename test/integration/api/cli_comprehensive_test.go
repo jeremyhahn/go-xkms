@@ -584,18 +584,17 @@ func TestCLIComprehensiveKeyOperationsAllAlgorithms(t *testing.T) {
 							if ciphertext == "" {
 								t.Fatal("No ciphertext from previous test - encrypt must succeed first")
 							}
-							// RSA decrypt through the CLI is PKCS#1 v1.5, refused
-							// by policy (see legacyWrapRefusal in cli_complete_test.go).
+							// key decrypt sends RSA-OAEP with --hash (default sha256), matching encrypt-asym.
 							stdout, stderr, err := suite.runCLI(serverURL,
 								"key", "decrypt", keyID, ciphertext,
 							)
-							if err == nil {
-								t.Fatalf("decrypt (RSA PKCS#1 v1.5) succeeded with legacy key wrap off; stdout: %s", stdout)
+							if err != nil {
+								t.Fatalf("decrypt (RSA-OAEP) failed: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 							}
-							if !strings.Contains(stderr+stdout, legacyWrapRefusal) {
-								t.Fatalf("decrypt failed for another reason than the legacy-wrap policy: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
+							if strings.TrimSpace(stdout) == "" {
+								t.Fatal("Decrypted output should not be empty")
 							}
-							t.Logf("[%s][%s] decrypt refused by the legacy-wrap policy as expected", proto, kt.name)
+							t.Logf("[%s][%s] decrypt passed", proto, kt.name)
 						})
 					}
 
