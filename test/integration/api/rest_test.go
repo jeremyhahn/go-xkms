@@ -172,9 +172,10 @@ func TestRESTGenerateKey(t *testing.T) {
 			testKeyID := fmt.Sprintf("%s-%s", keyID, tt.keyType)
 
 			reqBody := map[string]interface{}{
-				"key_id":   testKeyID,
-				"backend":  "software",
-				"key_type": tt.keyType,
+				"key_id":    testKeyID,
+				"backend":   "software",
+				"key_type":  tt.keyType,
+				"algorithm": tt.keyType,
 			}
 
 			if tt.keySize > 0 {
@@ -235,10 +236,11 @@ func TestRESTListKeys(t *testing.T) {
 
 	// Create a test key first
 	reqBody := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
@@ -301,10 +303,11 @@ func TestRESTSignVerify(t *testing.T) {
 
 	// Create a test key
 	reqBody := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
@@ -384,10 +387,11 @@ func TestRESTDeleteKey(t *testing.T) {
 
 	// Create a test key
 	reqBody := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
