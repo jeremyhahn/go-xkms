@@ -34,8 +34,9 @@ services:
     # job's checkout (DS-4181).
     environment:
       - XKMS_CONFIG=/workspace/test/integration/api/config.test.yaml
-      # The harness runs barrier/auth disabled by design (tests drive the
-      # API surface directly); opt out of the refuse-to-start security gate.
+      # Throwaway test SO PIN: `xkmsd init` makes it the barrier passphrase.
+      - XKMS_SO_PIN=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
+      - XKMS_STATE_DIR=/data
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       # TPM configuration
@@ -62,29 +63,8 @@ services:
       - xkms-integration
     # Run as root for integration tests (allows cert generation and UDP buffer config)
     user: root
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        # Set UDP buffer sizes for QUIC
-        echo "Configuring UDP buffers for QUIC..."
-        echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo "Warning: Could not set rmem_max"
-        echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo "Warning: Could not set wmem_max"
-        cat /proc/sys/net/core/rmem_max || true
-        # Ensure directories exist
-        mkdir -p /etc/xkms/certs /var/run/xkms /data
-        # Generate TLS certificates for QUIC
-        echo "Generating TLS certificates..."
-        /workspace/test/integration/api/scripts/generate-test-certs.sh
-        # Verify certificates were created
-        ls -la /etc/xkms/certs/
-        # Initialize the in-process SoftHSM2 token (idempotent) — the pkcs11
-        # backend loads libsofthsm2.so in THIS container, not the sidecar.
-        mkdir -p /var/lib/softhsm/tokens
-        softhsm2-util --show-slots | grep -q "test-token" || \
-          softhsm2-util --init-token --free --label test-token --so-pin 123456 --pin 123456
-        echo "Starting xkms server..."
-        exec /app/xkmsd
+    # Inits a fresh volume with `xkmsd init`, starts xkmsd and unseals it with the SO PIN.
+    entrypoint: ["/workspace/test/integration/api/scripts/start-xkms-server.sh"]
 
   # SWTPM TPM 2.0 Simulator
   swtpm:

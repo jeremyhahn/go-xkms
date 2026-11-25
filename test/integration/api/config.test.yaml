@@ -73,7 +73,7 @@ health:
 # Storage configuration
 datastore:
   engine: file
-  path: "/data/xkms"
+  path: "/data/storage"
 
 # Certificate Authority configuration
 ca:
