@@ -30,7 +30,7 @@ func TestNewHostServer_IssuerMintsUnderAnonymousContext(t *testing.T) {
 	srv, err := NewHostServer(context.Background(), &HostConfig{
 		XKMSService:    svc,
 		QRDBClient:     node.Client(),
-		ServiceContext: node.ServiceContext,
+		CallContext:    node.ServiceContext,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, srv.tokenIssuer, "the host must build a token issuer")

@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -114,11 +115,6 @@ func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
 	}
-	if m.serviceContext != nil {
-		// Login routes are public: the refresh store's KV bookkeeping
-		// runs as the node's service principal (go-xkms#2287).
-		hc.ServiceContext = token.CallContext(m.serviceContext)
-	}
 	if hc.QRDBClient != nil {
 		// WebAuthn credentials persist through the host datastore's DAO
 		// factory; without one the WebAuthn routes stay unmounted.
@@ -127,6 +123,9 @@ func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 			return nil, &HostBuildError{Err: err}
 		}
 		hc.DAOFactory = ds.DAOFactory()
+	}
+	if m.serviceContext != nil {
+		hc.ServiceCallContext = webauthn.CallContext(m.serviceContext)
 	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)

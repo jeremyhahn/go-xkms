@@ -29,8 +29,8 @@ func TestModule_HostConfig_CarriesServiceContext(t *testing.T) {
 	hc, err := m.hostConfig(svc)
 	require.NoError(t, err)
 	require.NotNil(t, hc.QRDBClient)
-	require.NotNil(t, hc.ServiceContext, "the module must pass its service context to the REST host")
-	ctx, err := hc.ServiceContext(context.Background())
+	require.NotNil(t, hc.ServiceCallContext, "the module must pass its service context to the REST host")
+	ctx, err := hc.ServiceCallContext(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, ctx)
 }

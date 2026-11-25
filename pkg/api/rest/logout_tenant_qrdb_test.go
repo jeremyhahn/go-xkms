@@ -49,7 +49,7 @@ func TestAuthLogout_FromNonSystemTenant_RevokesOnTheEmbeddedNode(t *testing.T) {
 		Backend:        newMockKeyStore(),
 		BackendName:    "test",
 		QRDBClient:     node.Client(),
-		ServiceContext: node.ServiceContext,
+		CallContext:    node.ServiceContext,
 	})
 	require.NoError(t, err)
 	server := newAuthTestServer(t, func(cfg *Config) { cfg.TokenIssuer = issuer })
