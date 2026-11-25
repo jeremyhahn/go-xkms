@@ -68,7 +68,7 @@ services:
       # unhealthy (CI at 2964e51e4). The window (start_period + retries x
       # interval) exceeds enrol-admin-client.sh's ENROL_WAIT_SECONDS
       # (healthcheck_test.go).
-      test: ["CMD-SHELL", "test -f /etc/xkms/certs/admin-client.bound && curl -sf -o /dev/null --max-time 3 --cacert /etc/xkms/certs/ca.crt https://localhost:8443/health"]
+      test: ["CMD", "sh", "-c", "test -f /etc/xkms/certs/admin-client.bound || exit 1; if command -v wget >/dev/null 2>&1; then exec \"$$@\"; fi; exec curl -sf -o /dev/null --max-time 3 --cacert /etc/xkms/certs/ca.crt https://localhost:8443/health", "probe", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
       timeout: 4s
       retries: 30
@@ -158,8 +158,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
-      - BOOTSTRAP_ADMIN_CERT=/etc/xkms/certs/admin-client.crt
-      - BOOTSTRAP_ADMIN_KEY=/etc/xkms/certs/admin-client.key
+      - BOOTSTRAP_ADMIN_CERT=/data/storage/admin-cert.pem
+      - BOOTSTRAP_ADMIN_KEY=/data/storage/admin-key.pem
     working_dir: /workspace
     networks:
       - bootstrap-net
@@ -207,8 +207,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
-      - BOOTSTRAP_ADMIN_CERT=/etc/xkms/certs/admin-client.crt
-      - BOOTSTRAP_ADMIN_KEY=/etc/xkms/certs/admin-client.key
+      - BOOTSTRAP_ADMIN_CERT=/data/storage/admin-cert.pem
+      - BOOTSTRAP_ADMIN_KEY=/data/storage/admin-key.pem
     working_dir: /workspace/xkey
     networks:
       - bootstrap-net
