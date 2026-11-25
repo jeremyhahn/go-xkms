@@ -399,6 +399,10 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 			// already exists". Including the protocol prevents collisions when two
 			// RunAllCommandsForProtocol calls share a runID (coarse clock).
 			if arg.Flag == "cn" && cmd.Category == CategoryCA {
+				overrides[arg.Flag] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
+			}
+			// A TPM policy name is unique per tenant, so it is made unique per protocol+run.
+			if arg.IsPositional && cmd.Name == "tpm-policy-create" {
 				overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
 			}
 		}
