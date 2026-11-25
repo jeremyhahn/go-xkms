@@ -456,6 +456,33 @@ type failPublicBlobOnce struct {
 	fail bool
 }
 
+// CompareAndSwap forwards to the wrapped backend's guarded swap.
+func (f *failPublicBlobOnce) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	swapper, ok := f.KeyBackend.(store.KeyBlobSwapper)
+	if !ok {
+		return false, errors.New("wrapped backend has no CompareAndSwap")
+	}
+	return swapper.CompareAndSwap(attrs, ext, expected, next)
+}
+
+// GetRevision forwards to the wrapped backend's revisioned read.
+func (f *failPublicBlobOnce) GetRevision(attrs *types.KeyAttributes, ext types.FSExtension) ([]byte, uint64, error) {
+	swapper, ok := f.KeyBackend.(store.KeyBlobRevisionSwapper)
+	if !ok {
+		return nil, 0, errors.New("wrapped backend has no GetRevision")
+	}
+	return swapper.GetRevision(attrs, ext)
+}
+
+// CompareAndSwapRevision forwards to the wrapped backend's revision-guarded swap.
+func (f *failPublicBlobOnce) CompareAndSwapRevision(attrs *types.KeyAttributes, ext types.FSExtension, revision uint64, next []byte) (bool, error) {
+	swapper, ok := f.KeyBackend.(store.KeyBlobRevisionSwapper)
+	if !ok {
+		return false, errors.New("wrapped backend has no CompareAndSwapRevision")
+	}
+	return swapper.CompareAndSwapRevision(attrs, ext, revision, next)
+}
+
 func (f *failPublicBlobOnce) Save(attrs *types.KeyAttributes, data []byte, ext types.FSExtension, overwrite bool) error {
 	if f.fail && ext == store.FSEXT_PUBLIC_BLOB {
 		f.fail = false
