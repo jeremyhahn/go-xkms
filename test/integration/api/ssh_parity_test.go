@@ -109,6 +109,9 @@ func runXkeySSH(t *testing.T, bin, serverURL, tlsCA, home string, args ...string
 	}
 	cmd := exec.Command(bin, full...)
 	cmd.Env = append(os.Environ(), "XKEY_HOME="+home, "USER=ittest", "LOGNAME=ittest")
+	if cert, key := getEnv("KEYSTORE_TLS_CERT", ""), getEnv("KEYSTORE_TLS_KEY", ""); cert != "" && key != "" {
+		cmd.Env = append(cmd.Env, "XKMSD_TLS_CERT="+cert, "XKMSD_TLS_KEY="+key)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -77,6 +77,9 @@ type TestRunner struct {
 	Timeout        time.Duration
 	Verbose        bool
 	TLSCACert      string
+	// TLSCert and TLSKey are the client mTLS credential, the init admin's in the compose stack.
+	TLSCert string
+	TLSKey  string
 }
 
 // NewTestRunner creates a new test runner with default configuration
@@ -96,6 +99,8 @@ func NewTestRunner() *TestRunner {
 		Timeout:        30 * time.Second,
 		Verbose:        getEnv("VERBOSE", "") != "",
 		TLSCACert:      getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
+		TLSCert:        getEnv("KEYSTORE_TLS_CERT", ""),
+		TLSKey:         getEnv("KEYSTORE_TLS_KEY", ""),
 	}
 }
 
@@ -217,6 +222,9 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 
 		if needsTLS && r.TLSCACert != "" {
 			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
+		}
+		if needsTLS && r.TLSCert != "" && r.TLSKey != "" {
+			prefixArgs = append(prefixArgs, "--tls-cert", r.TLSCert, "--tls-key", r.TLSKey)
 		}
 	}
 

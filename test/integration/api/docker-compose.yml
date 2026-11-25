@@ -133,6 +133,8 @@ services:
     volumes:
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
+      # The init admin's mTLS credential, which every suite authenticates with.
+      - xkms-data:/xkms-data:ro
       - cli-build:/app/build
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
@@ -152,6 +154,8 @@ services:
       - KEYSTORE_CLI_BIN=/app/build/bin/xkmsctl
       # TLS configuration - use CA certificate for proper verification
       - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
+      - KEYSTORE_TLS_CERT=/xkms-data/storage/admin-cert.pem
+      - KEYSTORE_TLS_KEY=/xkms-data/storage/admin-key.pem
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
       - GO_TEST_FLAGS=-v -tags=integration,frost

@@ -17,7 +17,6 @@ package integration
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,9 +44,7 @@ func newQUICClient(baseURL string) *QUICTestClient {
 		jwtToken: "test-jwt-token",
 		client: &http.Client{
 			Transport: &http3.Transport{
-				TLSClientConfig: &tls.Config{
-					RootCAs: loadCACertPool(),
-				},
+				TLSClientConfig: clientTLSConfig(),
 			},
 			Timeout: 10 * time.Second,
 		},

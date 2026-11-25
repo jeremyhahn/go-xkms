@@ -17,7 +17,6 @@ package integration
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -41,7 +40,7 @@ func NewRESTClient(baseURL string) *RESTClient {
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+				TLSClientConfig: clientTLSConfig(),
 			},
 		},
 	}
