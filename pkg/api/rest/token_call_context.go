@@ -69,12 +69,12 @@ func (b *boundRefreshStore) RevokeFamily(ctx context.Context, family string) err
 	return b.inner.RevokeFamily(c, family)
 }
 
-func (b *boundRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (b *boundRefreshStore) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
 	c, err := b.bind(ctx)
 	if err != nil {
 		return err
 	}
-	return b.inner.RevokeBySubject(c, subject)
+	return b.inner.RevokeBySubject(c, tenantID, subject)
 }
 
 // boundUserResolver runs every lookup of the wrapped resolver on the bound context.
