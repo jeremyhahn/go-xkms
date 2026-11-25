@@ -70,12 +70,48 @@ func TestCLISecretsMatrix(t *testing.T) {
 			if !isProtocolAvailable(t, runner, protocol) {
 				t.Fatalf("Protocol %s not available - server must be running", protocol)
 			}
+			if gap := runnerIdentityGap(runner, protocol); gap != "" {
+				t.Fatalf("[%s] the secrets workflows need an authenticated caller: %s", protocol, gap)
+			}
 			w := &secretsWorkflow{runner: runner, protocol: protocol, state: state}
 			t.Run("password", w.family(commands.CategoryPassword, w.password))
 			t.Run("pin", w.family(commands.CategoryPIN, w.pin))
 			t.Run("piv", w.family(commands.CategoryPIV, w.piv))
 		})
 	}
+}
+
+// runnerIdentityGap returns why the runner cannot authenticate on protocol, or
+// "" when it can: a remote transport needs a client certificate and key that
+// exist, or a token; the embedded transport runs in-process and needs none.
+func runnerIdentityGap(r *commands.TestRunner, protocol commands.ProtocolType) string {
+	if protocol == commands.ProtocolEmbedded || r.Token != "" {
+		return ""
+	}
+	if r.ClientCert == "" || r.ClientKey == "" {
+		return "no client certificate and key (KEYSTORE_TLS_CERT, KEYSTORE_TLS_KEY) and no token (KEYSTORE_TOKEN)"
+	}
+	for _, f := range []string{r.ClientCert, r.ClientKey} {
+		if _, err := os.Stat(f); err != nil {
+			return "client credential file unreadable: " + err.Error()
+		}
+	}
+	return ""
+}
+
+// authRefusal reports whether a command's output is the server refusing an
+// unauthenticated or unauthorized caller.
+func authRefusal(output string) bool {
+	out := strings.ToLower(output)
+	for _, marker := range []string{
+		"unauthenticated", "permissiondenied", "permission denied",
+		"401 unauthorized", "403 forbidden", "authentication required",
+	} {
+		if strings.Contains(out, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // family wraps a workflow so a transport that lacks the family's services
@@ -129,6 +165,10 @@ func (w *secretsWorkflow) cell(t *testing.T, name string, variants ...map[string
 				stdout, passed, w.variant = last.Stdout, true, i
 				return
 			}
+		}
+		if authRefusal(last.Stdout + last.Stderr) {
+			t.Fatalf("[%s] %s was refused as unauthenticated or unauthorized: %s\nstderr: %s",
+				w.protocol, name, last.Message, last.Stderr)
 		}
 		w.skipKnown(t, cmd, last)
 		t.Fatalf("[%s] %s failed: %s\nstdout: %s\nstderr: %s",
