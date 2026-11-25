@@ -49,7 +49,7 @@ func TestXKMSServerHealthcheckUsesGET(t *testing.T) {
 // failure trap to print the xkms-server container's health state after its
 // log, so an "unhealthy" stop shows the failing probe output.
 func TestBootstrapTrapPrintsHealthState(t *testing.T) {
-	recipe := joinedMakeRecipe(t, readMakefile(t), "integration-test-bootstrap")
+	recipe := mustMakeRecipe(t, readMakefile(t), "integration-test-bootstrap")
 
 	var trapLine string
 	for _, l := range strings.Split(recipe, "\n") {
