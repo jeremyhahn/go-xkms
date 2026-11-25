@@ -193,6 +193,9 @@ var sshDefaultAlgos = []sshAlgo{
 	{"rsa-2048", "rsa", 2048, "ssh-rsa"},
 }
 
+// sshRunSuffix makes the key names unique per run: a deleted name cannot be generated again.
+var sshRunSuffix = fmt.Sprintf("%x", time.Now().UnixNano())
+
 // genArgs builds the `keys generate` argument list for an algorithm.
 func (a sshAlgo) genArgs(scope, owner, name string) []string {
 	args := []string{"keys", "generate", "--scope", scope, "--owner", owner, "--name", name, "--type", a.cliType}
@@ -222,7 +225,7 @@ func TestXkeySSHMultiProtocol(t *testing.T) {
 				algo := algo
 				t.Run(algo.name, func(t *testing.T) {
 					home := t.TempDir()
-					keyName := "xkey-" + string(proto) + "-" + algo.name
+					keyName := "xkey-" + string(proto) + "-" + algo.name + "-" + sshRunSuffix
 					sshKeyLifecycle(t, bin, serverURL, tlsCA, home, keyName, algo)
 				})
 			}
@@ -235,7 +238,7 @@ func TestXkeySSHMultiProtocol(t *testing.T) {
 			algo := algo
 			t.Run(algo.name, func(t *testing.T) {
 				home := t.TempDir()
-				keyName := "xkey-embedded-" + algo.name
+				keyName := "xkey-embedded-" + algo.name + "-" + sshRunSuffix
 				sshKeyLifecycle(t, bin, "", "", home, keyName, algo)
 			})
 		}
@@ -311,7 +314,7 @@ func TestXkeySSHBackendSelection(t *testing.T) {
 				algo := algo
 				t.Run(algo.name, func(t *testing.T) {
 					home := t.TempDir()
-					keyName := "xkey-backend-" + backend + "-" + algo.name
+					keyName := "xkey-backend-" + backend + "-" + algo.name + "-" + sshRunSuffix
 					args := append(algo.genArgs("user", sshOwner(t), keyName), "--backend", backend)
 					out, errOut, err := runXkeySSH(t, bin, serverURL, tlsCA, home, args...)
 					if err != nil {
