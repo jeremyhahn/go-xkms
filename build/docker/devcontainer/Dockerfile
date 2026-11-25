@@ -608,14 +608,13 @@ RUN groupadd --gid $USER_GID $USERNAME && \
 # -- and made the act_runner job impersonate the devcontainer so the harness
 # never started one (go-xkms #19).
 #
-# The harness resolves modules over the network into its own cache volume, so
-# the offline toolchain settings are reset here.
+# Modules resolve from the image's verified cache first, then the public proxy.
 ENV XKMS_DEVCONTAINER=1 \
     HOME=/home/$USERNAME \
     GOPATH=/go \
     GOMODCACHE=/go/pkg/mod \
     GOCACHE=/home/$USERNAME/.cache/go-build \
-    GOPROXY=https://proxy.golang.org,direct \
+    GOPROXY=file:///opt/go/mod/cache/download|https://proxy.golang.org|direct \
     GOFLAGS=-buildvcs=false \
     FIDO2_PIN=123456 \
     PATH=/go/bin:$PATH
