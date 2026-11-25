@@ -55,6 +55,8 @@ func newAuthNodeHostServer(t *testing.T, node *qrdbnode.Node, bind webauthn.Call
 		DAOFactory:  ds.DAOFactory(),
 		WebAuthn:    qrdbWebAuthnConfig(),
 		Logger:      logger,
+
+		WebAuthnCallContext: bind,
 	})
 	require.NoError(t, err)
 	return srv
@@ -69,6 +71,17 @@ func beginAnonymousRegistration(t *testing.T, srv *Server) *httptest.ResponseRec
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, req)
 	return w
+}
+
+// TestNewHostServer_WebAuthnRunsOnTheServiceContext proves the HostConfig
+// path hands its call context to the WebAuthn store: open sign-up on an
+// auth-enabled node succeeds.
+func TestNewHostServer_WebAuthnRunsOnTheServiceContext(t *testing.T) {
+	node := newAuthNode(t)
+	srv := newAuthNodeHostServer(t, node, node.ServiceContext, nil)
+
+	w := beginAnonymousRegistration(t, srv)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 }
 
 // TestNewHostServer_WebAuthnUnclassifiedErrorLogsAtError proves an
