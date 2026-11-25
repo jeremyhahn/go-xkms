@@ -30,26 +30,8 @@ services:
     environment:
       # This suite exercises the bootstrap trust protocol (Noise handshake, SPKI
       # pin, admin mTLS) using generated test certs at the transport layer.
-      # scripts/generate-test-certs.sh still writes a config with auth.enabled
-      # false and no ca section: config.ComplianceGaps reports both, and
-      # cmd/xkmsd refuses to start on any gap with no override flag or
-      # environment variable, so that config has to gain an authenticator and a
-      # CA before the suite can bring the daemon up. The XKMS_INSECURE opt-in
-      # this comment used to name was removed in v0.3.0-alpha.
-      # KNOWN GAP (go-xkms#653): the generated config enables a barrier
-      # (passphrase strategy). go-xkms#653 removed the config-sourced
-      # boot-time barrier secret entirely (matching go-qrdb's own SealConfig,
-      # which carries none either), and XKMS_BARRIER_PASSPHRASE along with it
-      # -- setting it now fails config.Load with a typed RemovedFieldError,
-      # which would crash-loop this container, so it cannot be restored here.
-      # Without it the qrdb node barrier no longer auto-unseals at startup:
-      # the data plane boots sealed, and tenant operations (including the
-      # TenantBarrierInit/Unseal tests this suite exercises) fail with
-      # "barrier is sealed" until an unseal ceremony runs against the node's
-      # sealed-window listener. Wiring the passphrase/shamir strategies into
-      # the qrdb node's own barrier behind that ceremony (so this suite can
-      # drive it, matching go-qrdb's own qrdbd boot sequence) is scoped as an
-      # owner-approved follow-up to #653, not invented here.
+      # scripts/generate-test-certs.sh writes a config with no config.ComplianceGaps finding (setup/config_compliance_test.go).
+      # Its barrier strategy is "none" (auto-unseal at startup), since this stack has no unseal ceremony.
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
       - XKMS_BOOTSTRAP_NOISE_ENABLED=true
@@ -60,7 +42,7 @@ services:
       - XKMS_STORAGE_BACKEND=qrdb
       - XKMS_STORAGE_PATH=/data/storage
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -137,6 +119,9 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      # The first-boot administrator's mTLS pair, which xkmsd writes into
+      # datastore.path: the admin API the suite calls requires authentication.
+      - xkms-data:/data:ro
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
@@ -145,6 +130,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
+      - BOOTSTRAP_ADMIN_CERT=/data/datastore/admin-cert.pem
+      - BOOTSTRAP_ADMIN_KEY=/data/datastore/admin-key.pem
     working_dir: /workspace
     networks:
       - bootstrap-net
@@ -183,6 +170,9 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      # The first-boot administrator's mTLS pair, which xkmsd writes into
+      # datastore.path: the admin API the suite calls requires authentication.
+      - xkms-data:/data:ro
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
@@ -191,6 +181,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
+      - BOOTSTRAP_ADMIN_CERT=/data/datastore/admin-cert.pem
+      - BOOTSTRAP_ADMIN_KEY=/data/datastore/admin-key.pem
     working_dir: /workspace/xkey
     networks:
       - bootstrap-net
