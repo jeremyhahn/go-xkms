@@ -39,8 +39,7 @@ import (
 func newQRDBTestServer(t *testing.T) *Server {
 	t.Helper()
 
-	// go-qrdb v0.58.5 seals the barrier under the node context, so the
-	// literal needs the context New would give it.
+	// The qrdb barrier seals under the node context that New would set.
 	s := &Server{
 		ctx: context.Background(),
 		config: &config.Config{

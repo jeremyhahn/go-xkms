@@ -189,6 +189,7 @@ func TestInitializeCA_QRDB_CorruptPersistedCertificateFailsClosed(t *testing.T) 
 func openCADatabaseOutOfBand(t *testing.T, dataDir string) (*Server, qrdbsdk.KVStore) {
 	t.Helper()
 	s := &Server{
+		ctx: context.Background(),
 		config: &config.Config{
 			Datastore: config.DatastoreConfig{Path: filepath.Join(dataDir, "storage")},
 		},

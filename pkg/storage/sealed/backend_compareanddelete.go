@@ -133,8 +133,7 @@ func compareInEnclave(
 	// here than on the empty-plaintext path above.
 	var unsealErr error
 
-	// A nil ByteAccess has no material; it reads as destroyed, as a nil
-	// *MemoryEnclave did before go-enclave v0.12.
+	// A nil ByteAccess has no material, so it reads as destroyed.
 	if enc == nil {
 		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: enclave.ErrEnclaveDestroyed}
 	}
