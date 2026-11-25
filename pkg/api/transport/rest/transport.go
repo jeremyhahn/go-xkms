@@ -141,7 +141,12 @@ func (t *Transport) Connect(ctx context.Context) error {
 				if err != nil {
 					return &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
 				}
-				transport.PresentClientCertificate(tlsConfig, cert)
+				// The pair is the caller's explicit credential: crypto/tls withholds a
+				// Certificates entry whose issuer is not in the server's advertised
+				// client-CA list (xkmsd advertises its CA, not the first-boot TrustedCA).
+				tlsConfig.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+					return &cert, nil
+				}
 			}
 
 			// SPKI pin verification

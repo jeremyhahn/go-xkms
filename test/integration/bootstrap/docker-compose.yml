@@ -29,18 +29,9 @@ services:
     # lacks the job's checkout (DS-4181).
     environment:
       # This suite exercises the bootstrap trust protocol (Noise handshake, SPKI
-      # pin, DANE, admin mTLS). cmd/xkmsd refuses to start on any
-      # config.ComplianceGaps gap and config.Load refuses an invalid config,
-      # with no override, so scripts/generate-test-certs.sh writes a compliant
-      # config: a datastore section, auth.type composite, a ca section and
-      # barrier strategy "none" (the qrdb node barrier auto-unseals; this
-      # suite has no unseal ceremony). internal/buildgates
-      # TestBootstrapStackConfigStartsTheDaemon runs the script without Docker
-      # and fails when the generated config would stop xkmsd at start.
-      # With authentication on, the suite's admin calls (bootstrap show-keys,
-      # tenants) present the first-boot administrator certificate xkmsd writes
-      # to /data/storage/admin-{cert,key}.pem; the test services mount the
-      # data volume read-only for it.
+      # pin, admin mTLS) using generated test certs at the transport layer.
+      # scripts/generate-test-certs.sh writes a config with no config.ComplianceGaps finding (setup/config_compliance_test.go).
+      # Its barrier strategy is "none" (auto-unseal at startup), since this stack has no unseal ceremony.
       - XKMS_CONFIG=/etc/xkms/xkmsd.yaml
       - XKMS_LOGGING_LEVEL=debug
       - XKMS_BOOTSTRAP_NOISE_ENABLED=true
@@ -55,7 +46,7 @@ services:
     # became healthy (internal/buildgates
     # TestBootstrapStackHealthcheckProbesWhatTheServerServes).
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--output-document=/dev/null", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
       timeout: 3s
       retries: 15
@@ -132,6 +123,8 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      # The first-boot administrator's mTLS pair, which xkmsd writes into
+      # datastore.path: the admin API the suite calls requires authentication.
       - xkms-data:/data:ro
       - go-build-cache:/root/.cache/go-build
     environment:
@@ -141,8 +134,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
-      - BOOTSTRAP_TLS_CERT=/data/storage/admin-cert.pem
-      - BOOTSTRAP_TLS_KEY=/data/storage/admin-key.pem
+      - BOOTSTRAP_ADMIN_CERT=/data/datastore/admin-cert.pem
+      - BOOTSTRAP_ADMIN_KEY=/data/datastore/admin-key.pem
     working_dir: /workspace
     networks:
       - bootstrap-net
@@ -181,6 +174,8 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      # The first-boot administrator's mTLS pair, which xkmsd writes into
+      # datastore.path: the admin API the suite calls requires authentication.
       - xkms-data:/data:ro
       - go-build-cache:/root/.cache/go-build
     environment:
@@ -190,8 +185,8 @@ services:
       - BOOTSTRAP_DNS_SERVER=coredns:1053
       - BOOTSTRAP_HOSTNAME=bootstrap.test
       - BOOTSTRAP_TLS_CA=/etc/xkms/certs/ca.crt
-      - BOOTSTRAP_TLS_CERT=/data/storage/admin-cert.pem
-      - BOOTSTRAP_TLS_KEY=/data/storage/admin-key.pem
+      - BOOTSTRAP_ADMIN_CERT=/data/datastore/admin-cert.pem
+      - BOOTSTRAP_ADMIN_KEY=/data/datastore/admin-key.pem
     working_dir: /workspace/xkey
     networks:
       - bootstrap-net

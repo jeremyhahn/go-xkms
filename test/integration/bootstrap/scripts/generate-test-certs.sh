@@ -190,62 +190,23 @@ tls:
   # in the presented chain (RFC 7671 Section 5.2.2).
   cert_file: ${CERT_DIR}/fullchain.crt
   key_file: ${CERT_DIR}/server.key
-  # ca_file makes xkmsd serve ca.crt on /v1/ca/bootstrap (without it the
-  # bundle is the CA instance's own root, generated at start). truststrap's
-  # DANE method checks that bundle against the TLSA records, which
-  # setup/generate-zone.sh computes from ca.crt.
   ca_file: ${CERT_DIR}/ca.crt
-  # "verify" (VerifyClientCertIfGiven): the TLS layer requests a client
-  # certificate, so the suite's admin calls (bootstrap show-keys, tenants)
-  # authenticate with the first-boot administrator certificate xkmsd writes
-  # beside its datastore; a request without one still reaches the handler
-  # (the trust-bootstrap fetches) and is authorised there.
+  # The admin API authenticates the first-boot administrator's mTLS pair;
+  # clients without a certificate (health check, bootstrap discovery) must still complete the handshake.
   client_auth: verify
 
+# cmd/xkmsd refuses to start on any config.ComplianceGaps finding, so the
+# test config names an authenticator and a CA the way the web and
+# webauthn-browser integration configs do.
 auth:
   enabled: true
-  type: composite
-
-ratelimit:
-  enabled: false
-
-metrics:
-  enabled: false
-  path: /metrics
-  port: 9090
-
-health:
-  enabled: true
-  path: /health
-
-datastore:
-  engine: pebble
-  mode: standalone
-  path: ${DATA_DIR}/storage
-
-rng:
-  mode: software
-
-default_backend: software
-
-backends:
-  software:
-    enabled: true
-    path: ${DATA_DIR}/software
-
-barrier:
-  enabled: true
-  # "none": the qrdb node's own barrier auto-unseals unattended at startup.
-  # "passphrase"/"shamir" defer to an operator-driven unseal behind a
-  # sealed-window listener, and this suite has no unseal-ceremony step
-  # (same choice as test/integration/acmeadmin/xkmsd.yaml).
-  strategy: none
+  type: "composite"
 
 ca:
   identity:
     - subject:
-        cn: "Bootstrap Integration Test Root CA"
-        organization: "go-xkms Integration Tests"
+        cn: "go-xkms Bootstrap Test Root CA"
+        organization: "go-xkms Bootstrap Test"
         country: "US"
       valid: 10
       keys:
@@ -263,6 +224,44 @@ ca:
   default-validity-days: 365
   include-localhost-sans: true
   home-dir: ${DATA_DIR}/ca
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: false
+  path: /metrics
+  port: 9090
+
+health:
+  enabled: true
+  path: /health
+
+storage:
+  backend: file
+  path: ${DATA_DIR}
+
+datastore:
+  path: ${DATA_DIR}/datastore
+
+rng:
+  mode: software
+
+default_backend: software
+
+backends:
+  software:
+    enabled: true
+    path: ${DATA_DIR}/software
+
+barrier:
+  enabled: true
+  root_key_path: ${DATA_DIR}/barrier
+  # "none": the qrdb node's own barrier auto-unseals unattended at startup,
+  # as in test/integration/acmeadmin. The default "passphrase" boots sealed
+  # behind a sealed-window listener that refuses server.host=0.0.0.0 and
+  # answers /health 503 until an unseal ceremony, which this suite lacks.
+  strategy: "none"
 
 bootstrap:
   noise:
