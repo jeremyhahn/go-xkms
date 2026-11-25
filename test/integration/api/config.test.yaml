@@ -31,9 +31,11 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # No client auth for integration tests
-  # The init mTLS administrator needs its certificate requested (issue #2254).
+  # verify requests a client certificate (the init admin's mTLS credential) without requiring one.
   client_auth: verify
+  # xkmsd init issues the admin credential from this bundle's CA, beside the credential.
+  client_cas:
+    - "/data/storage/ca-bundle.pem"
 
 # Adaptive authentication: anonymous until the first user is provisioned, then
 # enforced. This keeps the integration suites able to exercise the API without
@@ -42,6 +44,9 @@ tls:
 auth:
   enabled: true
   type: "composite"
+  # The suites run every login and ceremony from one address within seconds; the limiter stays on.
+  session:
+    login_rate_per_min: 6000
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:
@@ -59,6 +64,10 @@ webauthn:
   # users through open sign-up, so opt in explicitly.
   allow_public_registration: true
 
+# Submitted credentials persist in the barrier, so the PKCS#11 PIN survives a restart.
+credentials:
+  seal_strategy: "barrier"
+
 ratelimit:
   enabled: false
 
@@ -74,7 +83,7 @@ health:
 # Storage configuration
 datastore:
   engine: file
-  path: "/data/xkms"
+  path: "/data/storage"
 
 # Certificate Authority configuration
 ca:
@@ -114,7 +123,8 @@ backends:
     enabled: true
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
-    pin: "123456"
+    # A protected target: scripts/start-xkms-server.sh submits this credential on first boot.
+    pin: "credential://pkcs11-user-pin"
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
 # no insecure override). There is no config-sourced boot-time secret any more
@@ -124,3 +134,5 @@ backends:
 barrier:
   enabled: true
   strategy: "passphrase"
+  # The test containers dial xkms-server over the compose network, so the window binds 0.0.0.0 too.
+  sealed_window_allow_remote: true
