@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Go toolchain 1.27.4 for GO-2026-6859, `net/http` (#2058).** govulncheck reports GO-2026-6859 in the go1.27.3 standard library, fixed in go1.27.4 (2026-11-02). The `go` line of `go.mod`, `sdk/go`, `web/desktop` and `xkey`, every workflow `GO_VERSION`, every `golang:` builder and test image tag, the Go tarball downloads in `xkey`, and the digest-pinned `GO_IMAGE` (`scripts/tool-pins.sh`, `Dockerfile.cli`, `release.yml` `GO_IMAGE_DIGEST`, now the `golang:1.27.4-bookworm` index `sha256:4fa7c968…`) move to 1.27.4. No dependency or code change.
 
+### Changed
+
+- **CI builds the toolchain image once per hash on the self-hosted pool, and apt-get is bounded (#2299).** On a same-repo pull request on the self-hosted forge, the `ci-images` job builds the toolchain image once and pushes it to the pool registry (`CI_IMAGE_REGISTRY`); pool consumers take it by digest and no consumer step runs `make docker-build-toolchain`. `scripts/ci-registry.sh use` fails on a same-repo pull request with an empty reference instead of building. Every "Take the toolchain image" step has `timeout-minutes: 30`, and every `apt-get` in a Dockerfile `RUN` runs under `timeout 300`. Gated by `internal/buildgates` and `test/scripts/ci-registry.test.sh`; see `docs/testing/docker-testing.md`.
+
 ## [0.64.0-alpha] - 2026-10-25
 
 ### Security
