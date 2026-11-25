@@ -23,7 +23,8 @@ sleep 5
 # can no longer produce.
 echo 'Discovering the running server bootstrap keys...'
 BOOTSTRAP_KEYS_JSON="$(cd /workspace && go run ./cmd/xkmsctl bootstrap show-keys --output json \
-    --transport rest --server https://xkms-server:8443 --tls-ca /etc/xkms/certs/ca.crt)"
+    --transport rest --server https://xkms-server:8443 --tls-ca /etc/xkms/certs/ca.crt \
+    --tls-cert "${BOOTSTRAP_ADMIN_CERT}" --tls-key "${BOOTSTRAP_ADMIN_KEY}")"
 BOOTSTRAP_NOISE_STATIC_KEY="$(printf '%s' "${BOOTSTRAP_KEYS_JSON}" | sed -n 's/.*"noise_public_key":"\([^"]*\)".*/\1/p')"
 BOOTSTRAP_SPKI_PIN="$(cat /etc/xkms/certs/spki.pin)"
 export BOOTSTRAP_NOISE_STATIC_KEY BOOTSTRAP_SPKI_PIN
