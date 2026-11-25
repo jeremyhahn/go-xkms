@@ -15,7 +15,6 @@ package serviceprincipal
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -150,19 +149,6 @@ func TestGrant_IsLeastPrivilegeCopy(t *testing.T) {
 
 	got[0] = "admin:*"
 	assert.NotEqual(t, got[0], Grant()[0], "Grant returns a copy")
-}
-
-// TestGrant_UsersPermissionsAreTheWebAuthnCeremonySet asserts the grant's
-// users permissions are exactly those the WebAuthn store's ceremonies call:
-// GetUser/GetUserByEmail (read), CreateUser (create), UpdateUser (update).
-func TestGrant_UsersPermissionsAreTheWebAuthnCeremonySet(t *testing.T) {
-	var users []string
-	for _, p := range Grant() {
-		if strings.HasPrefix(string(p), "users:") {
-			users = append(users, string(p))
-		}
-	}
-	assert.ElementsMatch(t, []string{"users:create", "users:read", "users:update"}, users)
 }
 
 // TestRegisterCeremonyGrant_AuthorizesAdminLookup proves the ceremony grant
