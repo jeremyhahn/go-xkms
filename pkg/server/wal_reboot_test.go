@@ -308,43 +308,69 @@ func walRebootDamageWAL(t *testing.T, dataDir string, delta int64) {
 
 // (2c) A torn or zero-extended WAL tail must not make the store
 // unopenable: a durable prefix (run 0, synced by a clean Close and a
-// reboot) is followed by a disposable unsynced tail (run 1) in a newer WAL,
-// the crash copy's newest WAL is damaged, and only the synced prefix is
-// promised. encfs authenticates up to 4096 plaintext bytes per block, so a
-// damaged trailing block may drop several tail records; nothing is asserted
-// about run 1. On the board this is the exact error.
+// reboot, then read back) is followed by an unsynced tail (run 1) whose full
+// encfs blocks reach disk, the crash copy's newest WAL is damaged, and the
+// replay must boot with all of run 0 and a gap-free prefix of run 1. encfs
+// authenticates up to 4096 plaintext bytes per block, so a damaged trailing
+// block may drop several tail records. On the board this is the exact error.
 func TestWALReboot_DamagedTailReplays(t *testing.T) {
 	for _, delta := range []int64{-1, -100, 1, 4096} {
 		t.Run(fmt.Sprintf("delta=%d", delta), func(t *testing.T) {
 			dir := t.TempDir()
 			node := walRebootFirstBoot(t, dir)
 			node = walRebootSyncedPut(t, node, dir, 0, walRebootRecords)
+			// The durable prefix is the records read back after the synced reboot.
+			walRebootCheck(t, node, 1, walRebootRecords)
 
-			prefixLogs, err := filepath.Glob(filepath.Join(dir, "pebble", "*.log"))
-			require.NoError(t, err)
-			prefix := make(map[string]bool, len(prefixLogs))
-			for _, l := range prefixLogs {
-				prefix[filepath.Base(l)] = true
-			}
-
-			walRebootPut(t, node, 1, walRebootRecords)
+			walRebootPut(t, node, 1, walRebootTailRecords)
 			crashed := walRebootCrashCopy(t, dir)
 			require.NoError(t, node.Close())
-
-			logs, err := filepath.Glob(filepath.Join(crashed, "pebble", "*.log"))
-			require.NoError(t, err)
-			require.NotEmpty(t, logs)
-			newest := filepath.Base(logs[len(logs)-1])
-			require.False(t, prefix[newest],
-				"the damaged WAL %s must hold only the unsynced tail, not the synced prefix", newest)
+			require.Greater(t, walRebootNewestWALSize(t, crashed), int64(133+2*4124),
+				"the crash copy's WAL must hold encfs blocks for the damage to land in")
 			walRebootDamageWAL(t, crashed, delta)
 
-			node, err = walRebootUnsealBoot(t, crashed)
+			node, err := walRebootUnsealBoot(t, crashed)
 			t.Cleanup(func() { _ = node.Close() })
 			require.NoError(t, err, "boot completion after unseal with a damaged WAL tail")
 			walRebootCheck(t, node, 1, walRebootRecords)
+			walRebootSurvivingPrefix(t, node, 1, walRebootTailRecords)
 		})
 	}
+}
+
+// walRebootTailRecords spans several 32 KiB pebble log blocks, so full encfs
+// blocks of the unsynced tail reach disk before the crash copy.
+const walRebootTailRecords = 512
+
+// walRebootNewestWALSize is the on-disk size of the main store's newest WAL.
+func walRebootNewestWALSize(t *testing.T, dataDir string) int64 {
+	t.Helper()
+	logs, err := filepath.Glob(filepath.Join(dataDir, "pebble", "*.log"))
+	require.NoError(t, err)
+	require.NotEmpty(t, logs)
+	fi, err := os.Stat(logs[len(logs)-1])
+	require.NoError(t, err)
+	return fi.Size()
+}
+
+// walRebootSurvivingPrefix requires the records of run that replayed to be a
+// prefix of the written order with the written values, and returns its length.
+func walRebootSurvivingPrefix(t *testing.T, node *qrdbnode.Node, run, n int) int {
+	t.Helper()
+	b := walRebootBackend(node)
+	survived, lost := 0, false
+	for i := 0; i < n; i++ {
+		k, want := walRebootRecord(run, i)
+		got, err := b.Get(context.Background(), k)
+		if err != nil {
+			lost = true
+			continue
+		}
+		require.False(t, lost, "record %s replayed after an earlier record was lost", k)
+		require.Equal(t, want, got, "record %s", k)
+		survived++
+	}
+	return survived
 }
 
 // (3) A boot-completion failure after the unseal is reported precisely:
