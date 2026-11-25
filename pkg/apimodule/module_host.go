@@ -106,12 +106,12 @@ func (m *Module) restServer() (*rest.Server, error) {
 		}
 		hc.DAOFactory = ds.DAOFactory()
 	}
+	if m.serviceContext != nil {
+		hc.ServiceCallContext = webauthn.CallContext(m.serviceContext)
+	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
-		if m.serviceContext != nil {
-			hc.WebAuthnCallContext = webauthn.CallContext(m.serviceContext)
-		}
 	}
 
 	srv, err := rest.NewHostServer(context.Background(), hc)

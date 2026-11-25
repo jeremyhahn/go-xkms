@@ -95,6 +95,9 @@ type TokenIssuerParams struct {
 	// restart).
 	QRDBClient *qrdbsdk.Client
 
+	// CallContext binds the refresh store's and user resolver's qrdb calls; nil uses the caller's context.
+	CallContext CallContextFunc
+
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
 
@@ -212,8 +215,8 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
-		refreshStore = qs
-		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
+		refreshStore = bindRefreshStore(qs, p.CallContext)
+		userResolver = bindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -647,8 +650,8 @@ type HostConfig struct {
 	// lookup. Empty selects DefaultWebAuthnTenant.
 	WebAuthnTenantID string
 
-	// WebAuthnCallContext binds the relying party's qrdb user calls; nil uses the request context.
-	WebAuthnCallContext webauthn.CallContext
+	// ServiceCallContext binds the WebAuthn and token-store qrdb calls; nil uses the request context.
+	ServiceCallContext webauthn.CallContext
 
 	// WebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
 	// store the WebAuthn relying party persists passkeys through, letting
@@ -760,6 +763,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			AccessTTL:    session.AccessTTL,
 			RefreshTTL:   session.RefreshTTL,
 			QRDBClient:   hc.QRDBClient,
+			CallContext:  CallContextFunc(hc.ServiceCallContext),
 			Logger:       logger,
 		})
 		if tiErr != nil {
@@ -815,7 +819,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
 				Logger:                   logger,
 				AuditLogger:              hc.AuditLogger,
-				CallContext:              hc.WebAuthnCallContext,
+				CallContext:              hc.ServiceCallContext,
 			})
 			if waErr != nil {
 				logger.Error("host REST surface: WebAuthn service construction failed; webauthn routes stay unmounted", "error", waErr)

@@ -56,7 +56,7 @@ func newAuthNodeHostServer(t *testing.T, node *qrdbnode.Node, bind webauthn.Call
 		WebAuthn:    qrdbWebAuthnConfig(),
 		Logger:      logger,
 
-		WebAuthnCallContext: bind,
+		ServiceCallContext: bind,
 	})
 	require.NoError(t, err)
 	return srv

@@ -1528,7 +1528,7 @@ func (s *Server) initializeWebAuthnService() error {
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),
 		TenantID:    webAuthnSystemTenant,
-		CallContext: s.webAuthnCallContext(),
+		CallContext: s.serviceCallContext(),
 		TokenIssuer: s.tokenIssuer,
 		Logger:      s.logger,
 		AuditLogger: s.auditLogger,
@@ -1541,8 +1541,8 @@ func (s *Server) initializeWebAuthnService() error {
 	return nil
 }
 
-// webAuthnCallContext binds WebAuthn user calls to the embedded node's service principal.
-func (s *Server) webAuthnCallContext() webauthn.CallContext {
+// serviceCallContext binds WebAuthn and token-store calls to the embedded node's service principal.
+func (s *Server) serviceCallContext() webauthn.CallContext {
 	if s.qrdbNode == nil {
 		return nil
 	}
