@@ -310,14 +310,17 @@ func (s *XKMSService) SetWebAuthnTenants(r *webauthn.TenantRouter) { s.webauthnT
 // WebAuthnTenantExists reports whether tenantID names a registered tenant,
 // for TenantRouter. A login is unauthenticated, so this asks the tenant
 // service directly with no caller admission; it answers only the router,
-// never a client. Any lookup failure reads as an unknown tenant, which the
-// router answers with the decoy.
+// never a client. Only qrdbsdk.ErrTenantMissing reads as an unknown tenant,
+// which the router answers with the decoy; any other failure is returned.
 func (s *XKMSService) WebAuthnTenantExists(ctx context.Context, tenantID string) (bool, error) {
 	if s.tenantService == nil || tenantID == "" {
 		return false, nil
 	}
 	if _, err := s.tenantService.GetTenant(ctx, tenantID); err != nil {
-		return false, nil
+		if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+			return false, nil
+		}
+		return false, err
 	}
 	return true, nil
 }
