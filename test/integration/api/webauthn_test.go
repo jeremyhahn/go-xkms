@@ -136,19 +136,29 @@ func TestWebAuthnAddCredentialRequiresSession(t *testing.T) {
 
 	requireWebAuthnEnabled(t, cfg)
 
-	client := NewWebAuthnClient(t, cfg.RESTBaseURL)
-	resp, err := client.doRequest("POST", "/api/v1/webauthn/credentials/begin", map[string]interface{}{})
-	assertNoError(t, err, "Add-credential request failed")
-	defer resp.Body.Close()
+	t.Run("unauthenticated caller", func(t *testing.T) {
+		// No client certificate: the request carries no identity at all.
+		client := NewWebAuthnClient(t, cfg.RESTBaseURL)
+		client.client = &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()}},
+		}
+		resp, err := client.doRequest("POST", "/api/v1/webauthn/credentials/begin", map[string]interface{}{})
+		assertNoError(t, err, "Add-credential request failed")
+		defer resp.Body.Close()
 
-	// The harness client presents the admin mTLS certificate, so
-	// AuthenticationMiddleware authenticates the caller and the request
-	// reaches BeginAddCredential (pkg/webauthn/http/handler.go) with an
-	// identity. That identity is a certificate, not a passkey session, so
-	// webauthn.SessionAccountFromIdentity fails with ErrSessionAccountMismatch,
-	// which handleServiceError maps to 403 session_account_mismatch. 401 is
-	// only for a request with no identity at all.
-	assertEqual(t, http.StatusForbidden, resp.StatusCode, "an add-passkey without a webauthn session must be refused")
+		assertEqual(t, http.StatusUnauthorized, resp.StatusCode, "an unauthenticated add-passkey must be refused")
+	})
+
+	t.Run("authenticated caller without a webauthn account", func(t *testing.T) {
+		// The admin mTLS identity is authenticated but names no WebAuthn account.
+		client := NewWebAuthnClient(t, cfg.RESTBaseURL)
+		resp, err := client.doRequest("POST", "/api/v1/webauthn/credentials/begin", map[string]interface{}{})
+		assertNoError(t, err, "Add-credential request failed")
+		defer resp.Body.Close()
+
+		assertEqual(t, http.StatusForbidden, resp.StatusCode, "a session that names no webauthn account must be refused")
+	})
 }
 
 // TestWebAuthnBeginRegistration tests the begin registration endpoint
@@ -505,7 +515,7 @@ func createTLSClient() *http.Client {
 	return &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+			TLSClientConfig: clientTLSConfig(),
 		},
 	}
 }

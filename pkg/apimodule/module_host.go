@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -126,12 +127,6 @@ func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 		SSHClient:     stores.SSH,
 		NodeUsers:     m.nodeUsers,
 	}
-	if m.serviceContext != nil {
-		// The refresh store binds its KV calls through the node's
-		// service context; without it minting a token on an
-		// auth-enforcing node fails saving the refresh record.
-		hc.ServiceContext = token.CallContext(m.serviceContext)
-	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
 	}
@@ -144,10 +139,12 @@ func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 		}
 		hc.DAOFactory = ds.DAOFactory()
 	}
+	if m.serviceContext != nil {
+		hc.ServiceCallContext = webauthn.CallContext(m.serviceContext)
+	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
-		hc.WebAuthnCallContext = m.serviceContext
 	}
 	return hc, nil
 }

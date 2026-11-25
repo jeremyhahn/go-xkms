@@ -28,10 +28,10 @@ func TestModuleHost_ForwardsServiceContext(t *testing.T) {
 	require.NotNil(t, x)
 	hc, err := m.hostConfig(x)
 	require.NoError(t, err)
-	require.NotNil(t, hc.ServiceContext, "the host's refresh store needs the module's service-context binder")
+	require.NotNil(t, hc.ServiceCallContext, "the host's refresh store needs the module's service-context binder")
 
-	bound, err := hc.ServiceContext(context.Background())
+	bound, err := hc.ServiceCallContext(context.Background())
 	require.NoError(t, err)
-	require.True(t, called, "HostConfig.ServiceContext must be the module's binder")
+	require.True(t, called, "HostConfig.ServiceCallContext must be the module's binder")
 	require.Equal(t, true, bound.Value(marker{}))
 }

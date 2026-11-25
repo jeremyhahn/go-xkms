@@ -22,8 +22,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-
-	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 )
 
 // QRDBUserStoreOptions configures the adapter pair at construction time.
@@ -62,7 +60,7 @@ type QRDBUserStoreOptions struct {
 	// it runs as the node's service principal, not as the HTTP caller (a
 	// sign-up's registration/begin is anonymous). A bind error fails the
 	// call. Nil keeps the caller's context.
-	CallContext qrdbstorage.CallContext
+	CallContext CallContext
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -72,8 +70,11 @@ type qrdbUserStore struct {
 	users    QRDBUsers
 	creds    CredentialStore
 	tenantID string
-	bind     qrdbstorage.CallContext
+	bind     CallContext
 }
+
+// CallContext derives the context a go-qrdb call runs on from the caller's.
+type CallContext func(context.Context) (context.Context, error)
 
 // callContext returns the context a call into qrdb runs on.
 func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error) {

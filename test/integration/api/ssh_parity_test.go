@@ -17,13 +17,16 @@ package integration
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 )
@@ -111,6 +114,9 @@ func runXkeySSH(t *testing.T, bin, serverURL string, tlsArgs []string, home stri
 	}
 	cmd := exec.Command(bin, full...)
 	cmd.Env = append(os.Environ(), "XKEY_HOME="+home, "USER=ittest", "LOGNAME=ittest")
+	if cert, key := getEnv("KEYSTORE_TLS_CERT", ""), getEnv("KEYSTORE_TLS_KEY", ""); cert != "" && key != "" {
+		cmd.Env = append(cmd.Env, "XKMSD_TLS_CERT="+cert, "XKMSD_TLS_KEY="+key)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -134,6 +140,46 @@ func sshServerURL(cfg *TestConfig, proto ProtocolType) string {
 	return cfg.GetServerURL(proto)
 }
 
+var (
+	sshOwnerOnce sync.Once
+	sshOwnerID   string
+	sshOwnerErr  error
+)
+
+// sshOwner returns the authenticated caller's subject (a user scope's owner) from /api/v1/auth/me, or "default" without a client certificate.
+func sshOwner(t *testing.T) string {
+	t.Helper()
+	sshOwnerOnce.Do(func() {
+		if getEnv("KEYSTORE_TLS_CERT", "") == "" {
+			sshOwnerID = "default"
+			return
+		}
+		client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: clientTLSConfig()}}
+		resp, err := client.Get(LoadTestConfig().RESTBaseURL + "/api/v1/auth/me")
+		if err != nil {
+			sshOwnerErr = err
+			return
+		}
+		defer resp.Body.Close()
+		var me struct {
+			Subject string `json:"subject"`
+		}
+		if resp.StatusCode != http.StatusOK {
+			sshOwnerErr = fmt.Errorf("GET /api/v1/auth/me: HTTP %d", resp.StatusCode)
+			return
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&me); err != nil || me.Subject == "" {
+			sshOwnerErr = fmt.Errorf("GET /api/v1/auth/me: no subject (%v)", err)
+			return
+		}
+		sshOwnerID = me.Subject
+	})
+	if sshOwnerErr != nil {
+		t.Fatalf("resolve the caller's subject: %v", sshOwnerErr)
+	}
+	return sshOwnerID
+}
+
 // sshAlgo describes an SSH algorithm to exercise in the parity matrix, with the
 // authorized_keys line prefix it produces. RSA-2048 and ECDSA-P256 are the
 // cross-backend defaults that TPM 2.0, SoftHSM2, and the software backend all
@@ -149,6 +195,9 @@ var sshDefaultAlgos = []sshAlgo{
 	{"ecdsa-p256", "ecdsa-p256", 0, "ecdsa-sha2-nistp256"},
 	{"rsa-2048", "rsa", 2048, "ssh-rsa"},
 }
+
+// sshRunSuffix makes the key names unique per run: a deleted name cannot be generated again.
+var sshRunSuffix = fmt.Sprintf("%x", time.Now().UnixNano())
 
 // genArgs builds the `keys generate` argument list for an algorithm.
 func (a sshAlgo) genArgs(scope, name string) []string {
@@ -184,7 +233,7 @@ func TestXkeySSHMultiProtocol(t *testing.T) {
 				algo := algo
 				t.Run(algo.name, func(t *testing.T) {
 					home := t.TempDir()
-					keyName := "xkey-" + string(proto) + "-" + algo.name
+					keyName := "xkey-" + string(proto) + "-" + algo.name + "-" + sshRunSuffix
 					sshKeyLifecycle(t, bin, serverURL, tlsArgs, home, keyName, algo)
 				})
 			}
@@ -197,7 +246,7 @@ func TestXkeySSHMultiProtocol(t *testing.T) {
 			algo := algo
 			t.Run(algo.name, func(t *testing.T) {
 				home := t.TempDir()
-				keyName := "xkey-embedded-" + algo.name
+				keyName := "xkey-embedded-" + algo.name + "-" + sshRunSuffix
 				sshKeyLifecycle(t, bin, "", nil, home, keyName, algo)
 			})
 		}
@@ -298,7 +347,7 @@ func TestXkeySSHBackendSelection(t *testing.T) {
 				algo := algo
 				t.Run(algo.name, func(t *testing.T) {
 					home := t.TempDir()
-					keyName := "xkey-backend-" + backend + "-" + algo.name
+					keyName := "xkey-backend-" + backend + "-" + algo.name + "-" + sshRunSuffix
 					args := append(algo.genArgs("user", keyName), "--backend", backend)
 					out, errOut, err := runXkeySSH(t, bin, serverURL, tlsArgs, home, args...)
 					if err != nil {

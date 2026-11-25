@@ -168,7 +168,7 @@ func isServerAvailable(t *testing.T, cfg *TestConfig) bool {
 	client := &http.Client{
 		Timeout: 2 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+			TLSClientConfig: clientTLSConfig(),
 		},
 	}
 	resp, err := client.Get(cfg.RESTBaseURL + "/health")
@@ -411,7 +411,7 @@ func (cfg *TestConfig) IsProtocolAvailable(t *testing.T, protocol ProtocolType) 
 		client := &http.Client{
 			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{RootCAs: loadCACertPool()},
+				TLSClientConfig: clientTLSConfig(),
 			},
 		}
 		// Check REST health endpoint to verify server is up (QUIC shares same server)

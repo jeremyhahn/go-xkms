@@ -86,9 +86,8 @@ func newEnforcingHostServer(t *testing.T, node *qrdbnode.Node) *Server {
 			RPID:                    "example.com",
 			AllowPublicRegistration: &allow,
 		}),
-		WebAuthnCallContext: node.ServiceContext,
-		ServiceContext:      node.ServiceContext,
-		NodeUsers:           node,
+		ServiceCallContext: webauthn.CallContext(node.ServiceContext),
+		NodeUsers:          node,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, srv.tokenIssuer, "the host must mount a token issuer")

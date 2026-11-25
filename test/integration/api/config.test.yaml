@@ -34,10 +34,11 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # Request but do not require a client certificate: the init-ceremony admin
-  # credential authenticates over mTLS to provision test accounts, while
-  # anonymous and session clients still connect.
+  # verify requests a client certificate (the init admin's mTLS credential) without requiring one.
   client_auth: verify
+  # xkmsd init issues the admin credential from this bundle's CA, beside the credential.
+  client_cas:
+    - "/data/storage/ca-bundle.pem"
 
 # Adaptive authentication: anonymous until the first user is provisioned, then
 # enforced. This keeps the integration suites able to exercise the API without
@@ -46,12 +47,9 @@ tls:
 auth:
   enabled: true
   type: "composite"
-  # Test-only: the WebAuthn, session and invite routes sit behind the login
-  # rate limiter (pkg/api/rest/routes.go), default 10/min per client. The
-  # suite runs every ceremony from one container address, so it would see
-  # 429 long before a test fails on its own merit. Production keeps 10.
+  # The suites run every login and ceremony from one address within seconds; the limiter stays on.
   session:
-    login_rate_per_min: 600
+    login_rate_per_min: 6000
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:
@@ -71,6 +69,10 @@ webauthn:
   # accounts as admin, redeeming each invitation with a passkey.
   allow_public_registration: true
 
+# Submitted credentials persist in the barrier, so the PKCS#11 PIN survives a restart.
+credentials:
+  seal_strategy: "barrier"
+
 ratelimit:
   enabled: false
 
@@ -86,7 +88,7 @@ health:
 # Storage configuration
 datastore:
   engine: file
-  path: "/data/xkms"
+  path: "/data/storage"
 
 # Certificate Authority configuration
 ca:
@@ -121,13 +123,13 @@ backends:
     simulator_port: 2321
 
   pkcs11:
-    # Off: a literal pin is refused as a protected target (#654). The api SSH
-    # matrix (make integration-test-api-ssh, XKMS_SSH_TEST_BACKENDS) runs
-    # software,tpm2 only until go-xkms#2262 lets xkmsd start a PIN-protected
-    # PKCS#11 backend from this config; PKCS#11 keeps its own suite.
-    enabled: false
+    # PKCS#11 loads in-process: the server container's own SoftHSM2 install
+    # is used (Debian path); the token is initialized by the entrypoint.
+    enabled: true
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
+    # A protected target: scripts/start-xkms-server.sh submits this credential on first boot.
+    pin: "credential://pkcs11-user-pin"
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
 # no insecure override). There is no config-sourced boot-time secret any more
@@ -137,12 +139,5 @@ backends:
 barrier:
   enabled: true
   strategy: "passphrase"
-  # The node boots sealed and serves the pre-unseal window on server.host
-  # (0.0.0.0): the api test container reaches xkms-server over the compose
-  # network, which is the trusted test network here. Listening beyond
-  # loopback is acceptable only because this is a throwaway test server
-  # with a test passphrase over a disposable data volume; a deployment
-  # binds the window to loopback or a trusted management interface. Same
-  # precedent as configs/xkmsd-integration.yaml and
-  # test/integration/cluster/config.node.yaml.
+  # The test containers dial xkms-server over the compose network, so the window binds 0.0.0.0 too.
   sealed_window_allow_remote: true
