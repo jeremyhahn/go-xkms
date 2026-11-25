@@ -31,8 +31,11 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # No client auth for integration tests
-  client_auth: none
+  # verify requests a client certificate (the init admin's mTLS credential) without requiring one.
+  client_auth: verify
+  # xkmsd init issues the admin credential from this bundle's CA, beside the credential.
+  client_cas:
+    - "/data/storage/ca-bundle.pem"
 
 # Adaptive authentication: anonymous until the first user is provisioned, then
 # enforced. This keeps the integration suites able to exercise the API without
@@ -57,6 +60,10 @@ webauthn:
   # Registration is closed by default (go-xkms#184); the suite creates its
   # users through open sign-up, so opt in explicitly.
   allow_public_registration: true
+
+# Submitted credentials persist in the barrier, so the PKCS#11 PIN survives a restart.
+credentials:
+  seal_strategy: "barrier"
 
 ratelimit:
   enabled: false
@@ -113,7 +120,8 @@ backends:
     enabled: true
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
-    pin: "123456"
+    # A protected target: scripts/start-xkms-server.sh submits this credential on first boot.
+    pin: "credential://pkcs11-user-pin"
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
 # no insecure override). There is no config-sourced boot-time secret any more
