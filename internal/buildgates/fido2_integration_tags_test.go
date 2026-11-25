@@ -20,7 +20,7 @@ func goTestTags(t *testing.T, makefile, target string) []string {
 	if tags == nil {
 		t.Fatalf("%s runs no `$(GO) test -tags='$(call go_tags,...)'`: %q", target, m[1])
 	}
-	return strings.Split(tags[1], "$(comma)")
+	return strings.Fields(expandMakeVars(makefile, strings.ReplaceAll(tags[1], "$(comma)", " ")))
 }
 
 // The fido2 suite builds its credential stores through
