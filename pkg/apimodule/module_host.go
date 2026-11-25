@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -108,6 +109,9 @@ func (m *Module) restServer() (*rest.Server, error) {
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
+		if m.serviceContext != nil {
+			hc.WebAuthnCallContext = webauthn.CallContext(m.serviceContext)
+		}
 	}
 
 	srv, err := rest.NewHostServer(context.Background(), hc)

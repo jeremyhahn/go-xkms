@@ -647,6 +647,9 @@ type HostConfig struct {
 	// lookup. Empty selects DefaultWebAuthnTenant.
 	WebAuthnTenantID string
 
+	// WebAuthnCallContext binds the relying party's qrdb user calls; nil uses the request context.
+	WebAuthnCallContext webauthn.CallContext
+
 	// WebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
 	// store the WebAuthn relying party persists passkeys through, letting
 	// the composing host add its own side effects (an identity-plane auth
@@ -812,6 +815,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
 				Logger:                   logger,
 				AuditLogger:              hc.AuditLogger,
+				CallContext:              hc.WebAuthnCallContext,
 			})
 			if waErr != nil {
 				logger.Error("host REST surface: WebAuthn service construction failed; webauthn routes stay unmounted", "error", waErr)
