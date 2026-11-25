@@ -91,7 +91,7 @@ func (a *PasskeyAccount) doRequest(method, path string, body interface{}) (*http
 func provisionPasskeyAccount(t *testing.T, cfg *TestConfig, email string) *PasskeyAccount {
 	t.Helper()
 	admin := adminHTTPClient(t)
-	anon := createTLSClient()
+	anon := createTLSClient(t)
 
 	var created transport.GetUserResponse
 	expectJSON(t, admin, "POST", cfg.RESTBaseURL+"/api/v1/users/", map[string]interface{}{

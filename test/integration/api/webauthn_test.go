@@ -16,7 +16,6 @@
 package integration
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -245,7 +244,7 @@ func TestWebAuthnBeginRegistration(t *testing.T) {
 			io.NopCloser(ioReader("{invalid json}")))
 		req.Header.Set("Content-Type", "application/json")
 
-		httpClient := createTLSClient()
+		httpClient := createTLSClient(t)
 		resp, err := httpClient.Do(req)
 		assertNoError(t, err, "Request failed")
 		defer resp.Body.Close()
@@ -348,7 +347,7 @@ func TestWebAuthnFinishRegistration(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Session-Id", "invalid-session-id")
 
-		httpClient := createTLSClient()
+		httpClient := createTLSClient(t)
 		resp, err := httpClient.Do(req)
 		assertNoError(t, err, "Request failed")
 		defer resp.Body.Close()
@@ -386,7 +385,7 @@ func TestWebAuthnFinishLogin(t *testing.T) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Session-Id", "invalid-session-id")
 
-		httpClient := createTLSClient()
+		httpClient := createTLSClient(t)
 		resp, err := httpClient.Do(req)
 		assertNoError(t, err, "Request failed")
 		defer resp.Body.Close()
@@ -501,11 +500,11 @@ func (s stringReader) Read(p []byte) (n int, err error) {
 }
 
 // createTLSClient creates an HTTP client with proper CA certificate verification
-func createTLSClient() *http.Client {
+func createTLSClient(t testing.TB) *http.Client {
 	return &http.Client{
 		Timeout: 10 * time.Second,
 		Transport: &http.Transport{
-			TLSClientConfig: clientTLSConfig(),
+			TLSClientConfig: adminTLSConfig(t),
 		},
 	}
 }

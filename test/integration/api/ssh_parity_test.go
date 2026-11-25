@@ -154,7 +154,7 @@ func sshOwner(t *testing.T) string {
 			sshOwnerID = "default"
 			return
 		}
-		client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: clientTLSConfig()}}
+		client := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: adminTLSConfig(t)}}
 		resp, err := client.Get(LoadTestConfig().RESTBaseURL + "/api/v1/auth/me")
 		if err != nil {
 			sshOwnerErr = err
