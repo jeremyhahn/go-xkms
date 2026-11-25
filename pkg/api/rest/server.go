@@ -403,7 +403,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		if cfg.WebAuthnService == nil {
 			return nil, ErrWebAuthnServiceRequired
 		}
-		server.webauthnHandler = webauthnhttp.NewHandler(cfg.WebAuthnService)
+		server.webauthnHandler = webauthnhttp.NewHandler(cfg.WebAuthnService).WithLogger(server.logger)
 		if cfg.WebAuthnTenants != nil {
 			server.webauthnHandler.WithTenants(cfg.WebAuthnTenants)
 		}

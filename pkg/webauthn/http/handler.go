@@ -82,7 +82,9 @@ func NewHandler(service *webauthn.Service) *Handler {
 
 // WithLogger sets a custom logger for the handler.
 func (h *Handler) WithLogger(logger *slog.Logger) *Handler {
-	h.logger = logger
+	if logger != nil {
+		h.logger = logger
+	}
 	return h
 }
 
@@ -354,6 +356,7 @@ func (h *Handler) handleLoginFinishError(w http.ResponseWriter, err error) {
 	case webauthn.LoginFinishFailed:
 		h.writeError(w, http.StatusUnauthorized, ErrorCodeVerificationFailed, "verification failed")
 	default:
+		h.logger.Error("webauthn ceremony failed", "error", err)
 		h.writeError(w, http.StatusInternalServerError, ErrorCodeInternalError, "internal server error")
 	}
 }
@@ -395,6 +398,7 @@ func (h *Handler) handleServiceError(w http.ResponseWriter, err error) {
 	case webauthn.IsSessionLimit(err):
 		h.writeError(w, http.StatusServiceUnavailable, ErrorCodeSessionLimit, "too many unfinished ceremonies; retry later")
 	default:
+		h.logger.Error("webauthn ceremony failed", "error", err)
 		h.writeError(w, http.StatusInternalServerError, ErrorCodeInternalError, "internal server error")
 	}
 }
