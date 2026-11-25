@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"time"
 
-	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
 	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
@@ -94,7 +93,7 @@ func bindTenant(ctx context.Context, tenantID string) context.Context {
 	if tenantID == "" {
 		return ctx
 	}
-	return qrdbtenant.WithTenantID(ctx, tenantID)
+	return qrdbsdk.ContextWithTenant(ctx, tenantID)
 }
 
 // GetUserByEmail retrieves a user by tenant-scoped email login key.
