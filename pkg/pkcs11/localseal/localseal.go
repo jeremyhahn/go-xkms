@@ -129,7 +129,11 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 	if credErr != nil {
 		return credErr
 	}
-	defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
+	defer func() {
+		if oldCreds.Secret != nil {
+			err = errors.Join(err, oldCreds.Secret.Destroy())
+		}
+	}()
 
 	wasSealed := c.barrier.IsSealed()
 	if wasSealed {
@@ -151,7 +155,12 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		}
 		return credErr
 	}
-	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
+	defer func() {
+		// An empty passphrase yields credentials with no secret to destroy.
+		if newCreds.Secret != nil {
+			err = errors.Join(err, newCreds.Secret.Destroy())
+		}
+	}()
 	if changeErr := c.barrier.ChangePassword(ctx, oldCreds, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {
