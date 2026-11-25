@@ -182,6 +182,9 @@ func runImageRecipeProblems(recipe string) []string {
 	if !strings.Contains(recipe, `!= '$(IT_IMAGE)'`) {
 		problems = append(problems, "clean-test-containers recipe does not skip IT_IMAGE")
 	}
+	if !strings.Contains(recipe, `"$$p"-soak-*`) {
+		problems = append(problems, "clean-test-containers recipe does not skip the soak job's images")
+	}
 	if strings.Contains(recipe, "prune") {
 		problems = append(problems, "clean-test-containers recipe prunes the Docker store")
 	}
@@ -217,7 +220,7 @@ func TestCITeardownCatchesKeptRunImages(t *testing.T) {
 	if got := imageTeardownProblems(parseWorkflow(t, []byte(teardownFixture))); len(got) == 0 {
 		t.Fatal("teardown without the image flag was not reported")
 	}
-	good := "\t@if [ \"$(CLEAN_RUN_IMAGES)\" = 1 ]; then p='$(IT_PROJECT)'; for ref in $$(docker image ls); do [ \"$$ref\" != '$(IT_IMAGE)' ] || continue; done; docker image rm -f $$refs || true; fi\n"
+	good := "\t@if [ \"$(CLEAN_RUN_IMAGES)\" = 1 ]; then p='$(IT_PROJECT)'; for ref in $$(docker image ls); do [ \"$$ref\" != '$(IT_IMAGE)' ] || continue; case \"$$ref\" in \"$$p\"-soak-*) continue;; esac; done; docker image rm -f $$refs || true; fi\n"
 	if got := runImageRecipeProblems(good); len(got) != 0 {
 		t.Fatalf("valid recipe reported %q", got)
 	}
@@ -225,6 +228,7 @@ func TestCITeardownCatchesKeptRunImages(t *testing.T) {
 		strings.Replace(good, " || true", "", 1),
 		strings.Replace(good, `[ "$$ref" != '$(IT_IMAGE)' ] || continue; `, "", 1),
 		strings.Replace(good, "docker image rm -f $$refs", "docker image prune -af", 1),
+		strings.Replace(good, `case "$$ref" in "$$p"-soak-*) continue;; esac; `, "", 1),
 	} {
 		if got := runImageRecipeProblems(bad); len(got) == 0 {
 			t.Errorf("recipe %q was not reported", bad)
