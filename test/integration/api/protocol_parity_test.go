@@ -334,7 +334,8 @@ func checkQUICEndpoint(baseURL string) bool {
 		caFile = "/etc/xkms/certs/ca.crt"
 	}
 	host := strings.TrimPrefix(strings.TrimPrefix(baseURL, "https://"), "http://")
-	cmd := exec.Command(binPath, "--server", "quic://"+host, "--tls-ca", caFile, "backends", "list")
+	args := append([]string{"--server", "quic://" + host, "--tls-ca", caFile}, clientCertArgs()...)
+	cmd := exec.Command(binPath, append(args, "backends", "list")...)
 	return cmd.Run() == nil
 }
 

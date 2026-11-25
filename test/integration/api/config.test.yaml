@@ -31,15 +31,20 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # The server asks for a client certificate (request: not required, so the
-  # healthcheck still connects without one).
-  client_auth: request
+  # verify requests a client certificate (the init admin's mTLS credential) without requiring one.
+  client_auth: verify
+  # xkmsd init issues the admin credential from this bundle's CA, beside the credential.
+  client_cas:
+    - "/data/storage/ca-bundle.pem"
 
 # The integration runner presents the first-boot admin credential, which
 # composite auth's mtls method binds to its user by SPKI thumbprint.
 auth:
   enabled: true
   type: "composite"
+  # The suites run every login and ceremony from one address within seconds; the limiter stays on.
+  session:
+    login_rate_per_min: 6000
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:
@@ -57,6 +62,10 @@ webauthn:
   # users through open sign-up, so opt in explicitly.
   allow_public_registration: true
 
+# Submitted credentials persist in the barrier, so the PKCS#11 PIN survives a restart.
+credentials:
+  seal_strategy: "barrier"
+
 ratelimit:
   enabled: false
 
@@ -72,7 +81,7 @@ health:
 # Storage configuration
 datastore:
   engine: file
-  path: "/data/xkms"
+  path: "/data/storage"
 
 # Certificate Authority configuration
 ca:
@@ -112,7 +121,8 @@ backends:
     enabled: true
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
-    pin: "123456"
+    # A protected target: scripts/start-xkms-server.sh submits this credential on first boot.
+    pin: "credential://pkcs11-user-pin"
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
 # no insecure override). There is no config-sourced boot-time secret any more
@@ -122,6 +132,8 @@ backends:
 barrier:
   enabled: true
   strategy: "passphrase"
+  # The test containers dial xkms-server over the compose network, so the window binds 0.0.0.0 too.
+  sealed_window_allow_remote: true
 
 # Services the integration-test-api-parity target drives on every server
 # transport (TestCLISecretsMatrix pin family, TestCLIBootstrapMatrix
@@ -130,13 +142,6 @@ barrier:
 pin:
   enabled: true
   strategy: "software"
-
-# manual installs no platform store, so TestCLIPlatformMatrix cells skip
-# naming credentials.seal_strategy: xkmsd refuses passphrase (no passphrase
-# source) and tpm2 needs an enrolled Platform SRK, and either would abort
-# startup (pkg/server/platform_store.go buildPlatformSealer).
-credentials:
-  seal_strategy: "manual"
 
 bootstrap:
   noise:

@@ -234,9 +234,10 @@ func (r *TestRunner) protocolArgs(protocol ProtocolType, args []string) []string
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC,
-	// QUIC, MCP over mcps://).
-	needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
+	// Add TLS options for protocols that use TLS (Unix socket, REST with
+	// HTTPS, gRPC, QUIC, MCP over mcps://).
+	needsTLS := protocol == ProtocolUnix ||
+		protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
 		protocol == ProtocolGRPC ||
 		protocol == ProtocolQUIC ||
 		protocol == ProtocolMCP
@@ -487,6 +488,10 @@ func commandOverrides(cmd CommandDefinition, protocol ProtocolType, runID int64,
 		if arg.Flag == "cn" && cmd.Category == CategoryCA {
 			// BuildCommandArgs reads non-positional overrides by flag.
 			overrides[arg.Flag] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
+		}
+		// A TPM policy name is unique per tenant, so it is made unique per protocol+run.
+		if arg.IsPositional && cmd.Name == "tpm-policy-create" {
+			overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
 		}
 		if strings.Contains(arg.Value, MatrixWorkDir) {
 			key := arg.Flag

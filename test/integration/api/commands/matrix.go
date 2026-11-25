@@ -69,11 +69,11 @@ const (
 	// verbs return ErrNotConfigured there.
 	ReasonEmbeddedNoPlatformStore = "embedded service installs no platform seal store (sdk/go/embedded.go)"
 	// ReasonNoPlatformStore: no cell has a platform seal store. The API
-	// fixture's credentials.seal_strategy is manual because xkmsd refuses
+	// fixture's credentials.seal_strategy is barrier because xkmsd refuses
 	// passphrase (no passphrase source) and tpm2 needs an enrolled Platform
 	// SRK (pkg/server/platform_store.go buildPlatformSealer).
 	ReasonNoPlatformStore = ReasonEmbeddedNoPlatformStore + "; the API fixture installs none either: " +
-		"credentials.seal_strategy is manual since xkmsd has no passphrase source and tpm2 needs " +
+		"credentials.seal_strategy is barrier since xkmsd has no passphrase source and tpm2 needs " +
 		"an enrolled Platform SRK (pkg/server/platform_store.go)"
 
 	// ReasonNoPolicyService: the standalone matrix server configures no TPM
