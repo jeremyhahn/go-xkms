@@ -84,6 +84,25 @@ func TestModule_HostMount_AuthDisabledAllowsInvite(t *testing.T) {
 	require.NoError(t, err, "an auth-disabled host allows the invitation")
 }
 
+// TestModule_HostMount_NilTenantTargetKeepsAuthDisabled: a host with
+// authentication disabled hands over a nil tenant-target authorizer and
+// sets no authorizer of its own; the module keeps authorization disabled,
+// so an invitation its transport admitted is not refused.
+func TestModule_HostMount_NilTenantTargetKeepsAuthDisabled(t *testing.T) {
+	client := newHostNodeClient(t)
+	h := mountLikeHost(t, client)
+	h.module.SetTenantTargetAuthorizer(nil)
+	h.svc.SetUserClients(client.Users(), client.Roles())
+	h.module.hostStores(h.svc)
+
+	_, err := h.svc.CreateUser(context.Background(), &transport.CreateUserRequest{
+		Username: "invitee",
+		Email:    "invitee@example.com",
+		TenantID: qrdbsdk.SystemTenantID,
+	})
+	require.NoError(t, err, "a nil handover keeps the host's disabled authorization")
+}
+
 // nodeScopeAuthorizer stands in for the host node's Authorizer(): it
 // grants what the identity carries in ScopePermissions.
 type nodeScopeAuthorizer struct{}
