@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/go-webauthn/webauthn/protocol"
@@ -27,11 +28,13 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
+	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
 )
 
 // newAuthNode builds an auth-enabled qrdb node with go-xkms's service
@@ -57,9 +60,20 @@ func newAuthNode(t *testing.T) *qrdbnode.Node {
 
 // buildXKMSDWebAuthnService builds the WebAuthn service the way xkmsd does
 // (pkg/server initializeWebAuthnService) over an auth-enabled node.
-func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) *webauthn.Service {
+func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) (*webauthn.Service, *token.Issuer, *atomic.Int32) {
 	t.Helper()
 	ds, err := datastore.New(node.Client(), config.DatastoreConfig{}, datastore.WithCallContext(node.ServiceContext))
+	require.NoError(t, err)
+	var binds atomic.Int32
+	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
+		Backend:     xkmsmocks.NewMockKeyStore(),
+		BackendName: "test",
+		QRDBClient:  ds.Client(),
+		CallContext: func(ctx context.Context) (context.Context, error) {
+			binds.Add(1)
+			return node.ServiceContext(ctx)
+		},
+	})
 	require.NoError(t, err)
 	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
 		Config:      qrdbWebAuthnConfig(),
@@ -67,9 +81,10 @@ func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) *webauthn.Serv
 		DAOFactory:  ds.DAOFactory(),
 		TenantID:    DefaultWebAuthnTenant,
 		CallContext: node.ServiceContext,
+		TokenIssuer: issuer,
 	})
 	require.NoError(t, err)
-	return svc
+	return svc, issuer, &binds
 }
 
 // TestBuildWebAuthnService_AnonymousRegistrationOnAuthNode drives an open
@@ -77,7 +92,13 @@ func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) *webauthn.Serv
 // auth-enabled node, as the browser suite does against xkmsd.
 func TestBuildWebAuthnService_AnonymousRegistrationOnAuthNode(t *testing.T) {
 	node := newAuthNode(t)
-	handler := webauthnhttp.NewHandler(buildXKMSDWebAuthnService(t, node))
+	svc, issuer, binds := buildXKMSDWebAuthnService(t, node)
+	handler := webauthnhttp.NewHandler(svc)
+
+	// The auth-enabled node refuses a refresh-store write off the service context.
+	unbound, err := token.NewQRDBRefreshStore(node.Client().KV())
+	require.NoError(t, err)
+	require.Error(t, unbound.Save(context.Background(), &token.Record{JTI: "control", Family: "control", Subject: "control", ExpiresAt: 1 << 40}))
 
 	beginBody, err := json.Marshal(map[string]string{"email": "anon@example.com", "display_name": "Anon"})
 	require.NoError(t, err)
@@ -113,5 +134,19 @@ func TestBuildWebAuthnService_AnonymousRegistrationOnAuthNode(t *testing.T) {
 	var resp webauthnhttp.AuthResponse
 	require.NoError(t, json.Unmarshal(finishRec.Body.Bytes(), &resp))
 	require.NotEmpty(t, resp.Token)
+	require.NotEmpty(t, resp.RefreshToken)
 	require.NotEmpty(t, resp.UserID)
+	require.Positive(t, binds.Load(), "the refresh store's save must run on the service context")
+
+	afterFinish := binds.Load()
+	pair, err := issuer.Refresh(context.Background(), resp.RefreshToken)
+	require.NoError(t, err)
+	require.NotEmpty(t, pair.AccessToken)
+	require.NotEmpty(t, pair.RefreshToken)
+	require.Greater(t, binds.Load(), afterFinish, "refresh must run on the service context")
+
+	require.NoError(t, issuer.Revoke(context.Background(), pair.RefreshToken))
+	_, err = issuer.Refresh(context.Background(), pair.RefreshToken)
+	var revoked *token.RefreshRevokedError
+	require.ErrorAs(t, err, &revoked)
 }
