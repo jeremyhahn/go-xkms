@@ -39,9 +39,9 @@ const (
 	// forgeFallbackPrefix is the forge-fallback runs-on form, which is
 	// hostedRunner on github.com; its other arm runs on Gitea only.
 	forgeFallbackPrefix = "${{ github.server_url == 'https://github.com' && '" + hostedRunner + "' ||"
-	// overflowPrefix is the ci-template v1.48 overflow form (ruling 1024,
-	// #2320): on github.com the job takes the preflight's runner or
-	// runner_docker output, hostedRunner unless the hosted pool is full.
+	// overflowPrefix is the preflight runner form (ci-template v1.48,
+	// ruling 1024; pool choice since v1.54, ruling 1137): on github.com
+	// the job takes the preflight's runner or runner_docker output.
 	overflowPrefix = "${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner"
 )
 
@@ -61,12 +61,10 @@ var hostedWorkflows = map[string]bool{
 	"nightly.yml":      true,
 }
 
-// runnerExempt are the jobs v1.46 leaves out of the rule: release.yml's
-// release job. The review jobs on the codex runner (credential: the reviewer
+// runnerExempt are the jobs left out of the rule. The review jobs on the codex runner (credential: the reviewer
 // token) are exempt until their runs-on lines carry the `# self-hosted:` reason (the ruling 999 question
 // to the Tenant Agent; the workflow change is a protected-path edit).
 var runnerExempt = map[string]bool{
-	"release.yml/release":             true,
 	"code-review.yml/review":          true,
 	"code-review.yml/review-opencode": true,
 }
@@ -160,7 +158,6 @@ func TestCIJobsRunHostedFirst(t *testing.T) {
 			job("tpm", "tpm-host  # self-hosted:hardware:a TPM 2.0 device")),
 		codexReviewFile: wf(job("review-codex", codexRunnerLabel+"  "+selfHostedWaiver+"credential: the reviewer token is mounted there"),
 			job("tier", "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}")),
-		"release.yml": wf(job("release", "release")),
 	}
 	for f, body := range good {
 		if p := runnerProblems(f, body); len(p) != 0 {
@@ -186,7 +183,7 @@ func TestCIJobsRunHostedFirst(t *testing.T) {
 		"a bare reason on a hosted job":            {"ci.yml", wf(job("build", hostedRunner+"  # self-hosted: x"))},
 		"another comment":                          {"ci.yml", wf(job("build", "bigdisk  # pool"))},
 		"a larger hosted runner":                   {"ci.yml", wf(job("build", "ubuntu-latest-8-cores"))},
-		"release.yml's other jobs":                 {"release.yml", wf(job("publish", "release"))},
+		"a release pool label":                     {"release.yml", wf(job("release", "release"))},
 		"no runs-on":                               {"ci.yml", []byte("jobs:\n  build:\n    steps: []\n")},
 	} {
 		if len(runnerProblems(bad.file, bad.body)) == 0 {
