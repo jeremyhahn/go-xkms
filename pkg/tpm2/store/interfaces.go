@@ -155,6 +155,19 @@ type KeyBlobSwapper interface {
 	CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (swapped bool, err error)
 }
 
+// KeyBlobRevisionSwapper is an optional KeyBackend capability: every write
+// stores the blob with a fresh revision, so a blob rewritten with the same
+// bytes no longer matches a revision read before that write.
+//
+// GetRevision returns the blob and its revision (ErrBlobNotFound when it is
+// absent). CompareAndSwapRevision stores next only while revision is still the
+// stored one, as one store operation; swapped=false with a nil error means
+// the blob changed (or is absent) and storage is unchanged.
+type KeyBlobRevisionSwapper interface {
+	GetRevision(attrs *types.KeyAttributes, ext types.FSExtension) (data []byte, revision uint64, err error)
+	CompareAndSwapRevision(attrs *types.KeyAttributes, ext types.FSExtension, revision uint64, next []byte) (swapped bool, err error)
+}
+
 // KeyLister enumerates the objects a KeyBackend holds blobs for.
 type KeyLister interface {
 	KeyNames(ctx context.Context, ext types.FSExtension) ([]string, error)

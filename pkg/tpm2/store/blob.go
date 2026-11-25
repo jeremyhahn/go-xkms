@@ -16,6 +16,8 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"log/slog"
 	"sort"
 	"strings"
@@ -70,6 +72,21 @@ type TPMBlob struct {
 	Name   string `json:"name"`
 	Ext    string `json:"ext"`
 	Data   []byte `json:"data"`
+	// Revision is fresh on every write: a guarded swap compares it, not Data.
+	Revision uint64 `json:"revision,omitempty"`
+}
+
+// newRevision returns a random non-zero blob revision.
+func newRevision() (uint64, error) {
+	var b [8]byte
+	for {
+		if _, err := rand.Read(b[:]); err != nil {
+			return 0, err
+		}
+		if r := binary.BigEndian.Uint64(b[:]); r != 0 {
+			return r, nil
+		}
+	}
 }
 
 // EntityID returns the blob's entity ID.
@@ -170,6 +187,41 @@ func (s *BlobStore) Save(attrs *types.KeyAttributes, data []byte, ext types.FSEx
 // expected, compared and written as one store operation. An absent blob,
 // or one whose data is no longer expected, reports swapped=false.
 func (s *BlobStore) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExtension, expected, next []byte) (bool, error) {
+	return s.swap(attrs, ext, func(stored *TPMBlob) bool { return bytes.Equal(stored.Data, expected) }, next)
+}
+
+// GetRevision implements KeyBlobRevisionSwapper: the ext blob of the key
+// attrs names and the revision of its last write.
+func (s *BlobStore) GetRevision(attrs *types.KeyAttributes, ext types.FSExtension) ([]byte, uint64, error) {
+	name, err := attrsName(attrs)
+	if err != nil {
+		return nil, 0, err
+	}
+	key, err := s.blobKey(name, string(ext))
+	if err != nil {
+		return nil, 0, err
+	}
+	blob, err := s.blobs.GetByNaturalKey(context.Background(), key)
+	if qrdbsdk.IsDAONotFound(err) {
+		return nil, 0, &BlobReadError{Name: key, Cause: ErrBlobNotFound}
+	}
+	if err != nil {
+		return nil, 0, &BlobReadError{Name: key, Cause: err}
+	}
+	return blob.Data, blob.Revision, nil
+}
+
+// CompareAndSwapRevision implements KeyBlobRevisionSwapper over the DAO's
+// guarded CompareAndSwap: next is stored only while the stored blob's
+// revision is still revision.
+func (s *BlobStore) CompareAndSwapRevision(attrs *types.KeyAttributes, ext types.FSExtension, revision uint64, next []byte) (bool, error) {
+	return s.swap(attrs, ext, func(stored *TPMBlob) bool { return stored.Revision == revision }, next)
+}
+
+// swap stores next as the ext blob while match accepts the stored record,
+// with a fresh revision; the DAO compares the whole stored record again
+// inside the guarded write.
+func (s *BlobStore) swap(attrs *types.KeyAttributes, ext types.FSExtension, match func(*TPMBlob) bool, next []byte) (bool, error) {
 	name, err := attrsName(attrs)
 	if err != nil {
 		return false, err
@@ -186,12 +238,14 @@ func (s *BlobStore) CompareAndSwap(attrs *types.KeyAttributes, ext types.FSExten
 	if err != nil {
 		return false, &BlobReadError{Name: key, Cause: err}
 	}
-	// Only an early exit: the DAO compares the whole stored record again
-	// inside the guarded write.
-	if !bytes.Equal(stored.Data, expected) {
+	if !match(stored) {
 		return false, nil
 	}
-	blob := &TPMBlob{ID: stored.ID, Key: key, Tenant: s.tenant, Name: name, Ext: string(ext), Data: next}
+	revision, err := newRevision()
+	if err != nil {
+		return false, &BlobWriteError{Name: key, Cause: err}
+	}
+	blob := &TPMBlob{ID: stored.ID, Key: key, Tenant: s.tenant, Name: name, Ext: string(ext), Data: next, Revision: revision}
 	swapped, err := s.blobs.CompareAndSwap(ctx, stored, blob)
 	if err != nil {
 		return false, &BlobWriteError{Name: key, Cause: err}
@@ -257,7 +311,11 @@ func (s *BlobStore) write(ctx context.Context, name, ext string, data []byte, ov
 	if err != nil {
 		return err
 	}
-	blob := &TPMBlob{Key: key, Tenant: s.tenant, Name: name, Ext: ext, Data: data}
+	revision, err := newRevision()
+	if err != nil {
+		return &BlobWriteError{Name: key, Cause: err}
+	}
+	blob := &TPMBlob{Key: key, Tenant: s.tenant, Name: name, Ext: ext, Data: data, Revision: revision}
 	if overwrite {
 		if err := s.blobs.Save(ctx, blob); err != nil {
 			return &BlobWriteError{Name: key, Cause: err}
