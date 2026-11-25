@@ -137,6 +137,19 @@
 
 {#if listError}
   <Alert kind="error"><span>{listError}</span></Alert>
+  <!-- Listing was refused: a tenant ID the user knows still selects it. -->
+  <div class="mb-4 max-w-md">
+    <label class="label" for="tenant-tpm-tenant-id">Tenant ID</label>
+    <input
+      id="tenant-tpm-tenant-id"
+      type="text"
+      class="input input-bordered w-full"
+      autocomplete="off"
+      value={tenantId}
+      disabled={busy}
+      onchange={(e) => selectTenant((e.currentTarget as HTMLInputElement).value.trim())}
+    />
+  </div>
 {:else}
   <div class="mb-4 max-w-md">
     <label class="label" for="tenant-tpm-tenant">Tenant</label>
@@ -153,8 +166,9 @@
       {/each}
     </select>
   </div>
+{/if}
 
-  {#if modeError}
+{#if modeError}
     <Alert kind="error"><span>{modeError}</span></Alert>
   {:else if mode !== null}
     <section class="card bg-base-100 shadow-sm mb-4">
@@ -197,7 +211,6 @@
         </div>
       </section>
     {/if}
-  {/if}
 {/if}
 
 {#if confirmMode}

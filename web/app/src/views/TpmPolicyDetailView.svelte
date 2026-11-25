@@ -16,6 +16,8 @@
   let scopes = $state<string[]>([]);
   let scope = $state("");
   let names = $state<string[]>([]);
+  // Set when listing is refused; the user then types a policy name it knows.
+  let namesRefused = $state(false);
   let name = $state("");
   let policy = $state<TPMPolicy | null>(null);
   let objects = $state<string[] | null>(null);
@@ -69,8 +71,15 @@
   function refreshNames(): Promise<void> {
     name = "";
     names = [];
+    namesRefused = false;
     begin();
-    return request(() => listPolicyNames(tenantId()), (v) => (names = v));
+    const mine = gen;
+    const listed = () =>
+      listPolicyNames(tenantId()).catch((e: unknown) => {
+        if (mine === gen) namesRefused = true;
+        throw e;
+      });
+    return request(listed, (v) => (names = v));
   }
 
   function pickScope(value: string): void {
@@ -144,6 +153,18 @@
           {/each}
         </select>
       </label>
+      {#if namesRefused}
+      <label class="form-control">
+        <span class="label-text">Policy name</span>
+        <input
+          class="input input-bordered input-sm"
+          type="text"
+          autocomplete="off"
+          value={name}
+          onchange={(e) => pickPolicy(e.currentTarget.value.trim())}
+        />
+      </label>
+      {:else}
       <label class="form-control">
         <span class="label-text">Policy</span>
         <select
@@ -157,6 +178,7 @@
           {/each}
         </select>
       </label>
+      {/if}
       <button class="btn btn-primary btn-sm" onclick={load} disabled={name === "" || loadBusy}>
         {#if loadBusy}<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>{/if}Load
       </button>
