@@ -16,7 +16,6 @@
 package integration
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"

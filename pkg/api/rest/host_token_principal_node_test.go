@@ -34,10 +34,10 @@ func TestBuildTokenIssuer_MintOnAuthEnforcingNode(t *testing.T) {
 	build := func(t *testing.T, bind func(context.Context) (context.Context, error)) error {
 		t.Helper()
 		issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
-			Backend:        xkmsmocks.NewMockKeyStore(),
-			BackendName:    "test",
-			QRDBClient:     node.Client(),
-			ServiceContext: bind,
+			Backend:     xkmsmocks.NewMockKeyStore(),
+			BackendName: "test",
+			QRDBClient:  node.Client(),
+			CallContext: bind,
 		})
 		require.NoError(t, err)
 		pair, err := issuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})

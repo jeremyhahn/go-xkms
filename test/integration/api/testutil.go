@@ -101,6 +101,14 @@ func loadCACertPool() *x509.CertPool {
 	return pool
 }
 
+// clientTLSConfig trusts the server bundle and presents the admin mTLS credential when it is readable.
+func clientTLSConfig() *tls.Config {
+	if cfg, err := apiharness.ClientTLSConfig(); err == nil {
+		return cfg
+	}
+	return &tls.Config{RootCAs: loadCACertPool(), MinVersion: tls.VersionTLS13}
+}
+
 // cliTLSArgs returns the xkmsctl flags that authenticate a CLI invocation
 // against serverURL as the init-ceremony admin over mTLS and verify the server
 // against the suite's trust bundle (apiharness.ClientTLSArgs). Every server
