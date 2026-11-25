@@ -535,6 +535,7 @@ var keyDecryptCmd = &cobra.Command{
 		nonce := fr.String("nonce")
 		tag := fr.String("tag")
 		keyVersion := fr.Uint32("key-version")
+		hashAlg := fr.String("hash")
 		if err := fr.Err(); err != nil {
 			handleError(err)
 			return
@@ -542,14 +543,15 @@ var keyDecryptCmd = &cobra.Command{
 
 		printVerbose("Decrypting data with key: %s", keyID)
 
-		decrypt(cfg, printer, keyID, ciphertext, aad, nonce, tag, keyVersion)
+		decrypt(cfg, printer, keyID, ciphertext, aad, nonce, tag, keyVersion, hashAlg)
 	},
 }
 
 // decrypt decrypts data using the SDK client. A zero keyVersion lets the
 // server choose: every enabled version for AEAD and RSA-OAEP ciphertext, the
-// one enabled version otherwise.
-func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag string, keyVersion uint32) {
+// one enabled version otherwise. An RSA key decrypts under RSA-OAEP with
+// hashAlg; symmetric keys ignore the padding.
+func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag string, keyVersion uint32, hashAlg string) {
 	cl, err := cfg.CreateClient()
 	if err != nil {
 		handleError(&WrappedError{Sentinel: ErrCreateClientFailed, Err: err})
@@ -576,6 +578,8 @@ func decrypt(cfg *Config, printer *Printer, keyID, ciphertext, aad, nonce, tag s
 		KeyID:      keyID,
 		Ciphertext: ciphertextBytes,
 		KeyVersion: keyVersion,
+		Padding:    "oaep",
+		Hash:       hashAlg,
 	}
 
 	if aad != "" {
@@ -1941,7 +1945,8 @@ func init() {
 	keyDecryptCmd.Flags().String("aad", "", "Additional authenticated data (for symmetric decryption)")
 	keyDecryptCmd.Flags().String("nonce", "", "Nonce/IV (base64, required for symmetric decryption)")
 	keyDecryptCmd.Flags().String("tag", "", "Authentication tag (base64, required for symmetric decryption)")
-	keyDecryptCmd.Flags().Uint32("key-version", 0, "Key version the encrypt reported (default: chosen by the server; required for AES-CBC and RSA PKCS#1 v1.5 once a key has several enabled versions)")
+	keyDecryptCmd.Flags().Uint32("key-version", 0, "Key version the encrypt reported (default: chosen by the server; required for AES-CBC once a key has several enabled versions)")
+	keyDecryptCmd.Flags().String("hash", "sha256", "Hash algorithm for RSA-OAEP, matching encrypt-asym (sha256, sha384, sha512)")
 
 	// Flags for import command. --key-type names the ALGORITHM of the material
 	// being imported, not a purpose: the server receives opaque wrapped bytes

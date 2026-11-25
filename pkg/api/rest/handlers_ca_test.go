@@ -371,6 +371,7 @@ func TestMapCAError_AllCases(t *testing.T) {
 		{"SPIFFENameInvalid", &xkms.ErrValidation{Sentinel: xkms.ErrSPIFFENameInvalid}, http.StatusBadRequest},
 		{"CSRMalformed", &xkms.ErrValidation{Sentinel: xkms.ErrCSRMalformed}, http.StatusBadRequest},
 		{"FleetAgentClaimRequested", &xkms.ErrCAOperation{Operation: "sign csr", Err: ca.ErrFleetAgentClaimRequested}, http.StatusBadRequest},
+		{"CertificateAlreadyExists", &xkms.ErrCAOperation{Operation: "issue certificate", Err: ca.ErrCertificateAlreadyExists}, http.StatusConflict},
 		{"SPIFFEKindForbidden", &xkms.SPIFFEKindPermissionError{Kind: "svc", Permission: "certs:issue_service", Err: errors.New("denied")}, http.StatusForbidden},
 		{"Unknown", errors.New("unknown"), http.StatusInternalServerError},
 	}
