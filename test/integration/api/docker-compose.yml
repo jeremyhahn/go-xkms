@@ -63,7 +63,7 @@ services:
     # The barrier boots sealed, so /health answers only after the suite's
     # TestMain unseals it; integration-tests waits for service_started.
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
       timeout: 5s
       retries: 15
