@@ -62,10 +62,11 @@ func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) *webauthn.Serv
 	ds, err := datastore.New(node.Client(), config.DatastoreConfig{}, datastore.WithCallContext(node.ServiceContext))
 	require.NoError(t, err)
 	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
-		Config:     qrdbWebAuthnConfig(),
-		QRDBClient: ds.Client(),
-		DAOFactory: ds.DAOFactory(),
-		TenantID:   DefaultWebAuthnTenant,
+		Config:      qrdbWebAuthnConfig(),
+		QRDBClient:  ds.Client(),
+		DAOFactory:  ds.DAOFactory(),
+		TenantID:    DefaultWebAuthnTenant,
+		CallContext: node.ServiceContext,
 	})
 	require.NoError(t, err)
 	return svc

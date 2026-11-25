@@ -356,6 +356,9 @@ type WebAuthnServiceParams struct {
 	// Defaults to DefaultWebAuthnTenant.
 	TenantID string
 
+	// CallContext binds the relying party's qrdb user calls; nil uses the request context.
+	CallContext webauthn.CallContext
+
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -416,9 +419,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      p.QRDBClient.Users(),
-		DAOFactory: p.DAOFactory,
-		TenantID:   tenantID,
+		Users:       p.QRDBClient.Users(),
+		DAOFactory:  p.DAOFactory,
+		TenantID:    tenantID,
+		CallContext: p.CallContext,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
