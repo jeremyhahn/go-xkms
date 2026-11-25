@@ -95,6 +95,9 @@ type TokenIssuerParams struct {
 	// restart).
 	QRDBClient *qrdbsdk.Client
 
+	// CallContext binds the refresh store's and user resolver's qrdb calls; nil uses the caller's context.
+	CallContext CallContextFunc
+
 	// Logger receives provisioning diagnostics. Nil selects slog.Default().
 	Logger *slog.Logger
 
@@ -212,8 +215,8 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
-		refreshStore = qs
-		userResolver = auth.NewQRDBUserResolver(p.QRDBClient.Users())
+		refreshStore = bindRefreshStore(qs, p.CallContext)
+		userResolver = bindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -356,6 +359,9 @@ type WebAuthnServiceParams struct {
 	// Defaults to DefaultWebAuthnTenant.
 	TenantID string
 
+	// CallContext binds the relying party's qrdb user calls; nil uses the request context.
+	CallContext webauthn.CallContext
+
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -416,9 +422,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      p.QRDBClient.Users(),
-		DAOFactory: p.DAOFactory,
-		TenantID:   tenantID,
+		Users:       p.QRDBClient.Users(),
+		DAOFactory:  p.DAOFactory,
+		TenantID:    tenantID,
+		CallContext: p.CallContext,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
@@ -643,6 +650,9 @@ type HostConfig struct {
 	// lookup. Empty selects DefaultWebAuthnTenant.
 	WebAuthnTenantID string
 
+	// ServiceCallContext binds the WebAuthn and token-store qrdb calls; nil uses the request context.
+	ServiceCallContext webauthn.CallContext
+
 	// WebAuthnCredentialStoreDecorator wraps the qrdb-backed credential
 	// store the WebAuthn relying party persists passkeys through, letting
 	// the composing host add its own side effects (an identity-plane auth
@@ -753,6 +763,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			AccessTTL:    session.AccessTTL,
 			RefreshTTL:   session.RefreshTTL,
 			QRDBClient:   hc.QRDBClient,
+			CallContext:  CallContextFunc(hc.ServiceCallContext),
 			Logger:       logger,
 		})
 		if tiErr != nil {
@@ -808,6 +819,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 				CredentialStoreDecorator: hc.WebAuthnCredentialStoreDecorator,
 				Logger:                   logger,
 				AuditLogger:              hc.AuditLogger,
+				CallContext:              hc.ServiceCallContext,
 			})
 			if waErr != nil {
 				logger.Error("host REST surface: WebAuthn service construction failed; webauthn routes stay unmounted", "error", waErr)
