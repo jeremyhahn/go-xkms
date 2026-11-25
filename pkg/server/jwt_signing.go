@@ -62,6 +62,7 @@ func (s *Server) initializeTokenIssuer() error {
 		RefreshTTL:      refreshTTL,
 		AccessTokenType: s.accessTokenType(),
 		QRDBClient:      s.qrdbClient,
+		CallContext:     rest.CallContextFunc(s.serviceCallContext()),
 		Logger:          s.logger,
 		Retry:           retryNotLeader,
 	})

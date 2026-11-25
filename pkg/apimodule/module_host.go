@@ -21,6 +21,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -104,6 +105,9 @@ func (m *Module) restServer() (*rest.Server, error) {
 			return nil, &HostBuildError{Err: err}
 		}
 		hc.DAOFactory = ds.DAOFactory()
+	}
+	if m.serviceContext != nil {
+		hc.ServiceCallContext = webauthn.CallContext(m.serviceContext)
 	}
 	if m.webauthnConfig != nil {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
