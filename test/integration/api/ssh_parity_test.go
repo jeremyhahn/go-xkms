@@ -17,6 +17,8 @@ package integration
 
 import (
 	"bytes"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 	"os/exec"
@@ -134,6 +136,23 @@ func sshServerURL(cfg *TestConfig, proto ProtocolType) string {
 	return cfg.GetServerURL(proto)
 }
 
+// sshOwner returns the CN of the client certificate the suite authenticates with, or "default".
+func sshOwner() string {
+	data, err := os.ReadFile(os.Getenv("KEYSTORE_TLS_CERT"))
+	if err != nil {
+		return "default"
+	}
+	block, _ := pem.Decode(data)
+	if block == nil {
+		return "default"
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || cert.Subject.CommonName == "" {
+		return "default"
+	}
+	return cert.Subject.CommonName
+}
+
 // sshAlgo describes an SSH algorithm to exercise in the parity matrix, with the
 // authorized_keys line prefix it produces. RSA-2048 and ECDSA-P256 are the
 // cross-backend defaults that TPM 2.0, SoftHSM2, and the software backend all
@@ -205,12 +224,12 @@ func sshKeyLifecycle(t *testing.T, bin, serverURL, tlsCA, home, keyName string, 
 	t.Helper()
 	label := keyName
 
-	out, errOut, err := runXkeySSH(t, bin, serverURL, tlsCA, home, algo.genArgs("user", "default", keyName)...)
+	out, errOut, err := runXkeySSH(t, bin, serverURL, tlsCA, home, algo.genArgs("user", sshOwner(), keyName)...)
 	if err != nil {
 		t.Fatalf("[%s] generate failed: %v\nstdout: %s\nstderr: %s", label, err, out, errOut)
 	}
 
-	out, errOut, err = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "list", "--scope", "user", "--owner", "default")
+	out, errOut, err = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "list", "--scope", "user", "--owner", sshOwner())
 	if err != nil {
 		t.Fatalf("[%s] list failed: %v\nstderr: %s", label, err, errOut)
 	}
@@ -218,7 +237,7 @@ func sshKeyLifecycle(t *testing.T, bin, serverURL, tlsCA, home, keyName string, 
 		t.Fatalf("[%s] list missing %q: %s", label, keyName, out)
 	}
 
-	out, errOut, err = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "export", "--scope", "user", "--owner", "default", "--name", keyName)
+	out, errOut, err = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "export", "--scope", "user", "--owner", sshOwner(), "--name", keyName)
 	if err != nil {
 		t.Fatalf("[%s] export failed: %v\nstderr: %s", label, err, errOut)
 	}
@@ -226,7 +245,7 @@ func sshKeyLifecycle(t *testing.T, bin, serverURL, tlsCA, home, keyName string, 
 		t.Fatalf("[%s] export missing %q prefix: %s", label, algo.prefix, out)
 	}
 
-	if _, errOut, err = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "delete", "--scope", "user", "--owner", "default", "--name", keyName); err != nil {
+	if _, errOut, err = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "delete", "--scope", "user", "--owner", sshOwner(), "--name", keyName); err != nil {
 		t.Fatalf("[%s] delete failed: %v\nstderr: %s", label, err, errOut)
 	}
 }
@@ -269,7 +288,7 @@ func TestXkeySSHBackendSelection(t *testing.T) {
 				t.Run(algo.name, func(t *testing.T) {
 					home := t.TempDir()
 					keyName := "xkey-backend-" + backend + "-" + algo.name
-					args := append(algo.genArgs("user", "default", keyName), "--backend", backend)
+					args := append(algo.genArgs("user", sshOwner(), keyName), "--backend", backend)
 					out, errOut, err := runXkeySSH(t, bin, serverURL, tlsCA, home, args...)
 					if err != nil {
 						t.Fatalf("[%s/%s] backend generate failed: %v\nstdout: %s\nstderr: %s", backend, algo.name, err, out, errOut)
@@ -279,14 +298,14 @@ func TestXkeySSHBackendSelection(t *testing.T) {
 						t.Fatalf("[%s/%s] expected backend %q in output: %s", backend, algo.name, backend, out)
 					}
 					// Export confirms a usable public key of the right type.
-					out, errOut, err = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "export", "--scope", "user", "--owner", "default", "--name", keyName)
+					out, errOut, err = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "export", "--scope", "user", "--owner", sshOwner(), "--name", keyName)
 					if err != nil {
 						t.Fatalf("[%s/%s] export failed: %v\nstderr: %s", backend, algo.name, err, errOut)
 					}
 					if !strings.Contains(out, algo.prefix) {
 						t.Fatalf("[%s/%s] export missing %q prefix: %s", backend, algo.name, algo.prefix, out)
 					}
-					_, _, _ = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "delete", "--scope", "user", "--owner", "default", "--name", keyName)
+					_, _, _ = runXkeySSH(t, bin, serverURL, tlsCA, home, "keys", "delete", "--scope", "user", "--owner", sshOwner(), "--name", keyName)
 				})
 			}
 		})

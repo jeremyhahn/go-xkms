@@ -36,8 +36,8 @@ func execCLIWithServer(t *testing.T, cfg *TestConfig, serverURL string, args ...
 	}
 
 	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-	// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
 	needsTLS := strings.HasPrefix(serverURL, "unix://") ||
+		strings.HasPrefix(serverURL, "mcps://") ||
 		strings.HasPrefix(serverURL, "https://") ||
 		strings.HasPrefix(serverURL, "grpc://") ||
 		strings.HasPrefix(serverURL, "grpcs://") ||

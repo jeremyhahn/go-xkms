@@ -135,7 +135,7 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(r.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
-		return "mcp://" + r.MCPAddr
+		return "mcps://" + r.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""
@@ -214,8 +214,8 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 		}
 
 		// Add TLS options for protocols that use TLS (Unix socket, REST with HTTPS, gRPC, QUIC)
-		// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
 		needsTLS := protocol == ProtocolUnix ||
+			protocol == ProtocolMCP ||
 			protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
 			protocol == ProtocolGRPC ||
 			protocol == ProtocolQUIC

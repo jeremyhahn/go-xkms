@@ -81,6 +81,7 @@ func (s *CLITestSuite) runCLI(serverURL string, args ...string) (string, string,
 
 	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
 	needsTLS := strings.HasPrefix(serverURL, "unix://") ||
+		strings.HasPrefix(serverURL, "mcps://") ||
 		strings.HasPrefix(serverURL, "https://") ||
 		strings.HasPrefix(serverURL, "grpc://") ||
 		strings.HasPrefix(serverURL, "grpcs://") ||
