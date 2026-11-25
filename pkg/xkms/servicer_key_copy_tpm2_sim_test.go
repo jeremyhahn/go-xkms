@@ -97,24 +97,24 @@ func TestCopyKeySoftwareToSimulatedTPM2WithNoAlgorithmAsymmetric(t *testing.T) {
 	ctx := context.Background()
 	generateEd25519Source(t, srcProvider, "sw-to-tpm2-ed")
 
+	// The TPM2 backend would store the PKCS#8 bytes as a sealed object it
+	// cannot sign with, so the copy is refused before any destination write.
 	resp, err := svc.CopyKey(ctx, &transport.CopyKeyRequest{
 		SourceBackend: "software",
 		SourceKeyID:   "sw-to-tpm2-ed",
 		DestBackend:   "tpm2",
 		DestKeyID:     "sw-to-tpm2-ed-copy",
 	})
-	require.NoError(t, err)
-	require.True(t, resp.Success)
+	require.ErrorIs(t, err, backend.ErrExportToUnsupported,
+		"an asymmetric key copy to TPM2 must be refused until the TPM2 copy can sign")
+	require.Nil(t, resp)
 
 	dstKeys, err := dstBackend.ListKeys(ctx)
 	require.NoError(t, err)
-	found := false
 	for _, a := range dstKeys {
-		if a != nil && a.CN == "sw-to-tpm2-ed-copy" {
-			found = true
-		}
+		require.False(t, a != nil && a.CN == "sw-to-tpm2-ed-copy",
+			"a refused copy must leave no destination key")
 	}
-	require.True(t, found, "the simulated TPM2 destination must hold the copied key")
 }
 
 // setupSoftwareToTPM2Copy registers a real software backend as "software"
