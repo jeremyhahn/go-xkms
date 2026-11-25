@@ -23,6 +23,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -162,7 +163,7 @@ func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
 	}
 	return qrdbsdk.DaemonCORSConfig{
 		AllowedOrigins:   append([]string(nil), o.AllowedOrigins...),
-		AllowedHeaders:   rest.CORSAllowedHeaders(),
+		AllowedHeaders:   webauthnhttp.CORSAllowedHeaders(),
 		AllowCredentials: o.AllowCredentials,
 		MaxAge:           o.MaxAgeSeconds,
 	}

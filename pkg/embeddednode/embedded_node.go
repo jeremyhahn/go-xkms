@@ -54,10 +54,10 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
 // KeyDirSubdir is the fixed subdirectory, under the configured datastore
@@ -336,7 +336,7 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	if cfg.CORS.Enabled && len(cfg.CORS.AllowedOrigins) > 0 {
 		qcfg.CORS = qrdbsdk.DaemonCORSConfig{
 			AllowedOrigins:   append([]string(nil), cfg.CORS.AllowedOrigins...),
-			AllowedHeaders:   rest.CORSAllowedHeaders(),
+			AllowedHeaders:   webauthnhttp.CORSAllowedHeaders(),
 			AllowCredentials: cfg.CORS.AllowCredentials,
 			MaxAge:           cfg.CORS.MaxAgeSeconds,
 		}

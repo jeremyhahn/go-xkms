@@ -28,9 +28,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/factor"
+	webauthnhttp "github.com/jeremyhahn/go-xkms/pkg/webauthn/http"
 )
 
 // testLogger returns a logger that discards output, matching the other
@@ -174,7 +174,7 @@ func TestEmbeddedNodeStorageConfig_CarriesTheCORSPolicy(t *testing.T) {
 
 	qcfg := EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{})
 	require.Equal(t, []string{"https://rp.example"}, qcfg.CORS.AllowedOrigins)
-	require.Equal(t, rest.CORSAllowedHeaders(), qcfg.CORS.AllowedHeaders)
+	require.Equal(t, webauthnhttp.CORSAllowedHeaders(), qcfg.CORS.AllowedHeaders)
 	require.True(t, qcfg.CORS.AllowCredentials)
 	require.Equal(t, 600, qcfg.CORS.MaxAge)
 
