@@ -58,10 +58,12 @@ func (g *grantTableRBAC) ListOwnPermissions(ctx context.Context) ([]db.Permissio
 }
 
 func TestPermissionGate_AdminRoleCannotCreateOrUpdateRoles(t *testing.T) {
+	adminRoleID := qrdbsdk.SystemRoleID("t1", qrdbsdk.RoleNameAdmin)
 	rbac := &grantTableRBAC{grants: map[string][]string{
 		qrdbsdk.RoleNameAdmin: {"roles:create", "roles:update", "roles:delete"},
 		qrdbsdk.RoleNameSO:    {"roles:create", "roles:update"},
 		"role-editor":         {"roles:update"},
+		adminRoleID:           {"roles:create", "roles:update"},
 	}}
 	gate := NewPermissionGate(auth.NewAuthorizer(rbac), discardLogger())
 
@@ -78,6 +80,8 @@ func TestPermissionGate_AdminRoleCannotCreateOrUpdateRoles(t *testing.T) {
 		{"admin and so create", []string{qrdbsdk.RoleNameAdmin, qrdbsdk.RoleNameSO}, auth.ActionCreate, true},
 		{"admin and editor update", []string{qrdbsdk.RoleNameAdmin, "role-editor"}, auth.ActionUpdate, true},
 		{"admin and editor create", []string{qrdbsdk.RoleNameAdmin, "role-editor"}, auth.ActionCreate, false},
+		{"admin by id create", []string{adminRoleID}, auth.ActionCreate, false},
+		{"admin by id and editor update", []string{adminRoleID, "role-editor"}, auth.ActionUpdate, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
