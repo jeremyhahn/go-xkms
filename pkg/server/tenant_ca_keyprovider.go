@@ -130,14 +130,24 @@ func (f *tenantCAKeyFactory) TrackTenants(svc tenantLookup) {
 
 // knownTenant reports whether the tracked tenant service has tenantID.
 func (f *tenantCAKeyFactory) knownTenant(ctx context.Context, tenantID string) bool {
+	_, ok := f.trackedTenant(ctx, tenantID)
+	return ok
+}
+
+// trackedTenant returns the live tenant record of tenantID from the tracked
+// tenant service; ok is false when no service is tracked or the tenant is unknown.
+func (f *tenantCAKeyFactory) trackedTenant(ctx context.Context, tenantID string) (*qrdbsdk.ServiceTenantInfo, bool) {
 	f.mu.RLock()
 	svc := f.tenants
 	f.mu.RUnlock()
 	if svc == nil {
-		return false
+		return nil, false
 	}
 	info, err := svc.GetTenant(ctx, tenantID)
-	return err == nil && info != nil
+	if err != nil || info == nil {
+		return nil, false
+	}
+	return info, true
 }
 
 // withdrawn reports a tenant whose login CA the node must no longer serve:
@@ -240,10 +250,11 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		// has a key for ReclaimWithdrawnTenants to find. A tenant whose
 		// create rollback is still pending (its CA cleanup failed) gets no
 		// new CA: the boot pass finishes that rollback.
-		if !f.knownTenant(context.Background(), tenantID) {
+		info, known := f.trackedTenant(context.Background(), tenantID)
+		if !known {
 			return nil, err
 		}
-		pending, pendErr := f.CreateUndoPending(context.Background(), tenantID)
+		pending, pendErr := f.createUndoPendingFor(context.Background(), tenantID, info.CreatedAt)
 		if pendErr != nil {
 			return nil, pendErr
 		}
@@ -556,13 +567,14 @@ func tenantLoginCACreateUndoKey(tenantID string) string {
 // MarkCreateUndo records that a wrapped create of tenantID is being rolled
 // back. The record outlives a rollback whose login CA cleanup failed, so the
 // boot pass resumes that rollback rather than meeting a listed tenant beside
-// its CA tombstone.
-func (f *tenantCAKeyFactory) MarkCreateUndo(ctx context.Context, tenantID string) error {
+// its CA tombstone. The record names the tenant instance being undone by its
+// creation time, so a later tenant under the same ID is not taken for it.
+func (f *tenantCAKeyFactory) MarkCreateUndo(ctx context.Context, tenantID string, createdAt time.Time) error {
 	claims, err := f.claimStorage()
 	if err != nil {
 		return err
 	}
-	if err := claims.Put(ctx, tenantLoginCACreateUndoKey(tenantID), []byte("1")); err != nil {
+	if err := claims.Put(ctx, tenantLoginCACreateUndoKey(tenantID), tenantLoginCAUndoInstance(createdAt)); err != nil {
 		return fmt.Errorf("tenant login CA key factory: mark create rollback of tenant %q: %w", tenantID, err)
 	}
 	return nil
@@ -583,6 +595,33 @@ func (f *tenantCAKeyFactory) CreateUndoPending(ctx context.Context, tenantID str
 		return false, fmt.Errorf("tenant login CA key factory: read create rollback of tenant %q: %w", tenantID, err)
 	}
 	return true, nil
+}
+
+// tenantLoginCAUndoInstance encodes the tenant instance a rollback record binds to.
+func tenantLoginCAUndoInstance(createdAt time.Time) []byte {
+	return []byte(createdAt.UTC().Format(time.RFC3339Nano))
+}
+
+// createUndoPendingFor reports whether a create rollback is pending for the
+// tenant instance created at createdAt. A record left for an earlier
+// instance under the same ID (its undo finished, the record was not
+// removed) is cleared, not reported.
+func (f *tenantCAKeyFactory) createUndoPendingFor(ctx context.Context, tenantID string, createdAt time.Time) (bool, error) {
+	claims, err := f.claimStorage()
+	if err != nil {
+		return false, err
+	}
+	raw, err := claims.Get(ctx, tenantLoginCACreateUndoKey(tenantID))
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("tenant login CA key factory: read create rollback of tenant %q: %w", tenantID, err)
+	}
+	if bytes.Equal(raw, tenantLoginCAUndoInstance(createdAt)) {
+		return true, nil
+	}
+	return false, f.ClearCreateUndo(ctx, tenantID)
 }
 
 // ClearCreateUndo drops tenantID's create rollback record once the rollback

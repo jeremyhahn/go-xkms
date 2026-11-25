@@ -71,7 +71,7 @@ func (p *provisioningTenantService) CreateTenant(ctx context.Context, id, name s
 	if ensureErr != nil {
 		return nil, &TenantProvisionError{
 			TenantID: info.ID,
-			Err:      errors.Join(ensureErr, p.undoCreate(ctx, info.ID)),
+			Err:      errors.Join(ensureErr, p.undoCreate(ctx, info.ID, info.CreatedAt)),
 		}
 	}
 	return info, nil
@@ -85,8 +85,8 @@ const tenantCreateUndoTimeout = 30 * time.Second
 // tenantCAKeyFactory implements it. A provisioner without it rolls back
 // without a record.
 type tenantCreateUndoRecorder interface {
-	MarkCreateUndo(ctx context.Context, tenantID string) error
-	CreateUndoPending(ctx context.Context, tenantID string) (bool, error)
+	MarkCreateUndo(ctx context.Context, tenantID string, createdAt time.Time) error
+	createUndoPendingFor(ctx context.Context, tenantID string, createdAt time.Time) (bool, error)
 	ClearCreateUndo(ctx context.Context, tenantID string) error
 	tenantLoginCARemoved(ctx context.Context, tenantID string) (bool, error)
 }
@@ -95,7 +95,7 @@ type tenantCreateUndoRecorder interface {
 // rather than deleting the tenant, so the tenant ID stays free for a retry,
 // and it runs on its own bounded context: a request cancelled during
 // provisioning must not leave the tenant behind.
-func (p *provisioningTenantService) undoCreate(ctx context.Context, id string) error {
+func (p *provisioningTenantService) undoCreate(ctx context.Context, id string, createdAt time.Time) error {
 	undoCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), tenantCreateUndoTimeout)
 	defer cancel()
 	// The rollback is recorded before the CA cleanup tombstones the ID: a
@@ -105,7 +105,7 @@ func (p *provisioningTenantService) undoCreate(ctx context.Context, id string) e
 	// the tenant has no tombstone and the boot pass provisions it.
 	rec, recorded := p.keys.(tenantCreateUndoRecorder)
 	if recorded {
-		if err := rec.MarkCreateUndo(undoCtx, id); err != nil {
+		if err := rec.MarkCreateUndo(undoCtx, id, createdAt); err != nil {
 			return err
 		}
 	}
@@ -173,8 +173,10 @@ func (s *Server) provisionTenantCAKeys(ctx context.Context) error {
 // tombstoned tenant with no pending rollback was created natively under an
 // ID whose rollback had finished: it is new, so its tombstone is cleared
 // (as ProviderForTenant's no-key branch does) and EnsureTenant provisions it.
-func resumeTenantCreateUndo(ctx context.Context, svc qrdbsdk.ServiceTenantServicer, keys tenantCAKeyProvisioner, rec tenantCreateUndoRecorder, id string) (resumed bool, err error) {
-	pending, err := rec.CreateUndoPending(ctx, id)
+// A rollback record is acted on only when it names this tenant instance
+// (createdAt); a record of an earlier instance under the ID is cleared.
+func resumeTenantCreateUndo(ctx context.Context, svc qrdbsdk.ServiceTenantServicer, keys tenantCAKeyProvisioner, rec tenantCreateUndoRecorder, id string, createdAt time.Time) (resumed bool, err error) {
+	pending, err := rec.createUndoPendingFor(ctx, id, createdAt)
 	if err != nil {
 		return false, err
 	}
@@ -206,15 +208,17 @@ func provisionTenantCAKeysWith(ctx context.Context, svc qrdbsdk.ServiceTenantSer
 		return &TenantProvisionError{Err: err}
 	}
 	ids := []string{qrdbsdk.SystemTenantID}
+	created := make(map[string]time.Time, len(infos))
 	for i := range infos {
 		if id := infos[i].ID; id != "" && id != qrdbsdk.SystemTenantID {
 			ids = append(ids, id)
+			created[id] = infos[i].CreatedAt
 		}
 	}
 	rec, recorded := keys.(tenantCreateUndoRecorder)
 	for _, id := range ids {
 		if recorded && id != qrdbsdk.SystemTenantID {
-			resumed, err := resumeTenantCreateUndo(ctx, svc, keys, rec, id)
+			resumed, err := resumeTenantCreateUndo(ctx, svc, keys, rec, id, created[id])
 			if err != nil {
 				return &TenantProvisionError{TenantID: id, Err: err}
 			}
