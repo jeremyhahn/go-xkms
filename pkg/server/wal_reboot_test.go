@@ -15,6 +15,10 @@ package server
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -27,6 +31,7 @@ import (
 
 	"github.com/jeremyhahn/go-qrdb/pkg/seal"
 	"github.com/jeremyhahn/go-qrdb/pkg/seal/encfs"
+	qrdbpebble "github.com/jeremyhahn/go-qrdb/pkg/storage/pebble"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/require"
@@ -371,6 +376,98 @@ func walRebootSurvivingPrefix(t *testing.T, node *qrdbnode.Node, run, n int) int
 		survived++
 	}
 	return survived
+}
+
+// walRebootTestKEK wraps encfs file keys with AES-256-GCM under a random key.
+type walRebootTestKEK struct{ aead cipher.AEAD }
+
+func newWALRebootTestKEK(t *testing.T) walRebootTestKEK {
+	t.Helper()
+	key := make([]byte, 32)
+	_, err := rand.Read(key)
+	require.NoError(t, err)
+	block, err := aes.NewCipher(key)
+	require.NoError(t, err)
+	aead, err := cipher.NewGCM(block)
+	require.NoError(t, err)
+	return walRebootTestKEK{aead: aead}
+}
+
+func (k walRebootTestKEK) Encrypt(plaintext []byte) ([]byte, error) {
+	nonce := make([]byte, k.aead.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return k.aead.Seal(nonce, nonce, plaintext, nil), nil
+}
+
+func (k walRebootTestKEK) Decrypt(ciphertext []byte) ([]byte, error) {
+	n := k.aead.NonceSize()
+	if len(ciphertext) < n {
+		return nil, errors.New("wrapped key too short")
+	}
+	return k.aead.Open(nil, ciphertext[:n], ciphertext[n:], nil)
+}
+
+func walRebootOpenEncryptedStore(t *testing.T, dir string, kek walRebootTestKEK) (*qrdbpebble.PebbleStorage, error) {
+	t.Helper()
+	cfg := qrdbpebble.TestConfig(dir)
+	cfg.SyncWrites = true
+	cfg.FS = encfs.New(nil, kek)
+	return qrdbpebble.New(cfg)
+}
+
+func walRebootReadWAL(t *testing.T, dir string) (string, []byte) {
+	t.Helper()
+	logs, err := filepath.Glob(filepath.Join(dir, "*.log"))
+	require.NoError(t, err)
+	require.Len(t, logs, 1)
+	b, err := os.ReadFile(logs[0])
+	require.NoError(t, err)
+	return logs[0], b
+}
+
+// (2d) A synced write leaves a partial encfs block on disk; the next synced
+// write rewrites that same block in place with a fresh nonce. A power cut
+// that persists only part of the rewrite must not lose the records the first
+// Sync made durable.
+func TestWALReboot_SyncedPrefixSurvivesTornPartialBlockOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	kek := newWALRebootTestKEK(t)
+	store, err := walRebootOpenEncryptedStore(t, dir, kek)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	const synced, more = 4, 4
+	for i := 0; i < synced; i++ {
+		k, v := walRebootRecord(0, i)
+		require.NoError(t, store.Set([]byte(k), v))
+	}
+	_, first := walRebootReadWAL(t, dir)
+	for i := synced; i < synced+more; i++ {
+		k, v := walRebootRecord(0, i)
+		require.NoError(t, store.Set([]byte(k), v))
+	}
+	walPath, second := walRebootReadWAL(t, dir)
+	require.Greater(t, len(second), len(first), "the second Sync must extend the WAL")
+	require.Less(t, len(second)-len(first), 4096, "both Syncs must land in the same partial block")
+
+	crashed := walRebootCrashCopy(t, dir)
+	require.NoError(t, store.Close())
+	// The rewrite reached disk up to split; the rest of the block is still the first Sync's.
+	split := len(first) - 100
+	torn := append(append([]byte(nil), second[:split]...), first[split:]...)
+	require.NoError(t, os.WriteFile(filepath.Join(crashed, filepath.Base(walPath)), torn, 0o600))
+
+	reopened, err := walRebootOpenEncryptedStore(t, crashed, kek)
+	require.NoError(t, err, "replay after a torn overwrite of the synced partial block")
+	t.Cleanup(func() { _ = reopened.Close() })
+	for i := 0; i < synced; i++ {
+		k, want := walRebootRecord(0, i)
+		got, err := reopened.Get([]byte(k))
+		require.NoError(t, err, "synced record %s", k)
+		require.Equal(t, want, got, "synced record %s", k)
+	}
 }
 
 // (3) A boot-completion failure after the unseal is reported precisely:
