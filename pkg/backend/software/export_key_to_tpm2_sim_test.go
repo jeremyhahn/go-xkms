@@ -30,7 +30,7 @@ import (
 // TestExportKeyTo_WrapsForTPM2DuplicationParameters proves an exportable
 // software key wraps under the TPM2_DUPLICATE parameters a real TPM2 backend
 // (on the simulator) hands out, and that the TPM2 backend imports the blob.
-func TestExportKeyTo_WrapsForTPM2DuplicationParameters(t *testing.T) {
+func TestExportKeyTo_RefusesTPM2DuplicationParameters(t *testing.T) {
 	ctx := context.Background()
 	src, _ := createTestBackend(t)
 	defer func() { _ = src.Close() }()
@@ -62,7 +62,8 @@ func TestExportKeyTo_WrapsForTPM2DuplicationParameters(t *testing.T) {
 		t.Fatalf("ExportKeyTo of a symmetric key with TPM2_DUPLICATE parameters: err = %v, want backend.ErrExportToUnsupported", err)
 	}
 
-	// A TPM sealed object holds at most 128 bytes; an Ed25519 PKCS#8 key fits.
+	// An asymmetric key is refused: the TPM2 backend would seal its PKCS#8
+	// bytes in an object it cannot sign with.
 	attrs := &types.KeyAttributes{
 		CN:           "export-to-tpm2.example",
 		KeyType:      types.KeyTypeSigning,
@@ -74,15 +75,7 @@ func TestExportKeyTo_WrapsForTPM2DuplicationParameters(t *testing.T) {
 		t.Fatalf("GenerateKey: %v", err)
 	}
 
-	wrapped, err := src.(backend.ImportExportBackend).ExportKeyTo(ctx, attrs, params)
-	if err != nil {
-		t.Fatalf("ExportKeyTo with TPM2_DUPLICATE parameters: %v", err)
-	}
-	if wrapped.Algorithm != backend.WrappingAlgorithmTPM2Duplicate {
-		t.Fatalf("wrapped algorithm = %q, want %q", wrapped.Algorithm, backend.WrappingAlgorithmTPM2Duplicate)
-	}
-
-	if err := dst.ImportKey(ctx, dstAttrs, wrapped); err != nil {
-		t.Fatalf("tpm2 ImportKey of the software blob: %v", err)
+	if _, err := src.(backend.ImportExportBackend).ExportKeyTo(ctx, attrs, params); !errors.Is(err, backend.ErrExportToUnsupported) {
+		t.Fatalf("ExportKeyTo of an asymmetric key with TPM2_DUPLICATE parameters: err = %v, want backend.ErrExportToUnsupported", err)
 	}
 }

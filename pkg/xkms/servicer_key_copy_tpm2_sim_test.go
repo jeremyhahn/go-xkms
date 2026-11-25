@@ -158,8 +158,15 @@ func generateEd25519Source(t *testing.T, sw types.SymmetricKeyProvider, cn strin
 func TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest(t *testing.T) {
 	svc, srcProvider, dstBackend, dstKeys := setupSoftwareToTPM2Copy(t)
 	ctx := context.Background()
-	generateEd25519Source(t, srcProvider, "sw-src-first")
 	generateEd25519Source(t, srcProvider, "sw-src-second")
+	_, err := dstBackend.GenerateRSA(ctx, &types.KeyAttributes{
+		CN:            "tpm2-existing-dest",
+		KeyType:       types.KeyTypeSigning,
+		StoreType:     types.StoreTPM2,
+		KeyAlgorithm:  x509.RSA,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	})
+	require.NoError(t, err)
 
 	copyTo := func(src string) (*transport.CopyKeyResponse, error) {
 		return svc.CopyKey(ctx, &transport.CopyKeyRequest{
@@ -169,10 +176,6 @@ func TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest(t *testing.T) {
 			DestKeyID:     "tpm2-existing-dest",
 		})
 	}
-	resp, err := copyTo("sw-src-first")
-	require.NoError(t, err)
-	require.True(t, resp.Success)
-
 	destBlobs := func() ([]byte, []byte) {
 		keys, lerr := dstBackend.ListKeys(ctx)
 		require.NoError(t, lerr)
@@ -190,9 +193,9 @@ func TestCopyKeySoftwareToSimulatedTPM2RefusesExistingDest(t *testing.T) {
 	}
 	privBefore, pubBefore := destBlobs()
 
-	resp, err = copyTo("sw-src-second")
+	resp, err := copyTo("sw-src-second")
 	require.Error(t, err, "a copy onto an existing TPM2 key must fail")
-	require.ErrorIs(t, err, backend.ErrKeyAlreadyExists)
+	require.ErrorIs(t, err, backend.ErrExportToUnsupported)
 	require.Nil(t, resp)
 
 	privAfter, pubAfter := destBlobs()

@@ -814,23 +814,12 @@ func (b *SoftwareBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttri
 		return nil, ErrStorageClosed
 	}
 
-	// A TPM 2.0 destination imports only TCG duplication blobs. Its import
-	// parameters carry the SRK's marshaled TPMT_PUBLIC in ImportToken, which
-	// is all tpmdup needs; this backend never mints such parameters itself,
-	// so isValidWrappingAlgorithm keeps refusing the algorithm elsewhere.
+	// A TPM 2.0 destination keeps every imported key as a sealed object it cannot use, so each copy to it is refused before any read or write.
 	if dstParams.Algorithm == tpmdup.Algorithm {
 		if attrs.SymmetricAlgorithm != "" {
 			return nil, &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: tpm2SymmetricCopyUnsupported}
 		}
-		keyMaterial, err := b.exportableKeyMaterial(ctx, attrs)
-		if err != nil {
-			return nil, err
-		}
-		wrapped, err := tpmdup.Wrap(rand.Reader, dstParams.ImportToken, keyMaterial)
-		if err != nil {
-			return nil, &errs.Wrapped{Msg: "failed to wrap key for TPM 2.0 destination", Err: err}
-		}
-		return wrapped, nil
+		return nil, &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: tpm2AsymmetricCopyUnsupported}
 	}
 
 	if !isValidWrappingAlgorithm(dstParams.Algorithm) {
@@ -854,6 +843,11 @@ func (b *SoftwareBackend) ExportKeyTo(ctx context.Context, attrs *types.KeyAttri
 // wrapped for a TPM 2.0 destination: the TPM2 backend keeps an imported key
 // as a sealed object only and cannot yet encrypt or decrypt with it.
 const tpm2SymmetricCopyUnsupported = "a TPM2 copy of a symmetric key is not usable by the service yet"
+
+// tpm2AsymmetricCopyUnsupported is the refusal detail for an asymmetric key
+// wrapped for a TPM 2.0 destination: the TPM2 backend would store its PKCS#8
+// bytes as a sealed object it cannot sign or decrypt with.
+const tpm2AsymmetricCopyUnsupported = "a TPM2 copy of an asymmetric key is not usable by the service yet"
 
 // exportableKeyMaterial reads attrs' private key material in the shape
 // WrapKey expects: raw bytes for a symmetric key, PKCS#8 DER for an
