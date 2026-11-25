@@ -208,9 +208,10 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
 
-		// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
+		// Add TLS options for protocols that use TLS (Unix socket, REST with HTTPS, gRPC, QUIC)
 		// Note: MCP uses plain TCP (mcp://), not TLS. Use mcps:// for TLS.
-		needsTLS := protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
+		needsTLS := protocol == ProtocolUnix ||
+			protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
 			protocol == ProtocolGRPC ||
 			protocol == ProtocolQUIC
 

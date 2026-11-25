@@ -118,7 +118,8 @@ func runXkeySSH(t *testing.T, bin, serverURL, tlsCA, home string, args ...string
 
 // needsTLSScheme reports whether the server URL uses a TLS-bearing scheme.
 func needsTLSScheme(u string) bool {
-	return strings.HasPrefix(u, "https://") ||
+	return strings.HasPrefix(u, "unix://") ||
+		strings.HasPrefix(u, "https://") ||
 		strings.HasPrefix(u, "grpcs://") ||
 		strings.HasPrefix(u, "quic://") ||
 		strings.HasPrefix(u, "mcps://")
