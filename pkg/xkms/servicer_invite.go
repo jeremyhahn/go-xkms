@@ -206,7 +206,7 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.inviteUsers(req.TenantID).GetUser(ctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -239,7 +239,7 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.inviteUsers(req.TenantID).GetUser(ctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -304,7 +304,7 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 		return nil, &ErrUserOperation{Operation: "decode invite user handle", Err: err}
 	}
 
-	if err := s.activateInviteUser(ctx, userID); err != nil {
+	if err := s.activateInviteUser(ctx, s.inviteUsers(req.TenantID), userID); err != nil {
 		return nil, err
 	}
 	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
@@ -359,7 +359,7 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: err}
 	}
 
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.inviteUsers(req.TenantID).GetUser(ctx, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -368,11 +368,11 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	}
 
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if _, err := s.users.AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+	if _, err := s.inviteUsers(req.TenantID).AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
 	}
 
-	if err := s.activateInviteUser(ctx, userID); err != nil {
+	if err := s.activateInviteUser(ctx, s.inviteUsers(req.TenantID), userID); err != nil {
 		return nil, err
 	}
 	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
@@ -392,10 +392,10 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 // other outcome (including a failed re-read) keeps the fail-closed refusal,
 // which leaves the invitation intact and the account recoverable — mirrors
 // go-quicbaas's ActivateFIDO2Finish / PIVActivator.Activate.
-func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) error {
+func (s *XKMSService) activateInviteUser(ctx context.Context, users qrdbtransport.UserClient, userID uint64) error {
 	active := string(qrdbsdk.LifecycleActive)
-	if _, err := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: active}); err != nil {
-		if u, gErr := s.users.GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
+	if _, err := users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: active}); err != nil {
+		if u, gErr := users.GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
 			return nil
 		}
 		return &ErrUserOperation{Operation: "activate invited user", Err: err}

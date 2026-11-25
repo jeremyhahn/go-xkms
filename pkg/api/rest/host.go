@@ -32,6 +32,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -356,6 +357,10 @@ type WebAuthnServiceParams struct {
 	// Defaults to DefaultWebAuthnTenant.
 	TenantID string
 
+	// Users is the user client the relying party reads and updates its
+	// accounts through. Nil selects QRDBClient.Users().
+	Users qrdbtransport.UserClient
+
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
 	// Nil leaves ceremony completion unable to authenticate future requests
 	// (logged, not fatal).
@@ -415,8 +420,12 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		tenantID = DefaultWebAuthnTenant
 	}
 
+	users := p.Users
+	if users == nil {
+		users = p.QRDBClient.Users()
+	}
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:      p.QRDBClient.Users(),
+		Users:      users,
 		DAOFactory: p.DAOFactory,
 		TenantID:   tenantID,
 	})
@@ -465,6 +474,9 @@ type WebAuthnTenantRouterParams struct {
 	System *webauthn.Service
 	// TenantExists reports whether a tenant exists (the qrdb tenant lookup).
 	TenantExists func(ctx context.Context, tenantID string) (bool, error)
+	// TenantUsers returns the user client a tenant's relying party uses; nil,
+	// or a nil result, keeps Service's.
+	TenantUsers func(tenantID string) qrdbtransport.UserClient
 }
 
 // BuildWebAuthnTenantRouter builds the tenant router of go-xkms#2319: each
@@ -489,6 +501,11 @@ func BuildWebAuthnTenantRouter(p WebAuthnTenantRouterParams) (*webauthn.TenantRo
 		Build: func(tenantID string) (*webauthn.Service, error) {
 			params := p.Service
 			params.TenantID = tenantID
+			if p.TenantUsers != nil {
+				if users := p.TenantUsers(tenantID); users != nil {
+					params.Users = users
+				}
+			}
 			return BuildWebAuthnService(params)
 		},
 	})

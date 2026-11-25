@@ -42,6 +42,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"
@@ -943,6 +944,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		}
 		if s.passwordStore != nil && s.qrdbClient != nil {
 			svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
+			svc.SetCeremonyUsers(s.ceremonyUsers)
 		}
 		if s.pkcs11StateStore != nil {
 			svc.SetPKCS11StateStore(s.pkcs11StateStore)
@@ -1564,6 +1566,7 @@ func (s *Server) initializeWebAuthnService() error {
 			}
 			return x.WebAuthnTenantExists(ctx, tenantID)
 		},
+		TenantUsers: s.ceremonyUsers,
 	})
 	if err != nil {
 		return &ErrServiceInit{Service: "webauthn tenant router", Err: err}
@@ -1691,6 +1694,22 @@ func (n nodeCertUsers) UserByCertThumbprint(ctx context.Context, thumbprint stri
 		return nil, ErrQRDBNodeNotServing
 	}
 	return users.UserByCertThumbprint(ctx, thumbprint)
+}
+
+// ceremonyUsers returns the tenant-confined user client the login and
+// invitation ceremonies of tenantID use; nil without an embedded node.
+func (s *Server) ceremonyUsers(tenantID string) qrdbtransport.UserClient {
+	if s.qrdbNode == nil || s.qrdbClient == nil {
+		return nil
+	}
+	node := s.qrdbNode
+	return auth.NewCeremonyUsers(tenantID, func() auth.CeremonyUserService {
+		users := node.UserService()
+		if users == nil {
+			return nil
+		}
+		return users
+	}, s.qrdbClient.Users())
 }
 
 // initializeKeyVersionStore builds the key-version record store through

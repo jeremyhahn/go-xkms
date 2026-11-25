@@ -102,7 +102,10 @@ type XKMSService struct {
 	// users and roles are the embedded qrdb node's identity clients. xkms
 	// presents its own user-management API on top of them, so callers only
 	// ever see xkms users; qrdb is an internal implementation detail.
-	users           qrdbtransport.UserClient
+	users qrdbtransport.UserClient
+	// ceremonyUsers returns the tenant-confined user client of invitation
+	// redemption; nil uses users.
+	ceremonyUsers   func(tenantID string) qrdbtransport.UserClient
 	roles           qrdbtransport.RoleClient
 	platformStore   subsystem[seal.PlatformStore]
 	tpmPolicies     subsystem[*tpmpolicy.Service]
@@ -278,6 +281,24 @@ func (s *XKMSService) SetPasswordStore(p *staticpw.DAOStore) { s.passwordStore.s
 
 // SetPKCS11StateStore wires the remote-mode PKCS#11 state persistence store.
 func (s *XKMSService) SetPKCS11StateStore(p *pkcs11state.Store) { s.pkcs11StateStore = p }
+
+// SetCeremonyUsers wires the per-tenant user client invitation redemption
+// reads and activates accounts through.
+func (s *XKMSService) SetCeremonyUsers(users func(tenantID string) qrdbtransport.UserClient) {
+	s.ceremonyUsers = users
+}
+
+// inviteUsers returns the user client an invitation of tenantID is redeemed
+// through: the tenant-confined ceremony client when one is wired, else the
+// service's user client.
+func (s *XKMSService) inviteUsers(tenantID string) qrdbtransport.UserClient {
+	if s.ceremonyUsers != nil && tenantID != "" {
+		if users := s.ceremonyUsers(tenantID); users != nil {
+			return users
+		}
+	}
+	return s.users
+}
 
 // SetUserClients wires the embedded qrdb node's user and role clients into the
 // service so xkms can present its own user-management API backed by qrdb.
