@@ -53,7 +53,7 @@ const Name = "xkms"
 //   - admin:shard_state -- a clustered xkmsd waits for its shard's leader
 //     before serving (Server.waitForClusterLeader); the leader query is a
 //     shard-state read.
-//   - users:create, users:read, users:update, users:delete -- the WebAuthn relying party manages its accounts.
+//   - users:create, users:read, users:update -- the WebAuthn relying party's ceremonies read, create and update accounts.
 var grant = []qrdbsdk.Permission{
 	"kv:get",
 	"kv:put",
@@ -72,7 +72,6 @@ var grant = []qrdbsdk.Permission{
 	"users:create",
 	"users:read",
 	"users:update",
-	"users:delete",
 }
 
 var registerOnce sync.Once
