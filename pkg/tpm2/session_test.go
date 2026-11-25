@@ -486,6 +486,58 @@ func TestSaveKeyPair_StaleRecoveryPrivateSwapDoesNotStrandTheOwner(t *testing.T)
 	require.Equal(t, "public-B/private-B", string(gotPub)+"/"+string(gotPriv))
 }
 
+// TestSaveKeyPair_PausedRecoveryDoesNotOverwriteAWinnerReusingThePrivateBlob:
+// B fences an incomplete pair (private A) and pauses at its private swap; C
+// takes the fence over and commits public C with the same private bytes A.
+// B, released, must not swap its private blob in beside C's public blob.
+func TestSaveKeyPair_PausedRecoveryDoesNotOverwriteAWinnerReusingThePrivateBlob(t *testing.T) {
+	_, sim := createSim(t, false)
+	defer func() { _ = sim.Close() }()
+	tpmImpl := sim.(*TPM2)
+
+	factory, err := store.NewMemoryStorageFactory(slog.Default())
+	require.NoError(t, err)
+	defer func() { _ = factory.Close() }()
+	shared := factory.KeyBackend()
+
+	attrs := &types.KeyAttributes{
+		CN:      "reused-private-recovery-key",
+		KeyType: types.KeyTypeTPM,
+		Parent: &types.KeyAttributes{CN: "parent", KeyType: types.KeyTypeStorage,
+			TPMAttributes: &types.TPMAttributes{
+				Handle: tpm2.TPMHandle(0x81000001),
+				Name:   tpm2.TPM2BName{Buffer: []byte{0x00, 0x0b}},
+			}},
+	}
+	require.NoError(t, shared.Save(attrs, []byte("private-A"), store.FSEXT_PRIVATE_BLOB, false))
+
+	paused := &pausingKeyBackend{KeyBackend: shared, reached: make(chan struct{}), release: make(chan struct{})}
+	var releaseOnce sync.Once
+	releaseB := func() { releaseOnce.Do(func() { close(paused.release) }) }
+	t.Cleanup(releaseB)
+
+	bDone := make(chan error, 1)
+	go func() {
+		bDone <- tpmImpl.SaveKeyPair(attrs, tpm2.TPM2BPrivate{Buffer: []byte("private-B")},
+			tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-B")), paused, false)
+	}()
+	<-paused.reached
+
+	require.NoError(t, tpmImpl.SaveKeyPair(attrs, tpm2.TPM2BPrivate{Buffer: []byte("private-A")},
+		tpm2.BytesAs2B[tpm2.TPMTPublic]([]byte("public-C")), shared, false),
+		"C must take the stalled recovery over")
+
+	releaseB()
+	require.ErrorIs(t, <-bDone, store.ErrBlobExists, "B lost its fence and must not commit")
+
+	gotPriv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	require.Equal(t, "public-C/private-A", string(gotPub)+"/"+string(gotPriv),
+		"B must not swap its private blob in beside C's public blob")
+}
+
 func TestSaveKeyPairWithNilBackend(t *testing.T) {
 	logger, tpm := createSim(t, false)
 	defer func() { _ = tpm.Close() }()
