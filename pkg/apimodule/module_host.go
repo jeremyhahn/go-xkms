@@ -172,9 +172,12 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 			// disabled, auth.NewNodeAuthorizer for its node's
 			// full-identity decision) is its choice and is kept.
 			if x.Authorizer() == nil {
-				if m.tenantTarget != nil {
+				switch {
+				case m.authDisabled:
+					x.SetAuthorizer(auth.NewAuthorizer(nil))
+				case m.tenantTarget != nil:
 					x.SetAuthorizer(auth.NewHostAuthorizer(client.RBAC(), m.tenantTarget))
-				} else {
+				default:
 					x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
 				}
 			}
