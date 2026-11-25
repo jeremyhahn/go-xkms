@@ -198,25 +198,31 @@ func skipCell(t *testing.T, name, reason string) {
 	t.Run(name, func(t *testing.T) { t.Skip(reason) })
 }
 
+// setupFailer is the part of testing.TB the setup output checks use.
+type setupFailer interface {
+	Helper()
+	Fatalf(format string, args ...any)
+}
+
 // setupID returns the "id" a setup cell printed. A setup cell that exited
 // zero must print valid JSON with a nonempty ID; when it does not, the
-// workflow fails here, so the dependent cells it then skips are never a
-// silent loss of coverage. A cell that failed already failed its subtest.
-func (w *secretsWorkflow) setupID(t *testing.T, name, out string, passed bool) string {
+// workflow stops here, so its dependent cells are never skipped for a cell
+// that passed. A cell that failed already failed its subtest.
+func (w *secretsWorkflow) setupID(t setupFailer, name, out string, passed bool) string {
 	t.Helper()
 	return w.setupField(t, name, "id", out, passed)
 }
 
 // setupField is setupID for any JSON field: a passing producer cell must
-// print the field nonempty, or the workflow fails here with its stdout.
-func (w *secretsWorkflow) setupField(t *testing.T, name, field, out string, passed bool) string {
+// print the field nonempty, or the workflow stops here with its stdout.
+func (w *secretsWorkflow) setupField(t setupFailer, name, field, out string, passed bool) string {
 	t.Helper()
 	if !passed {
 		return ""
 	}
 	value := jsonValue(out, field)
 	if value == "" {
-		t.Errorf("[%s] %s exited zero without a JSON response carrying a nonempty %s\nstdout: %s",
+		t.Fatalf("[%s] %s exited zero without a JSON response carrying a nonempty %s\nstdout: %s",
 			w.protocol, name, field, out)
 	}
 	return value
