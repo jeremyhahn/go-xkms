@@ -289,6 +289,24 @@ func createRootOnlyTestCA(t *testing.T) ca.TCGCA {
 // single tenant identity authority, so every test that exercises
 // CreateTenant/GetTenant/UpdateTenant/DeleteTenant/ListTenants needs one
 // wired; the tenantDAO remains available for the CA/EAB/status linkage row.
+// newFirstBootTenantAwareTestService runs over a qrdb node seeded by the production first-boot path.
+func newFirstBootTenantAwareTestService(t *testing.T) (*TenantAwareAdminService, *testutil.FirstBootNode) {
+	t.Helper()
+
+	kv, err := kvadapter.New(xkmsstorage.NewMemory())
+	require.NoError(t, err)
+
+	factory, err := acmeobjstore.NewTenantAwareFactoryFromKVStore(kv)
+	require.NoError(t, err)
+
+	node, err := testutil.NewFirstBootNode(t)
+	require.NoError(t, err)
+
+	svc := mustTenantAwareAdminService(t, nil, factory, node.Client(), slog.Default(), "1.0.0")
+	svc.SetTenantService(newFakeTenantServicer())
+	return svc, node
+}
+
 func newTenantAwareTestService(t *testing.T) *TenantAwareAdminService {
 	t.Helper()
 
