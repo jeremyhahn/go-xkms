@@ -37,7 +37,9 @@ func TestKeyDecrypt_PaddingDefaultsToOAEPSHA256(t *testing.T) {
 		wantHash    string
 	}{
 		{name: "default", flags: nil, wantPadding: "oaep", wantHash: "sha256"},
-		{name: "oaep-sha256", flags: map[string]string{"padding": "oaep-sha256"}, wantPadding: "oaep", wantHash: "sha256"},
+		{name: "oaep", flags: map[string]string{"padding": "oaep"}, wantPadding: "oaep", wantHash: "sha256"},
+		{name: "oaep-sha384", flags: map[string]string{"padding": "oaep", "hash": "sha384"}, wantPadding: "oaep", wantHash: "sha384"},
+		{name: "pkcs1v15 ignores hash", flags: map[string]string{"padding": "pkcs1v15", "hash": "sha384"}, wantPadding: "pkcs1v15", wantHash: ""},
 		{name: "pkcs1v15", flags: map[string]string{"padding": "pkcs1v15"}, wantPadding: "pkcs1v15", wantHash: ""},
 	}
 	for _, tc := range cases {
@@ -56,7 +58,7 @@ func TestKeyDecrypt_PaddingDefaultsToOAEPSHA256(t *testing.T) {
 // TestKeyDecrypt_UnknownPaddingFailsBeforeRequest pins that an unknown
 // --padding value exits 1 with the typed error before any client is built.
 func TestKeyDecrypt_UnknownPaddingFailsBeforeRequest(t *testing.T) {
-	_, _, err := decryptPaddingOptions("bogus")
+	_, _, err := decryptPaddingOptions("bogus", "sha256")
 	var perr *DecryptPaddingError
 	require.ErrorAs(t, err, &perr)
 	assert.Equal(t, "bogus", perr.Value)
@@ -85,7 +87,7 @@ func TestKeyDecrypt_UnknownPaddingFailsBeforeRequest(t *testing.T) {
 	_, sent := mock.requests["decrypt"]
 	assert.False(t, sent, "no decrypt request is sent")
 	assert.Contains(t, stderr, "bogus")
-	assert.Contains(t, stderr, "oaep-sha256")
+	assert.Contains(t, stderr, "oaep")
 	assert.Contains(t, stderr, "pkcs1v15")
 }
 

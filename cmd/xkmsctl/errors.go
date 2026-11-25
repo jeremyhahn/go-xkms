@@ -858,7 +858,7 @@ var (
 	ErrInvalidKeyVersion = errors.New("invalid key version: must be a positive integer")
 
 	// ErrInvalidDecryptPadding is returned (inside a *DecryptPaddingError)
-	// for a key decrypt --padding value that is not oaep-sha256 or pkcs1v15.
+	// for a key decrypt --padding value that is not oaep or pkcs1v15.
 	ErrInvalidDecryptPadding = errors.New("invalid --padding")
 
 	// ErrSOPINRequired is the sentinel error "--so-pin is required".
@@ -1515,7 +1515,7 @@ type DecryptPaddingError struct {
 // Error renders the rejected value and the accepted values.
 func (e *DecryptPaddingError) Error() string {
 	return fmt.Sprintf("%s %q (accepted: %s, %s)", ErrInvalidDecryptPadding.Error(), e.Value,
-		decryptPaddingOAEPSHA256, decryptPaddingPKCS1v15)
+		decryptPaddingOAEP, decryptPaddingPKCS1v15)
 }
 
 // Unwrap exposes ErrInvalidDecryptPadding to errors.Is.
