@@ -10,26 +10,6 @@ import (
 // in a recipe line.
 var apiRunFlag = regexp.MustCompile(`\./test/integration/api/\.\.\.[^"]*?-run '([^']*)'`)
 
-// makeRecipe returns the tab-indented recipe lines of target.
-func makeRecipe(makefile, target string) []string {
-	lines := strings.Split(makefile, "\n")
-	head := regexp.MustCompile(`^` + regexp.QuoteMeta(target) + `[ \t]*:([^=]|$)`)
-	var out []string
-	for i, line := range lines {
-		if !head.MatchString(line) {
-			continue
-		}
-		for _, body := range lines[i+1:] {
-			if !strings.HasPrefix(body, "\t") {
-				break
-			}
-			out = append(out, body)
-		}
-		break
-	}
-	return out
-}
-
 // apiRunRegexes walks target and its prerequisites and returns, per reached
 // target, the -run regexes its recipe passes to go test over
 // ./test/integration/api/....
@@ -47,7 +27,8 @@ func apiRunRegexes(t *testing.T, makefile, target string) map[string][]string {
 		if !ok {
 			return
 		}
-		for _, line := range makeRecipe(makefile, name) {
+		recipe, _ := makeRecipe(makefile, name)
+		for _, line := range strings.Split(recipe, "\n") {
 			for _, m := range apiRunFlag.FindAllStringSubmatch(line, -1) {
 				found[name] = append(found[name], m[1])
 			}
