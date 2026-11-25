@@ -1146,6 +1146,8 @@ test-scripts:
 	@bash test/scripts/ci-registry.test.sh
 	@bash test/scripts/build-web-deps.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
+	@bash test/scripts/touched-features.test.sh
+	@bash test/scripts/touched-packages.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 # test-buildgates: the CI tier gate (#1483) -- every ci.yml job is in CI Gate
@@ -5166,13 +5168,8 @@ AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/do
 integration-test-bootstrap: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
-	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,bootstrap) run --build --rm test || { rc=$$?; \
-		echo "$(RED)✗ bootstrap stack failed (rc=$$rc): ps, xkms-server logs and health follow$(RESET)"; \
-		$(call compose,bootstrap) ps -a; \
-		$(call compose,bootstrap) logs --no-color --tail=400 xkms-server 2>&1 | grep -v 'PRIVATE KEY'; \
-		docker inspect --format '{{json .State.Health}}' $$($(call compose,bootstrap) ps -aq xkms-server); \
-		exit $$rc; }
+	@cd test/integration/bootstrap && trap 'rc=$$?; if [ $$rc -ne 0 ]; then echo "--- xkms-server log ---"; $(call compose,bootstrap) logs --no-color --tail=200 xkms-server; echo "--- xkms-server health ---"; docker inspect --format "{{json .State.Health}}" $$($(call compose,bootstrap) ps -aq xkms-server) || true; fi; $(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1; trap - EXIT; exit $$rc' EXIT INT TERM && \
+		$(call compose,bootstrap) run --build --rm test
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
 .PHONY: integration-test-acmeadmin
@@ -5578,6 +5575,19 @@ integration_dir = $(or $(wildcard ./test/integration/$(1)),$(error ./test/integr
 # simulator and fail without it, so the per-package targets that reach them
 # build it first, as test-go, race and coverage-full do.
 test-acme coverage-acme: agsim
+
+# Unit tests of one package directory under the unit-test flags and tags
+# ($(TEST_FLAGS), from $(TEST_TAGS)) (handbook testing-guidelines.md
+# section 4): make test-pkg PKG=pkg/acme/admin.
+# scripts/touched-packages.sh <base> <tip> prints the PKG values a diff needs.
+.PHONY: test-pkg
+test-pkg: $(if $(filter pkg/acme/%,$(PKG)/),agsim)
+	@if [ -z "$(PKG)" ] || [ ! -d "./$(PKG)" ]; then \
+		echo "usage: make test-pkg PKG=<package dir>, e.g. PKG=pkg/acme/admin" >&2; exit 2; \
+	fi
+	@echo "$(CYAN)→ Running tests for ./$(PKG)...$(RESET)"
+	@$(GO) test $(TEST_FLAGS) ./$(PKG)
+	@echo "$(GREEN)✓ Tests passed for ./$(PKG)$(RESET)"
 
 # Dynamic test target for individual packages and binaries
 # Usage: make test-backend, make test-xkms, make test-xkmsd, etc.

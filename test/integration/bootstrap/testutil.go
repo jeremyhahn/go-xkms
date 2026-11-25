@@ -17,6 +17,7 @@ package bootstrap
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"os"
 	"sync"
@@ -37,6 +38,9 @@ const (
 	EnvHostname  = "BOOTSTRAP_HOSTNAME"
 	EnvSPKIPin   = "BOOTSTRAP_SPKI_PIN"
 	EnvTLSCA     = "BOOTSTRAP_TLS_CA"
+	// EnvAdminCert and EnvAdminKey name the first-boot administrator's mTLS
+	// pair xkmsd writes into its datastore.path: the admin API requires
+	// authentication.
 	EnvAdminCert = "BOOTSTRAP_ADMIN_CERT"
 	EnvAdminKey  = "BOOTSTRAP_ADMIN_KEY"
 
@@ -102,20 +106,44 @@ func fetchBootstrapKeys(t *testing.T) (*transport.BootstrapListenerKeysResponse,
 
 // newSDKTransport creates a connected REST transport pointing at the
 // integration-test xkms-server. It is closed by t.Cleanup.
+// adminTLSConfig builds the suite's client TLS config. The admin pair is issued
+// by the first-boot TrustedCA, which the server does not advertise when
+// tls.server_cn is unset, so crypto/tls would withhold a pair held in Certificates.
+func adminTLSConfig(certFile, keyFile, caFile string) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return nil, err
+	}
+	pool, err := transport.LoadCertPool(caFile)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		RootCAs:    pool,
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			return &cert, nil
+		},
+	}, nil
+}
+
 func newSDKTransport(t *testing.T) *rest.Transport {
 	t.Helper()
 
 	serverURL := requiredEnv(t, EnvServerURL)
 	caFile := requiredEnv(t, EnvTLSCA)
-	// The admin routes (bootstrap key discovery among them) authenticate
-	// with mTLS: present the administrator client credential the harness
-	// generated and bound (scripts/enrol-admin-client.sh).
 	certFile := requiredEnv(t, EnvAdminCert)
 	keyFile := requiredEnv(t, EnvAdminKey)
+	waitForFiles(t, 60*time.Second, certFile, keyFile)
+
+	cfg, err := adminTLSConfig(certFile, keyFile, caFile)
+	if err != nil {
+		t.Fatalf("build admin TLS config: %v", err)
+	}
 
 	tr, err := rest.New(
 		transport.WithAddress(serverURL),
-		transport.WithMTLS(certFile, keyFile, caFile),
+		transport.WithTLSConfig(cfg),
 	)
 	if err != nil {
 		t.Fatalf("create REST transport: %v", err)
@@ -130,6 +158,24 @@ func newSDKTransport(t *testing.T) *rest.Transport {
 
 	t.Cleanup(func() { tr.Close() })
 	return tr
+}
+
+// waitForFiles waits until every path exists: xkmsd writes the admin
+// credential during first boot, which can trail its health check.
+func waitForFiles(t *testing.T, timeout time.Duration, paths ...string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for _, p := range paths {
+		for {
+			if _, err := os.Stat(p); err == nil {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("%s did not appear within %s", p, timeout)
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 }
 
 // requiredEnv reads a harness-supplied environment variable.
