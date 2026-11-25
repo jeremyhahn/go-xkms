@@ -987,6 +987,44 @@ func TestActivateInvitePIV_RejectedChainLeavesInvitationRedeemable(t *testing.T)
 	assert.Len(t, f.certBindings(inviteFixtureQRDBUserID), 1)
 }
 
+// TestActivateInvitePIV_FailedActivationLeavesInvitationRedeemable: a
+// storage error in the certificate-binding activation spends no invitation,
+// so the invitee can retry with the same token.
+func TestActivateInvitePIV_FailedActivationLeavesInvitationRedeemable(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+
+	caCert, leafCert, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+	activate := f.users.activateWithCertBinding
+	errStorage := errors.New("storage unavailable")
+	failed := false
+	f.users.activateWithCertBinding = func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+		if !failed {
+			failed = true
+			return nil, errStorage
+		}
+		return activate(ctx, userID, thumbprint, notAfterUnix)
+	}
+
+	_, err = f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+	require.ErrorIs(t, err, errStorage)
+	assert.Empty(t, f.certBindings(inviteFixtureQRDBUserID))
+
+	_, err = f.getInvite(inviteFixtureTenant, token)
+	require.NoError(t, err, "a failed activation must not spend the invitation")
+
+	result, err := f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+	require.NoError(t, err)
+	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+	assert.Len(t, f.certBindings(inviteFixtureQRDBUserID), 1)
+
+	_, err = f.getInvite(inviteFixtureTenant, token)
+	require.ErrorIs(t, err, ErrInviteUnusable, "a confirmed activation redeems the invitation")
+}
+
 // A certificate the CA trusts but that names another tenant (here a
 // system-tenant certificate presented with an acme-tenant invitation) is
 // refused before anything is claimed or bound: PIV login derives the tenant
