@@ -20,7 +20,6 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
-	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"

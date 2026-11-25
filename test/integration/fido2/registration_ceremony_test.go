@@ -65,10 +65,6 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 		rpOrigin      = "https://localhost"
 	)
 
-	// The ceremony drives the public BeginRegistration entry point, which
-	// refuses a new account unless the RP opts in (allow_public_registration
-	// defaults to disabled, #198), so the fixture opts in.
-	allowPublic := true
 	stores := webauthntest.NewStores(t)
 	// The ceremony enrolls a new account through the public sign-up path.
 	allowPublicRegistration := true

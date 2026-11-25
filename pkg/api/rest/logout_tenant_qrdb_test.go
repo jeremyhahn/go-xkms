@@ -46,10 +46,10 @@ func refreshFamilyAndJTI(t *testing.T, refreshToken string) (string, string) {
 func TestAuthLogout_FromNonSystemTenant_RevokesOnTheEmbeddedNode(t *testing.T) {
 	node := barriertest.NewPrincipalNode(t)
 	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
-		Backend:        newMockKeyStore(),
-		BackendName:    "test",
-		QRDBClient:     node.Client(),
-		CallContext:    node.ServiceContext,
+		Backend:     newMockKeyStore(),
+		BackendName: "test",
+		QRDBClient:  node.Client(),
+		CallContext: node.ServiceContext,
 	})
 	require.NoError(t, err)
 	server := newAuthTestServer(t, func(cfg *Config) { cfg.TokenIssuer = issuer })
