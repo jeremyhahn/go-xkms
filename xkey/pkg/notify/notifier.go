@@ -33,7 +33,8 @@ import (
 // TouchRequest contains information about a pending touch request that
 // triggered the notification.
 type TouchRequest struct {
-	// Operation is the WebAuthn ceremony type ("register" or "authenticate").
+	// Operation is the ceremony type ("register", "authenticate", or
+	// "select" for CTAP 2.1 authenticatorSelection).
 	Operation string
 
 	// RPID is the relying party identifier (e.g. "example.com").
@@ -44,6 +45,21 @@ type TouchRequest struct {
 
 	// UserName is the display name of the user being prompted.
 	UserName string
+
+	// AuthenticatorName names the authenticator asking for the touch, so a
+	// user with several authenticators can tell which one it is.
+	AuthenticatorName string
+
+	// RequestID identifies the presence request this notification is for. A
+	// notifier that approves on the user's behalf (a dialog running
+	// "xkey touch") passes it on, so a late approval resolves only this
+	// request and never one that became pending after it ended.
+	RequestID string
+
+	// Done is closed when the presence request ends (approved, denied,
+	// timed out or cancelled). A notifier that keeps a prompt open stops it
+	// then. Nil means the request carries no lifetime.
+	Done <-chan struct{}
 }
 
 // Notifier defines the interface for sending touch-required notifications

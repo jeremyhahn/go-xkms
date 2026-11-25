@@ -204,6 +204,28 @@ func (s *Server) upgradeUnifiedTLSCert(bundle caBundleSource) error {
 	return nil
 }
 
+// trustUnifiedCAClients installs the client-CA pool computed by
+// unifiedClientCAPool -- the operator-configured client CAs plus the
+// composed CA's bundle -- without swapping the serving certificate. It is
+// the operator cert_file path (no server_cn): the operator's certificate
+// keeps serving, and clients holding a certificate the CA issued (the
+// first-boot administrator's) are requested and verified. A failure leaves
+// the previous pool serving.
+func (s *Server) trustUnifiedCAClients(bundle caBundleSource) error {
+	s.mu.Lock()
+	provider := s.unifiedTLS
+	s.mu.Unlock()
+	if provider == nil || bundle == nil {
+		return nil
+	}
+	pool, err := s.unifiedClientCAPool(bundle)
+	if err != nil {
+		return err
+	}
+	provider.clientCAs.Store(pool)
+	return nil
+}
+
 // persistUnifiedCABundle writes the CA bundle that verifies the CA-issued
 // serving certificate to unifiedCABundleFile, beside the persisted bootstrap
 // certificate and with the same owner-only permissions.

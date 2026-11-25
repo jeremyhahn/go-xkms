@@ -171,7 +171,20 @@ type CTAPHIDHandler struct {
 	// sends CTAPHID_CANCEL.
 	cancelCBOR context.CancelFunc
 
+	// earlyCancel records a CTAPHID_CANCEL that Submit routed to the report
+	// in flight on earlyCancelCID before its command had set cancelCBOR;
+	// processCBORCommandLocked honours it when the command starts.
+	earlyCancel    bool
+	earlyCancelCID uint32
+
 	mu sync.Mutex
+
+	// Submit's dispatch state, guarded by dispatchMu (taken before mu).
+	dispatchMu      sync.Mutex
+	dispatchQueue   [][]byte
+	dispatchRunning bool
+	dispatchBusy    bool
+	dispatchCID     uint32
 }
 
 // NewCTAPHIDHandler creates a new CTAP-HID handler wrapping an authenticator.
@@ -229,6 +242,86 @@ func (h *CTAPHIDHandler) HandleMessage(data []byte) {
 		h.handleInitPacket(cid, cmdOrSeq, data)
 	} else {
 		h.handleContPacket(cid, cmdOrSeq, data)
+	}
+}
+
+// Submit hands one host output report to the handler without blocking the
+// caller for the command it completes. A transport's read loop calls it so
+// it keeps reading while a command waits for user presence: reports are
+// processed in arrival order on one dispatch goroutine, one at a time, and a
+// CTAPHID_CANCEL for the channel whose report is in flight goes straight to
+// that command instead of queueing behind it (CTAP 2.1 §11.2.9.1.5).
+func (h *CTAPHIDHandler) Submit(data []byte) {
+	if h.closed.Load() {
+		return
+	}
+	pkt := append([]byte(nil), data...)
+
+	h.dispatchMu.Lock()
+	if len(pkt) >= HIDPacketSize && pkt[4] == CTAPHIDCancel {
+		cid := binary.BigEndian.Uint32(pkt[0:4])
+		if h.dispatchBusy && h.dispatchCID == cid && !h.queuedForLocked(cid) {
+			h.mu.Lock()
+			early := h.cancelCBOR == nil
+			if early {
+				h.earlyCancel = true
+				h.earlyCancelCID = cid
+			}
+			h.mu.Unlock()
+			h.dispatchMu.Unlock()
+			if !early {
+				h.HandleMessage(pkt)
+			}
+			return
+		}
+	}
+	h.dispatchQueue = append(h.dispatchQueue, pkt)
+	if !h.dispatchRunning {
+		h.dispatchRunning = true
+		go h.drainDispatch()
+	}
+	h.dispatchMu.Unlock()
+}
+
+// queuedForLocked reports whether a report on cid waits in the dispatch
+// queue. The caller holds dispatchMu.
+func (h *CTAPHIDHandler) queuedForLocked(cid uint32) bool {
+	for _, q := range h.dispatchQueue {
+		if binary.BigEndian.Uint32(q[0:4]) == cid {
+			return true
+		}
+	}
+	return false
+}
+
+// drainDispatch processes queued reports in order until the queue is empty.
+func (h *CTAPHIDHandler) drainDispatch() {
+	for {
+		h.dispatchMu.Lock()
+		if len(h.dispatchQueue) == 0 {
+			h.dispatchRunning = false
+			h.dispatchMu.Unlock()
+			return
+		}
+		pkt := h.dispatchQueue[0]
+		h.dispatchQueue[0] = nil
+		h.dispatchQueue = h.dispatchQueue[1:]
+		h.dispatchBusy = true
+		if len(pkt) >= 4 {
+			h.dispatchCID = binary.BigEndian.Uint32(pkt[0:4])
+		}
+		h.dispatchMu.Unlock()
+
+		h.HandleMessage(pkt)
+
+		h.dispatchMu.Lock()
+		h.dispatchBusy = false
+		h.mu.Lock()
+		// A cancel aimed at a report that started no command has nothing
+		// left to end.
+		h.earlyCancel = false
+		h.mu.Unlock()
+		h.dispatchMu.Unlock()
 	}
 }
 
@@ -529,8 +622,15 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 
 	// Create a cancellable context for this CBOR command. CTAPHID_CANCEL
 	// calls h.cancelCBOR() to abort blocking operations like user presence.
-	ctx, cancel := context.WithCancel(context.Background())
+	// The context carries the channel ID: a presence grant from an approved
+	// authenticatorSelection is bound to the channel it arrived on.
+	ctx, cancel := context.WithCancel(WithCTAPHIDChannel(context.Background(), cid))
 	h.cancelCBOR = cancel
+	if h.earlyCancel && h.earlyCancelCID == cid {
+		// The host cancelled this command while its report was in flight.
+		h.earlyCancel = false
+		cancel()
+	}
 
 	// Multi-authenticator coexistence: when this authenticator has no
 	// matching credentials for a GetAssertion request AND the request
@@ -565,6 +665,12 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 
 	if cmd == CmdGetAssertion && parseable && !hasMatch && !hasPINAuth && !isU2FAppID(assertionRPID) {
 		debugHIDLog("processCBORCommandLocked: GetAssertion no matching credentials, deferring until CANCEL")
+		// This GetAssertion never reaches ProcessCBORWithContext, so apply
+		// its Selection grant rules here: a command from another channel
+		// ends the grant, and the credential operation ends it on whatever
+		// status the deferral answers.
+		h.authenticator.dropForeignPresenceGrant(ctx)
+		defer h.authenticator.endPresenceGrantAfter()()
 		if h.logger != nil {
 			h.logger.Info("GetAssertion: no matching credentials, waiting for CTAPHID_CANCEL",
 				slog.String("cid", fmt.Sprintf("0x%08X", cid)),
@@ -634,7 +740,8 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 	//     required) and the authenticator is waiting for a physical touch.
 	keepaliveDone := make(chan struct{})
 	var keepaliveWG sync.WaitGroup
-	if cmd == CmdMakeCredential || cmd == CmdGetAssertion {
+	//   - authenticatorSelection always waits for a touch (CTAP 2.1 §6.9).
+	if cmd == CmdMakeCredential || cmd == CmdGetAssertion || cmd == CmdSelection {
 		keepaliveStatus := byte(KeepaliveStatusUpNeeded)
 		if h.authenticator.NeedsPINBeforeTouch(cmd, data) {
 			keepaliveStatus = KeepaliveStatusProcessing

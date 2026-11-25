@@ -232,6 +232,16 @@ type Authenticator struct {
 	// acquisitions for the whole command, including any user-presence wait.
 	cmdMu sync.Mutex
 
+	// grantMu guards presenceGrant: the one-shot presence an approved
+	// authenticatorSelection leaves for the next MakeCredential or
+	// GetAssertion on the same CTAPHID channel (see presence_grant.go).
+	grantMu       sync.Mutex
+	presenceGrant *selectionGrant
+
+	// grantClock returns the current time for presenceGrant expiry. Nil
+	// means time.Now; tests replace it.
+	grantClock func() time.Time
+
 	// poweredUpAt is when this authenticator instance came up. It bounds the
 	// trust-on-first-use window for token initialization (CTAP 2.1 §6.9); for a
 	// software authenticator a power cycle is a process restart.
@@ -477,6 +487,20 @@ func (a *Authenticator) RPPolicyStore() RPPolicyStore {
 
 // requestUserPresence requests user presence confirmation via the configured handler.
 func (a *Authenticator) requestUserPresence(ctx context.Context, rpID, rpName, userName, operation string) error {
+	// An approved authenticatorSelection on this CTAPHID channel, moments
+	// ago, already collected this presence (presence_grant.go).
+	if grantableOperation(operation) && a.consumePresenceGrant(ctx) {
+		if a.logger != nil {
+			a.logger.Info("user presence satisfied by the preceding Selection",
+				slog.String("operation", operation))
+		}
+		return nil
+	}
+	return a.askUserPresence(ctx, rpID, rpName, userName, operation)
+}
+
+// askUserPresence prompts the configured UserPresenceHandler once.
+func (a *Authenticator) askUserPresence(ctx context.Context, rpID, rpName, userName, operation string) error {
 	// Read the handler once, under the lock. SetUserPresenceHandler runs on the
 	// UI goroutine while a CTAP command may be in flight on the transport
 	// goroutine, and an interface value is two words — an unsynchronized read
@@ -491,11 +515,12 @@ func (a *Authenticator) requestUserPresence(ctx context.Context, rpID, rpName, u
 	}
 
 	req := &UserPresenceRequest{
-		RPID:      rpID,
-		RPName:    rpName,
-		UserName:  userName,
-		Operation: operation,
-		Timeout:   a.config.UserPresenceTimeout,
+		RPID:              rpID,
+		RPName:            rpName,
+		UserName:          userName,
+		Operation:         operation,
+		AuthenticatorName: a.displayName(),
+		Timeout:           a.config.UserPresenceTimeout,
 	}
 
 	if a.logger != nil {
@@ -514,7 +539,7 @@ func (a *Authenticator) requestUserPresence(ctx context.Context, rpID, rpName, u
 		}
 		return err
 	}
-	if !result.Approved {
+	if result == nil || !result.Approved {
 		return ErrUserPresenceRequired
 	}
 	return nil
@@ -572,8 +597,18 @@ func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, da
 	a.cmdCtx.Store(&cmdCtxHolder{ctx: ctx})
 	defer a.cmdCtx.Store(nil)
 
+	// A Selection grant is bound to one CTAPHID channel: any command from
+	// another channel ends it.
+	a.dropForeignPresenceGrant(ctx)
+	if credentialOperation(cmd) {
+		defer a.endPresenceGrantAfter()()
+	}
+
 	response, err := a.dispatchCommand(cmd, data)
 	if err != nil {
+		if presenceEndsGrant(err) {
+			a.clearPresenceGrant()
+		}
 		return a.errorResponseFromError(err), err
 	}
 
@@ -1147,16 +1182,23 @@ func errorToStatus(err error) byte {
 }
 
 func (a *Authenticator) handleSelection() ([]byte, error) {
-	// CTAP2.1 authenticatorSelection: indicates the authenticator is present
-	// and ready. For a virtual authenticator, always auto-approve — the user
-	// selected xkey by having it running. Requiring touch here would create a
-	// redundant interaction before the PIN dialog, causing the user to
-	// experience touch→PIN→touch instead of just PIN→touch.
+	// CTAP 2.1 §6.9 authenticatorSelection: a platform sends it to every
+	// connected authenticator and uses the one the user touches, so the
+	// answer waits for user presence. Answering at once would make xkey win
+	// every choice and hide the user's hardware keys (#2345).
 	//
-	// The user intent check feature (EnableUserIntentCheck) is implemented in
-	// MakeCredential/GetAssertion where it shows a touch dialog BEFORE
-	// returning ErrPINRequired, giving multi-authenticator users a chance to
-	// decline without an extra Selection-level prompt.
+	// While it waits the CTAPHID transport sends UP_NEEDED keepalives. An
+	// approval returns CTAP2_OK; a decline CTAP2_ERR_OPERATION_DENIED; no
+	// answer CTAP2_ERR_USER_ACTION_TIMEOUT; CTAPHID_CANCEL (another
+	// authenticator was touched) CTAP2_ERR_KEEPALIVE_CANCEL and closes the
+	// prompt through the cancelled context.
+	//
+	// The approved touch is granted to the next MakeCredential or
+	// GetAssertion on the same channel within SelectionPresenceWindow, so
+	// choosing xkey does not cost a second touch after the PIN.
+	if err := a.waitForSelectionPresence(a.commandContext(), "", "", "", PresenceOperationSelect); err != nil {
+		return nil, err
+	}
 	return a.successResponse(nil), nil
 }
 

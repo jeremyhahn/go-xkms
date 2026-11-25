@@ -130,7 +130,7 @@ func (t *Transport) transportCredentialsOption() (grpc.DialOption, error) {
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to load client certificate", Err: err}
 		}
-		tlsConfig.Certificates = []tls.Certificate{cert}
+		transport.PresentClientCertificate(tlsConfig, cert)
 	}
 
 	if t.config.SPKIPin != "" {

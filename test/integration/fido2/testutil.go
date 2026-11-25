@@ -239,7 +239,15 @@ func (tc *TestConfig) RequireDevice(t *testing.T) {
 	if !tc.CheckDeviceAvailable(t) {
 		t.Log("No hardware FIDO2 device detected; falling back to virtual FIDO2 device")
 		tc.useVirtual = true
+		// xkmsctl subprocesses started by the CLI tests read the same switch.
+		t.Setenv("FIDO2_USE_VIRTUAL", "true")
 		tc.PIN = "" // Virtual devices don't support client-side PIN protocol
+	}
+	if tc.useVirtual {
+		// The CLI-exec tests run xkmsctl as a child process: it inherits
+		// this switch and serves the same virtual authenticator through
+		// cmd/xkmsctl/fido2_virtual.go instead of enumerating hidraw.
+		t.Setenv("FIDO2_USE_VIRTUAL", "true")
 	}
 }
 

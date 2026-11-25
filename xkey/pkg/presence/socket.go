@@ -17,6 +17,8 @@ package presence
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"log/slog"
 	"sync/atomic"
 
@@ -29,8 +31,18 @@ import (
 // channel. The channel capacity of 1 prevents goroutine leaks when a timeout
 // fires before Approve or Deny is called.
 type pendingPresenceRequest struct {
+	id       string
 	request  *authenticator.UserPresenceRequest
 	resultCh chan *authenticator.UserPresenceResult
+}
+
+// newPresenceRequestID returns a random identifier for one presence request.
+func newPresenceRequestID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // SocketHandler implements authenticator.UserPresenceHandler for daemon mode. Instead of
@@ -103,7 +115,12 @@ func (h *SocketHandler) RequestUserPresence(ctx context.Context, req *authentica
 		return nil, auditErr
 	}
 
+	id, idErr := newPresenceRequestID()
+	if idErr != nil {
+		return nil, idErr
+	}
 	pending := &pendingPresenceRequest{
+		id:       id,
 		request:  req,
 		resultCh: make(chan *authenticator.UserPresenceResult, 1),
 	}
@@ -116,6 +133,11 @@ func (h *SocketHandler) RequestUserPresence(ctx context.Context, req *authentica
 			RPID:      req.RPID,
 			RPName:    req.RPName,
 			UserName:  req.UserName,
+
+			AuthenticatorName: req.AuthenticatorName,
+
+			RequestID: id,
+			Done:      timeoutCtx.Done(),
 		}
 		if err := h.notifier.NotifyTouchRequired(touchReq); err != nil {
 			h.logger.Warn("failed to send touch notification",
@@ -191,6 +213,21 @@ func (h *SocketHandler) HasPending() bool {
 func (h *SocketHandler) Approve() bool {
 	pending := h.pendingReq.Load()
 	if pending == nil {
+		return false
+	}
+	if !h.pendingReq.CompareAndSwap(pending, nil) {
+		return false
+	}
+	pending.resultCh <- &authenticator.UserPresenceResult{Approved: true}
+	return true
+}
+
+// ApproveRequest approves the pending request only if its ID is id. An
+// approval issued for a request that has since ended (its dialog was
+// answered late) finds a different ID or none and resolves nothing.
+func (h *SocketHandler) ApproveRequest(id string) bool {
+	pending := h.pendingReq.Load()
+	if pending == nil || id == "" || pending.id != id {
 		return false
 	}
 	if !h.pendingReq.CompareAndSwap(pending, nil) {

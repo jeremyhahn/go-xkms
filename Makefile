@@ -348,6 +348,13 @@ COMPOSE_NS := go-xkms-$(COMPOSE_RUN_ID)
 #                         silently falling back to its directory basename.
 compose = COMPOSE_PROJECT_NAME=$(COMPOSE_NS)-$(1) docker compose -p $(COMPOSE_NS)-$(1)
 
+# Appended to an integration recipe's `$(call compose,<stack>) run ...` line:
+# when the run fails, print the stack's container logs (the server's start
+# error among them) before the EXIT trap tears the stack down, then keep the
+# run's non-zero exit status. Without it a server that exits at start shows
+# only "dependency failed to start" (issue #2232).
+compose_logs_on_fail = || { rc=$$?; echo "$(RED)✗ $(1) stack failed (exit $$rc); container logs:$(RESET)"; $(call compose,$(1)) logs --no-color --tail=400 || true; exit $$rc; }
+
 # An image TAG is daemon-global -- the project namespace does not reach it.
 # `docker build -t go-xkms-integration:latest` on one job retags that name for
 # every job on the host, so two runs building different commits race between
@@ -1965,7 +1972,7 @@ integration-test-storage-file:
 	@echo "$(CYAN)$(BOLD)→ Running file storage integration tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,storage) run --rm test-file
+		$(call compose,storage) run --rm test-file $(call compose_logs_on_fail,storage)
 	@echo "$(GREEN)✓ File storage integration tests complete$(RESET)"
 
 .PHONY: integration-test-storage-memory
@@ -1974,7 +1981,7 @@ integration-test-storage-memory:
 	@echo "$(CYAN)$(BOLD)→ Running memory storage integration tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,storage) run --rm test-memory
+		$(call compose,storage) run --rm test-memory $(call compose_logs_on_fail,storage)
 	@echo "$(GREEN)✓ Memory storage integration tests complete$(RESET)"
 
 .PHONY: integration-test-storage-hardware
@@ -1994,7 +2001,7 @@ integration-test-storage-hardware-pkcs11:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 hardware storage tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,storage) run --rm test-hardware-pkcs11
+		$(call compose,storage) run --rm test-hardware-pkcs11 $(call compose_logs_on_fail,storage)
 	@echo "$(GREEN)✓ PKCS#11 hardware storage tests complete$(RESET)"
 
 .PHONY: integration-test-storage-hardware-tpm2
@@ -2005,7 +2012,7 @@ integration-test-storage-hardware-tpm2:
 	@cd test/integration/storage && $(call compose,storage) up -d tpm-simulator
 	@sleep 3
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,storage) run --rm test-hardware-tpm2
+		$(call compose,storage) run --rm test-hardware-tpm2 $(call compose_logs_on_fail,storage)
 	@echo "$(GREEN)✓ TPM2 hardware storage tests complete$(RESET)"
 
 # ==============================================================================
@@ -2136,7 +2143,7 @@ integration-test-pkcs8:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS8 integration tests...$(RESET)"
 	@cd test/integration/pkcs8 && $(call compose,pkcs8) down -v >/dev/null 2>&1 || true
 	@cd test/integration/pkcs8 && trap '$(call compose,pkcs8) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,pkcs8) run --build --rm test
+		$(call compose,pkcs8) run --build --rm test $(call compose_logs_on_fail,pkcs8)
 	@echo "$(GREEN)✓ PKCS8 integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11-backend integration-test-pkcs11
@@ -2151,7 +2158,7 @@ integration-test-pkcs11-backend:
 	@echo "$(CYAN)$(BOLD)→ Running PKCS11/SoftHSM integration tests...$(RESET)"
 	@cd test/integration/pkcs11 && $(call compose,pkcs11) down -v >/dev/null 2>&1 || true
 	@cd test/integration/pkcs11 && trap '$(call compose,pkcs11) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,pkcs11) run --build --rm test
+		$(call compose,pkcs11) run --build --rm test $(call compose_logs_on_fail,pkcs11)
 	@echo "$(GREEN)✓ PKCS11 integration tests complete$(RESET)"
 
 .PHONY: integration-test-pkcs11-barrier
@@ -2481,7 +2488,7 @@ integration-test-tpm2:
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
 	@cd test/integration/tpm2 && trap '$(call compose,tpm2) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,tpm2) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test
+		$(call compose,tpm2) run --build --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test $(call compose_logs_on_fail,tpm2)
 	@echo "$(GREEN)✓ TPM2 integration tests complete$(RESET)"
 
 .PHONY: integration-test-peergate
@@ -2517,7 +2524,7 @@ integration-test-acme-tpm:
 	@cd test/integration/acme-tpm && $(call compose,acme-tpm) up -d --build tpm-simulator acme-server
 	@echo "$(CYAN)  Waiting for swtpm and the ACME server to be ready...$(RESET)"
 	@cd test/integration/acme-tpm && trap '$(call compose,acme-tpm) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,acme-tpm) run --build --rm test
+		$(call compose,acme-tpm) run --build --rm test $(call compose_logs_on_fail,acme-tpm)
 	@echo "$(GREEN)✓ ACME+TPM integration tests complete$(RESET)"
 
 .PHONY: integration-test-challenges
@@ -2532,7 +2539,7 @@ integration-test-challenges:
 	@cd test/integration/challenges && $(call compose,challenges) up -d --build acme-server
 	@echo "$(CYAN)  Waiting for the ACME server to be ready...$(RESET)"
 	@cd test/integration/challenges && trap '$(call compose,challenges) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,challenges) run --build --rm test
+		$(call compose,challenges) run --build --rm test $(call compose_logs_on_fail,challenges)
 	@echo "$(GREEN)✓ ACME challenge-framework integration tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption
@@ -2544,7 +2551,7 @@ test-tpm2-encryption:
 	@echo "$(CYAN)  Waiting for TPM simulator to be ready...$(RESET)"
 	@sleep 3
 	@cd test/integration/tpm2 && trap '$(call compose,tpm2) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,tpm2) run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test sh /app/test/integration/tpm2/run_capture_tests.sh
+		$(call compose,tpm2) run --rm -e TPM2_SIMULATOR_HOST=tpm-simulator -e TPM2_SIMULATOR_PORT=2421 test sh /app/test/integration/tpm2/run_capture_tests.sh $(call compose_logs_on_fail,tpm2)
 	@echo "$(GREEN)✓ TPM2 encryption verification tests complete$(RESET)"
 
 .PHONY: test-tpm2-encryption-local
@@ -2568,7 +2575,7 @@ integration-test-awskms:
 	@cd test/integration/awskms && $(call compose,awskms) down -v >/dev/null 2>&1 || true
 	@cd test/integration/awskms && $(call compose,awskms) up -d floci
 	@cd test/integration/awskms && trap '$(call compose,awskms) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,awskms) run --build --rm test
+		$(call compose,awskms) run --build --rm test $(call compose_logs_on_fail,awskms)
 	@echo "$(GREEN)✓ AWS KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-gcpkms
@@ -2577,7 +2584,7 @@ integration-test-gcpkms:
 	@echo "$(CYAN)$(BOLD)→ Running GCP KMS integration tests (Floci emulator + mock client)...$(RESET)"
 	@cd test/integration/gcpkms && $(call compose,gcpkms) down -v >/dev/null 2>&1 || true
 	@cd test/integration/gcpkms && trap '$(call compose,gcpkms) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,gcpkms) run --build --rm test
+		$(call compose,gcpkms) run --build --rm test $(call compose_logs_on_fail,gcpkms)
 	@echo "$(GREEN)✓ GCP KMS integration tests complete$(RESET)"
 
 .PHONY: integration-test-azurekv
@@ -2586,7 +2593,7 @@ integration-test-azurekv:
 	@echo "$(CYAN)$(BOLD)→ Running Azure Key Vault integration tests...$(RESET)"
 	@cd test/integration/azurekv && $(call compose,azurekv) down -v >/dev/null 2>&1 || true
 	@cd test/integration/azurekv && trap '$(call compose,azurekv) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,azurekv) run --build --rm test
+		$(call compose,azurekv) run --build --rm test $(call compose_logs_on_fail,azurekv)
 	@echo "$(GREEN)✓ Azure Key Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-vault
@@ -2597,7 +2604,7 @@ integration-test-vault:
 	@cd test/integration/vault && $(call compose,vault) up -d vault
 	@cd test/integration/vault && $(call compose,vault) build test
 	@cd test/integration/vault && trap '$(call compose,vault) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,vault) run --build --rm test
+		$(call compose,vault) run --build --rm test $(call compose_logs_on_fail,vault)
 	@echo "$(GREEN)✓ Vault integration tests complete$(RESET)"
 
 .PHONY: integration-test-quantum
@@ -2608,7 +2615,7 @@ integration-test-quantum:
 	@cd test/integration/quantum && $(call compose,quantum) down -v >/dev/null 2>&1 || true
 	@cd test/integration/quantum && $(call compose,quantum) build --no-cache quantum-test
 	@cd test/integration/quantum && trap '$(call compose,quantum) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,quantum) run --rm quantum-test
+		$(call compose,quantum) run --rm quantum-test $(call compose_logs_on_fail,quantum)
 	@echo "$(GREEN)✓ Quantum-safe integration tests complete$(RESET)"
 
 .PHONY: test-frost
@@ -2627,7 +2634,7 @@ ifeq ($(WITH_FROST),1)
 	@cd test/integration/frost && $(call compose,frost) down -v >/dev/null 2>&1 || true
 	@cd test/integration/frost && $(call compose,frost) build frost-test
 	@cd test/integration/frost && trap '$(call compose,frost) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,frost) run --rm frost-test
+		$(call compose,frost) run --rm frost-test $(call compose_logs_on_fail,frost)
 	@echo "$(GREEN)✓ FROST integration tests complete$(RESET)"
 else
 	@echo "$(YELLOW)⚠ Skipping FROST integration tests (WITH_FROST=0)$(RESET)"
@@ -2961,13 +2968,18 @@ devcontainer-server-wait:
 # only that build compiles in the //go:build integration && fido2 virtual-device
 # seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
 # binary (make build / make release-*) never carries those tags. See #807.
+# The UHID round trip (#2052) needs /dev/uhid. A container's /dev is copied
+# when it starts, and the host has no uhid node until the module is loaded,
+# so the step makes the misc node (10:239) when it is missing: opening it
+# loads uhid on the host kernel (misc_open requests char-major-10-239), where
+# post-start.sh's in-container modprobe cannot (no /lib/modules).
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -timeout 10m && $(GO) test -c -tags='$(call go_tags,linux)' -o build/bin/fido2-uhid.test ./pkg/fido2/ && { [ -c /dev/uhid ] || sudo mknod -m 600 /dev/uhid c 10 239; } && sudo XKMS_REQUIRE_UHID=1 build/bin/fido2-uhid.test -test.v -test.count=1 -test.run TestLinuxHIDDevice_UHIDRoundTrip,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-hardware
 ## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
@@ -2979,12 +2991,12 @@ integration-test-fido2-hardware:
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)webauthn)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)webauthn$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-uhid
 ## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)
@@ -3015,7 +3027,7 @@ integration-test-xkey-webauthn:
 	@echo "$(CYAN)$(BOLD)→ Running xkey Playwright WebAuthn integration tests...$(RESET)"
 	@cd xkey/test/integration/webauthn && $(call compose,xkey-webauthn) down -v >/dev/null 2>&1 || true
 	@cd xkey/test/integration/webauthn && trap '$(call compose,xkey-webauthn) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,xkey-webauthn) run --rm webauthn-test
+		$(call compose,xkey-webauthn) run --rm webauthn-test $(call compose_logs_on_fail,xkey-webauthn)
 	@echo "$(GREEN)✓ xkey Playwright WebAuthn integration tests complete$(RESET)"
 
 .PHONY: integration-test-xkey-backends
@@ -3030,7 +3042,7 @@ integration-test-xkey-oidc:
 	@echo "$(CYAN)$(BOLD)→ Running xkey OIDC integration tests...$(RESET)"
 	@cd xkey/test/integration/oidc && $(call compose,xkey-oidc) down -v >/dev/null 2>&1 || true
 	@cd xkey/test/integration/oidc && trap '$(call compose,xkey-oidc) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,xkey-oidc) run --rm test-runner
+		$(call compose,xkey-oidc) run --rm test-runner $(call compose_logs_on_fail,xkey-oidc)
 	@echo "$(GREEN)✓ xkey OIDC integration tests complete$(RESET)"
 
 .PHONY: integration-test-xkey-piv
@@ -3165,7 +3177,7 @@ integration-test-cli:
 	@cd $(API_TEST_DIR) && $(call compose,api) down -v >/dev/null 2>&1 || true
 	@cd $(API_TEST_DIR) && $(call compose,api) build
 	@cd $(API_TEST_DIR) && trap '$(call compose,api) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,api) run --rm integration-tests
+		$(call compose,api) run --rm integration-tests $(call compose_logs_on_fail,api)
 	@echo "$(GREEN)✓ CLI integration tests complete$(RESET)"
 
 .PHONY: integration-test-cli-local
@@ -5042,7 +5054,7 @@ integration-test-acmeadmin: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running ACME admin plane integration tests...$(RESET)"
 	@cd test/integration/acmeadmin && $(call compose,acmeadmin) down -v >/dev/null 2>&1 || true
 	@cd test/integration/acmeadmin && trap '$(call compose,acmeadmin) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,acmeadmin) run --build --rm test
+		$(call compose,acmeadmin) run --build --rm test $(call compose_logs_on_fail,acmeadmin)
 	@echo "$(GREEN)✓ ACME admin plane integration tests complete$(RESET)"
 
 .PHONY: integration-test-cluster
@@ -5052,7 +5064,7 @@ integration-test-cluster: stage-gomodauth
 	@cd test/integration/cluster && bash gen-certs.sh
 	@cd test/integration/cluster && $(call compose,cluster) down -v >/dev/null 2>&1 || true
 	@cd test/integration/cluster && trap '$(call compose,cluster) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
-		$(call compose,cluster) run --build --rm test
+		$(call compose,cluster) run --build --rm test $(call compose_logs_on_fail,cluster)
 	@echo "$(GREEN)✓ Cluster integration tests complete$(RESET)"
 
 .PHONY: integration-test-truststrap

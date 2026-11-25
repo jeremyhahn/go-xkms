@@ -20,10 +20,11 @@ import (
 const (
 	devcontainerJob = "image"
 	preflightJob    = "preflight"
-	// devcontainerRunsOn is the v1.48 Docker-job runs-on (ruling 1024):
-	// the preflight runner_docker output on github.com, so the job is
-	// hosted unless the run overflows, and never self-hosted for a fork.
-	devcontainerRunsOn = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}`
+	// devcontainerRunsOn is the ci-template v1.60 runs-on (DS-10367): the
+	// bigdisk-docker pool when CI_BIGDISK_ONLY names image on a
+	// same-repository run, else the preflight runner_docker output on
+	// github.com, so a fork never goes self-hosted.
+	devcontainerRunsOn = `${{ github.server_url == 'https://github.com' && fromJSON(contains(format(' {0} ', vars.CI_BIGDISK_ONLY), ' image ') && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && '["self-hosted","linux","x64","bigdisk-docker"]' || needs.preflight.outputs.runner_docker) || 'bigdisk' }}`
 	buildStepID        = "build"
 	coverageAfterBuild = "steps.build.outcome != 'failure'"
 	// scheduleBranch opens the guard's chain of branches for a schedule run.

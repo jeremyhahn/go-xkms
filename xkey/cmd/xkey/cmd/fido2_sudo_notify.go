@@ -14,11 +14,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
@@ -62,8 +64,8 @@ func buildSudoDialogArgv(sudoUser string, req *notify.TouchRequest, timeout time
 // socketPath come from the running process (os.Executable, the resolved
 // --socket flag), not from a WebAuthn caller, so there is nothing to
 // substitute or sanitize here.
-func buildSudoTouchArgv(sudoUser, execPath, socketPath string) []string {
-	return []string{sudoRunuserBin, "-u", sudoUser, "--", execPath, "touch", "--socket", socketPath}
+func buildSudoTouchArgv(sudoUser, execPath, socketPath, requestID string) []string {
+	return []string{sudoRunuserBin, "-u", sudoUser, "--", execPath, "touch", "--socket", socketPath, "--request-id", requestID}
 }
 
 // buildSudoPassiveArgv builds the argv that sends a passive notify-send
@@ -93,6 +95,11 @@ type sudoDialogNotifier struct {
 	timeout    time.Duration
 	logger     *slog.Logger
 	closed     atomic.Bool
+
+	// command builds the dialog and touch processes; tests replace it.
+	command func(ctx context.Context, name string, arg ...string) *exec.Cmd
+	// dialogDone, when set, runs after a dialog goroutine finishes (tests).
+	dialogDone func()
 }
 
 // newSudoDialogNotifier creates a sudoDialogNotifier.
@@ -103,6 +110,7 @@ func newSudoDialogNotifier(sudoUser, execPath, socketPath string, timeout time.D
 		socketPath: socketPath,
 		timeout:    timeout,
 		logger:     logger,
+		command:    exec.CommandContext,
 	}
 }
 
@@ -115,20 +123,49 @@ func (n *sudoDialogNotifier) NotifyTouchRequired(req *notify.TouchRequest) error
 	}
 
 	sanitized := notify.SanitizeTouchRequest(req)
+	requestID, done := req.RequestID, req.Done
+
+	// The dialog lives only as long as the presence request it was opened
+	// for: when the request ends (approved elsewhere, denied, timed out, or
+	// cancelled because another authenticator won a Selection) the dialog
+	// is killed, and its touch names the request so a late answer cannot
+	// approve a request that became pending afterwards.
+	ctx, cancel := context.WithCancel(context.Background())
+	if done != nil {
+		go func() {
+			select {
+			case <-done:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+	}
 
 	go func() {
+		defer cancel()
+		if n.dialogDone != nil {
+			defer n.dialogDone()
+		}
 		argv := buildSudoDialogArgv(n.sudoUser, sanitized, n.timeout)
-		dialog := exec.Command(argv[0], argv[1:]...)
+		dialog := n.command(ctx, argv[0], argv[1:]...)
 		dialog.Env = append(os.Environ(), notify.TouchRequestEnv(sanitized)...)
+		// runuser forwards SIGTERM to zenity; SIGKILL would orphan it.
+		dialog.Cancel = func() error { return dialog.Process.Signal(syscall.SIGTERM) }
+		dialog.WaitDelay = 2 * time.Second
 		if err := dialog.Run(); err != nil {
 			n.logger.Info("touch dialog denied, timed out, or failed",
 				slog.String("sudo_user", n.sudoUser),
 				slog.String("error", err.Error()))
 			return
 		}
+		if ctx.Err() != nil || requestID == "" {
+			n.logger.Info("touch dialog approved after its request ended; not approving",
+				slog.String("sudo_user", n.sudoUser))
+			return
+		}
 
-		touchArgv := buildSudoTouchArgv(n.sudoUser, n.execPath, n.socketPath)
-		touch := exec.Command(touchArgv[0], touchArgv[1:]...)
+		touchArgv := buildSudoTouchArgv(n.sudoUser, n.execPath, n.socketPath, requestID)
+		touch := n.command(ctx, touchArgv[0], touchArgv[1:]...)
 		if err := touch.Run(); err != nil {
 			n.logger.Error("touch approval command failed",
 				slog.String("sudo_user", n.sudoUser),
