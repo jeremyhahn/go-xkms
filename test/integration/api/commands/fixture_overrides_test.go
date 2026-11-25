@@ -72,7 +72,7 @@ func TestAPIFixtureProvidesClientIdentity(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(rawCfg, &cfg))
 	require.NotEmpty(t, cfg.Datastore.Path, "config.test.yaml datastore.path")
 
-	assert.Equal(t, "request", cfg.TLS.ClientAuth,
+	assert.Equal(t, "verify", cfg.TLS.ClientAuth,
 		"config.test.yaml tls.client_auth must ask for the runner's client certificate")
 
 	rawCompose, err := os.ReadFile(filepath.Join("..", "docker-compose.yml"))
