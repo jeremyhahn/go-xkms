@@ -687,6 +687,23 @@ func TestHandler_WithLogger(t *testing.T) {
 	assert.Same(t, h, result)
 }
 
+// TestHandleServiceError_UnclassifiedLogsCauseAtError proves an error no
+// case classifies is logged at Error with its cause through the handler's
+// logger, while the response body stays generic.
+func TestHandleServiceError_UnclassifiedLogsCauseAtError(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	h := newTestHandler(t).WithLogger(logger)
+
+	w := httptest.NewRecorder()
+	h.handleServiceError(w, errors.New("qrdb create user: permission denied"))
+
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.NotContains(t, w.Body.String(), "permission denied")
+	assert.Contains(t, logs.String(), "level=ERROR")
+	assert.Contains(t, logs.String(), "qrdb create user: permission denied")
+}
+
 func TestHandler_FinishRegistration_InvalidSession(t *testing.T) {
 	h := newTestHandler(t)
 
