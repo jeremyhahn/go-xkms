@@ -236,9 +236,6 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			}
 			prefixArgs = append(prefixArgs, tlsArgs...)
 		}
-		if needsTLS && r.TLSCert != "" && r.TLSKey != "" {
-			prefixArgs = append(prefixArgs, "--tls-cert", r.TLSCert, "--tls-key", r.TLSKey)
-		}
 	}
 
 	args = append(prefixArgs, args...)
