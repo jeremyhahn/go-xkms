@@ -85,5 +85,5 @@ func TestNewHostServer_WebAuthnUnclassifiedErrorLogsAtError(t *testing.T) {
 	assert.NotContains(t, w.Body.String(), "qrdb")
 
 	assert.Contains(t, logs.String(), "level=ERROR")
-	assert.Contains(t, logs.String(), "qrdb create user")
+	assert.Contains(t, logs.String(), "qrdb/auth: unauthenticated")
 }
