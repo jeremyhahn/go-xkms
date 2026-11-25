@@ -141,9 +141,10 @@ func adminRoleExcluded(resource, action string) bool {
 
 // authorizeWithoutAdminRole authorizes the identity on its roles other than the built-in admin role.
 func (g *PermissionGate) authorizeWithoutAdminRole(ctx context.Context, identity *auth.Identity, resource, action string) error {
+	adminID := qrdbsdk.SystemRoleID(identity.TenantID, qrdbsdk.RoleNameAdmin)
 	others := make([]string, 0, len(identity.Roles))
 	for _, r := range identity.Roles {
-		if r != qrdbsdk.RoleNameAdmin {
+		if r != qrdbsdk.RoleNameAdmin && r != adminID {
 			others = append(others, r)
 		}
 	}
