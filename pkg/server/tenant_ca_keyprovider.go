@@ -515,7 +515,7 @@ func (f *tenantCAKeyFactory) EnsureTenant(ctx context.Context, tenantID string) 
 	}
 	if errors.Is(ensureErr, errTenantLoginCAClaimHeld) {
 		// Name the holder: a holder on a lost host is released only when the
-		// operator fences it (WithTenantLoginCAFencedHolders).
+		// operator fences it (withTenantLoginCAFencedHolders).
 		if holder := f.tenantLoginCAClaimHolder(ctx, tenantID); holder != "" {
 			ensureErr = fmt.Errorf("%w (claim holder %s)", ensureErr, holder)
 		}
@@ -1866,14 +1866,15 @@ func WithTenantLoginCAKeys() Option {
 	return func(s *Server) { s.tenantLoginCAKeys = true }
 }
 
-// WithTenantLoginCAFencedHolders is the recovery for a tenant login CA
+// withTenantLoginCAFencedHolders is the recovery for a tenant login CA
 // provisioning claim a lost host left marked generating: no other host can
 // prove that host's generate stopped, so the claim is held and the boot pass
 // fails with an error naming the "claim holder". After fencing that host
-// (powered off, or its HSM session revoked) the embedder passes the named
-// holder here; the boot pass then takes the claim over. Passing a holder
-// whose host may still run is unsafe: its generate could leave a second key.
-func WithTenantLoginCAFencedHolders(holders ...string) Option {
+// (powered off, or its HSM session revoked) the named holder is passed
+// here; the boot pass then takes the claim over. Passing a holder whose
+// host may still run is unsafe: its generate could leave a second key. The
+// option is not exported, so it is not part of the embedder API.
+func withTenantLoginCAFencedHolders(holders ...string) Option {
 	return func(s *Server) {
 		s.tenantLoginCAFencedHolders = append(s.tenantLoginCAFencedHolders, holders...)
 	}

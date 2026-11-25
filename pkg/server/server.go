@@ -475,7 +475,7 @@ type Server struct {
 
 	// tenantLoginCAKeys and tenantLoginCAFencedHolders are set only by the
 	// construction options WithTenantLoginCAKeys and
-	// WithTenantLoginCAFencedHolders (tenant_ca_keyprovider.go); there is
+	// withTenantLoginCAFencedHolders (tenant_ca_keyprovider.go); there is
 	// no config setting for either.
 	tenantLoginCAKeys          bool
 	tenantLoginCAFencedHolders []string
