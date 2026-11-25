@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// makeRecipe returns the recipe lines of target in the Makefile text,
+// mustMakeRecipe returns the recipe lines of target in the Makefile text,
 // with backslash continuations joined into one line each.
-func targetRecipe(t *testing.T, makefile, target string) string {
+func mustMakeRecipe(t *testing.T, makefile, target string) string {
 	t.Helper()
 	lines := strings.Split(makefile, "\n")
 	start := -1
@@ -43,7 +43,7 @@ func targetRecipe(t *testing.T, makefile, target string) string {
 // "--- xkms-server log ---" header and a bounded tail of the xkms-server
 // service log, tears the stack down and exits with the original status.
 func TestBootstrapRecipePrintsServerLogOnFailure(t *testing.T) {
-	recipe := targetRecipe(t, readMakefile(t), "integration-test-bootstrap")
+	recipe := mustMakeRecipe(t, readMakefile(t), "integration-test-bootstrap")
 
 	var runLine string
 	for _, l := range strings.Split(recipe, "\n") {
