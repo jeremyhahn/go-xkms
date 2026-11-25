@@ -79,6 +79,8 @@ var caErrorStatusMap = map[error]int{
 	xkms.ErrInvalidEncodingPEM:   http.StatusBadRequest,
 	ca.ErrCRLNotFound:            http.StatusNotFound,
 	ca.ErrNotInitialized:         http.StatusServiceUnavailable,
+	// IssueCertificate refuses a common name that already has a certificate.
+	ca.ErrCertificateAlreadyExists: http.StatusConflict,
 	// SignCSR's SPIFFE tenant is caller-supplied; the service's tenant
 	// binding refuses a foreign one as not-found (xkms.TenantBindingError).
 	qrdbsdk.ErrTenantMissing: http.StatusNotFound,
