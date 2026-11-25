@@ -142,7 +142,7 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 	f.roleB, err = client.Roles().CreateRole(ctxB, &qrdbtransport.CreateRoleRequest{
 		Name:        "victim-role-1225",
 		TenantID:    bindingTenantB,
-		Permissions: []string{"kv:get"},
+		Permissions: []string{"keys:get"},
 	})
 	require.NoError(t, err)
 	return f
@@ -212,9 +212,9 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 		{"update tenant", http.MethodPut, "/api/v1/tenants/" + bindingTenantB, map[string]string{"name": "pwned"}},
 		{"update tenant status", http.MethodPut, "/api/v1/tenants/" + bindingTenantB + "/status", map[string]string{"status": "suspended"}},
 		{"list roles", http.MethodGet, "/api/v1/tenants/" + bindingTenantB + "/roles", nil},
-		{"create role", http.MethodPost, "/api/v1/tenants/" + bindingTenantB + "/roles", map[string]any{"name": "planted", "permissions": []string{"kv:get"}}},
+		{"create role", http.MethodPost, "/api/v1/tenants/" + bindingTenantB + "/roles", map[string]any{"name": "planted", "permissions": []string{"keys:get"}}},
 		{"get role", http.MethodGet, "/api/v1/tenants/" + bindingTenantB + "/roles/" + f.roleB.ID, nil},
-		{"update role", http.MethodPut, "/api/v1/tenants/" + bindingTenantB + "/roles/" + f.roleB.ID, map[string]any{"permissions": []string{"kv:get", "kv:put"}}},
+		{"update role", http.MethodPut, "/api/v1/tenants/" + bindingTenantB + "/roles/" + f.roleB.ID, map[string]any{"permissions": []string{"keys:get", "keys:create"}}},
 		{"delete role", http.MethodDelete, "/api/v1/tenants/" + bindingTenantB + "/roles/" + f.roleB.ID, nil},
 		{"list users", http.MethodGet, "/api/v1/tenants/" + bindingTenantB + "/users", nil},
 		{"create user", http.MethodPost, "/api/v1/tenants/" + bindingTenantB + "/users", map[string]any{"username": "planted", "without_email_login_key": true}},
@@ -241,7 +241,7 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 		want   string
 	}{
 		{"get role", http.MethodGet, "/api/v1/tenants/" + bindingTenantA + "/roles/" + f.roleB.ID, nil, "Role not found"},
-		{"update role", http.MethodPut, "/api/v1/tenants/" + bindingTenantA + "/roles/" + f.roleB.ID, map[string]any{"permissions": []string{"kv:get", "kv:put"}}, "Role not found"},
+		{"update role", http.MethodPut, "/api/v1/tenants/" + bindingTenantA + "/roles/" + f.roleB.ID, map[string]any{"permissions": []string{"keys:get", "keys:create"}}, "Role not found"},
 		{"delete role", http.MethodDelete, "/api/v1/tenants/" + bindingTenantA + "/roles/" + f.roleB.ID, nil, "Role not found"},
 		{"get user", http.MethodGet, "/api/v1/tenants/" + bindingTenantA + "/users/" + userBID, nil, "User not found"},
 		{"update user", http.MethodPut, "/api/v1/tenants/" + bindingTenantA + "/users/" + userBID, map[string]any{"name": "pwned"}, "User not found"},
@@ -264,7 +264,7 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 	assert.Equal(t, "Victim B", gotUser.Name)
 	gotRole, err := f.client.Roles().GetRole(ctxB, f.roleB.ID)
 	require.NoError(t, err, "tenant-b's role must survive a tenant-a caller")
-	assert.Equal(t, []string{"kv:get"}, gotRole.Permissions)
+	assert.Equal(t, []string{"keys:get"}, gotRole.Permissions)
 	roles, err := f.client.Roles().ListRoles(ctxB, &qrdbtransport.ListRolesRequest{TenantID: bindingTenantB})
 	require.NoError(t, err)
 	for _, r := range roles.Roles {
