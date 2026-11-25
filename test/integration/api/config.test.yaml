@@ -71,6 +71,10 @@ webauthn:
   # accounts as admin, redeeming each invitation with a passkey.
   allow_public_registration: true
 
+# Submitted credentials persist in the barrier, so the PKCS#11 PIN survives a restart.
+credentials:
+  seal_strategy: "barrier"
+
 ratelimit:
   enabled: false
 
@@ -86,7 +90,7 @@ health:
 # Storage configuration
 datastore:
   engine: file
-  path: "/data/xkms"
+  path: "/data/storage"
 
 # Certificate Authority configuration
 ca:

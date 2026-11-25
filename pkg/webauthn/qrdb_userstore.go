@@ -22,8 +22,6 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
-
-	qrdbstorage "github.com/jeremyhahn/go-xkms/pkg/storage/qrdb"
 )
 
 // QRDBUserStoreOptions configures the adapter pair at construction time.
@@ -56,13 +54,8 @@ type QRDBUserStoreOptions struct {
 	// per-tenant id for multi-tenant deployments. Required.
 	TenantID string
 
-	// CallContext binds the context every users and credentials call runs
-	// on, as datastore.WithCallContext does for the DAOs. Over an embedded
-	// node pass Node.ServiceContext: the store is xkms's own persistence, so
-	// it runs as the node's service principal, not as the HTTP caller (a
-	// sign-up's registration/begin is anonymous). A bind error fails the
-	// call. Nil keeps the caller's context.
-	CallContext qrdbstorage.CallContext
+	// CallContext, when set, binds every user-client call.
+	CallContext CallContext
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -72,10 +65,13 @@ type qrdbUserStore struct {
 	users    QRDBUsers
 	creds    CredentialStore
 	tenantID string
-	bind     qrdbstorage.CallContext
+	bind     CallContext
 }
 
-// callContext returns the context a call into qrdb runs on.
+// CallContext derives the context a go-qrdb call runs on from the caller's.
+type CallContext func(context.Context) (context.Context, error)
+
+// callContext returns the context a user-client call runs on.
 func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error) {
 	if s.bind == nil {
 		return ctx, nil
