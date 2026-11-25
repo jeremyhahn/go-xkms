@@ -21,6 +21,7 @@ package integration
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -142,7 +143,8 @@ func TestProtocolParity_CA_Lifecycle(t *testing.T) {
 					"ca", "issue",
 					"--cn", cn,
 					"--profile", "server",
-					"--output", "json",
+					// ca issue's local --output is the certificate file path.
+					"--output", filepath.Join(t.TempDir(), "cert.pem"),
 				}
 				stdout, stderr, err := runner.RunCommandWithProtocol(t, protocol, args...)
 				if err != nil {
