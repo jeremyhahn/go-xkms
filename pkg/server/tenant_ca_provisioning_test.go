@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"testing"
+	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -24,6 +25,8 @@ type fakeTenantService struct {
 	createErr error
 	listErr   error
 	deleteErr error
+	created   map[string]time.Time
+	seq       int64
 }
 
 func (f *fakeTenantService) CreateTenant(_ context.Context, id, name string, _ qrdbsdk.TenantIsolationType, _ ...qrdbsdk.CreateTenantOption) (*qrdbsdk.ServiceTenantInfo, error) {
@@ -31,7 +34,12 @@ func (f *fakeTenantService) CreateTenant(_ context.Context, id, name string, _ q
 		return nil, f.createErr
 	}
 	f.tenants = append(f.tenants, id)
-	return &qrdbsdk.ServiceTenantInfo{ID: id, Name: name}, nil
+	if f.created == nil {
+		f.created = map[string]time.Time{}
+	}
+	f.seq++
+	f.created[id] = time.Unix(1_700_000_000, f.seq).UTC()
+	return &qrdbsdk.ServiceTenantInfo{ID: id, Name: name, CreatedAt: f.created[id]}, nil
 }
 
 func (f *fakeTenantService) ListTenants(context.Context) ([]qrdbsdk.ServiceTenantInfo, error) {
@@ -40,7 +48,7 @@ func (f *fakeTenantService) ListTenants(context.Context) ([]qrdbsdk.ServiceTenan
 	}
 	out := make([]qrdbsdk.ServiceTenantInfo, 0, len(f.tenants))
 	for _, id := range f.tenants {
-		out = append(out, qrdbsdk.ServiceTenantInfo{ID: id})
+		out = append(out, qrdbsdk.ServiceTenantInfo{ID: id, CreatedAt: f.created[id]})
 	}
 	return out, nil
 }
@@ -263,7 +271,7 @@ func TestServer_TenantCAKeys_ResolveDuringServerLockContention(t *testing.T) {
 func (f *fakeTenantService) GetTenant(_ context.Context, id string) (*qrdbsdk.ServiceTenantInfo, error) {
 	for _, known := range f.tenants {
 		if known == id {
-			return &qrdbsdk.ServiceTenantInfo{ID: id}, nil
+			return &qrdbsdk.ServiceTenantInfo{ID: id, CreatedAt: f.created[id]}, nil
 		}
 	}
 	return nil, qrdbsdk.ErrTenantMissing
