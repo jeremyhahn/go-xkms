@@ -3,6 +3,7 @@ package buildgates
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -130,5 +131,103 @@ func TestCITeardownCatchEachMissingTeardown(t *testing.T) {
 			}
 			t.Fatalf("want a problem containing %q, got %q", tc.want, problems)
 		})
+	}
+}
+
+// runImagesFlag asks clean-test-containers to also remove this run's images.
+const runImagesFlag = "CLEAN_RUN_IMAGES=1"
+
+// imageTeardownProblems lists every if: always() clean-test-containers line
+// that does not also remove its run's images, and fails when there is none.
+func imageTeardownProblems(wf workflow) []string {
+	names := make([]string, 0, len(wf.Jobs))
+	for name := range wf.Jobs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var problems []string
+	seen := 0
+	for _, name := range names {
+		for _, step := range wf.Jobs[name].Steps {
+			if !strings.Contains(step.If, "always()") {
+				continue
+			}
+			for _, line := range strings.Split(step.Run, "\n") {
+				if !strings.Contains(line, "make clean-test-containers ") {
+					continue
+				}
+				seen++
+				if !strings.Contains(line, runImagesFlag) {
+					problems = append(problems, fmt.Sprintf("%s: %q does not pass %s", name, strings.TrimSpace(line), runImagesFlag))
+				}
+			}
+		}
+	}
+	if seen == 0 {
+		problems = append(problems, "no if: always() step runs make clean-test-containers")
+	}
+	return problems
+}
+
+// runImageRecipeProblems lists what the clean-test-containers recipe lacks to
+// remove this run's IT_PROJECT images without failing or touching IT_IMAGE.
+func runImageRecipeProblems(recipe string) []string {
+	var problems []string
+	for _, want := range []string{"CLEAN_RUN_IMAGES", "$(IT_PROJECT)", "docker image ls", "docker image rm -f", "|| true"} {
+		if !strings.Contains(recipe, want) {
+			problems = append(problems, fmt.Sprintf("clean-test-containers recipe has no %q", want))
+		}
+	}
+	if !strings.Contains(recipe, `!= '$(IT_IMAGE)'`) {
+		problems = append(problems, "clean-test-containers recipe does not skip IT_IMAGE")
+	}
+	if strings.Contains(recipe, "prune") {
+		problems = append(problems, "clean-test-containers recipe prunes the Docker store")
+	}
+	return problems
+}
+
+func TestCITeardownRemovesThisRunsImages(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	for _, p := range imageTeardownProblems(parseWorkflow(t, data)) {
+		t.Error(p)
+	}
+	mk, err := os.ReadFile(filepath.Join(repoRoot, "Makefile"))
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Join(repoRoot, "Makefile"), err)
+	}
+	recipe, ok := makeRecipe(string(mk), "clean-test-containers")
+	if !ok {
+		t.Fatal("Makefile has no clean-test-containers target")
+	}
+	for _, p := range runImageRecipeProblems(recipe) {
+		t.Error(p)
+	}
+}
+
+func TestCITeardownCatchesKeptRunImages(t *testing.T) {
+	kept := strings.Replace(teardownFixture, `clean-test-containers IT_PROJECT="$IT_PROJECT"`, `clean-test-containers IT_PROJECT="$IT_PROJECT" `+runImagesFlag, 1)
+	if got := imageTeardownProblems(parseWorkflow(t, []byte(kept))); len(got) != 0 {
+		t.Fatalf("valid fixture reported %q", got)
+	}
+	if got := imageTeardownProblems(parseWorkflow(t, []byte(teardownFixture))); len(got) == 0 {
+		t.Fatal("teardown without the image flag was not reported")
+	}
+	good := "\t@if [ \"$(CLEAN_RUN_IMAGES)\" = 1 ]; then p='$(IT_PROJECT)'; for ref in $$(docker image ls); do [ \"$$ref\" != '$(IT_IMAGE)' ] || continue; done; docker image rm -f $$refs || true; fi\n"
+	if got := runImageRecipeProblems(good); len(got) != 0 {
+		t.Fatalf("valid recipe reported %q", got)
+	}
+	for _, bad := range []string{
+		strings.Replace(good, " || true", "", 1),
+		strings.Replace(good, `[ "$$ref" != '$(IT_IMAGE)' ] || continue; `, "", 1),
+		strings.Replace(good, "docker image rm -f $$refs", "docker image prune -af", 1),
+	} {
+		if got := runImageRecipeProblems(bad); len(got) == 0 {
+			t.Errorf("recipe %q was not reported", bad)
+		}
 	}
 }
