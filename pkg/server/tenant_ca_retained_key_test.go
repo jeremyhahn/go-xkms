@@ -158,3 +158,74 @@ func TestTenantLoginCA_ReclaimWithRetainedKeyDoesNotBlockBoot(t *testing.T) {
 	require.NoError(t, err)
 	requireUsableLoginCA(t, f, "tenant-w")
 }
+
+// outageKeyBackend fails every Signer call while down is set.
+type outageKeyBackend struct {
+	*retainingKeyBackend
+	mu   sync.Mutex
+	down bool
+}
+
+var errSignerOutage = errors.New("key service unavailable")
+
+func (b *outageKeyBackend) setDown(down bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.down = down
+}
+
+func (b *outageKeyBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	b.mu.Lock()
+	down := b.down
+	b.mu.Unlock()
+	if down {
+		return nil, errSignerOutage
+	}
+	return b.retainingKeyBackend.Signer(ctx, attrs)
+}
+
+// TestTenantLoginCA_SignerOutageKeepsLiveKey fails the Signer of a live
+// tenant's login CA key and checks the key and its claim are kept.
+func TestTenantLoginCA_SignerOutageKeepsLiveKey(t *testing.T) {
+	ctx := context.Background()
+	_, inner := newTenantCAKeyTestFactory(t)
+	base := &outageKeyBackend{retainingKeyBackend: &retainingKeyBackend{Backend: inner}}
+	f := newTenantCAKeyFactory()
+	native := &fakeTenantService{}
+	s := &Server{
+		config:       &config.Config{},
+		tenantCAKeys: f,
+		backends:     map[string]xkms.Backend{"software": base},
+	}
+	s.adoptTenantService(native)
+	useTenantCAClaimStorage(s)
+	require.NoError(t, s.provisionTenantCAKeys(ctx))
+
+	_, err := newProvisioningTenantService(native, f).CreateTenant(ctx, "tenant-s", "S", "")
+	require.NoError(t, err)
+	requireUsableLoginCA(t, f, "tenant-s")
+	prov, err := f.ProviderForTenant("tenant-s")
+	require.NoError(t, err)
+	before, err := prov.Certificate(ctx)
+	require.NoError(t, err)
+	claims := f.boundClaims()
+	claimBefore, err := claims.Get(ctx, tenantLoginCAClaimKey("tenant-s"))
+	require.NoError(t, err)
+
+	base.setDown(true)
+	require.ErrorIs(t, f.EnsureTenant(ctx, "tenant-s"), errSignerOutage)
+	_ = provisionTenantCAKeysWith(ctx, native, f)
+	require.NoError(t, f.ReclaimWithdrawnTenants(ctx))
+	base.setDown(false)
+
+	retired, err := tenantLoginCAKeyRetired(ctx, claims, "tenant-s")
+	require.NoError(t, err)
+	require.False(t, retired, "a Signer error must not retire a live key")
+	claimAfter, err := claims.Get(ctx, tenantLoginCAClaimKey("tenant-s"))
+	require.NoError(t, err)
+	require.Equal(t, claimBefore, claimAfter, "a Signer error must leave the claim untouched")
+	requireUsableLoginCA(t, f, "tenant-s")
+	after, err := prov.Certificate(ctx)
+	require.NoError(t, err)
+	require.True(t, before.PublicKey.(*ecdsa.PublicKey).Equal(after.PublicKey), "the live key must be kept")
+}

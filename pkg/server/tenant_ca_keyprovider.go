@@ -224,7 +224,7 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		return nil, fmt.Errorf("tenant login CA key factory: tenant %q no longer exists", tenantID)
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
-	attrs, err := tenantLoginCAKeyAttrs(context.Background(), base, tenantID)
+	attrs, err := liveTenantLoginCAKeyAttrs(context.Background(), f.boundClaims(), base, tenantID)
 	if err == nil {
 		// A key without its provenance or its certificate is an earlier
 		// pass that stopped after the key: EnsureTenant finishes it over the
@@ -277,7 +277,7 @@ func (f *tenantCAKeyFactory) ProviderForTenant(tenantID string) (qrdbsdk.CAKeyPr
 		SignerFunc: func(callerCtx context.Context) (crypto.Signer, error) {
 			ctx, release := detachTenantCAKeyCall(callerCtx)
 			defer release()
-			attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+			attrs, err := liveTenantLoginCAKeyAttrs(ctx, f.boundClaims(), base, tenantID)
 			if err != nil {
 				return nil, err
 			}
@@ -363,9 +363,16 @@ func (f *tenantCAKeyFactory) ReclaimWithdrawnTenants(ctx context.Context) error 
 	if err != nil {
 		return fmt.Errorf("tenant login CA key factory: list keys: %w", err)
 	}
+	claims := f.boundClaims()
 	held := make(map[string]struct{})
 	for _, attrs := range keys {
 		if id, ok := tenantLoginCAKeyTenant(attrs); ok && id != scope.TenantName(qrdbsdk.SystemTenantID) {
+			if claims != nil {
+				// A retired key is already destroyed; its backend only still lists it.
+				if _, getErr := claims.Get(ctx, tenantLoginCARetiredKeyByName(id)); getErr == nil {
+					continue
+				}
+			}
 			held[id] = struct{}{}
 		}
 	}
@@ -720,7 +727,7 @@ func (f *tenantCAKeyFactory) repairRevivedTenantLoginCA(ctx context.Context, ten
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	var signer crypto.Signer
-	attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+	attrs, err := liveTenantLoginCAKeyAttrs(ctx, f.boundClaims(), base, tenantID)
 	switch {
 	case err == nil:
 		if signer, err = scoped.Signer(ctx, attrs); err != nil {
@@ -829,7 +836,7 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 		return err
 	}
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
-	existing, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+	existing, err := liveTenantLoginCAKeyAttrs(ctx, f.boundClaims(), base, tenantID)
 	switch {
 	case err == nil:
 		// Keep the key, but a key alone is not a provisioned login CA: an
@@ -845,7 +852,7 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 	}
 	if owner == "" {
 		// Another pass holds the claim and makes the key: adopt it.
-		return adoptOtherTenantLoginCAKey(ctx, base, scoped, tenantID)
+		return adoptOtherTenantLoginCAKey(ctx, f.boundClaims(), base, scoped, tenantID)
 	}
 	defer tenantLoginCALiveOwners.Delete(owner)
 	attrs := tenantLoginCAKeyGenAttrs(tenantID)
@@ -859,7 +866,7 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 	if !held {
 		// The pass was delayed past its lease and another pass took the
 		// claim over: that pass makes the key.
-		return adoptOtherTenantLoginCAKey(ctx, base, scoped, tenantID)
+		return adoptOtherTenantLoginCAKey(ctx, f.boundClaims(), base, scoped, tenantID)
 	}
 	// The claim now says a generate is in flight, and no pass takes it
 	// over while this pass runs: a backend may ignore the context (PKCS#11
@@ -872,7 +879,7 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 	if err := f.checkTenantLoginCAGenerating(ctx, tenantID, generating); err != nil {
 		return err
 	}
-	_, err = scoped.GenerateECDSA(ctx, attrs)
+	err = f.generateTenantLoginCAKey(ctx, base, scoped, tenantID, attrs)
 	// The generate returned, so it makes no key any more: put back a plain
 	// claim, which teardown may replace and a later pass may take over once
 	// its lease runs out and no key is behind it. Writes this pass still
@@ -884,7 +891,7 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 		}
 		// Another node provisioned the key between the lookup and the
 		// generate: converge on the persisted key.
-		existing, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+		existing, lookupErr := liveTenantLoginCAKeyAttrs(ctx, f.boundClaims(), base, tenantID)
 		if lookupErr != nil {
 			return fmt.Errorf("tenant login CA key factory: generate key for tenant %q: %w", tenantID, errors.Join(err, lookupErr))
 		}
@@ -895,6 +902,39 @@ func (f *tenantCAKeyFactory) ensureTenant(ctx context.Context, tenantID string) 
 		return fmt.Errorf("tenant login CA key factory: signer for tenant %q: %w", tenantID, err)
 	}
 	return finishTenantLoginCAKey(ctx, scoped, tenantID, signer)
+}
+
+// generateTenantLoginCAKey makes the tenant's login CA key. A key claim
+// storage marks retired is still listed by its backend and cannot be
+// created again, so it gets a fresh version and the marker is cleared.
+func (f *tenantCAKeyFactory) generateTenantLoginCAKey(ctx context.Context, base xkms.Backend, scoped *xkms.TenantScopedBackend, tenantID string, attrs *types.KeyAttributes) error {
+	claims := f.boundClaims()
+	retired, err := tenantLoginCAKeyRetired(ctx, claims, tenantID)
+	if err != nil {
+		return err
+	}
+	if !retired {
+		_, err = scoped.GenerateECDSA(ctx, attrs)
+		return err
+	}
+	listed, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+	switch {
+	case errors.Is(err, errTenantLoginCAKeyNotFound):
+		// The backend dropped the key since: make it afresh.
+		if _, err = scoped.GenerateECDSA(ctx, attrs); err != nil {
+			return err
+		}
+	case err != nil:
+		return err
+	default:
+		if _, err = base.RotateKey(ctx, listed); err != nil {
+			return fmt.Errorf("tenant login CA key factory: new version of retired key of tenant %q: %w", tenantID, err)
+		}
+	}
+	if err := claims.Delete(ctx, tenantLoginCARetiredKey(tenantID)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return fmt.Errorf("tenant login CA key factory: clear retired marker of tenant %q: %w", tenantID, err)
+	}
+	return nil
 }
 
 // tenantLoginCAClaimKey is the shared-storage key of a tenant's provisioning
@@ -961,7 +1001,7 @@ func (f *tenantCAKeyFactory) claimTenantLoginCAKey(ctx context.Context, base xkm
 			return "", nil
 		}
 	}
-	if _, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID); lookupErr == nil {
+	if _, lookupErr := liveTenantLoginCAKeyAttrs(ctx, claims, base, tenantID); lookupErr == nil {
 		return "", nil
 	} else if !errors.Is(lookupErr, errTenantLoginCAKeyNotFound) {
 		return "", lookupErr
@@ -1138,21 +1178,21 @@ func parseTenantLoginCAClaim(claim []byte) (time.Time, string, error) {
 // the key, and returns it.
 // adoptOtherTenantLoginCAKey waits for the key the claim's owner makes and
 // adopts it.
-func adoptOtherTenantLoginCAKey(ctx context.Context, base xkms.Backend, scoped *xkms.TenantScopedBackend, tenantID string) error {
-	existing, err := waitTenantLoginCAKey(ctx, base, tenantID)
+func adoptOtherTenantLoginCAKey(ctx context.Context, claims storage.Backend, base xkms.Backend, scoped *xkms.TenantScopedBackend, tenantID string) error {
+	existing, err := waitTenantLoginCAKey(ctx, claims, base, tenantID)
 	if err != nil {
 		return err
 	}
 	return adoptTenantLoginCAKey(ctx, scoped, tenantID, existing)
 }
 
-func waitTenantLoginCAKey(ctx context.Context, base xkms.Backend, tenantID string) (*types.KeyAttributes, error) {
+func waitTenantLoginCAKey(ctx context.Context, claims storage.Backend, base xkms.Backend, tenantID string) (*types.KeyAttributes, error) {
 	waitCtx, cancel := context.WithTimeout(ctx, tenantLoginCAProvenanceWait)
 	defer cancel()
 	ticker := time.NewTicker(tenantLoginCAProvenanceWait / 40)
 	defer ticker.Stop()
 	for {
-		attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+		attrs, err := liveTenantLoginCAKeyAttrs(ctx, claims, base, tenantID)
 		if err == nil {
 			return attrs, nil
 		}
@@ -1410,7 +1450,7 @@ func (f *tenantCAKeyFactory) cleanTenantLoginCAMaterial(ctx context.Context, cla
 	if !ok {
 		// Claim storage without a guarded swap cannot hold a lease; it
 		// cannot fence a revive either (see ReviveTenant).
-		return true, deleteTenantLoginCAMaterial(ctx, base, tenantID)
+		return true, deleteTenantLoginCAMaterial(ctx, claims, base, tenantID)
 	}
 	owner, err := newTenantLoginCAClaimOwner()
 	if err != nil {
@@ -1436,7 +1476,7 @@ func (f *tenantCAKeyFactory) cleanTenantLoginCAMaterial(ctx context.Context, cla
 	if !swapped {
 		return false, nil
 	}
-	errs = deleteTenantLoginCAMaterial(ctx, base, tenantID)
+	errs = deleteTenantLoginCAMaterial(ctx, claims, base, tenantID)
 	if _, _, err := swapper.CompareAndSwap(context.WithoutCancel(ctx), key, lease, removed); err != nil {
 		// The lease stays; once this pass returns its holder is stopped,
 		// and ReviveTenant clears it then.
@@ -1567,7 +1607,7 @@ func (f *tenantCAKeyFactory) fencedHolder(owner string) bool {
 // deleteTenantLoginCAMaterial deletes the tenant's login CA certificate,
 // provenance and intent records and its key, and returns what failed. A
 // lookup error other than absence leaves the key in place and is returned.
-func deleteTenantLoginCAMaterial(ctx context.Context, base xkms.Backend, tenantID string) []error {
+func deleteTenantLoginCAMaterial(ctx context.Context, claims storage.Backend, base xkms.Backend, tenantID string) []error {
 	scoped := xkms.NewTenantScopedBackend(base, tenantID)
 	var errs []error
 	for _, certID := range []string{tenantLoginCAKeyCN, tenantLoginCAProvenanceID, tenantLoginCAIntentID} {
@@ -1581,14 +1621,38 @@ func deleteTenantLoginCAMaterial(ctx context.Context, base xkms.Backend, tenantI
 			}
 		}
 	}
-	if attrs, lookupErr := tenantLoginCAKeyAttrs(ctx, base, tenantID); lookupErr == nil {
+	if attrs, lookupErr := liveTenantLoginCAKeyAttrs(ctx, claims, base, tenantID); lookupErr == nil {
 		if delErr := base.DeleteKey(ctx, attrs); delErr != nil {
 			errs = append(errs, delErr)
+		} else if retireErr := retireListedTenantLoginCAKey(ctx, claims, base, tenantID); retireErr != nil {
+			errs = append(errs, retireErr)
 		}
 	} else if !errors.Is(lookupErr, errTenantLoginCAKeyNotFound) {
 		errs = append(errs, lookupErr)
 	}
 	return errs
+}
+
+// retireListedTenantLoginCAKey marks the tenant's login CA key retired when
+// the backend still lists it after a successful DeleteKey.
+func retireListedTenantLoginCAKey(ctx context.Context, claims storage.Backend, base xkms.Backend, tenantID string) error {
+	if claims == nil {
+		return nil
+	}
+	keys, err := base.ListKeys(ctx)
+	if err != nil {
+		return fmt.Errorf("tenant login CA key factory: list keys after delete of tenant %q: %w", tenantID, err)
+	}
+	want := scope.TenantName(tenantID)
+	for _, attrs := range keys {
+		if id, ok := tenantLoginCAKeyTenant(attrs); ok && id == want {
+			if err := claims.Put(ctx, tenantLoginCARetiredKey(tenantID), []byte(attrs.CN)); err != nil {
+				return fmt.Errorf("tenant login CA key factory: mark retired key of tenant %q: %w", tenantID, err)
+			}
+			return nil
+		}
+	}
+	return nil
 }
 
 // ensureTenantLoginCACert makes sure the tenant's saved login CA certificate is
@@ -1760,6 +1824,59 @@ func tenantLoginCAKeyAttrs(ctx context.Context, base xkms.Backend, tenantID stri
 		return nil, fmt.Errorf("tenant login CA key factory: look up key of tenant %q: %w", tenantID, err)
 	}
 	return exact, nil
+}
+
+// tenantLoginCARetiredKey is the claim storage key that marks a tenant's
+// login CA key destroyed although its backend still lists it.
+func tenantLoginCARetiredKey(tenantID string) string {
+	return tenantLoginCARetiredKeyByName(scope.TenantName(tenantID))
+}
+
+// tenantLoginCARetiredKeyByName is tenantLoginCARetiredKey for a scoped
+// tenant name.
+func tenantLoginCARetiredKeyByName(name string) string {
+	return "tenant-login-ca/retired/" + tenantLoginCAKeyCN + "-" + name
+}
+
+// tenantLoginCAKeyRetired reports whether claim storage marks the tenant's
+// login CA key destroyed. A nil claim storage holds no marker.
+func tenantLoginCAKeyRetired(ctx context.Context, claims storage.Backend, tenantID string) (bool, error) {
+	if claims == nil {
+		return false, nil
+	}
+	_, err := claims.Get(ctx, tenantLoginCARetiredKey(tenantID))
+	switch {
+	case err == nil:
+		return true, nil
+	case errors.Is(err, storage.ErrNotFound):
+		return false, nil
+	default:
+		return false, fmt.Errorf("tenant login CA key factory: read retired marker of tenant %q: %w", tenantID, err)
+	}
+}
+
+// liveTenantLoginCAKeyAttrs is tenantLoginCAKeyAttrs, but a key claim
+// storage marks retired is reported as absent.
+func liveTenantLoginCAKeyAttrs(ctx context.Context, claims storage.Backend, base xkms.Backend, tenantID string) (*types.KeyAttributes, error) {
+	attrs, err := tenantLoginCAKeyAttrs(ctx, base, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	retired, err := tenantLoginCAKeyRetired(ctx, claims, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if retired {
+		return nil, errTenantLoginCAKeyNotFound
+	}
+	return attrs, nil
+}
+
+// boundClaims returns the bound claim storage, or nil when none is bound.
+func (f *tenantCAKeyFactory) boundClaims() storage.Backend {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.claims
 }
 
 // tenantLoginCAKeyGenAttrs are the attributes of the login CA key this path
