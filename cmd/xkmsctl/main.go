@@ -35,7 +35,7 @@ func main() {
 // run executes the command tree and prints the error the root command silences.
 func run(stderr io.Writer) int {
 	if err := Execute(); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
 	return 0
