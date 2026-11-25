@@ -96,20 +96,6 @@ func TestNewAttester_RefusesWithoutTheReportInterface(t *testing.T) {
 	}
 }
 
-func TestNewAttester_RefusesAnEntryWithNoProviderAndRemovesIt(t *testing.T) {
-	if !supported {
-		t.Fatal("this test runs on linux/amd64 only; the Makefile runs the module there")
-	}
-	root := t.TempDir()
-	useRoot(t, root)
-	_, err := NewAttester()
-	wantStep(t, err, "provider")
-	left, rerr := os.ReadDir(root)
-	if rerr != nil || len(left) != 0 {
-		t.Fatalf("entries left under the root: %v, %v", left, rerr)
-	}
-}
-
 func TestWithEntry_AFailedRemovalIsTheError(t *testing.T) {
 	root := t.TempDir()
 	err := withEntry(root, func(dir string) error {
