@@ -44,6 +44,9 @@ tls:
 auth:
   enabled: true
   type: "composite"
+  # The suites run every login and ceremony from one address within seconds; the limiter stays on.
+  session:
+    login_rate_per_min: 6000
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:
