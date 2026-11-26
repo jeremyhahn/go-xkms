@@ -167,8 +167,10 @@ func runSecretService(cmd *cobra.Command, args []string) (err error) {
 			if unsealErr := barrier.Unseal(cmd.Context(), creds); unsealErr != nil {
 				logger.Warn("secret-service: startup unseal failed, starting sealed", slog.String("error", unsealErr.Error()))
 			}
-			if destroyErr := creds.Secret.Destroy(); destroyErr != nil {
-				logger.Warn("secret-service: wiping startup credentials failed", slog.String("error", destroyErr.Error()))
+			if creds.Secret != nil { // the zero Credentials of a hardware strategy hold no secret
+				if destroyErr := creds.Secret.Destroy(); destroyErr != nil {
+					logger.Warn("secret-service: wiping startup credentials failed", slog.String("error", destroyErr.Error()))
+				}
 			}
 		}
 	}
