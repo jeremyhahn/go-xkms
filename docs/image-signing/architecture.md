@@ -25,6 +25,9 @@ the certificate's first OU (`RequestCodeSigningCertificate`,
    (`pkg/image/dsse.go:113`, `:158`). RSA and P-256 keys sign SHA-256(PAE),
    P-384 and P-521 keys sign SHA-384(PAE) and SHA-512(PAE), and other curves
    are refused; Ed25519 signs the PAE itself (`pkg/image/dsse.go:132`).
+   Verification of a P-384 or P-521 envelope also accepts a SHA-256(PAE)
+   signature, so envelopes signed before the per-curve digest still verify
+   (`pkg/image/dsse.go:176`).
 4. Optionally gets an RFC 3161 timestamp over the envelope bytes
    (`pkg/image/timestamp.go:247`).
 5. Pushes the attestation twice (`pkg/image/registry.go:271`):

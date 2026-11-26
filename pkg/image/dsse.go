@@ -177,15 +177,26 @@ func verifyEnvelope(env *Envelope, publicKey crypto.PublicKey) error {
 	if len(env.Signatures) == 0 {
 		return &errs.Detail{Err: ErrInvalidEnvelope, Detail: "no signatures"}
 	}
-	digest, hash, err := signatureInput(publicKey, PAE(env.PayloadType, env.Payload))
+	message := PAE(env.PayloadType, env.Payload)
+	digest, hash, err := signatureInput(publicKey, message)
 	if err != nil {
 		return err
 	}
 	verifier := types.NewVerifier(&types.VerifyOpts{Hash: hash})
+	// ECDSA envelopes signed before the per-curve digest used SHA-256 on every curve.
+	var legacy types.Verifier
+	var legacyDigest []byte
+	if _, ok := publicKey.(*ecdsa.PublicKey); ok && hash != crypto.SHA256 {
+		legacy = types.NewVerifier(&types.VerifyOpts{Hash: crypto.SHA256})
+		legacyDigest = sha256Sum(message)
+	}
 	failures := make([]error, 0, len(env.Signatures))
 	for _, signature := range env.Signatures {
 		err := verifier.Verify(publicKey, digest, signature.Sig)
 		if err == nil {
+			return nil
+		}
+		if legacy != nil && legacy.Verify(publicKey, legacyDigest, signature.Sig) == nil {
 			return nil
 		}
 		failures = append(failures, err)
