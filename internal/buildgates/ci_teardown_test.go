@@ -3,6 +3,7 @@ package buildgates
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -232,6 +233,93 @@ func TestCITeardownCatchesKeptRunImages(t *testing.T) {
 	} {
 		if got := runImageRecipeProblems(bad); len(got) == 0 {
 			t.Errorf("recipe %q was not reported", bad)
+		}
+	}
+}
+
+// fakeDocker answers image listings from IMAGES (one ref per line), logs each
+// removed ref to RMLOG, and succeeds silently on every other command.
+const fakeDocker = `#!/usr/bin/env bash
+case "$1" in
+images|image)
+	if [ "$1" = image ]; then shift; fi
+	case "$1" in
+	rm|rmi) shift; for a in "$@"; do [ "$a" = -f ] || echo "$a" >>"$RMLOG"; done; exit 0;;
+	esac
+	pat=""
+	for a in "$@"; do case "$a" in --filter=reference=*) pat="${a#--filter=reference=}";; esac; done
+	while IFS= read -r ref; do
+		[ -n "$ref" ] || continue
+		if [ -z "$pat" ] || [[ "$ref" == $pat ]]; then echo "$ref"; fi
+	done <"$IMAGES"
+	exit 0;;
+rmi) shift; for a in "$@"; do [ "$a" = -f ] || echo "$a" >>"$RMLOG"; done; exit 0;;
+esac
+exit 0
+`
+
+func TestCITeardownRemovesOnlyOwnedRunImages(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Fatalf("make not on PATH: %v", err)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fakeDocker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const project = "go-xkms-ci-7-1"
+	const itImage = "go-xkms-ci-it:0123456789abcdef"
+	owned := []string{
+		"go-xkms-server:" + project,
+		"go-xkms/cli:" + project,
+		"go-quicbaas-server:" + project,
+	}
+	kept := []string{
+		itImage,
+		"go-xkms-server:" + project + "-soak-1",
+		"go-xkms-server:go-xkms-ci-7-10",
+		"other/tool:" + project,
+		project + "-cache:latest",
+		"registry.example/" + project + "-tool:v1",
+	}
+	images := filepath.Join(dir, "images")
+	if err := os.WriteFile(images, []byte(strings.Join(append(append([]string{}, owned...), kept...), "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rmlog := filepath.Join(dir, "rm.log")
+	cmd := exec.Command("make", "-s", "-C", repoRoot, "clean-test-containers",
+		"IT_PROJECT="+project, "IT_IMAGE="+itImage, "CLEAN_RUN_IMAGES=1", "BUILD_DIR="+filepath.Join(dir, "build"))
+	for _, kv := range os.Environ() {
+		switch strings.SplitN(kv, "=", 2)[0] {
+		case "PATH", "XKMS_IMAGE_TAG", "COMPOSE_RUN_ID", "IT_PROJECT", "IT_IMAGE", "MAKEFLAGS":
+			continue
+		}
+		cmd.Env = append(cmd.Env, kv)
+	}
+	cmd.Env = append(cmd.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"IMAGES="+images, "RMLOG="+rmlog)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("make clean-test-containers: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(rmlog)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	removed := map[string]bool{}
+	for _, ref := range strings.Fields(string(data)) {
+		removed[ref] = true
+	}
+	for _, ref := range owned {
+		if !removed[ref] {
+			t.Errorf("teardown kept this run's image %s", ref)
+		}
+	}
+	for _, ref := range kept {
+		if removed[ref] {
+			t.Errorf("teardown removed %s, which this run does not own", ref)
 		}
 	}
 }
