@@ -34,7 +34,7 @@ func newFakePacketSource() *fakePacketSource {
 func (f *fakePacketSource) ReadOutput() ([]byte, error) {
 	select {
 	case p := <-f.packets:
-		if p[4] == authenticator.CTAPHIDCancel {
+		if p[4] == authenticator.CTAPHIDCancel && f.cancelAt.Load() == 0 {
 			f.cancelAt.Store(time.Now().UnixNano())
 			close(f.cancelReturned)
 		}
@@ -263,6 +263,48 @@ func TestEventLoop_KeepsPacketOrder(t *testing.T) {
 	f = h.nextFrame(2 * time.Second)
 	if f.cid != cid || f.cmd != authenticator.CTAPHIDCBOR || len(f.payload) < 2 || f.payload[0] != 0x00 {
 		t.Fatalf("second response cmd=0x%02x payload len=%d, want a GetInfo success", f.cmd, len(f.payload))
+	}
+	h.stopAndWait()
+}
+
+// A CANCEL read while its Selection is still queued behind a busy worker
+// ends that Selection without a presence wait.
+func TestEventLoop_CancelEndsQueuedSelection(t *testing.T) {
+	presence := &blockingPresence{started: make(chan struct{})}
+	h := startEventLoopHarness(t, presence)
+
+	busy := h.allocateChannel()
+	queued := h.allocateChannel()
+	h.src.packets <- initPacket(busy, authenticator.CTAPHIDCBOR, 1, []byte{authenticator.CmdSelection})
+	select {
+	case <-presence.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first Selection never asked for presence")
+	}
+
+	h.src.packets <- initPacket(queued, authenticator.CTAPHIDCBOR, 1, []byte{authenticator.CmdSelection})
+	h.src.packets <- initPacket(queued, authenticator.CTAPHIDCancel, 0, nil)
+	select {
+	case <-h.src.cancelReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("event loop never read the CTAPHID_CANCEL packet")
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	// Free the worker: the queued Selection starts only now.
+	h.src.packets <- initPacket(busy, authenticator.CTAPHIDCancel, 0, nil)
+	got := map[uint32][]byte{}
+	for range 2 {
+		f := h.nextFrame(3 * time.Second)
+		if f.cmd != authenticator.CTAPHIDCBOR {
+			t.Fatalf("response cmd=0x%02x on cid=0x%08x, want CBOR", f.cmd, f.cid)
+		}
+		got[f.cid] = f.payload
+	}
+	for _, cid := range []uint32{busy, queued} {
+		if !bytes.Equal(got[cid], []byte{authenticator.StatusKeepaliveCancel}) {
+			t.Fatalf("Selection on cid=0x%08x answered % x, want 2d (KEEPALIVE_CANCEL)", cid, got[cid])
+		}
 	}
 	h.stopAndWait()
 }
