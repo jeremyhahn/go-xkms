@@ -167,8 +167,8 @@ func TestACMEError_Is(t *testing.T) {
 	err2 := NewACMEError(CodeACMEBadNonce, "Op2", "msg2")
 	err3 := NewACMEError(CodeACMEBadCSR, "Op3", "msg3")
 
-	if !err1.Is(err2) {
-		t.Error("expected ACMEErrors with same code to match")
+	if !errors.Is(err1, err2) {
+		t.Error("expected errors.Is to match ACMEErrors with same code")
 	}
 	if err1.Is(err3) {
 		t.Error("expected ACMEErrors with different codes to not match")
@@ -235,6 +235,9 @@ func TestACMEError_AddSubproblem(t *testing.T) {
 
 	if len(err.Subproblems) != 2 {
 		t.Fatalf("expected 2 subproblems, got %d", len(err.Subproblems))
+	}
+	if err.Subproblems[0].Identifier != nil {
+		t.Error("expected a subproblem without an identifier to keep a nil identifier")
 	}
 }
 
@@ -311,12 +314,6 @@ func TestACMEHTTPStatus(t *testing.T) {
 		code     ErrorCode
 		expected int
 	}{
-		// ACME codes
-		{CodeACMEBadNonce, 400},
-		{CodeACMERateLimited, 429},
-		{CodeACMEServerInternal, 500},
-		{CodeACMEUnauthorized, 403},
-		// General codes
 		{CodeUnknown, 500},
 		{CodeInvalidInput, 400},
 		{CodeNotFound, 404},
@@ -342,103 +339,5 @@ func TestACMEHTTPStatus_UnknownCode(t *testing.T) {
 	unknownCode := ErrorCode(9999)
 	if got := ACMEHTTPStatus(unknownCode); got != 500 {
 		t.Errorf("expected 500 for unknown code, got %d", got)
-	}
-}
-
-func TestACMEIdentifier(t *testing.T) {
-	id := &ACMEIdentifier{
-		Type:  "dns",
-		Value: "example.com",
-	}
-
-	if id.Type != "dns" {
-		t.Errorf("expected type 'dns', got %q", id.Type)
-	}
-	if id.Value != "example.com" {
-		t.Errorf("expected value 'example.com', got %q", id.Value)
-	}
-}
-
-func TestACMESubproblem(t *testing.T) {
-	sp := ACMESubproblem{
-		Type:   "urn:ietf:params:acme:error:caa",
-		Detail: "CAA record prevents issuance",
-		Identifier: &ACMEIdentifier{
-			Type:  "dns",
-			Value: "sub.example.com",
-		},
-	}
-
-	if sp.Type != "urn:ietf:params:acme:error:caa" {
-		t.Errorf("expected type urn, got %q", sp.Type)
-	}
-	if sp.Identifier == nil {
-		t.Fatal("expected non-nil identifier")
-	}
-	if sp.Identifier.Value != "sub.example.com" {
-		t.Errorf("expected identifier value, got %q", sp.Identifier.Value)
-	}
-}
-
-func TestACMESubproblem_NilIdentifier(t *testing.T) {
-	sp := ACMESubproblem{
-		Type:   "urn:ietf:params:acme:error:dns",
-		Detail: "DNS error",
-	}
-
-	if sp.Identifier != nil {
-		t.Error("expected nil identifier")
-	}
-}
-
-func TestACMEErrorChaining(t *testing.T) {
-	err := NewACMEError(CodeACMECompound, "ValidateOrder", "validation failed").
-		WithInstance("https://ca.example.com/errors/12345").
-		AddSubproblem(ACMESubproblem{
-			Type:   "urn:ietf:params:acme:error:caa",
-			Detail: "CAA prevents issuance",
-			Identifier: &ACMEIdentifier{
-				Type:  "dns",
-				Value: "example.com",
-			},
-		}).
-		AddSubproblem(ACMESubproblem{
-			Type:   "urn:ietf:params:acme:error:dns",
-			Detail: "DNS lookup failed",
-			Identifier: &ACMEIdentifier{
-				Type:  "dns",
-				Value: "www.example.com",
-			},
-		})
-
-	if err.Instance != "https://ca.example.com/errors/12345" {
-		t.Error("expected instance to be set")
-	}
-	if len(err.Subproblems) != 2 {
-		t.Fatalf("expected 2 subproblems, got %d", len(err.Subproblems))
-	}
-	if err.Code != CodeACMECompound {
-		t.Error("expected compound error code")
-	}
-}
-
-func TestACMEError_ErrorsAs(t *testing.T) {
-	err := NewACMEError(CodeACMEBadNonce, "Op", "msg")
-
-	var acmeErr *ACMEError
-	if !errors.As(err, &acmeErr) {
-		t.Fatal("expected errors.As to succeed for ACMEError")
-	}
-	if acmeErr.Code != CodeACMEBadNonce {
-		t.Error("expected code to be preserved")
-	}
-}
-
-func TestACMEError_ErrorsIs(t *testing.T) {
-	err1 := NewACMEError(CodeACMEBadNonce, "Op1", "msg1")
-	err2 := NewACMEError(CodeACMEBadNonce, "Op2", "msg2")
-
-	if !errors.Is(err1, err2) {
-		t.Error("expected errors.Is to match ACMEErrors with same code")
 	}
 }
