@@ -44,15 +44,23 @@ func NewTenantScopedBackend(base Backend, tenantID string) *TenantScopedBackend 
 }
 
 // keepsTenantScope reports whether a key generated through a
-// TenantScopedBackend over base stays visible to its tenant. AWS KMS, Azure
-// Key Vault and Cloud KMS name and list keys without the tenant, so the
-// scope's ListKeys filters a new key out and a retry generates another.
+// TenantScopedBackend over base stays visible to its tenant. It is an
+// allow-list: the software backend stores and lists TenantID with each key
+// (pkcs8 key metadata), and the TPM does so only with a scope provider set,
+// which it reports through TenantBoundSealing. Every other backend names or
+// lists keys without the tenant, so the scope's ListKeys filters a new key
+// out and a retry generates another.
 func keepsTenantScope(base Backend) bool {
 	switch base.Type() {
-	case types.StoreAWSKMS, types.StoreAzureKV, types.StoreGCPKMS:
-		return false
+	case types.StoreSoftware:
+		// An unknown provider type maps to the software store type too.
+		p := base.KeyProvider()
+		return p == nil || p.Type() == types.BackendTypeSoftware
+	case types.StoreTPM2:
+		bound, ok := base.KeyProvider().(TenantBoundSealer)
+		return ok && bound.TenantBoundSealing()
 	default:
-		return true
+		return false
 	}
 }
 
