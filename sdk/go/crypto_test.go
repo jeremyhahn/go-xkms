@@ -529,6 +529,9 @@ func (n *noopClient) ExportOTAImagePublicKey(context.Context, *transport.OTAImag
 func (n *noopClient) SignOTAImage(context.Context, *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }
+func (n *noopClient) ExportOTAImageKey(context.Context, *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
+	return nil, nil
+}
 func (n *noopClient) GetImportParameters(context.Context, *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, nil
 }

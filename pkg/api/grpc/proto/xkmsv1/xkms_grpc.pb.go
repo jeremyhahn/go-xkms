@@ -37,6 +37,7 @@ const (
 	KeystoreService_RotateOTAImageKey_FullMethodName                  = "/xkms.v1.KeystoreService/RotateOTAImageKey"
 	KeystoreService_ExportOTAImagePublicKey_FullMethodName            = "/xkms.v1.KeystoreService/ExportOTAImagePublicKey"
 	KeystoreService_SignOTAImage_FullMethodName                       = "/xkms.v1.KeystoreService/SignOTAImage"
+	KeystoreService_ExportOTAImageKey_FullMethodName                  = "/xkms.v1.KeystoreService/ExportOTAImageKey"
 	KeystoreService_ListKeyVersions_FullMethodName                    = "/xkms.v1.KeystoreService/ListKeyVersions"
 	KeystoreService_EnableKeyVersion_FullMethodName                   = "/xkms.v1.KeystoreService/EnableKeyVersion"
 	KeystoreService_DisableKeyVersion_FullMethodName                  = "/xkms.v1.KeystoreService/DisableKeyVersion"
@@ -296,6 +297,10 @@ type KeystoreServiceClient interface {
 	// SignOTAImage signs an OTA image with the current version of its board's
 	// key.
 	SignOTAImage(ctx context.Context, in *SignOTAImageRequest, opts ...grpc.CallOption) (*SignResponse, error)
+	// ExportOTAImageKey returns the public half of the current version of a
+	// board's OTA image-signing key; it reads a public key, so the get
+	// permission applies.
+	ExportOTAImageKey(ctx context.Context, in *OTAImageKeyRequest, opts ...grpc.CallOption) (*ExportOTAImageKeyResponse, error)
 	// ListKeyVersions lists every version of a key and marks the current one.
 	// A key that was never rotated lists version 1 alone.
 	ListKeyVersions(ctx context.Context, in *ListKeyVersionsRequest, opts ...grpc.CallOption) (*ListKeyVersionsResponse, error)
@@ -960,6 +965,16 @@ func (c *keystoreServiceClient) SignOTAImage(ctx context.Context, in *SignOTAIma
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SignResponse)
 	err := c.cc.Invoke(ctx, KeystoreService_SignOTAImage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *keystoreServiceClient) ExportOTAImageKey(ctx context.Context, in *OTAImageKeyRequest, opts ...grpc.CallOption) (*ExportOTAImageKeyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExportOTAImageKeyResponse)
+	err := c.cc.Invoke(ctx, KeystoreService_ExportOTAImageKey_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -3194,6 +3209,10 @@ type KeystoreServiceServer interface {
 	// SignOTAImage signs an OTA image with the current version of its board's
 	// key.
 	SignOTAImage(context.Context, *SignOTAImageRequest) (*SignResponse, error)
+	// ExportOTAImageKey returns the public half of the current version of a
+	// board's OTA image-signing key; it reads a public key, so the get
+	// permission applies.
+	ExportOTAImageKey(context.Context, *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error)
 	// ListKeyVersions lists every version of a key and marks the current one.
 	// A key that was never rotated lists version 1 alone.
 	ListKeyVersions(context.Context, *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error)
@@ -3765,6 +3784,9 @@ func (UnimplementedKeystoreServiceServer) ExportOTAImagePublicKey(context.Contex
 }
 func (UnimplementedKeystoreServiceServer) SignOTAImage(context.Context, *SignOTAImageRequest) (*SignResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SignOTAImage not implemented")
+}
+func (UnimplementedKeystoreServiceServer) ExportOTAImageKey(context.Context, *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExportOTAImageKey not implemented")
 }
 func (UnimplementedKeystoreServiceServer) ListKeyVersions(context.Context, *ListKeyVersionsRequest) (*ListKeyVersionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListKeyVersions not implemented")
@@ -4692,6 +4714,24 @@ func _KeystoreService_SignOTAImage_Handler(srv interface{}, ctx context.Context,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(KeystoreServiceServer).SignOTAImage(ctx, req.(*SignOTAImageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _KeystoreService_ExportOTAImageKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(OTAImageKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(KeystoreServiceServer).ExportOTAImageKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: KeystoreService_ExportOTAImageKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(KeystoreServiceServer).ExportOTAImageKey(ctx, req.(*OTAImageKeyRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -8700,6 +8740,10 @@ var KeystoreService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SignOTAImage",
 			Handler:    _KeystoreService_SignOTAImage_Handler,
+		},
+		{
+			MethodName: "ExportOTAImageKey",
+			Handler:    _KeystoreService_ExportOTAImageKey_Handler,
 		},
 		{
 			MethodName: "ListKeyVersions",

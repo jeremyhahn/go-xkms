@@ -59,6 +59,11 @@ func newOTAImageMCPServer(t *testing.T) *Transport {
 			}
 		case "xkms.signOTAImage":
 			result = map[string]interface{}{"signature": []byte("sig"), "key_version": 2}
+		case "xkms.exportOTAImageKey":
+			result = transport.ExportOTAImageKeyResponse{
+				BoardID: params.BoardID, KeyID: "ota-image-" + params.BoardID, KeyVersion: 2, Algorithm: "ES256",
+				PublicKey: []byte("x||y"), COSEKey: []byte("cose"),
+			}
 		default:
 			return jsonrpcResponse{ErrorText: "unexpected method " + req.Method, Envelope: qrdbsdk.MCPCodeUnimplemented}
 		}
@@ -88,6 +93,17 @@ func TestOTAImageKey_MCP(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sig"), signed.Signature)
 	assert.Equal(t, uint32(2), signed.KeyVersion)
+
+	exported, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
+	require.NoError(t, err)
+	assert.Equal(t, &transport.ExportOTAImageKeyResponse{
+		BoardID:    "cm4",
+		KeyID:      "ota-image-cm4",
+		KeyVersion: 2,
+		Algorithm:  "ES256",
+		PublicKey:  []byte("x||y"),
+		COSEKey:    []byte("cose"),
+	}, exported, "every field crosses the wire")
 }
 
 func TestOTAImageKey_MCP_ExportPublicKey(t *testing.T) {
@@ -120,6 +136,10 @@ func TestOTAImageKey_MCP_InvalidBoard(t *testing.T) {
 		},
 		"sign": func() error {
 			_, err := tr.SignOTAImage(ctx, &transport.OTAImageSignRequest{Backend: "software", BoardID: otaBadBoard, Data: []byte("image")})
+			return err
+		},
+		"export": func() error {
+			_, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: otaBadBoard})
 			return err
 		},
 	}

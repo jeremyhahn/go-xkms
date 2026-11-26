@@ -45,6 +45,7 @@ type RotateKeyResponse = pkgtransport.RotateKeyResponse
 type OTAImageKeyRequest = pkgtransport.OTAImageKeyRequest
 type OTAImagePublicKeyResponse = pkgtransport.OTAImagePublicKeyResponse
 type OTAImageSignRequest = pkgtransport.OTAImageSignRequest
+type ExportOTAImageKeyResponse = pkgtransport.ExportOTAImageKeyResponse
 type GetImportParametersRequest = pkgtransport.GetImportParametersRequest
 type GetImportParametersResponse = pkgtransport.GetImportParametersResponse
 type CopyKeyRequest = pkgtransport.CopyKeyRequest

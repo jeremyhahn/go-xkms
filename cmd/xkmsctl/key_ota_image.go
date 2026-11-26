@@ -70,26 +70,6 @@ Example:
 	},
 }
 
-var keyOTAImageExportCmd = &cobra.Command{
-	Use:   "export <board-id>",
-	Short: "Export a board's OTA image public key",
-	Long: `Export the public half of the current version of a board's OTA image key:
-the key id, the board id, the version, the raw 64-byte X||Y point in hex and
-the COSE_Key in base64. A board flashes the raw point to verify its images.
-
-Example:
-  xkmsctl key ota-image export cm4 --backend software`,
-	Args: cobra.ExactArgs(1),
-	Run: func(cmd *cobra.Command, args []string) {
-		cfg := getConfig()
-		req := &client.OTAImageKeyRequest{Backend: cfg.Backend, BoardID: args[0]}
-		runClientCall(cfg, "Exporting the OTA image public key of board "+args[0], ErrExportOTAImagePublicKeyFailed,
-			func(ctx context.Context, cl client.Client) (any, error) {
-				return cl.ExportOTAImagePublicKey(ctx, req)
-			}, printOTAImagePublicKey)
-	},
-}
-
 var keyOTAImageSignCmd = &cobra.Command{
 	Use:   "sign <board-id> <image-file>",
 	Short: "Sign an OTA image with a board's key",
@@ -116,6 +96,25 @@ Example:
 		runClientCall(cfg, "Signing an OTA image for board "+args[0], ErrSignOTAImageFailed, func(ctx context.Context, cl client.Client) (any, error) {
 			return cl.SignOTAImage(ctx, &client.OTAImageSignRequest{Backend: cfg.Backend, BoardID: args[0], Data: data, DataIsDigest: isDigest})
 		}, printOTAImageSignature)
+	},
+}
+
+var keyOTAImageExportCmd = &cobra.Command{
+	Use:   "export <board-id>",
+	Short: "Export a board's OTA verification public key",
+	Long: `Export the public half of the current version of a board's OTA
+image-signing key: the raw X || Y, 64 bytes in hex, and the COSE_Key
+(RFC 9052 §7, RFC 9053 §7.1.1) in base64. The private key never leaves
+xkmsd. With --output json the bytes are base64 in the JSON fields.
+
+Example:
+  xkmsctl key ota-image export cm4 --backend software`,
+	Args: cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		runOTAImageKeyCall(cmd, args[0], "Exporting the OTA image key of board "+args[0], ErrExportOTAImageKeyFailed,
+			func(ctx context.Context, cl client.Client, req *client.OTAImageKeyRequest) (any, error) {
+				return cl.ExportOTAImageKey(ctx, req)
+			}, printOTAImageKeyExported)
 	},
 }
 
@@ -157,17 +156,6 @@ func printOTAImageKeyRotated(p *Printer, result any) {
 	}
 }
 
-func printOTAImagePublicKey(p *Printer, result any) {
-	resp, ok := result.(*client.OTAImagePublicKeyResponse)
-	if !ok || printJSONResult(p, result) {
-		return
-	}
-	if _, err := fmt.Fprintf(os.Stdout, "Key ID: %s\nBoard ID: %s\nVersion: %d\nPublic key (raw X||Y, hex): %s\nCOSE_Key (base64): %s\n",
-		resp.KeyID, resp.BoardID, resp.Version, hex.EncodeToString(resp.Raw), base64.StdEncoding.EncodeToString(resp.COSEKey)); err != nil {
-		handleError(err)
-	}
-}
-
 func printOTAImageSignature(p *Printer, result any) {
 	resp, ok := result.(*client.SignResponse)
 	if !ok {
@@ -178,11 +166,28 @@ func printOTAImageSignature(p *Printer, result any) {
 	}
 }
 
+func printOTAImageKeyExported(p *Printer, result any) {
+	resp, ok := result.(*client.ExportOTAImageKeyResponse)
+	if !ok || printJSONResult(p, result) {
+		return
+	}
+	printCallSuccess(p, fmt.Sprintf("OTA image key of board %s: %s (version %d, %s)", resp.BoardID, resp.KeyID, resp.KeyVersion, resp.Algorithm))
+	for _, line := range []string{
+		"Public key (X || Y, hex): " + hex.EncodeToString(resp.PublicKey),
+		"COSE_Key (base64): " + base64.StdEncoding.EncodeToString(resp.COSEKey),
+	} {
+		if err := p.PrintMessage(line); err != nil {
+			handleError(err)
+			return
+		}
+	}
+}
+
 func init() {
 	keyCmd.AddCommand(keyOTAImageCmd)
-	keyOTAImageCmd.AddCommand(keyOTAImageCreateCmd, keyOTAImageRotateCmd, keyOTAImageExportCmd, keyOTAImageSignCmd)
+	keyOTAImageCmd.AddCommand(keyOTAImageCreateCmd, keyOTAImageRotateCmd, keyOTAImageSignCmd, keyOTAImageExportCmd)
 
-	for _, cmd := range []*cobra.Command{keyOTAImageCreateCmd, keyOTAImageRotateCmd} {
+	for _, cmd := range []*cobra.Command{keyOTAImageCreateCmd, keyOTAImageRotateCmd, keyOTAImageExportCmd} {
 		cmd.Flags().String("algorithm", "ES256", "Key algorithm (ES256 is the only one accepted)")
 	}
 	keyOTAImageSignCmd.Flags().Bool("digest", false, "The file holds the image's SHA-256 digest, not the image")
