@@ -60,4 +60,17 @@ var (
 	// ErrComponentOrdinal is returned when a component's class index is too
 	// large to name an event.
 	ErrComponentOrdinal = errors.New("refvalue: component class index is out of range")
+
+	// ErrSignerKey reports a nil signer, or a signer whose key has no COSE
+	// algorithm Sign produces: ECDSA P-256, P-384 or P-521, RSA of at least
+	// 2048 bits, or Ed25519.
+	ErrSignerKey = errors.New("refvalue: signer key must be ECDSA P-256/P-384/P-521, RSA of at least 2048 bits, or Ed25519")
+
+	// ErrMeta reports corim-meta that is not a valid corim-meta-map: an
+	// empty signer name, or a signature validity that ends before it starts.
+	ErrMeta = errors.New("refvalue: corim-meta is not valid")
+
+	// ErrSign reports a signer that failed to produce the COSE_Sign1
+	// signature.
+	ErrSign = errors.New("refvalue: signing the CoRIM failed")
 )
