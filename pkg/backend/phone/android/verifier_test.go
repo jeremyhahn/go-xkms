@@ -214,16 +214,16 @@ func TestAndroidVerifier_VerifyAttestation_ValidChainWithAttestation(t *testing.
 
 // statusListServer serves body with status from an httptest server. Tests
 // never reach Google's list.
-func statusListServer(t *testing.T, status int, body string) string {
+func statusListServer(t *testing.T, status int, body string) *phone.AttestationConfig {
 	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(status)
 		if _, err := w.Write([]byte(body)); err != nil {
 			return
 		}
 	}))
 	t.Cleanup(server.Close)
-	return server.URL
+	return &phone.AttestationConfig{StatusListURL: server.URL, StatusListClient: server.Client()}
 }
 
 func TestAndroidVerifier_VerifyAttestation_StatusListFromConfig(t *testing.T) {
@@ -243,7 +243,7 @@ func TestAndroidVerifier_VerifyAttestation_StatusListFromConfig(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg := &phone.AttestationConfig{StatusListURL: statusListServer(t, tt.status, tt.body)}
+			cfg := statusListServer(t, tt.status, tt.body)
 			v, err := NewAndroidVerifier(pool, cfg)
 			if err != nil {
 				t.Fatalf("NewAndroidVerifier() error: %v", err)
@@ -285,7 +285,7 @@ func TestNewAndroidVerifier_StatusListFile(t *testing.T) {
 	nonce := []byte("test-nonce-12345")
 	leafDER, caDER, pool := newAttestedChain(t, nonce)
 
-	v, err := NewAndroidVerifier(pool, &phone.AttestationConfig{StatusListFile: listed, StatusListURL: "http://unused.test/status"})
+	v, err := NewAndroidVerifier(pool, &phone.AttestationConfig{StatusListFile: listed, StatusListURL: "https://unused.test/status"})
 	if err != nil {
 		t.Fatalf("NewAndroidVerifier() error: %v", err)
 	}
@@ -300,9 +300,11 @@ func TestNewAndroidVerifier_StatusListFile(t *testing.T) {
 }
 
 func TestNewAndroidVerifier_InvalidStatusListURL(t *testing.T) {
-	_, err := NewAndroidVerifier(x509.NewCertPool(), &phone.AttestationConfig{StatusListURL: "ftp://mirror.test/status"})
-	if !errors.Is(err, attestandroid.ErrInvalidStatusListURL) {
-		t.Fatalf("NewAndroidVerifier() error = %v, want ErrInvalidStatusListURL", err)
+	for _, bad := range []string{"ftp://mirror.test/status", "http://mirror.test/status"} {
+		_, err := NewAndroidVerifier(x509.NewCertPool(), &phone.AttestationConfig{StatusListURL: bad})
+		if !errors.Is(err, attestandroid.ErrInvalidStatusListURL) {
+			t.Fatalf("NewAndroidVerifier(%q) error = %v, want ErrInvalidStatusListURL", bad, err)
+		}
 	}
 }
 

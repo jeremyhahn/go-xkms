@@ -43,7 +43,7 @@ type statusEndpoint struct {
 func newStatusEndpoint(t *testing.T, body string, headers map[string]string) *statusEndpoint {
 	t.Helper()
 	e := &statusEndpoint{body: body, headers: headers, status: http.StatusOK}
-	e.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	e.server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		e.requests.Add(1)
 		e.mu.Lock()
 		body, headers, status, delay := e.body, e.headers, e.status, e.delay
@@ -177,7 +177,7 @@ func TestHTTPStatusList_OverSizeBody(t *testing.T) {
 	})
 
 	t.Run("streamed body", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			flusher, ok := w.(http.Flusher)
 			if !ok {
 				return
@@ -238,12 +238,52 @@ func TestNewHTTPStatusList(t *testing.T) {
 		assert.Equal(t, GoogleStatusListURL, source.URL())
 	})
 
-	for _, bad := range []string{"ftp://example.test/status", "/attestation/status", "https://", "http://[::1"} {
+	for _, bad := range []string{"ftp://example.test/status", "/attestation/status", "https://", "http://[::1", "http://example.test/status"} {
 		t.Run(bad, func(t *testing.T) {
 			_, err := NewHTTPStatusList(HTTPStatusListOptions{URL: bad})
 			require.ErrorIs(t, err, ErrInvalidStatusListURL)
 		})
 	}
+}
+
+// The list is unsigned: a redirect from HTTPS to plain HTTP would let an
+// on-path attacker answer with an empty list, so the fetch fails closed.
+func TestHTTPStatusList_RefusesRedirectToHTTP(t *testing.T) {
+	var plainRequests atomic.Int32
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		plainRequests.Add(1)
+		w.Header().Set("Cache-Control", "max-age=86400")
+		_, _ = w.Write([]byte(`{"entries":{}}`))
+	}))
+	t.Cleanup(plain.Close)
+	secure := httptest.NewTLSServer(http.RedirectHandler(plain.URL+"/status", http.StatusFound))
+	t.Cleanup(secure.Close)
+
+	source, err := NewHTTPStatusList(HTTPStatusListOptions{URL: secure.URL, Client: secure.Client()})
+	require.NoError(t, err)
+	list, err := source.Current()
+	require.Error(t, err)
+	assert.Nil(t, list)
+	assert.Zero(t, plainRequests.Load())
+}
+
+// A redirect that stays on HTTPS is still followed.
+func TestHTTPStatusList_FollowsRedirectOverHTTPS(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/moved" {
+			http.Redirect(w, r, "/moved", http.StatusFound)
+			return
+		}
+		w.Header().Set("Cache-Control", "max-age=60")
+		_, _ = w.Write([]byte(`{"entries":{}}`))
+	}))
+	t.Cleanup(server.Close)
+
+	source, err := NewHTTPStatusList(HTTPStatusListOptions{URL: server.URL, Client: server.Client()})
+	require.NoError(t, err)
+	list, err := source.Current()
+	require.NoError(t, err)
+	assert.NotNil(t, list)
 }
 
 func TestFreshUntil_AgeBeyondLifetimeIsStale(t *testing.T) {
@@ -304,7 +344,7 @@ func staleOnceEndpoint(t *testing.T, staleAnswers int32) (*httptest.Server, *ato
 	var requests atomic.Int32
 	var mu sync.Mutex
 	var cacheControl []string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n := requests.Add(1)
 		mu.Lock()
 		cacheControl = append(cacheControl, r.Header.Get("Cache-Control"))

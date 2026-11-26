@@ -36,7 +36,7 @@ const revokedSerialList = `{"entries":{"2c8cdddfd5e03bfc":{"status":"REVOKED","r
 var revokedSerial = new(big.Int).SetUint64(0x2c8cdddfd5e03bfc)
 
 func TestNewAndroidHTTPStatusList_FetchesTheConfiguredURL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Cache-Control", "max-age=60")
 		if _, err := w.Write([]byte(revokedSerialList)); err != nil {
 			return
@@ -44,7 +44,7 @@ func TestNewAndroidHTTPStatusList_FetchesTheConfiguredURL(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	source, err := NewAndroidHTTPStatusList(AndroidHTTPStatusListOptions{URL: server.URL})
+	source, err := NewAndroidHTTPStatusList(AndroidHTTPStatusListOptions{URL: server.URL, Client: server.Client()})
 	require.NoError(t, err)
 	assert.Equal(t, server.URL, source.URL())
 
@@ -59,11 +59,11 @@ func TestNewAndroidHTTPStatusList_Errors(t *testing.T) {
 	_, err := NewAndroidHTTPStatusList(AndroidHTTPStatusListOptions{URL: "ftp://mirror.test/status"})
 	require.ErrorIs(t, err, ErrAndroidInvalidStatusListURL)
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(server.Close)
-	source, err := NewAndroidHTTPStatusList(AndroidHTTPStatusListOptions{URL: server.URL})
+	source, err := NewAndroidHTTPStatusList(AndroidHTTPStatusListOptions{URL: server.URL, Client: server.Client()})
 	require.NoError(t, err)
 	_, err = source.Current()
 	require.ErrorIs(t, err, ErrAndroidStatusListUnavailable, "an unfetchable list fails closed")
