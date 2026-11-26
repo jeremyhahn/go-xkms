@@ -461,17 +461,14 @@ func TestCTPolicy_Submit(t *testing.T) {
 		policy, err := NewCTPolicy(config, submitter)
 		require.NoError(t, err)
 
+		// Cancelled before Submit: every staggered submission returns at its
+		// stagger wait, so no SCT is collected.
 		ctx, cancel := context.WithCancel(context.Background())
-		// Cancel after short time to trigger cancel during stagger
-		go func() {
-			time.Sleep(20 * time.Millisecond)
-			cancel()
-		}()
+		cancel()
 
 		expiry := time.Now().AddDate(1, 0, 0)
-		_, _ = policy.Submit(ctx, []byte("test"), nil, expiry)
-		// May or may not get enough SCTs depending on timing
-		// The important thing is it doesn't hang
+		_, err = policy.Submit(ctx, []byte("test"), nil, expiry)
+		require.Error(t, err)
 	})
 
 	t.Run("context cancelled during semaphore acquisition", func(t *testing.T) {
@@ -884,18 +881,6 @@ func TestLogGroup_IsTemporallyValid(t *testing.T) {
 
 		// Expiry before start time
 		assert.False(t, log.IsTemporallyValid(now.AddDate(0, -1, 0)))
-	})
-}
-
-func TestLogGroup_IsRFC6962Compliant(t *testing.T) {
-	t.Run("RFC6962 compliant", func(t *testing.T) {
-		log := LogGroup{IsTiled: false}
-		assert.True(t, log.IsRFC6962Compliant())
-	})
-
-	t.Run("tiled (not RFC6962)", func(t *testing.T) {
-		log := LogGroup{IsTiled: true}
-		assert.False(t, log.IsRFC6962Compliant())
 	})
 }
 

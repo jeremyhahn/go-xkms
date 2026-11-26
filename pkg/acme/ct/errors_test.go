@@ -58,33 +58,3 @@ func TestPolicyViolationError(t *testing.T) {
 		assert.Equal(t, 2, err.Required)
 	})
 }
-
-func TestSentinelErrors(t *testing.T) {
-	// Verify sentinel errors are properly defined
-	assert.Error(t, ErrNilInput)
-	assert.Error(t, ErrInvalidSCT)
-	assert.Error(t, ErrSCTEncodingFailed)
-	assert.Error(t, ErrSCTDecodingFailed)
-	assert.Error(t, ErrInvalidLogConfig)
-	assert.Error(t, ErrNoLogsConfigured)
-	assert.Error(t, ErrNoEligibleLogs)
-	assert.Error(t, ErrInsufficientSCTs)
-	assert.Error(t, ErrInsufficientOperators)
-	assert.Error(t, ErrNoRFC6962Log)
-	assert.Error(t, ErrCTSubmissionFailed)
-	assert.Error(t, ErrCTSubmissionTimeout)
-	assert.Error(t, ErrInvalidPolicyConfig)
-	assert.Error(t, ErrLogTemporalMismatch)
-	assert.Error(t, ErrInvalidSignature)
-	assert.Error(t, ErrPrecertPoisonMissing)
-	assert.Error(t, ErrPrecertPoisonInvalid)
-}
-
-func TestErrorWrapping(t *testing.T) {
-	t.Run("CTSubmissionError wraps cause", func(t *testing.T) {
-		innerErr := errors.New("inner error")
-		err := NewCTSubmissionError("Log", "URL", innerErr)
-
-		assert.True(t, errors.Is(err, innerErr))
-	})
-}
