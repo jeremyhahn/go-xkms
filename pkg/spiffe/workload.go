@@ -102,7 +102,7 @@ type TrustDomain struct {
 // ParseTrustDomain validates name as a SPIFFE trust domain. It accepts the
 // bare name ("example.org"), not a spiffe:// URI.
 func ParseTrustDomain(name string) (TrustDomain, error) {
-	if err := validateTrustDomain(name); err != nil {
+	if err := ValidateTrustDomain(name); err != nil {
 		return TrustDomain{}, err
 	}
 	return TrustDomain{name: name}, nil
@@ -274,8 +274,10 @@ func ValidatePathPrefix(prefix string) error {
 	return nil
 }
 
-// validateTrustDomain applies SPIFFE-ID §2.1.
-func validateTrustDomain(name string) error {
+// ValidateTrustDomain applies SPIFFE-ID §2.1 to a bare trust-domain name:
+// non-empty, at most 255 bytes, only [a-z0-9._-]. Tenant creation uses it so
+// a tenant ID that could never name an SVID's trust domain is refused up front.
+func ValidateTrustDomain(name string) error {
 	if name == "" {
 		return ErrTrustDomainEmpty
 	}
