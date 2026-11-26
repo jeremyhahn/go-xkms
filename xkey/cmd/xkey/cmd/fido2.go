@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
+	"github.com/jeremyhahn/go-xkms/pkg/fido2/virtualdevice"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
@@ -49,9 +50,6 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
-
-// ctaphidCancel is the CTAPHID_CANCEL command byte (CTAP 2.1 section 11.2.9.1.5, same value as pkg/fido2/authenticator CTAPHIDCancel).
-const ctaphidCancel byte = 0x11 | 0x80
 
 // FIDO2 configuration errors.
 var (
@@ -1275,15 +1273,15 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 	// ends, so HandleMessage runs on a worker in arrival order while this
 	// goroutine keeps reading: a CTAPHID_CANCEL cancels the context of each
 	// queued or running packet of its channel.
-	work := make(chan *hidWork, fido2EventQueueSize)
-	pending := newHIDPending()
+	work := make(chan *virtualdevice.HIDWork, fido2EventQueueSize)
+	pending := virtualdevice.NewHIDPending()
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
 		for w := range work {
-			pending.start(w)
-			d.hidHandler.HandleMessageContext(w.ctx, w.packet)
-			pending.finish(w)
+			pending.Start(w)
+			d.hidHandler.HandleMessageContext(w.Ctx, w.Packet)
+			pending.Finish(w)
 		}
 	}()
 	defer func() {
@@ -1336,10 +1334,10 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 			// CTAPHID_CANCEL cancels the channel's queued and running
 			// packets at once; it queues behind them only while some have
 			// not started, so it cannot overtake its target.
-			if packet[4] == ctaphidCancel {
-				if pending.cancel(packet) {
+			if virtualdevice.IsCTAPHIDCancel(packet) {
+				if pending.Cancel(packet) {
 					select {
-					case work <- &hidWork{packet: packet, ctx: ctx}:
+					case work <- virtualdevice.NewHIDCancelWork(ctx, packet):
 						continue
 					default:
 					}
@@ -1350,11 +1348,11 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 
 			// The reader never blocks on the worker: a CTAP HID host sends
 			// nothing but CANCEL to a busy channel, so a full queue drops.
-			w := pending.add(ctx, packet)
+			w := pending.Add(ctx, packet)
 			select {
 			case work <- w:
 			default:
-				pending.drop(w)
+				pending.Drop(w)
 				d.logger.Warn("HID packet queue full, dropping packet",
 					slog.String("cid", formatCID(packet)),
 					slog.String("cmd_or_seq", formatCmd(packet)),

@@ -31,7 +31,12 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
+
+	hidqueue "github.com/jeremyhahn/go-xkms/pkg/fido2/virtualdevice"
 )
+
+// fido2BridgeQueueSize bounds the HID packets waiting for the bridge worker.
+const fido2BridgeQueueSize = 64
 
 // FIDO2 device service errors.
 var (
@@ -579,13 +584,36 @@ func (s *FIDO2DeviceService) HasPendingTouch() bool {
 // authenticator and writes them back to UHID as input reports.
 //
 // Both goroutines use polling with timeouts so they periodically check the
-// stop channel and exit cleanly when Stop is called.
+// stop channel and exit cleanly when Stop is called. A third goroutine runs
+// the host commands so a CTAPHID_CANCEL can reach a command blocked on
+// user presence.
 func (s *FIDO2DeviceService) bridgeLoop() {
-	s.bridgeWg.Add(2)
+	s.bridgeWg.Add(3)
+
+	work := make(chan *hidqueue.HIDWork, fido2BridgeQueueSize)
+	pending := hidqueue.NewHIDPending()
+	bridgeCtx, stopBridge := context.WithCancel(context.Background())
+	go func() {
+		defer s.bridgeWg.Done()
+		for {
+			select {
+			case <-s.stopCh:
+				stopBridge()
+				return
+			case w := <-work:
+				pending.Start(w)
+				if _, writeErr := s.device.WriteContext(w.Ctx, w.Packet); writeErr != nil {
+					s.log.Debug("device write error", slog.String("error", writeErr.Error()))
+				}
+				pending.Finish(w)
+			}
+		}
+	}()
 
 	// Goroutine 1: UHID -> Authenticator (host sends HID commands)
 	go func() {
 		defer s.bridgeWg.Done()
+		defer stopBridge()
 		for {
 			select {
 			case <-s.stopCh:
@@ -605,8 +633,27 @@ func (s *FIDO2DeviceService) bridgeLoop() {
 				}
 				continue
 			}
-			if _, writeErr := s.device.Write(packet); writeErr != nil {
-				s.log.Debug("device write error", slog.String("error", writeErr.Error()))
+			// CANCEL cancels its channel's queued and running packets at once
+			// and queues behind them only while some have not started.
+			if hidqueue.IsCTAPHIDCancel(packet) {
+				if pending.Cancel(packet) {
+					select {
+					case work <- hidqueue.NewHIDCancelWork(bridgeCtx, packet):
+						continue
+					default:
+					}
+				}
+				if _, writeErr := s.device.Write(packet); writeErr != nil {
+					s.log.Debug("device write error", slog.String("error", writeErr.Error()))
+				}
+				continue
+			}
+			w := pending.Add(bridgeCtx, packet)
+			select {
+			case work <- w:
+			default:
+				pending.Drop(w)
+				s.log.Warn("HID packet queue full, dropping packet")
 			}
 		}
 	}()

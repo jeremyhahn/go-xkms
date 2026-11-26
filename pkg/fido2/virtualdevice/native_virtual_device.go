@@ -16,6 +16,7 @@
 package virtualdevice
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"sync"
@@ -271,15 +272,26 @@ func (d *NativeVirtualDevice) handleResponse(response []byte) {
 // Write sends data to the virtual device (HID output report).
 // The data should be a 64-byte HID packet.
 func (d *NativeVirtualDevice) Write(data []byte) (int, error) {
+	return d.WriteContext(context.Background(), data)
+}
+
+// WriteContext is Write with a context that, when cancelled, ends the
+// command the packet completes as CTAPHID_CANCEL would.
+func (d *NativeVirtualDevice) WriteContext(ctx context.Context, data []byte) (int, error) {
 	if d.closed.Load() {
 		return 0, ErrNativeDeviceClosed
+	}
+
+	// CTAPHID_CANCEL must reach a command blocked inside another Write.
+	if IsCTAPHIDCancel(data) {
+		d.hidHandler.HandleMessageContext(ctx, data)
+		return len(data), nil
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	// Process the HID packet through the handler
-	d.hidHandler.HandleMessage(data)
+	d.hidHandler.HandleMessageContext(ctx, data)
 
 	return len(data), nil
 }
