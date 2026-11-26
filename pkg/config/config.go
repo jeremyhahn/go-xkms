@@ -1658,8 +1658,10 @@ func (c *Config) Validate() error {
 	// on and the auth chain accepts mTLS identities, the handshake must ask
 	// for the client certificate, or that administrator is never seen.
 	if c.TLS.Enabled && c.Auth.usesMTLS() {
-		switch strings.ToLower(strings.TrimSpace(c.TLS.ClientAuth)) {
-		case "", "none":
+		// The listener matches these values exactly; anything else serves NoClientCert.
+		switch c.TLS.ClientAuth {
+		case "request", "require", "verify", "require_and_verify":
+		default:
 			return &errs.Message{Msg: "tls.client_auth must request client certificates when auth accepts mTLS administrators (use \"verify\", \"request\", or \"require_and_verify\")"}
 		}
 	}
