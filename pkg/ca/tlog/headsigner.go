@@ -243,6 +243,14 @@ func signatureType(pub crypto.PublicKey) (qrdbsdk.HeadSignatureType, error) {
 	return "", ErrUnsupportedCAKey
 }
 
+// CheckCAKey reports, with ErrUnsupportedCAKey, a CA public key go-qrdb
+// cannot record as a head-signing key, so a caller can decide before it
+// opens the log whether this CA can sign the log's tree heads at all.
+func CheckCAKey(pub crypto.PublicKey) error {
+	_, err := signatureType(pub)
+	return err
+}
+
 // keyRef is the hex SHA-256 of pub's SubjectPublicKeyInfo.
 func keyRef(pub crypto.PublicKey) (string, error) {
 	spki, err := x509.MarshalPKIXPublicKey(pub)

@@ -35,6 +35,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tlogtest"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -148,6 +149,44 @@ func TestOpenTransparencyLog_CAUnsupported(t *testing.T) {
 	require.ErrorIs(t, err, ErrTransparencyLogCAUnsupported)
 	require.EqualError(t, err,
 		"transparency log: failed to attach the CA log: "+ErrTransparencyLogCAUnsupported.Error())
+}
+
+// newTLogP384CAServer is newTLogCAServer with a P-384 CA key, which go-qrdb
+// cannot record as a head-signing key, and the log setting left as given.
+func newTLogP384CAServer(t *testing.T, enabled *bool) *Server {
+	t.Helper()
+	s := newTLogCAServer(t, true)
+	s.config.CA.Identity[0].Keys[0].ECCConfig = &types.ECCConfig{Curve: types.CurveP384}
+	s.config.TransparencyLog.Enabled = enabled
+	return s
+}
+
+// A CA whose key cannot sign tree heads still starts when the log is on only
+// by the build's default: the configured CA algorithm is preserved and the
+// log is not attached.
+func TestInitializeCA_TransparencyLogDefaultKeepsUnsupportedCAKey(t *testing.T) {
+	s := newTLogP384CAServer(t, nil)
+	require.True(t, s.config.TransparencyLogEnabled(), "qrdb_vlog builds default the log on")
+	opts, err := s.transparencyLogNodeOptions()
+	require.NoError(t, err)
+	startTLogNode(t, s, opts)
+
+	require.NoError(t, s.initializeCA())
+	require.Nil(t, s.tlogService, "no log is attached for a P-384 CA by default")
+}
+
+// An operator who sets transparency_log.enabled requires the log, so a CA key
+// that cannot sign tree heads fails closed.
+func TestInitializeCA_TransparencyLogExplicitRefusesUnsupportedCAKey(t *testing.T) {
+	enabled := true
+	s := newTLogP384CAServer(t, &enabled)
+	opts, err := s.transparencyLogNodeOptions()
+	require.NoError(t, err)
+	startTLogNode(t, s, opts)
+
+	err = s.initializeCA()
+	require.ErrorIs(t, err, tlog.ErrUnsupportedCAKey)
+	require.Nil(t, s.tlogService)
 }
 
 // TestServiceTransparencyLog_AppendWithoutServiceContext proves an append

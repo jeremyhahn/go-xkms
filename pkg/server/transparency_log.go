@@ -78,6 +78,9 @@ func (s *Server) openTransparencyLog(trustedCA ca.TrustedCA) error {
 	if err := s.tlogKeys.Bind(trustedCA); err != nil {
 		return &ErrTransparencyLog{Operation: "bind the head-signing key", Err: err}
 	}
+	if supported, err := s.transparencyLogKeySupported(); err != nil || !supported {
+		return err
+	}
 	ctx, err := s.qrdbNode.ServiceContext(s.ctx)
 	if err != nil {
 		return &ErrTransparencyLog{Operation: "open the CA log", Err: err}
@@ -97,6 +100,31 @@ func (s *Server) openTransparencyLog(trustedCA ca.TrustedCA) error {
 	target.SetTransparencyLog(s.tlogService)
 	s.logger.Info("CA transparency log attached", "log", cfg.Name, "origin", cfg.Origin)
 	return nil
+}
+
+// transparencyLogKeySupported checks that the bound CA key can sign the log's
+// tree heads. go-qrdb records head signatures as Ed25519 or ECDSA P-256 only,
+// while a CA may use any configured algorithm (RSA, P-384, PQC): such a CA is
+// kept, not refused. When the log is on only by the build's default, the
+// server starts without it and logs why; when the operator set
+// transparency_log.enabled, it fails closed with ErrUnsupportedCAKey.
+func (s *Server) transparencyLogKeySupported() (bool, error) {
+	signer, err := s.tlogKeys.Signer(s.ctx)
+	if err != nil {
+		return false, &ErrTransparencyLog{Operation: "read the head-signing key", Err: err}
+	}
+	if signer == nil {
+		return false, &ErrTransparencyLog{Operation: "read the head-signing key", Err: tlog.ErrCAKeyUnavailable}
+	}
+	if err := tlog.CheckCAKey(signer.Public()); err != nil {
+		if s.config.TransparencyLog.Enabled == nil {
+			s.logger.Warn("CA transparency log not attached: the CA key cannot sign tree heads; set transparency_log.enabled to require it",
+				"log", caTransparencyLogName)
+			return false, nil
+		}
+		return false, &ErrTransparencyLog{Operation: "check the head-signing key", Err: err}
+	}
+	return true, nil
 }
 
 // serviceTransparencyLog runs every append the CA makes, and every read and
