@@ -137,6 +137,12 @@ func grantableOperation(operation string) bool {
 	return operation == "register" || operation == "authenticate"
 }
 
+// retiresPresenceGrant reports whether a completed command ends any grant,
+// also when PIN verification or the key backend satisfied presence.
+func retiresPresenceGrant(cmd byte) bool {
+	return cmd == CmdMakeCredential || cmd == CmdGetAssertion
+}
+
 func (a *Authenticator) displayName() string {
 	if a.config != nil && a.config.DisplayName != "" {
 		return a.config.DisplayName

@@ -608,6 +608,9 @@ func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, da
 		}
 		return a.errorResponseFromError(err), err
 	}
+	if retiresPresenceGrant(cmd) {
+		a.clearPresenceGrant()
+	}
 
 	return response, nil
 }
