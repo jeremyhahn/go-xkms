@@ -232,86 +232,98 @@ func (h *HTTPStatusList) download(revalidate bool) (_ *StatusList, _ time.Time, 
 	received := h.now()
 	until, stale := freshUntil(resp.Header, requested, received)
 	if stale {
-		return nil, time.Time{}, &errs.Detail{Err: ErrStatusListStale, Detail: fmt.Sprintf("Age %q over its freshness lifetime", resp.Header.Get("Age"))}
+		return nil, time.Time{}, &errs.Detail{Err: ErrStatusListStale, Detail: fmt.Sprintf("not fresh on arrival (Cache-Control %q, Expires %q, Age %q)", resp.Header.Get("Cache-Control"), resp.Header.Get("Expires"), resp.Header.Get("Age"))}
 	}
 	return list, until, nil
 }
 
 // freshUntil is the instant a response stops being fresh: the time it was
 // received plus its freshness lifetime less its age at that time (RFC 9111
-// §4.2: response_is_fresh = freshness_lifetime > current_age). stale
-// reports a response that has a freshness lifetime but arrived already
-// past it, such as one served by a cache with an Age beyond its max-age.
+// §4.2: response_is_fresh = freshness_lifetime > current_age, the lifetime
+// per §4.2.1 and the age per §4.2.3, whose resident_time is zero on
+// receipt). stale reports a response that carries freshness information
+// and is not fresh by that comparison: one served by a cache with an Age
+// beyond its max-age, a max-age of 0, or an Expires in the past. A response
+// with no freshness information is not stale; it answers this request and
+// is never reused.
 func freshUntil(header http.Header, requested, received time.Time) (_ time.Time, stale bool) {
-	lifetime := freshnessLifetime(header, received)
-	if lifetime <= 0 {
+	lifetime, explicit := freshnessLifetime(header, received)
+	if !explicit {
 		return received, false
 	}
 	age := initialAge(header, requested, received)
-	if age >= lifetime {
+	if lifetime <= age {
 		return received, true
 	}
 	return received.Add(lifetime - age), false
 }
 
-// freshnessLifetime implements RFC 9111 §4.2.1 for a private cache.
+// freshnessLifetime implements RFC 9111 §4.2.1 for a private cache. explicit
+// reports whether the response carries freshness information at all, a
+// max-age (§5.2.2.1) or an Expires (§5.3), even an invalid one: §5.3 reads
+// an invalid Expires as a time in the past, and §4.2.1 has a response with
+// invalid freshness information considered stale. max-age wins over
+// Expires; s-maxage applies to shared caches only.
+//
 // no-store (§5.2.2.5) and no-cache (§5.2.2.4) forbid reuse without
-// validation, which this source does not do, so they give no lifetime.
-// max-age (§5.2.2.1) wins over Expires (§5.3); s-maxage applies to shared
-// caches only. With neither, the list is not reused: §4.2.2 permits
+// validation, which this source does not do, so they give no lifetime and
+// no freshness information: the response answers this request only. With
+// neither max-age nor Expires the list is not reused either: §4.2.2 permits
 // heuristic freshness but does not require it, and a revocation list is
 // not something to guess the freshness of.
-func freshnessLifetime(header http.Header, received time.Time) time.Duration {
+func freshnessLifetime(header http.Header, received time.Time) (_ time.Duration, explicit bool) {
 	maxAge, hasMaxAge := int64(0), false
 	for _, field := range header.Values("Cache-Control") {
 		for _, directive := range strings.Split(field, ",") {
 			name, value, _ := strings.Cut(strings.TrimSpace(directive), "=")
 			switch strings.ToLower(strings.TrimSpace(name)) {
 			case "no-store", "no-cache":
-				return 0
+				return 0, false
 			case "max-age":
 				seconds, ok := parseDeltaSeconds(value)
 				if !ok {
 					// An invalid max-age is a response that is not fresh.
-					return 0
+					return 0, true
 				}
 				maxAge, hasMaxAge = seconds, true
 			}
 		}
 	}
 	if hasMaxAge {
-		return time.Duration(maxAge) * time.Second
+		return time.Duration(maxAge) * time.Second, true
 	}
 
 	expiresField := header.Get("Expires")
 	if expiresField == "" {
-		return 0
+		return 0, false
 	}
 	// §5.3: an invalid Expires, "0" in particular, is a time in the past.
 	expires, err := http.ParseTime(expiresField)
 	if err != nil {
-		return 0
+		return 0, true
 	}
 	date := received
 	if parsed, err := http.ParseTime(header.Get("Date")); err == nil {
 		date = parsed
 	}
-	return expires.Sub(date)
+	return expires.Sub(date), true
 }
 
-// initialAge implements the corrected_initial_age of RFC 9111 §4.2.3:
-// the larger of the age the Date field implies and the Age field (§5.1)
-// plus the request's round trip.
+// initialAge implements the corrected_initial_age of RFC 9111 §4.2.3: the
+// larger of the apparent_age the Date field implies and the corrected
+// age_value, the Age field (§5.1), or 0 without a valid one, plus the
+// response_delay of the request's round trip.
 func initialAge(header http.Header, requested, received time.Time) time.Duration {
 	var apparentAge time.Duration
 	if date, err := http.ParseTime(header.Get("Date")); err == nil {
 		apparentAge = max(received.Sub(date), 0)
 	}
 
-	var correctedAge time.Duration
+	var ageValue time.Duration
 	if seconds, ok := parseDeltaSeconds(header.Get("Age")); ok {
-		correctedAge = time.Duration(seconds)*time.Second + received.Sub(requested)
+		ageValue = time.Duration(seconds) * time.Second
 	}
+	correctedAge := ageValue + received.Sub(requested)
 	return max(apparentAge, correctedAge)
 }
 
