@@ -5,18 +5,23 @@
 
 Public specification documents this project implements against. Nothing here
 is proprietary; each entry is a publicly published standard, kept locally so
-implementation work does not depend on the publisher's site staying up.
+implementation work does not depend on the publisher's site staying up. The
+TCG and USB-IF documents are not redistributed here; their rows name their
+path in the private `jeremyhahn/vendor-tcg` repository.
 
-- `TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf` — TCG
+- `tcg/TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf` in
+  the private `jeremyhahn/vendor-tcg` repository — TCG
   "TPM 2.0 Keys for Device Identity and Attestation", v1.00 r12. IAK/IDevID
   key templates, the TCG-CSR-IDEVID enrollment structure, and the identity
   provisioning strategies `pkg/tpm2` implements (`ParseIdentityProvisioningStrategy`).
-- `TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.10r9_pub.pdf` — the
+- `tcg/TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.10r9_pub.pdf` in
+  the private `jeremyhahn/vendor-tcg` repository — the
   same TCG specification, revision v1.10 r9 (public review draft). Kept
   alongside v1.00 r12 rather than replacing it: this project's IAK/IDevID
   code was implemented and is tested against r12, and the two revisions are
   compared here before any migration, not silently swapped.
-- `DWG_Smart-Card_CCID_Rev110.pdf` — USB Implementers Forum, "Universal Serial
+- `usb-if/DWG_Smart-Card_CCID_Rev110.pdf` in the private `jeremyhahn/vendor-tcg`
+  repository — USB Implementers Forum, "Universal Serial
   Bus Device Class: Smart Card CCID", revision 1.10. USB CCID framing used by
   PIV/smart-card integration.
 - `kmip-spec-v1.4-os.pdf` — OASIS "Key Management Interoperability Protocol

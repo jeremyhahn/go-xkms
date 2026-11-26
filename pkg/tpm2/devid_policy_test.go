@@ -31,8 +31,9 @@ import (
 // TPM2_PolicyUpdate must agree, or the key policy this package attaches to
 // every IDevID and IAK is not the one the specification defines.
 //
-// The reference document is checked in at
-// docs/references/TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf.
+// The reference document is kept at
+// tcg/TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf in the
+// private jeremyhahn/vendor-tcg repository.
 
 // Table 14 - PolicyUser values.
 var tcgPolicyUser = map[tpm2.TPMAlgID]string{
