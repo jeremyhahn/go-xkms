@@ -29,6 +29,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/image"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -303,9 +304,10 @@ func (s *XKMSService) releaseKeySigner(ctx context.Context, tenant string, key *
 }
 
 // provisionReleaseKey generates tenant's release key in backendName, the
-// default backend when empty. An existing key is kept: every backend refuses
-// to generate over one with ErrKeyAlreadyExists, so of two concurrent first
-// uses one generates the key and the other signs with it.
+// default backend when empty. An existing key is kept: a backend refuses to
+// generate over one, with ErrKeyAlreadyExists or, on a tenant-scoped TPM
+// backend, a blob write wrapping store.ErrBlobExists, so of two concurrent
+// first uses one generates the key and the other signs with it.
 func (s *XKMSService) provisionReleaseKey(ctx context.Context, tenant, backendName string) error {
 	b, err := s.resolveBackend(backendName)
 	if err != nil {
@@ -322,7 +324,7 @@ func (s *XKMSService) provisionReleaseKey(ctx context.Context, tenant, backendNa
 		Curve:     releaseKeyCurve,
 		TenantID:  tenant,
 	})
-	if err == nil || errors.Is(err, ErrKeyAlreadyExists) {
+	if err == nil || errors.Is(err, ErrKeyAlreadyExists) || errors.Is(err, store.ErrBlobExists) {
 		return nil
 	}
 	return &ReleaseKeyProvisionError{TenantID: tenant, Err: err}
