@@ -34,6 +34,10 @@ const (
 	testOrigin  = "ca.example.com/tlog"
 )
 
+// testScope is the "certs" log as the test node's service principal
+// creates it.
+var testScope = ServiceLogScope("certs")
+
 // caKeyTypes are the CA key types go-qrdb can record as head-signing keys.
 var caKeyTypes = map[string]func(t *testing.T) crypto.Signer{
 	"ed25519":    newEd25519,
@@ -79,7 +83,7 @@ func newCAKeys(t *testing.T, signer crypto.Signer) qrdbsdk.CAKeyProvider {
 // newProvider returns the head-signer provider over a CA key of signer.
 func newProvider(t *testing.T, signer crypto.Signer) *HeadSignerProvider {
 	t.Helper()
-	p, err := NewHeadSignerProvider(newCAKeys(t, signer), testKeyName)
+	p, err := NewHeadSignerProvider(newCAKeys(t, signer), testKeyName, testScope)
 	require.NoError(t, err)
 	return p
 }

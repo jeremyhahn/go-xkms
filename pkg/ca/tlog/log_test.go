@@ -176,7 +176,7 @@ func TestOpenOrCreate_Errors(t *testing.T) {
 	_, err = OpenOrCreate(ctx, client, Config{Name: "certs"}, p)
 	require.ErrorIs(t, err, ErrInvalidConfig)
 
-	unavailable, err := NewHeadSignerProvider(failingCAKeys(nil, &qrdbsdk.CAKeyNotInitializedError{}), testKeyName)
+	unavailable, err := NewHeadSignerProvider(failingCAKeys(nil, &qrdbsdk.CAKeyNotInitializedError{}), testKeyName, testScope)
 	require.NoError(t, err)
 	_, err = OpenOrCreate(ctx, client, Config{Name: "certs", Origin: testOrigin}, unavailable)
 	require.ErrorIs(t, err, ErrCAKeyUnavailable)
@@ -185,6 +185,84 @@ func TestOpenOrCreate_Errors(t *testing.T) {
 	// cannot create the log either: the caller learns at once.
 	_, err = OpenOrCreate(t.Context(), client, Config{Name: "certs", Origin: testOrigin}, p)
 	require.ErrorIs(t, err, ErrLogRequest)
+}
+
+// TestOpenOrCreate_ChecksTheExistingLog reopens a log that already exists
+// with the configuration it was created under, with a changed origin, and
+// with another CA key: only the first opens, whether the log is empty, has
+// entries but no signed head yet, or has a signed head.
+func TestOpenOrCreate_ChecksTheExistingLog(t *testing.T) {
+	for name, fill := range map[string]func(t *testing.T, ctx context.Context, l *Log){
+		"empty": func(*testing.T, context.Context, *Log) {},
+		"never signed": func(t *testing.T, ctx context.Context, l *Log) {
+			_, err := l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(3), Reason: 1})
+			require.NoError(t, err)
+		},
+		"signed": func(t *testing.T, ctx context.Context, l *Log) {
+			_, err := l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(3), Reason: 1})
+			require.NoError(t, err)
+			_, err = l.SignedTreeHead(ctx)
+			require.NoError(t, err)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for reopen, want := range map[string]error{
+				"same origin and key": nil,
+				"changed origin":      ErrExistingLogMismatch,
+				"another CA key":      ErrExistingLogMismatch,
+			} {
+				t.Run(reopen, func(t *testing.T) {
+					p := newProvider(t, newEd25519(t))
+					client, ctx := newVlogClient(t, p)
+					cfg := Config{Name: "certs", Origin: testOrigin}
+					created, err := Create(ctx, client, cfg, p)
+					require.NoError(t, err)
+					fill(t, ctx, created)
+
+					signers := p
+					switch reopen {
+					case "changed origin":
+						cfg.Origin = "other.example.com/tlog"
+					case "another CA key":
+						signers = newProvider(t, newEd25519(t))
+					}
+					opened, err := OpenOrCreate(ctx, client, cfg, signers)
+					if want != nil {
+						require.ErrorIs(t, err, want)
+						require.Nil(t, opened)
+						return
+					}
+					require.NoError(t, err)
+					head, err := opened.SignedTreeHead(ctx)
+					require.NoError(t, err)
+					_, err = opened.VerifyCheckpoint(head.Note)
+					require.NoError(t, err)
+				})
+			}
+		})
+	}
+}
+
+// TestHeadSignerProvider_OtherLogOnTheNode creates a log under another name
+// on a node whose provider serves "certs": go-qrdb cannot obtain the CA key
+// for it, while the CA log on the same node still signs heads its
+// checkpoint verifier accepts.
+func TestHeadSignerProvider_OtherLogOnTheNode(t *testing.T) {
+	p := newProvider(t, newEd25519(t))
+	client, ctx := newVlogClient(t, p)
+
+	_, err := Create(ctx, client, Config{Name: "attacker", Origin: testOrigin}, p)
+	require.ErrorIs(t, err, ErrLogRequest)
+	require.ErrorContains(t, err, ErrLogOutOfScope.Error())
+
+	l, err := Create(ctx, client, Config{Name: "certs", Origin: testOrigin}, p)
+	require.NoError(t, err)
+	_, err = l.AppendRevoked(ctx, Revoked{Serial: big.NewInt(5), Reason: 0})
+	require.NoError(t, err)
+	head, err := l.SignedTreeHead(ctx)
+	require.NoError(t, err)
+	_, err = l.VerifyCheckpoint(head.Note)
+	require.NoError(t, err)
 }
 
 // TestSignedTreeHead_CheckpointMismatch refuses a head that does not verify

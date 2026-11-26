@@ -56,7 +56,7 @@ func New(t *testing.T, caKey crypto.Signer, caCert *x509.Certificate) *Fixture {
 	t.Helper()
 	keys, err := qrdbsdk.NewCAKeyStaticProvider(caKey, caCert)
 	require.NoError(t, err)
-	signers, err := tlog.NewHeadSignerProvider(keys, "ca-tlog")
+	signers, err := tlog.NewHeadSignerProvider(keys, "ca-tlog", tlog.ServiceLogScope("certs"))
 	require.NoError(t, err)
 
 	cfg := qrdbsdk.DefaultDaemonConfig()

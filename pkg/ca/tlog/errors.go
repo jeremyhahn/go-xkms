@@ -36,6 +36,11 @@ var (
 	// ErrKeyRefMismatch indicates the CA key is no longer the key the log
 	// recorded: a signer request whose reference names another key.
 	ErrKeyRefMismatch = errors.New("tlog: CA key is not the key the log recorded")
+
+	// ErrLogOutOfScope indicates a key or signer request for a log other
+	// than the one the provider is bound to: another tenant, database or
+	// log name. The CA key never signs for it.
+	ErrLogOutOfScope = errors.New("tlog: log is not the CA log the head signer serves")
 )
 
 // Log errors: the service over go-qrdb's verifiable log.
@@ -60,6 +65,11 @@ var (
 	// not verify under the CA key, names another origin, or describes another
 	// tree than the head it came with.
 	ErrCheckpointMismatch = errors.New("tlog: checkpoint does not match the signed tree head")
+
+	// ErrExistingLogMismatch indicates a log that already exists whose head
+	// checkpoint does not verify under the configured origin and CA key:
+	// the origin or the CA key changed since the log was created.
+	ErrExistingLogMismatch = errors.New("tlog: existing log does not verify under the configured origin and CA key")
 )
 
 // Entry errors: the versioned entry encoding.
