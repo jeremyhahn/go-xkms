@@ -19,6 +19,8 @@ package server
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
+	"math/big"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -36,6 +38,13 @@ import (
 // principal and the given node options, as initEmbeddedQRDBNode builds it.
 func startTLogNode(t *testing.T, s *Server, opts []qrdbnode.NodeOption) {
 	t.Helper()
+	s.qrdbNode = newTLogNode(t, append([]qrdbnode.NodeOption{serviceprincipal.Option()}, opts...))
+}
+
+// newTLogNode builds a real in-memory standalone node with exactly the given
+// node options, so a test can leave the service principal out.
+func newTLogNode(t *testing.T, opts []qrdbnode.NodeOption) *qrdbnode.Node {
+	t.Helper()
 	cfg := qrdbsdk.DefaultDaemonConfig()
 	cfg.Raft.DataDir = t.TempDir()
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
@@ -45,11 +54,10 @@ func startTLogNode(t *testing.T, s *Server, opts []qrdbnode.NodeOption) {
 	cfg.Protocols.Unix = false
 	cfg.Protocols.MCP = false
 	cfg.Seal.Enabled = false
-	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil,
-		append([]qrdbnode.NodeOption{serviceprincipal.Option()}, opts...)...)
+	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil, opts...)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, node.Close()) })
-	s.qrdbNode = node
+	return node
 }
 
 // The wired server's CA appends a cert-issued entry for every certificate
@@ -105,6 +113,64 @@ func TestInitializeCA_TransparencyLogNodeWithoutHeadSigner(t *testing.T) {
 	startTLogNode(t, s, nil)
 	err := s.initializeCA()
 	require.ErrorIs(t, err, ErrTransparencyLogUnavailable)
+}
+
+// TestInitializeCA_TransparencyLogNodeWithoutServicePrincipal proves start-up
+// fails closed when the node has the head signer but no service principal:
+// the CA could never append, so it must not start issuing unlogged.
+func TestInitializeCA_TransparencyLogNodeWithoutServicePrincipal(t *testing.T) {
+	s := newTLogCAServer(t, true)
+	opts, err := s.transparencyLogNodeOptions()
+	require.NoError(t, err)
+	s.qrdbNode = newTLogNode(t, opts)
+
+	err = s.initializeCA()
+	var tlogErr *ErrTransparencyLog
+	require.True(t, errors.As(err, &tlogErr), "got %v", err)
+	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
+	require.Equal(t, "open the CA log", tlogErr.Operation)
+}
+
+// TestOpenTransparencyLog_CAUnsupported proves a composed CA that is not a
+// *ca.CA (here none at all) is refused before the head-signing key is bound
+// to it, since nothing could record its issuance.
+func TestOpenTransparencyLog_CAUnsupported(t *testing.T) {
+	s := newTLogCAServer(t, true)
+	opts, err := s.transparencyLogNodeOptions()
+	require.NoError(t, err)
+	startTLogNode(t, s, opts)
+
+	err = s.openTransparencyLog(nil)
+	require.ErrorIs(t, err, ErrTransparencyLogCAUnsupported)
+	require.EqualError(t, err,
+		"transparency log: failed to attach the CA log: "+ErrTransparencyLogCAUnsupported.Error())
+}
+
+// TestServiceTransparencyLog_AppendWithoutServiceContext proves an append
+// whose call cannot carry the node's service principal is refused and leaves
+// the log unchanged, so the CA's issuance or revocation fails closed.
+func TestServiceTransparencyLog_AppendWithoutServiceContext(t *testing.T) {
+	s := newTLogCAServer(t, true)
+	opts, err := s.transparencyLogNodeOptions()
+	require.NoError(t, err)
+	startTLogNode(t, s, opts)
+	require.NoError(t, s.initializeCA())
+
+	ctx, err := s.qrdbNode.ServiceContext(context.Background())
+	require.NoError(t, err)
+	opened, err := tlog.OpenOrCreate(ctx, s.qrdbNode.Client().Vlog(),
+		tlog.Config{Name: caTransparencyLogName, Origin: s.transparencyLogOrigin()}, s.tlogSigners)
+	require.NoError(t, err)
+	before := tlogtest.Size(ctx, t, opened)
+
+	withoutPrincipal := newTLogNode(t, nil)
+	l := &serviceTransparencyLog{log: opened, callContext: withoutPrincipal.ServiceContext}
+
+	_, err = l.AppendCertIssued(context.Background(), tlog.CertIssued{Serial: big.NewInt(7)})
+	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
+	_, err = l.AppendRevoked(context.Background(), tlog.Revoked{Serial: big.NewInt(7), Reason: 1})
+	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
+	require.Equal(t, before, tlogtest.Size(ctx, t, opened), "a refused append records nothing")
 }
 
 // The log's default follows the build: this file builds with qrdb_vlog, so
