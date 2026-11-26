@@ -96,12 +96,22 @@ transit they are as safe as the transport:
 | MCP | mTLS only; the client has no plaintext mode (`pkg/api/transport/mcp/transport.go:17`) |
 | QUIC | TLS 1.3 always (`pkg/api/transport/quic/transport.go:193`) |
 | Unix socket | A local socket (`pkg/api/unix/grpc_server.go:261`), TLS 1.3 on top when `TLSEnabled` (`pkg/api/transport/unix/transport.go:101`) |
-| gRPC | TLS 1.3 when `TLSEnabled`, plaintext otherwise (`pkg/api/transport/grpc/transport.go:94`, `:111`) |
-| REST | TLS 1.3 when `TLSEnabled`, plaintext otherwise (`pkg/api/transport/rest/transport.go:116`, `:122`) |
+| gRPC | TLS 1.3 (`pkg/api/transport/grpc/transport.go:115`, `:122`); a TLS-disabled TCP endpoint is refused (`:95`) |
+| REST | TLS 1.3 over `https://` (`pkg/api/transport/rest/transport.go:129`, `:135`); any other base URL is refused (`:121`) |
 | USB | Refused: `SignImage` returns `ErrNotSupported` (`pkg/api/transport/usb/transport_signing_key.go:57`) |
 
-A gRPC or REST client with `TLSEnabled` off sends the password in clear;
-that is the caller's own `transport.Config` choice.
+No client sends the password in clear (ruling 152). The gRPC and REST
+constructors refuse a TLS-disabled TCP endpoint with
+`transport.ErrInsecureTransport`. `SignImage` checks again before it sends
+`Registry` credentials, because the caller can change the `transport.Config`
+after construction (`pkg/api/transport/grpc/transport_signing_key.go:96`,
+`pkg/api/transport/rest/transport_signing_key.go:92`). The one opt-out,
+`AllowInsecureTransport` or `XKMS_TRANSPORT_ALLOW_INSECURE_TRANSPORT`, is for
+loopback tests and dev only; see
+[Client Transport Security](../configuration/README.md#client-transport-security).
+`types.SecretBytes` prints as `[REDACTED]` for every `fmt` verb
+(`Format`, `pkg/types/types_secretbytes.go:250`), so a logged request never shows the
+password.
 
 go-quicbaas replaces its Tier 0 `ImageSignature` with `ImageVerifier.VerifyImage`
 through the SDK. go-trusted-platform keeps its manifest format and its AK-key

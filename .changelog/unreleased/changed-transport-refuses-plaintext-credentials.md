@@ -1,0 +1,1 @@
+Transport: the gRPC and REST clients refuse a TLS-disabled, non-unix endpoint with `ErrInsecureTransport`, and `SignImage` refuses registry credentials over one before sending (ruling 152); `AllowInsecureTransport` or `XKMS_TRANSPORT_ALLOW_INSECURE_TRANSPORT` opts out, for loopback test and dev only.
