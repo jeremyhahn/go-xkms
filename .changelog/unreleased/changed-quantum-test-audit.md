@@ -1,0 +1,1 @@
+Tests: the `pkg/quantum/*` suites test each behaviour by one path (#1794). The length-getter tests fold into `TestDetails`, the second-`Clean` check folds into `TestClean`, and tests whose path a kept test already covers are removed. Coverage is unchanged in all six packages.
