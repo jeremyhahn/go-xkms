@@ -48,6 +48,9 @@ func TestParseSignedAny(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "compact", input: compact},
+		{name: "compact with leading space", input: " " + compact},
+		{name: "compact with trailing newline", input: compact + "\n"},
+		{name: "compact with white space inside", input: compact[:10] + " " + compact[10:20] + "\t" + compact[20:30] + "\n" + compact[30:]},
 		{name: "json", input: full},
 		{name: "json with leading white space", input: " \t\r\n" + full},
 		{name: "not a jws", input: "not a jws", wantErr: true},
