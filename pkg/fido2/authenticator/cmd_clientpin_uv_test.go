@@ -437,6 +437,51 @@ func TestGetPinUvAuthTokenUsingUv_CancelSpendsNoRetry(t *testing.T) {
 	require.Nil(t, auth.GetPinUvAuthToken())
 }
 
+// A verifier may finish after the host cancelled the command: the phone
+// verifier's revocation list download does not follow the command context. A
+// nil answer that arrives after the cancel mints no token and restores no
+// retry.
+func TestGetPinUvAuthTokenUsingUv_CancelDuringVerificationMintsNoToken(t *testing.T) {
+	asked := make(chan struct{})
+	release := make(chan struct{})
+	backend := &verifyingKeyBackend{
+		mockUVKeyBackend: mockUVKeyBackend{handlesUV: true},
+		wait: func(context.Context) {
+			close(asked)
+			<-release
+		},
+	}
+	auth := newVerifyingAuthenticator(t, backend)
+	auth.mu.Lock()
+	spent := auth.state.DecrementUVRetries()
+	auth.mu.Unlock()
+
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type result struct {
+		resp []byte
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		resp, err := auth.ProcessCBORWithContext(ctx, CmdClientPIN, reqBytes)
+		done <- result{resp: resp, err: err}
+	}()
+
+	<-asked
+	cancel()
+	close(release)
+	got := <-done
+
+	require.ErrorIs(t, got.err, context.Canceled)
+	require.Equal(t, []byte{byte(StatusKeepaliveCancel)}, got.resp)
+	require.Equal(t, 1, backend.calls)
+	require.Equal(t, spent, auth.state.UVRetries())
+	require.Nil(t, auth.GetPinUvAuthToken())
+}
+
 // TestGetPinUvAuthTokenUsingUv_UnavailableSpendsNoRetry pins that a verifier
 // which could not reach a decision — the phone dropped, the exchange timed
 // out, the revocation list was unreachable — mints nothing, answers
