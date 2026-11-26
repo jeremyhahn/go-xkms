@@ -1707,6 +1707,13 @@ func (c *Config) Validate() error {
 			return &errs.Message{Msg: "TLS key_file is required when TLS is enabled without CA"}
 		}
 	}
+	// With a CA and neither cert_file nor key_file, the listeners' TLS
+	// certificate (the Unix socket's included) is issued by the CA, and the
+	// CA needs a Common Name for it; without one the CA is asked for an empty
+	// CN and the node never gets a CA-issued certificate (#2253).
+	if c.TLS.Enabled && c.CA != nil && strings.TrimSpace(c.TLS.ServerCN) == "" && c.TLS.CertFile == "" && c.TLS.KeyFile == "" {
+		return &errs.Message{Msg: "tls.server_cn is required when tls.enabled is true without cert_file/key_file: the CA-issued server certificate needs a Common Name (set it to the external host name)"}
+	}
 
 	// Validate RNG mode
 	if c.RNG.Mode != "" {
