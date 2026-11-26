@@ -1273,15 +1273,17 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 
 	// A CBOR command stays inside HandleMessage until its presence wait
 	// ends, so HandleMessage runs on a worker in arrival order while this
-	// goroutine keeps reading: a CTAPHID_CANCEL for the pending command is
-	// handed to the handler at once (it does not hold the handler's lock
-	// the blocked command released).
-	work := make(chan []byte, fido2EventQueueSize)
+	// goroutine keeps reading: a CTAPHID_CANCEL cancels the context of each
+	// queued or running packet of its channel.
+	work := make(chan *hidWork, fido2EventQueueSize)
+	pending := newHIDPending()
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		for packet := range work {
-			d.hidHandler.HandleMessage(packet)
+		for w := range work {
+			pending.start(w)
+			d.hidHandler.HandleMessageContext(w.ctx, w.packet)
+			pending.finish(w)
 		}
 	}()
 	defer func() {
@@ -1331,18 +1333,28 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 				slog.String("cmd_or_seq", formatCmd(packet)),
 			)
 
-			// CTAPHID_CANCEL must reach the handler while a command is
-			// pending, so it never queues behind that command.
+			// CTAPHID_CANCEL cancels the channel's queued and running
+			// packets at once; it queues behind them only while some have
+			// not started, so it cannot overtake its target.
 			if packet[4] == ctaphidCancel {
+				if pending.cancel(packet) {
+					select {
+					case work <- &hidWork{packet: packet, ctx: ctx}:
+						continue
+					default:
+					}
+				}
 				d.hidHandler.HandleMessage(packet)
 				continue
 			}
 
 			// The reader never blocks on the worker: a CTAP HID host sends
 			// nothing but CANCEL to a busy channel, so a full queue drops.
+			w := pending.add(ctx, packet)
 			select {
-			case work <- packet:
+			case work <- w:
 			default:
+				pending.drop(w)
 				d.logger.Warn("HID packet queue full, dropping packet",
 					slog.String("cid", formatCID(packet)),
 					slog.String("cmd_or_seq", formatCmd(packet)),

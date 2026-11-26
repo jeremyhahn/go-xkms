@@ -207,6 +207,13 @@ func (h *CTAPHIDHandler) SetLogger(logger *slog.Logger) {
 // The packet must be exactly 64 bytes (HIDPacketSize).
 // Responses are delivered via the response handler callback.
 func (h *CTAPHIDHandler) HandleMessage(data []byte) {
+	h.HandleMessageContext(context.Background(), data)
+}
+
+// HandleMessageContext is HandleMessage with a parent context for the CBOR
+// command the packet completes: cancelling ctx cancels that command, and a
+// command whose ctx is already done answers CTAP2_ERR_KEEPALIVE_CANCEL.
+func (h *CTAPHIDHandler) HandleMessageContext(ctx context.Context, data []byte) {
 	if h.closed.Load() {
 		debugHIDLog("HandleMessage: handler is closed, ignoring")
 		return
@@ -228,9 +235,9 @@ func (h *CTAPHIDHandler) HandleMessage(data []byte) {
 	isInitPacket := (cmdOrSeq & 0x80) != 0
 
 	if isInitPacket {
-		h.handleInitPacket(cid, cmdOrSeq, data)
+		h.handleInitPacket(ctx, cid, cmdOrSeq, data)
 	} else {
-		h.handleContPacket(cid, cmdOrSeq, data)
+		h.handleContPacket(ctx, cid, cmdOrSeq, data)
 	}
 }
 
@@ -250,7 +257,7 @@ func (h *CTAPHIDHandler) Close() error {
 }
 
 // handleInitPacket processes an initialization packet (command with high bit set).
-func (h *CTAPHIDHandler) handleInitPacket(cid uint32, cmd byte, data []byte) {
+func (h *CTAPHIDHandler) handleInitPacket(ctx context.Context, cid uint32, cmd byte, data []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -279,7 +286,7 @@ func (h *CTAPHIDHandler) handleInitPacket(cid uint32, cmd byte, data []byte) {
 
 	case CTAPHIDCBOR:
 		debugHIDLog("handleInitPacket: CTAPHID_CBOR command")
-		h.handleCBOR(cid, payload, payloadLen)
+		h.handleCBOR(ctx, cid, payload, payloadLen)
 
 	case CTAPHIDWink:
 		debugHIDLog("handleInitPacket: CTAPHID_WINK command")
@@ -307,7 +314,7 @@ func (h *CTAPHIDHandler) handleInitPacket(cid uint32, cmd byte, data []byte) {
 }
 
 // handleContPacket processes a continuation packet.
-func (h *CTAPHIDHandler) handleContPacket(cid uint32, seq byte, data []byte) {
+func (h *CTAPHIDHandler) handleContPacket(ctx context.Context, cid uint32, seq byte, data []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -360,7 +367,7 @@ func (h *CTAPHIDHandler) handleContPacket(cid uint32, seq byte, data []byte) {
 		// Handle the complete command
 		switch cmd {
 		case CTAPHIDCBOR:
-			h.processCBORCommandLocked(cid, payload)
+			h.processCBORCommandLocked(ctx, cid, payload)
 		case CTAPHIDPing:
 			h.sendResponseLocked(cid, CTAPHIDPing, payload)
 		default:
@@ -444,7 +451,7 @@ func (h *CTAPHIDHandler) handlePing(cid uint32, payload []byte, payloadLen int) 
 }
 
 // handleCBOR processes CTAPHID_CBOR command start.
-func (h *CTAPHIDHandler) handleCBOR(cid uint32, payload []byte, payloadLen int) {
+func (h *CTAPHIDHandler) handleCBOR(ctx context.Context, cid uint32, payload []byte, payloadLen int) {
 	// Validate channel
 	if cid == CIDBroadcast {
 		debugHIDLog("handleCBOR: broadcast CID not allowed")
@@ -474,7 +481,7 @@ func (h *CTAPHIDHandler) handleCBOR(cid uint32, payload []byte, payloadLen int) 
 
 	// Single packet CBOR - process immediately
 	debugHIDLog("handleCBOR: single packet CBOR, processing %d bytes", payloadLen)
-	h.processCBORCommandLocked(cid, payload[:payloadLen])
+	h.processCBORCommandLocked(ctx, cid, payload[:payloadLen])
 }
 
 // handleWink processes CTAPHID_WINK command.
@@ -514,7 +521,7 @@ func (h *CTAPHIDHandler) handleCancel(cid uint32) {
 
 // processCBORCommandLocked processes a complete CTAP2 CBOR command.
 // Caller must hold h.mu.
-func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
+func (h *CTAPHIDHandler) processCBORCommandLocked(parent context.Context, cid uint32, payload []byte) {
 	if len(payload) == 0 {
 		debugHIDLog("processCBORCommandLocked: empty payload")
 		h.sendErrorLocked(cid, CTAPHIDErrInvalidLen)
@@ -543,7 +550,13 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 	// calls h.cancelCBOR() to abort blocking operations like user presence.
 	// The context carries the channel ID: a presence grant from an approved
 	// authenticatorSelection is bound to the channel it arrived on.
-	ctx, cancel := context.WithCancel(WithCTAPHIDChannel(context.Background(), cid))
+	// A command the host cancelled before it started never runs.
+	if parent.Err() != nil {
+		h.authenticator.revokePresenceGrantForChannel(cid)
+		h.sendResponseLocked(cid, CTAPHIDCBOR, []byte{StatusKeepaliveCancel})
+		return
+	}
+	ctx, cancel := context.WithCancel(WithCTAPHIDChannel(parent, cid))
 	h.cancelCBOR = cancel
 	h.cborCID = cid
 

@@ -1,1 +1,1 @@
-- xkey answers CTAPHID_CANCEL while a Selection or presence prompt is pending, so the browser's cancel after another key is touched closes the prompt at once (#2052).
+- xkey answers CTAPHID_CANCEL while a Selection or presence prompt is pending, so the browser's cancel after another key is touched closes the prompt at once (#2052). A CANCEL also ends a command still queued on its channel, a CANCEL on another channel no longer aborts the active ceremony, and a Selection approved as it is cancelled leaves no presence grant.
