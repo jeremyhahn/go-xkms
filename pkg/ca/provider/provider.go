@@ -131,6 +131,7 @@ type TCGCA interface {
 	// IAK's X.509 signature algorithm; lakPublicArea is the LAK's marshalled
 	// TPMT_PUBLIC; nonce is the qualifying data the evidence must echo.
 	// tenantID is the caller's tenant, recorded as the LAK's owner.
+	// tenantID is the caller's tenant.
 	IssueLAKCertificateRaw(
 		ctx context.Context,
 		tpmManufacturer, tpmModel, tpmFirmwareVersion string,
