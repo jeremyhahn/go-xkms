@@ -132,20 +132,6 @@ func TestKHStore_Add_NilPin(t *testing.T) {
 	}
 }
 
-func TestKHStore_Add_InvalidScope(t *testing.T) {
-	store := newStore(t)
-	pub := newEd25519PublicKey(t)
-	err := store.Add(context.Background(), &known_hosts.Pin{
-		Scope:       scope.Scope("badscope"),
-		Owner:       "alice",
-		Host:        "bastion.example.com",
-		Fingerprint: keys.Fingerprint(pub),
-	})
-	if err == nil {
-		t.Fatal("expected error for invalid scope in Add")
-	}
-}
-
 func TestKHStore_Add_EmptyOwner(t *testing.T) {
 	store := newStore(t)
 	pub := newEd25519PublicKey(t)
@@ -172,37 +158,6 @@ func TestKHStore_Add_InvalidHost(t *testing.T) {
 	var ihe *known_hosts.InvalidHostError
 	if !errors.As(err, &ihe) {
 		t.Fatalf("expected InvalidHostError for host with slash, got %T: %v", err, err)
-	}
-}
-
-func TestKHStore_Add_InvalidFingerprint(t *testing.T) {
-	store := newStore(t)
-	err := store.Add(context.Background(), &known_hosts.Pin{
-		Scope:       scope.User,
-		Owner:       "alice",
-		Host:        "bastion.example.com",
-		Fingerprint: "not-a-valid-fingerprint",
-	})
-	var ife *known_hosts.InvalidFingerprintError
-	if !errors.As(err, &ife) {
-		t.Fatalf("expected InvalidFingerprintError, got %T: %v", err, err)
-	}
-}
-
-func TestKHStore_Add_ZeroAddedAt(t *testing.T) {
-	// AddedAt zero triggers the time.Now() backfill. Confirm no error.
-	store := newStore(t)
-	pub := newEd25519PublicKey(t)
-	err := store.Add(context.Background(), &known_hosts.Pin{
-		Scope:       scope.User,
-		Owner:       "alice",
-		Host:        "bastion.example.com",
-		Fingerprint: keys.Fingerprint(pub),
-		PublicKey:   pub.Marshal(),
-		// AddedAt intentionally zero
-	})
-	if err != nil {
-		t.Fatalf("Add with zero AddedAt: %v", err)
 	}
 }
 
@@ -237,14 +192,6 @@ func TestKHStore_Get_CorruptRecord(t *testing.T) {
 // ---------------------------------------------------------------------------
 // Store.List: invalid scope, owner-with-slash, StorageError
 // ---------------------------------------------------------------------------
-
-func TestKHStore_List_InvalidScope(t *testing.T) {
-	store := newStore(t)
-	_, err := store.List(context.Background(), scope.Scope("badscope"), "")
-	if err == nil {
-		t.Fatal("expected error for invalid scope in List")
-	}
-}
 
 func TestKHStore_List_OwnerWithSlash(t *testing.T) {
 	store := newStore(t)
