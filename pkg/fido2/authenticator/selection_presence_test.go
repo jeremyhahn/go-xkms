@@ -634,3 +634,43 @@ func TestSelection_TwoAuthenticatorsOneHost(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, byte(StatusKeepaliveCancel), status)
 }
+
+// A CANCEL on another or unknown channel leaves the active ceremony running.
+func TestCTAPHIDCancel_ScopedToCommandChannel(t *testing.T) {
+	t.Parallel()
+	d := newSelHIDDevice(t)
+	nonce := []byte{9, 8, 7, 6, 5, 4, 3, 2}
+	d.hid.HandleMessage(selHIDPacket(CIDBroadcast, CTAPHIDInit, nonce))
+	var other uint32
+	d.probe.mu.Lock()
+	for _, pkt := range d.probe.pkts {
+		if pkt[4] == CTAPHIDInit && bytes.Equal(pkt[7:15], nonce) {
+			other = binary.BigEndian.Uint32(pkt[15:19])
+		}
+	}
+	d.probe.mu.Unlock()
+	require.NotZero(t, other, "no second channel")
+	require.NotEqual(t, d.cid, other)
+
+	done := d.sendSelection()
+	d.up.waitStarted(t)
+
+	for _, cid := range []uint32{other, 0x0BADBEEF} {
+		d.hid.HandleMessage(selHIDPacket(cid, CTAPHIDCancel, nil))
+	}
+	select {
+	case <-done:
+		t.Fatal("a CANCEL on another channel ended the Selection")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	d.hid.HandleMessage(selHIDPacket(d.cid, CTAPHIDCancel, nil))
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a CANCEL on the command's channel did not end the Selection")
+	}
+	status, ok := d.cborStatus()
+	require.True(t, ok)
+	require.Equal(t, byte(StatusKeepaliveCancel), status)
+}
