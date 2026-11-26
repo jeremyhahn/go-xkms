@@ -33,7 +33,7 @@ type putRecordingKV struct {
 	bound   []bool
 }
 
-func (k *putRecordingKV) Put(ctx context.Context, _ string, _ []byte) error {
+func (k *putRecordingKV) Put(ctx context.Context, _ string, _ []byte, _ ...qrdbtransport.WriteOption) error {
 	k.tenants = append(k.tenants, qrdbtenant.FromContext(ctx))
 	v, _ := ctx.Value(tokenCallCtxKey{}).(string)
 	k.bound = append(k.bound, v == "service")
