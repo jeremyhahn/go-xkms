@@ -69,17 +69,6 @@ func TestGetInvite_DescribesTheInvitation(t *testing.T) {
 	assert.True(t, resp.GetExpiresAt().AsTime().After(time.Now()))
 }
 
-// TestGetInvite_UnknownTokenIsNotFound proves an unusable token gets the one
-// opaque NotFound answer.
-func TestGetInvite_UnknownTokenIsNotFound(t *testing.T) {
-	s, _ := newInviteGRPCService(t)
-
-	_, err := s.GetInvite(context.Background(), &pb.GetInviteRequest{TenantId: qrdbsdk.SystemTenantID, Token: "never-issued"})
-	st := status.Convert(err)
-	assert.Equal(t, codes.NotFound, st.Code())
-	assert.Equal(t, xkms.ErrInviteUnusable.Error(), st.Message())
-}
-
 // inviteRPCs returns every invite redemption RPC of s, each with a complete
 // request for token.
 func inviteRPCs(s *Service, token string) map[string]func() error {

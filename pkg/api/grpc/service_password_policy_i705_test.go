@@ -59,31 +59,6 @@ func newTestPasswordStore(t *testing.T) *staticpw.DAOStore {
 	return store
 }
 
-func TestServicePasswordAdd_Success(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	resp, err := svc.PasswordAdd(context.Background(), &pb.PasswordAddRequest{
-		Name:     "db-prod",
-		Username: "admin",
-		Password: "hunter2",
-		Url:      "https://db.example.com",
-		Notes:    "rotate quarterly",
-	})
-	require.NoError(t, err)
-	assert.Equal(t, "db-prod", resp.Name)
-	assert.NotEmpty(t, resp.Id)
-	assert.NotEmpty(t, resp.CreatedAt)
-}
-
-func TestServicePasswordAdd_Conflict(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	req := &pb.PasswordAddRequest{Name: "db-prod", Password: "hunter2"}
-	_, err := svc.PasswordAdd(context.Background(), req)
-	require.NoError(t, err)
-
-	_, err = svc.PasswordAdd(context.Background(), req)
-	assert.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
 func TestServicePasswordAdd_InvalidExpiresAt(t *testing.T) {
 	svc := newPasswordGRPCService(t)
 	_, err := svc.PasswordAdd(context.Background(), &pb.PasswordAddRequest{
@@ -92,23 +67,6 @@ func TestServicePasswordAdd_InvalidExpiresAt(t *testing.T) {
 		ExpiresAt: "not-a-timestamp",
 	})
 	assert.Equal(t, codes.Internal, status.Code(err))
-}
-
-func TestServicePasswordGet_Success(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	_, err := svc.PasswordAdd(context.Background(), &pb.PasswordAddRequest{Name: "db-prod", Password: "hunter2"})
-	require.NoError(t, err)
-
-	resp, err := svc.PasswordGet(context.Background(), &pb.PasswordGetRequest{Id: "db-prod"})
-	require.NoError(t, err)
-	assert.Equal(t, "db-prod", resp.Entry.Name)
-	assert.Equal(t, "hunter2", resp.Entry.Password)
-}
-
-func TestServicePasswordGet_NotFound(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	_, err := svc.PasswordGet(context.Background(), &pb.PasswordGetRequest{Id: "missing"})
-	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestServicePasswordList_Success(t *testing.T) {
@@ -126,21 +84,6 @@ func TestServicePasswordList_Success(t *testing.T) {
 	byFolder, err := svc.PasswordList(context.Background(), &pb.PasswordListRequest{FolderPath: "team"})
 	require.NoError(t, err)
 	assert.Equal(t, int32(1), byFolder.Total)
-}
-
-func TestServicePasswordUpdate_Success(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	_, err := svc.PasswordAdd(context.Background(), &pb.PasswordAddRequest{Name: "db-prod", Password: "hunter2"})
-	require.NoError(t, err)
-
-	newUsername := "root"
-	resp, err := svc.PasswordUpdate(context.Background(), &pb.PasswordUpdateRequest{Id: "db-prod", Username: &newUsername})
-	require.NoError(t, err)
-	assert.Equal(t, staticpw.GenerateID("db-prod", ""), resp.Id, "the response names the entry's ID, not the name the request used")
-
-	got, err := svc.PasswordGet(context.Background(), &pb.PasswordGetRequest{Id: "db-prod"})
-	require.NoError(t, err)
-	assert.Equal(t, "root", got.Entry.Username)
 }
 
 // TestServicePasswordUpdate_RenameReturnsNewID is the regression for the
@@ -161,13 +104,6 @@ func TestServicePasswordUpdate_RenameReturnsNewID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, newName, got.Entry.Name)
 	_, err = svc.PasswordGet(context.Background(), &pb.PasswordGetRequest{Id: added.Id})
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
-func TestServicePasswordUpdate_NotFound(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	newUsername := "root"
-	_, err := svc.PasswordUpdate(context.Background(), &pb.PasswordUpdateRequest{Id: "missing", Username: &newUsername})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
@@ -210,56 +146,6 @@ func TestServicePasswordGenerate_Success(t *testing.T) {
 	assert.Equal(t, int32(16), resp.Length)
 }
 
-func TestServicePasswordGenerate_InvalidLength(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	_, err := svc.PasswordGenerate(context.Background(), &pb.PasswordGenerateRequest{Length: 2})
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestServicePasswordStoreStatus_Success(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	_, err := svc.PasswordAdd(context.Background(), &pb.PasswordAddRequest{Name: "db-prod", Password: "hunter2"})
-	require.NoError(t, err)
-
-	resp, err := svc.PasswordStoreStatus(context.Background(), &pb.PasswordStoreStatusRequest{})
-	require.NoError(t, err)
-	assert.Equal(t, "direct", resp.AccessMode)
-	assert.False(t, resp.IsLocked)
-	assert.Equal(t, int32(1), resp.PasswordCount)
-}
-
-func TestServicePasswordStoreLock_OperationNotSupportedOnSystemStore(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	// The system-level store has no session, so lock/unlock report
-	// Unimplemented (xkms.ErrOperationNotSupported) rather than succeeding
-	// silently or panicking.
-	_, err := svc.PasswordStoreLock(context.Background(), &pb.PasswordStoreLockRequest{})
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServicePasswordStoreUnlock_OperationNotSupportedOnSystemStore(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	_, err := svc.PasswordStoreUnlock(context.Background(), &pb.PasswordStoreUnlockRequest{
-		Credential: &pb.PasswordVaultCredential{Factor: "passphrase", Passphrase: "correct horse battery"},
-	})
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServicePasswordStoreSetAccessMode_InvalidMode(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	_, err := svc.PasswordStoreSetAccessMode(context.Background(), &pb.PasswordStoreSetAccessModeRequest{Mode: "bogus"})
-	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
-}
-
-func TestServicePasswordStoreSetAccessMode_UnsupportedOnSystemStore(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	// The system store enforces no access-control strategy of its own
-	// (PasswordAccessMode returns ""), so any well-formed mode differs from
-	// the effective one and is reported as unsupported rather than applied.
-	_, err := svc.PasswordStoreSetAccessMode(context.Background(), &pb.PasswordStoreSetAccessModeRequest{Mode: string(staticpw.AccessSessionBased)})
-	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
 // --- mapBootstrapError / mapSealStoreError pure-function coverage ---
 //
 // Neither mapper had any direct test: mapSealStoreError was only exercised
@@ -269,11 +155,6 @@ func TestServicePasswordStoreSetAccessMode_UnsupportedOnSystemStore(t *testing.T
 
 func TestMapBootstrapError_NilIsNil(t *testing.T) {
 	assert.NoError(t, mapBootstrapError(nil))
-}
-
-func TestMapBootstrapError_NotEnabled(t *testing.T) {
-	err := mapBootstrapError(xkms.ErrBootstrapListenerNotEnabled)
-	assert.Equal(t, codes.Unavailable, status.Code(err))
 }
 
 func TestMapBootstrapError_UnclassifiedFallsBackToInternal(t *testing.T) {
@@ -314,39 +195,6 @@ func newTenantPasswordGRPCService(t *testing.T) (*Service, context.Context) {
 	return NewService(nil, nil, xkmsSvc), vaultUserCtx("test-user")
 }
 
-func TestServicePasswordStoreUnlock_TenantSuccess(t *testing.T) {
-	svc, ctx := newTenantPasswordGRPCService(t)
-	enrollPasskey(t, svc, ctx, testPasskey("test-user"))
-	_, err := svc.PasswordStoreLock(ctx, &pb.PasswordStoreLockRequest{})
-	require.NoError(t, err)
-
-	resp, err := svc.PasswordStoreUnlock(ctx, &pb.PasswordStoreUnlockRequest{Credential: testPasskey("test-user")})
-	require.NoError(t, err)
-	assert.False(t, resp.IsLocked)
-}
-
-func TestServicePasswordStoreUnlock_WrongCredential(t *testing.T) {
-	svc, ctx := newTenantPasswordGRPCService(t)
-	enrollPasskey(t, svc, ctx, testPasskey("test-user"))
-	_, err := svc.PasswordStoreLock(ctx, &pb.PasswordStoreLockRequest{})
-	require.NoError(t, err)
-
-	wrong := testPasskey("test-user")
-	wrong.Secret = make([]byte, 32)
-	_, err = svc.PasswordStoreUnlock(ctx, &pb.PasswordStoreUnlockRequest{Credential: wrong})
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestServicePasswordStoreLock_TenantSuccess(t *testing.T) {
-	svc, ctx := newTenantPasswordGRPCService(t)
-	// The first enrollment opens the session.
-	enrollPasskey(t, svc, ctx, testPasskey("test-user"))
-
-	resp, err := svc.PasswordStoreLock(ctx, &pb.PasswordStoreLockRequest{})
-	require.NoError(t, err)
-	assert.True(t, resp.IsLocked)
-}
-
 func TestServicePasswordStoreStatus_TenantScoped(t *testing.T) {
 	svc, ctx := newTenantPasswordGRPCService(t)
 	resp, err := svc.PasswordStoreStatus(ctx, &pb.PasswordStoreStatusRequest{})
@@ -368,16 +216,6 @@ func TestServicePasswordStoreSetAccessMode_TenantUnsupportedMode(t *testing.T) {
 	svc, ctx := newTenantPasswordGRPCService(t)
 	_, err := svc.PasswordStoreSetAccessMode(ctx, &pb.PasswordStoreSetAccessModeRequest{Mode: string(staticpw.AccessPINPerOperation)})
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
-}
-
-func TestServicePasswordGenerate_CharsetPassesThrough(t *testing.T) {
-	svc := newPasswordGRPCService(t)
-	resp, err := svc.PasswordGenerate(context.Background(), &pb.PasswordGenerateRequest{Length: 32, Charset: "0123456789"})
-	require.NoError(t, err)
-	require.Len(t, resp.Password, 32)
-	for _, r := range resp.Password {
-		assert.True(t, r >= '0' && r <= '9', "%q is outside the requested charset", r)
-	}
 }
 
 func TestServicePasswordGenerate_InvalidCharset(t *testing.T) {

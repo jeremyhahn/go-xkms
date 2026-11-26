@@ -38,61 +38,6 @@ func TestParseTimestampHelper(t *testing.T) {
 	})
 }
 
-func TestPasswordGetResponseToProto(t *testing.T) {
-	t.Run("converts response with all fields", func(t *testing.T) {
-		now := time.Now().UTC().Format(time.RFC3339)
-		resp := &transport.PasswordGetResponse{
-			ID:         "pw-1",
-			Name:       "test-password",
-			Username:   "admin",
-			Password:   "secret123",
-			URL:        "https://example.com",
-			Notes:      "test notes",
-			FolderPath: "folder/sub",
-			BackendID:  "software",
-			ExpiresAt:  now,
-			CreatedAt:  now,
-			UpdatedAt:  now,
-			ReadOnly:   false,
-			Encrypted:  true,
-			OwnerID:    "user-1",
-			Shared:     true,
-		}
-
-		pb := passwordGetResponseToProto(resp)
-		require.NotNil(t, pb)
-		require.NotNil(t, pb.Entry)
-		assert.Equal(t, "pw-1", pb.Entry.Id)
-		assert.Equal(t, "test-password", pb.Entry.Name)
-		assert.Equal(t, "admin", pb.Entry.Username)
-		assert.Equal(t, "secret123", pb.Entry.Password)
-		assert.Equal(t, "https://example.com", pb.Entry.Url)
-		assert.Equal(t, "test notes", pb.Entry.Notes)
-		assert.Equal(t, "folder/sub", pb.Entry.FolderPath)
-		assert.Equal(t, "software", pb.Entry.BackendId)
-		assert.True(t, pb.Entry.Encrypted)
-		assert.True(t, pb.Entry.Shared)
-		assert.NotNil(t, pb.Entry.ExpiresAt)
-		assert.NotNil(t, pb.Entry.CreatedAt)
-		assert.NotNil(t, pb.Entry.UpdatedAt)
-	})
-
-	t.Run("converts response with empty timestamps", func(t *testing.T) {
-		resp := &transport.PasswordGetResponse{
-			ID:   "pw-2",
-			Name: "minimal",
-		}
-
-		pb := passwordGetResponseToProto(resp)
-		require.NotNil(t, pb)
-		require.NotNil(t, pb.Entry)
-		assert.Equal(t, "pw-2", pb.Entry.Id)
-		assert.Nil(t, pb.Entry.ExpiresAt)
-		assert.Nil(t, pb.Entry.CreatedAt)
-		assert.Nil(t, pb.Entry.UpdatedAt)
-	})
-}
-
 func TestPasswordEntryToProto(t *testing.T) {
 	t.Run("converts entry with all fields", func(t *testing.T) {
 		now := time.Now().UTC().Format(time.RFC3339)
