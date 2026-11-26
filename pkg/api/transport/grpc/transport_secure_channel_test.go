@@ -15,6 +15,8 @@ package grpc
 
 import (
 	"context"
+	"net"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,6 +24,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
@@ -141,4 +144,59 @@ func TestNotLeaderInterceptor_GuardsTheLeaderTarget(t *testing.T) {
 			assert.Equal(t, 2, calls, "the request is retried once on the leader")
 		})
 	}
+}
+
+// signImageRecorder counts the SignImage requests that reach the server.
+type signImageRecorder struct {
+	mockKeystoreServer
+	calls atomic.Int32
+}
+
+func (s *signImageRecorder) SignImage(_ context.Context, _ *pb.SignImageRequest) (*pb.SignedImage, error) {
+	s.calls.Add(1)
+	return &pb.SignedImage{}, nil
+}
+
+// connectPlaintextThenFlip connects over plaintext TCP with the opt-out set,
+// then flips the caller's Config to claim TLS and withdraws the opt-out. The
+// channel Connect established is still plaintext.
+func connectPlaintextThenFlip(t *testing.T) (*Transport, *signImageRecorder) {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	rec := &signImageRecorder{}
+	srv := grpc.NewServer()
+	pb.RegisterKeystoreServiceServer(srv, rec)
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	cfg := &transport.Config{Address: lis.Addr().String(), AllowInsecureTransport: true}
+	tr, err := NewWithConfig(cfg)
+	require.NoError(t, err)
+	require.NoError(t, tr.Connect(context.Background()))
+	t.Cleanup(func() { _ = tr.Close() })
+
+	cfg.TLSEnabled = true
+	cfg.AllowInsecureTransport = false
+	return tr, rec
+}
+
+func TestSignImage_GuardChecksTheEstablishedChannelNotTheConfig(t *testing.T) {
+	guardOn(t)
+	tr, rec := connectPlaintextThenFlip(t)
+
+	_, err := tr.SignImage(context.Background(), &transport.SignImageRequest{
+		Reference: "registry.example/app:1",
+		Registry:  &transport.ImageRegistryCredentials{Username: "ci", Password: types.SecretBytes("hunter2")},
+	})
+	require.ErrorIs(t, err, transport.ErrInsecureTransport, "the channel is plaintext whatever the Config now claims")
+	assert.Zero(t, rec.calls.Load(), "the registry credential is never sent")
+}
+
+func TestRequireSecureTarget_LeaderChecksTheEstablishedChannelNotTheConfig(t *testing.T) {
+	guardOn(t)
+	tr, _ := connectPlaintextThenFlip(t)
+
+	require.ErrorIs(t, tr.requireSecureTarget("10.0.0.2:9443"), transport.ErrInsecureTransport,
+		"the leader is redialed with the cached plaintext credentials")
 }
