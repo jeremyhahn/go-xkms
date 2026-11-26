@@ -30,3 +30,11 @@ func TestEnvFactory_ErrorReturnsNilProvider(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, provider == nil, "the factory must return a nil Provider, got %#v", provider)
 }
+
+// The registered config factory surfaces a New error with a nil Provider
+// interface, not one holding a nil pointer.
+func TestFactory_ErrorReturnsNilProvider(t *testing.T) {
+	provider, err := providers.Get(providers.ProviderAzure)(t.Context(), Config{})
+	require.Error(t, err)
+	require.True(t, provider == nil, "the factory must return a nil Provider, got %#v", provider)
+}
