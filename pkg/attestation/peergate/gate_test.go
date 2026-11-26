@@ -96,11 +96,15 @@ func TestGate_RequiredRefusesAnUnattestedPeer(t *testing.T) {
 	assert.False(t, verdict.Passed)
 	assert.Equal(t, qrdbsdk.PeerAttestationFailureAbsence, verdict.Failure)
 	assert.True(t, verdict.CollectedAt.IsZero(), "go-qrdb refuses a verdict with no collection time as no evidence")
+	assert.Equal(t, h.attested().Thumbprint, verdict.PeerThumbprint)
 
 	require.NoError(t, submitTo(t, h, gate, h.honest(t)))
 	verdict = h.verify(t, gate.Verifier())
 	assert.True(t, verdict.Passed, "reason: %s", verdict.Reason)
+	assert.Equal(t, qrdbsdk.PeerAttestationFailureNone, verdict.Failure)
+	assert.Equal(t, h.attested().Thumbprint, verdict.PeerThumbprint)
 	assert.Equal(t, h.clock.now, verdict.CollectedAt)
+	assert.Empty(t, verdict.Reason)
 }
 
 func TestGate_OptionalAdmitsOnlyAnAbsentPeer(t *testing.T) {
