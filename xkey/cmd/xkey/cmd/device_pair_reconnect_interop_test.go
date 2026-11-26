@@ -509,6 +509,8 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 			"a record bound under challenge-response must demand the proof on every surface")
 		assert.NotNil(t, cfg.LiveAttest,
 			"demanding the proof without a verifier is a refusal at connect; both must be set together")
+		assert.NotNil(t, cfg.VerifyUser,
+			"without a verifier every getPinUvAuthTokenUsingUvWithPermissions is refused (ruling 167)")
 		assert.Equal(t, dak.Fingerprint(), cfg.ExpectedDeviceFingerprint,
 			"the stored fingerprint must bind the prologue; none of the five call sites used to set it")
 		assert.Equal(t, remote.PublicBytes(), cfg.ExpectedRemoteStatic)

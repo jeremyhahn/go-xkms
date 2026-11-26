@@ -157,6 +157,14 @@ type PhoneKeyBackendConfig struct {
 	// established; channelBinding is that session's attestation channel
 	// binding.
 	LiveAttest pairingproto.LiveAttestFunc
+
+	// VerifyUser runs the local.verifyUser exchange behind the backend's
+	// VerifyUser method (ruling 167): the phone signs a fresh challenge with
+	// its user-verification key, which only a biometric match unlocks, and
+	// the function judges the answer. It is injected for the same reason as
+	// LiveAttest. Nil refuses every VerifyUser with
+	// ErrUserVerifierUnavailable.
+	VerifyUser pairingproto.LiveAttestFunc
 }
 
 // DefaultPhoneKeyBackendConfig returns default configuration.
@@ -743,6 +751,35 @@ func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
 	}
 
 	return b.cfg.LiveAttest(ctx, exchange, binding)
+}
+
+// VerifyUser implements keybackend.UserVerifier (ruling 167): it asks the
+// connected phone to prove a biometric match with its user-verification key
+// over the established session, and returns nil only when cfg.VerifyUser
+// accepts the answer. The authenticator calls it before minting a
+// pinUvAuthToken through getPinUvAuthTokenUsingUvWithPermissions.
+func (b *PhoneKeyBackend) VerifyUser(ctx context.Context) error {
+	if b.cfg.VerifyUser == nil {
+		b.log.Error("user verification was requested but no verifier was supplied")
+		return ErrUserVerifierUnavailable
+	}
+	if !b.connected.Load() {
+		return ErrNotConnected
+	}
+
+	// The lease keeps the session alive while its channel binding is read;
+	// the exchange itself goes through SendRequest, which takes its own.
+	_, session, release, ok := b.acquireSession()
+	if !ok {
+		return ErrNotConnected
+	}
+	defer release()
+
+	binding, err := pairingproto.AttestChannelBinding(session)
+	if err != nil {
+		return err
+	}
+	return b.cfg.VerifyUser(ctx, b.SendRequest, binding)
 }
 
 // EnableBidirectional starts bidirectional JSON-RPC routing using the
@@ -1603,4 +1640,7 @@ func (b *PhoneKeyBackend) Notifier() notify.Notifier {
 }
 
 // Ensure PhoneKeyBackend implements FIDO2KeyBackend.
-var _ keybackend.FIDO2KeyBackend = (*PhoneKeyBackend)(nil)
+var (
+	_ keybackend.FIDO2KeyBackend = (*PhoneKeyBackend)(nil)
+	_ keybackend.UserVerifier    = (*PhoneKeyBackend)(nil)
+)

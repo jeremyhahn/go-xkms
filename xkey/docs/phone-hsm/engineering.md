@@ -1053,10 +1053,22 @@ and keeps nothing. The pairing record does not change and
 fingerprint in the pairing record changes the record and must bump that
 version, with the same only-moves-up rule.
 
-Status: the wire definition is in place; the desktop verifier (step 5 needs the
-Android extension parser to expose tags 503 to 506) and the authenticator's
-`pinUvAuthToken` minting are the next change. Until then the authenticator
-keeps refusing UV tokens (#1145).
+**Minting the token.** `PhoneKeyBackend` implements
+`keybackend.UserVerifier`: its `VerifyUser` runs `local.verifyUser` over the
+connected session through `PhoneKeyBackendConfig.VerifyUser`, which
+`newPairedDeviceBackendConfig` (`xkey/cmd/xkey/cmd/device_session.go`) sets to
+`attestation.NewUserVerifier` over the pairing attestation trust. A backend
+without that function refuses with `ErrUserVerifierUnavailable`. When the key
+backend is a `UserVerifier`, `getInfo` reports `uv` and `pinUvAuthToken`, and
+clientPIN subcommand `0x06` calls `VerifyUser` before it mints the token
+(`pkg/fido2/authenticator/cmd_clientpin.go`). A refusal spends one `uvRetries`
+and answers `CTAP2_ERR_UV_INVALID`, or `CTAP2_ERR_UV_BLOCKED` once the retries
+are spent; a cancelled request spends none.
+
+Status: shipped on the desktop. The wire definition, the verifier and the
+authenticator path are in place, tested end to end against the `attesttest`
+phone (`device_session_verify_user_test.go`). The phone side is xkey-android
+#13.
 
 ## Configuration
 
