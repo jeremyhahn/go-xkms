@@ -118,6 +118,14 @@ type ACMEOrderFinalizeHookContext = acmehandler.OrderFinalizeHookContext
 // ACMEOrderFinalizeHookRegistry manages registered order finalization hooks.
 type ACMEOrderFinalizeHookRegistry = acmehandler.OrderFinalizeHookRegistry
 
+// ACMEOrderFinalizeCommitHook is a function called after the certificate and
+// order saves of a finalized order, told whether the saves succeeded.
+type ACMEOrderFinalizeCommitHook = acmehandler.OrderFinalizeCommitHook
+
+// ACMEOrderFinalizeCommitHookRegistry manages registered order finalize
+// commit hooks.
+type ACMEOrderFinalizeCommitHookRegistry = acmehandler.OrderFinalizeCommitHookRegistry
+
 // ACMETCGEnrollmentData contains TPM/TCG-specific enrollment information.
 type ACMETCGEnrollmentData = acmehandler.TCGEnrollmentData
 
@@ -253,6 +261,10 @@ var NewACMECAAValidator = acmeserver.NewCAAValidator
 
 // NewACMEOrderFinalizeHookRegistry creates a new order finalization hook registry.
 var NewACMEOrderFinalizeHookRegistry = acmehandler.NewOrderFinalizeHookRegistry
+
+// NewACMEOrderFinalizeCommitHookRegistry creates a new order finalize commit
+// hook registry.
+var NewACMEOrderFinalizeCommitHookRegistry = acmehandler.NewOrderFinalizeCommitHookRegistry
 
 // NewACMEPreIssuanceHookRegistry creates a new pre-issuance hook registry.
 var NewACMEPreIssuanceHookRegistry = acmehandler.NewPreIssuanceHookRegistry

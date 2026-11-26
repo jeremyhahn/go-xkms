@@ -85,6 +85,7 @@ func createMinimalConfig(t *testing.T) *config.Config {
 		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
+			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
 			ClientAuth:           "verify",
 		},
@@ -1700,6 +1701,7 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
+			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
 			ClientAuth:           "verify",
 		},
@@ -2721,6 +2723,7 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
+			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
 			ClientAuth:           "verify",
 		},

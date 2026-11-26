@@ -62,6 +62,7 @@ logging:
 tls:
   enabled: true
   client_auth: "verify"
+  server_cn: "localhost"
 
 auth:
   enabled: true
