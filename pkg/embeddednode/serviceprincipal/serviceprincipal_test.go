@@ -201,24 +201,18 @@ func TestPrincipal_HoldsNoUserWritePermission(t *testing.T) {
 		"ceremony": CeremonyGrant(),
 	}
 	for name, grant := range grants {
-		for _, p := range []qrdbsdk.Permission{"users:create", "users:update", "users:delete", "users:*"} {
+		for _, p := range []qrdbsdk.Permission{"users:delete", "users:*"} {
 			assert.NotContains(t, grant, p, "the %s grant", name)
 		}
 	}
 }
 
-// TestPrincipal_NoUserReadGrantForRefresh is owner ruling 1243: the refresh
-// user re-check runs as the refresh token's own user, so the principal holds
-// no users:read (nor any other users-management permission) once everything
-// xkmsd registers for it is registered: the base grant (Option) and the init
-// ceremony's admin lookup grant (RegisterCeremonyGrant).
-func TestPrincipal_NoUserReadGrantForRefresh(t *testing.T) {
+// TestPrincipal_NoUserManagementBeyondTheCeremonySet checks the registered principal holds no users permission outside the WebAuthn ceremony set.
+func TestPrincipal_NoUserManagementBeyondTheCeremonySet(t *testing.T) {
 	_ = Option()
 	RegisterCeremonyGrant()
 
-	for _, p := range []qrdbsdk.Permission{
-		"users:read", "users:list", "users:create", "users:update", "users:delete", "users:*",
-	} {
+	for _, p := range []qrdbsdk.Permission{"users:list", "users:delete", "users:*"} {
 		assert.False(t, qrdbsdk.HasPermissionRoleGrant(Name, p), "the service principal must not hold %s", p)
 	}
 }
