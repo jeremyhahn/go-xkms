@@ -839,12 +839,19 @@ func (tpm *TPM2) checkEKCertForNV(ekCertDER []byte) (tpm2.TPMHandle, error) {
 }
 
 // ekCertIndexByCurve maps an ECC EK's curve to its EK certificate NV index
-// (TCG EK Credential Profile v2.1 §2.2.1.4). Only curves that CreateEK and
-// the transient EK recovery both build a template for are mapped: every ECC
-// EK is made from the P-256 ECCEKTemplate, so P-384 (0x01C00016) and P-521
-// (0x01C00018) fail with ErrEKCertKeyType until they have one.
+// (TCG EK Credential Profile v2.1 §2.2.1.4). Discovery reads every mapped
+// index, so a manufacturer's P-384 or P-521 certificate is found; only the
+// provisioning path (ekCertIndex) refuses curves CreateEK cannot make.
 var ekCertIndexByCurve = map[elliptic.Curve]tpm2.TPMHandle{
 	elliptic.P256(): ekCertIndexECCP256,
+	elliptic.P384(): ekCertIndexECCP384,
+	elliptic.P521(): ekCertIndexECCP521,
+}
+
+// ekCreatableCurves are the ECC curves CreateEK builds an EK for: every ECC
+// EK is made from the P-256 ECCEKTemplate.
+var ekCreatableCurves = map[elliptic.Curve]bool{
+	elliptic.P256(): true,
 }
 
 // ekCertIndex returns the NV index the EK certificate is written to. A
@@ -854,8 +861,28 @@ var ekCertIndexByCurve = map[elliptic.Curve]tpm2.TPMHandle{
 // 0x01C00016 for P-384 and 0x01C00018 for P-521. So the RSA default
 // cert-handle never receives an ECC EK's certificate. Any other configured
 // index is used as configured. An EK key type the profile gives no index is
-// ErrEKCertKeyType.
+// ErrEKCertKeyType, and so is a P-384 or P-521 EK on the default handle:
+// this is the provisioning path, and CreateEK makes every ECC EK from the
+// P-256 template, so no certificate is written for a key the TPM never made.
+// Discovery (configuredEKCertIndex) reads those indexes all the same.
 func ekCertIndex(configured tpm2.TPMHandle, ekAttrs *types.KeyAttributes) (tpm2.TPMHandle, error) {
+	index, err := ekCertDiscoveryIndex(configured, ekAttrs)
+	if err != nil {
+		return 0, err
+	}
+	if configured == ekCertIndexRSA2048 && ekAttrs.KeyAlgorithm == x509.ECDSA &&
+		!ekCreatableCurves[ekAttrs.ECCAttributes.Curve] {
+		return 0, ErrEKCertKeyType
+	}
+	return index, nil
+}
+
+// ekCertDiscoveryIndex returns the NV index at which the EK certificate is
+// looked for: the configured cert-handle resolved by the EK's key type, as
+// ekCertIndex does, but for every curve the profile assigns an index, P-384
+// and P-521 included, so a manufacturer's certificate there is found. An EK
+// key type the profile gives no index is ErrEKCertKeyType.
+func ekCertDiscoveryIndex(configured tpm2.TPMHandle, ekAttrs *types.KeyAttributes) (tpm2.TPMHandle, error) {
 	// Only the RSA 2048 default is resolved by key type; any other index,
 	// the ECC ones included, is an explicit operator choice and kept.
 	if configured != ekCertIndexRSA2048 {
@@ -897,9 +924,10 @@ func configuredEKKeyType(config EKConfig) (*types.KeyAttributes, error) {
 
 // configuredEKCertIndex returns the NV index at which to look for the EK
 // certificate the EK config names before the EK itself exists. It resolves
-// the configured cert-handle by the configured key type with ekCertIndex, as
-// the write path does, so an ECC EK's certificate is found at its TCG index
-// (TCG EK Credential Profile v2.1 §2.2.1.4). A config whose key type has no
+// the configured cert-handle by the configured key type with
+// ekCertDiscoveryIndex, so an ECC EK's certificate is found at its TCG index
+// (TCG EK Credential Profile v2.1 §2.2.1.4), P-384 and P-521 included: only
+// the provisioning path (ekCertIndex) refuses those curves. A config whose key type has no
 // TCG index, or does not parse, keeps the configured index: a manufacturer
 // may still have provisioned a certificate there, and the bad key type is
 // reported where the EK attributes are built (EKAttributesFromConfig).
@@ -909,7 +937,7 @@ func configuredEKCertIndex(config EKConfig) tpm2.TPMHandle {
 	if err != nil {
 		return configured
 	}
-	index, err := ekCertIndex(configured, keyType)
+	index, err := ekCertDiscoveryIndex(configured, keyType)
 	if err != nil {
 		return configured
 	}
