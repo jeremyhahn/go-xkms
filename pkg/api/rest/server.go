@@ -73,6 +73,9 @@ type Server struct {
 	sshHandlers             *SSHHandlers
 	sshClient               sdkssh.Client
 
+	// attestationAppraisalHandlers serves the attestation Verifier API.
+	attestationAppraisalHandlers *AttestationAppraisalHandlers
+
 	// cors carries the CORS policy for the router; nil disables CORS
 	// entirely (no headers emitted — correct for the same-origin web UI).
 	cors *CORSOptions
@@ -456,6 +459,7 @@ func NewServer(cfg *Config) (*Server, error) {
 		server.tpmPolicyHandlers = NewTPMPolicyHandlers(cfg.XKMSService)
 		server.trustRootHandlers = NewTrustRootHandlers(cfg.XKMSService)
 		server.oidcCredentialHandlers = NewOIDCCredentialHandlers(cfg.XKMSService)
+		server.attestationAppraisalHandlers = NewAttestationAppraisalHandlers(cfg.XKMSService)
 		server.signingKeyHandlers = NewSigningKeyHandlers(cfg.XKMSService)
 		server.peerAttestationHandlers = NewPeerAttestationHandlers(cfg.XKMSService)
 		server.credentialHandlers = NewCredentialHandlers(cfg.XKMSService, log)
