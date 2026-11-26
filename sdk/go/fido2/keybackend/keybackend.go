@@ -41,6 +41,7 @@ type (
 
 var (
 	ErrUserVerificationUnavailable = keybackend.ErrUserVerificationUnavailable
+	ErrUserVerificationCancelled   = keybackend.ErrUserVerificationCancelled
 
 	EncodeCOSEPublicKey            = keybackend.EncodeCOSEPublicKey
 	NewBackendAdapter              = keybackend.NewBackendAdapter

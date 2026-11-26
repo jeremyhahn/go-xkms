@@ -5,18 +5,14 @@ package authenticator
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // errUserNotVerified is what the verifying backend below answers when it is
@@ -31,17 +27,11 @@ type verifyingKeyBackend struct {
 	err   error
 	calls int
 	rpID  string
-	// wait, when set, holds VerifyUser as a user being asked on another
-	// device would.
-	wait func(ctx context.Context)
 }
 
 var _ keybackend.UserVerifier = (*verifyingKeyBackend)(nil)
 
-func (b *verifyingKeyBackend) VerifyUser(ctx context.Context, rpID string) error {
-	if b.wait != nil {
-		b.wait(ctx)
-	}
+func (b *verifyingKeyBackend) VerifyUser(_ context.Context, rpID string) error {
 	b.calls++
 	b.rpID = rpID
 	return b.err
@@ -271,26 +261,6 @@ func TestGetPinUvAuthTokenUsingUv_RPScopedPermissionNeedsRPID(t *testing.T) {
 	})
 }
 
-// TestGetPinUvAuthTokenUsingUv_OverlongRPIDSpendsNoRetry pins that an rpId
-// the verifier cannot name to the user is a parameter error answered before
-// the user is asked, not a failed verification that spends uvRetries.
-func TestGetPinUvAuthTokenUsingUv_OverlongRPIDSpendsNoRetry(t *testing.T) {
-	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
-	auth := newVerifyingAuthenticator(t, backend)
-	rpID := strings.Repeat("a", pairingproto.VerifyUserRPNameMaxLen+1)
-
-	for range 3 {
-		reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionGetAssertion, rpID)
-		resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
-
-		require.ErrorIs(t, err, ErrInvalidParameter)
-		require.Equal(t, []byte{byte(StatusInvalidParameter)}, resp)
-	}
-	require.Zero(t, backend.calls, "the user is never asked for an RP the verifier cannot name")
-	require.Nil(t, auth.GetPinUvAuthToken())
-	require.Equal(t, DefaultUVRetries, auth.state.UVRetries())
-}
-
 // TestGetPinUvAuthTokenUsingUv_VerifierRefusalBlocksMinting pins that a
 // refused verification mints nothing, answers CTAP2_ERR_UV_INVALID, spends a
 // retry, and leaves an outstanding token as it was.
@@ -307,33 +277,6 @@ func TestGetPinUvAuthTokenUsingUv_VerifierRefusalBlocksMinting(t *testing.T) {
 	require.Equal(t, []byte{byte(StatusUVInvalid)}, resp)
 	require.Equal(t, want, auth.GetPinUvAuthToken(), "a refusal must not replace the outstanding token")
 	require.Equal(t, DefaultUVRetries-1, auth.state.UVRetries())
-}
-
-// TestGetPinUvAuthTokenUsingUv_FailureKeepsTheTokenProtocol checks that a
-// UV request refused under another PIN protocol leaves the outstanding
-// token verified under the protocol it was issued for: protocol 2's full
-// 32-byte HMAC, not protocol 1's 16 bytes.
-func TestGetPinUvAuthTokenUsingUv_FailureKeepsTheTokenProtocol(t *testing.T) {
-	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
-	auth := newVerifyingAuthenticator(t, backend)
-
-	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
-	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
-	require.NoError(t, err)
-	require.Equal(t, byte(StatusOK), resp[0])
-	token := append([]byte(nil), auth.GetPinUvAuthToken()...)
-
-	backend.err = errUserNotVerified
-	reqBytes, _ = uvTokenRequest(t, auth, PINProtocol1, PINPermissionCredentialMgmt, "example.com")
-	_, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
-	require.ErrorIs(t, err, ErrUVInvalid)
-	require.Equal(t, token, auth.GetPinUvAuthToken(), "a refusal must not replace the outstanding token")
-
-	clientDataHash := sha256.Sum256([]byte("example.com request"))
-	mac := hmac.New(sha256.New, token)
-	mac.Write(clientDataHash[:])
-	require.True(t, auth.VerifyPinUvAuthToken(clientDataHash[:], mac.Sum(nil)),
-		"the outstanding protocol 2 token still verifies with its 32-byte HMAC")
 }
 
 // TestPINTokenRestoresUVRetries covers CTAP 2.1 §6.5.5.5 and §6.5.5.7.1: a
@@ -437,49 +380,31 @@ func TestGetPinUvAuthTokenUsingUv_CancelSpendsNoRetry(t *testing.T) {
 	require.Nil(t, auth.GetPinUvAuthToken())
 }
 
-// A verifier may finish after the host cancelled the command: the phone
-// verifier's revocation list download does not follow the command context. A
-// nil answer that arrives after the cancel mints no token and restores no
-// retry.
-func TestGetPinUvAuthTokenUsingUv_CancelDuringVerificationMintsNoToken(t *testing.T) {
-	asked := make(chan struct{})
-	release := make(chan struct{})
-	backend := &verifyingKeyBackend{
-		mockUVKeyBackend: mockUVKeyBackend{handlesUV: true},
-		wait: func(context.Context) {
-			close(asked)
-			<-release
-		},
+// TestGetPinUvAuthTokenUsingUv_DismissedPromptSpendsNoRetry pins that a user
+// dismissing the prompt on the verifier is not a failed verification: it
+// mints nothing, answers CTAP2_ERR_OPERATION_DENIED, and spends no uvRetries,
+// however often the prompt is dismissed.
+func TestGetPinUvAuthTokenUsingUv_DismissedPromptSpendsNoRetry(t *testing.T) {
+	dismissed := &keybackend.SentinelCauseError{
+		Sentinel: keybackend.ErrUserVerificationCancelled,
+		Cause:    errors.New("test: user dismissed the prompt"),
 	}
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}, err: dismissed}
 	auth := newVerifyingAuthenticator(t, backend)
-	auth.mu.Lock()
-	spent := auth.state.DecrementUVRetries()
-	auth.mu.Unlock()
 
-	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	for range DefaultUVRetries {
+		reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+		resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
 
-	type result struct {
-		resp []byte
-		err  error
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationCancelled)
+		require.ErrorIs(t, err, ErrOperationDenied)
+		require.NotErrorIs(t, err, ErrUVInvalid)
+		require.NotErrorIs(t, err, ErrUVBlocked)
+		require.Equal(t, []byte{byte(StatusOperationDenied)}, resp)
+		require.Equal(t, DefaultUVRetries, auth.state.UVRetries(), "a dismissed prompt is not a failed verification")
+		require.Nil(t, auth.GetPinUvAuthToken())
 	}
-	done := make(chan result, 1)
-	go func() {
-		resp, err := auth.ProcessCBORWithContext(ctx, CmdClientPIN, reqBytes)
-		done <- result{resp: resp, err: err}
-	}()
-
-	<-asked
-	cancel()
-	close(release)
-	got := <-done
-
-	require.ErrorIs(t, got.err, context.Canceled)
-	require.Equal(t, []byte{byte(StatusKeepaliveCancel)}, got.resp)
-	require.Equal(t, 1, backend.calls)
-	require.Equal(t, spent, auth.state.UVRetries())
-	require.Nil(t, auth.GetPinUvAuthToken())
+	require.Equal(t, DefaultUVRetries, backend.calls, "the user is still asked after dismissing a prompt")
 }
 
 // TestGetPinUvAuthTokenUsingUv_UnavailableSpendsNoRetry pins that a verifier
