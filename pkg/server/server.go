@@ -41,8 +41,8 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"

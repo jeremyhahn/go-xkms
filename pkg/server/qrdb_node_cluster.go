@@ -22,9 +22,9 @@ import (
 	"path/filepath"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
