@@ -98,6 +98,7 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
 // Params contains the parameters for creating a new CA instance.
@@ -146,7 +147,7 @@ type Params struct {
 	// and tpm_enrollment.go. If nil, features that require an object store
 	// return ErrObjectStoreRequired when invoked.
 	// Optional.
-	ObjectStore qrdbsdk.Storage
+	ObjectStore qrdbstorage.Storage
 
 	// RevocationStore durably persists certificate revocations and the
 	// derived CRL artifact in the datastore so both survive restarts and
@@ -272,7 +273,7 @@ type CA struct {
 	// objectStore is the optional blob store for cross-signed certs, AIA
 	// trust-chain cache, and attestation evidence. May be nil; features that
 	// require it return ErrObjectStoreRequired in that case.
-	objectStore qrdbsdk.Storage
+	objectStore qrdbstorage.Storage
 
 	// revocationStore durably persists revocation records and the derived CRL
 	// artifact in the datastore so both survive restarts (and replicate under
@@ -604,7 +605,7 @@ type MultiIdentityParams struct {
 	// ObjectStore provides blob storage for cross-signed certificates, AIA
 	// trust-chain cache, and attestation evidence.
 	// Optional. If nil, features that require it return ErrObjectStoreRequired.
-	ObjectStore qrdbsdk.Storage
+	ObjectStore qrdbstorage.Storage
 
 	// RevocationStore durably persists certificate revocations and the
 	// derived CRL artifact in the datastore so both survive restarts.
@@ -763,7 +764,7 @@ func NewHierarchicalCA(mp *MultiIdentityParams) (TrustedCA, error) {
 // Used by CA-adjacent features (cross-signing, AIA cache, attestation
 // evidence, CRL snapshots) that need blob storage beyond the CN-keyed
 // CertStore. Callers should check for nil and surface ErrObjectStoreRequired.
-func (ca *CA) ObjectStore() qrdbsdk.Storage {
+func (ca *CA) ObjectStore() qrdbstorage.Storage {
 	return ca.objectStore
 }
 

@@ -23,7 +23,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbbackend "github.com/jeremyhahn/go-qrdb/sdk/go/backend"
-	qrdbstatemachine "github.com/jeremyhahn/go-qrdb/sdk/go/statemachine"
+	qrdbsm "github.com/jeremyhahn/go-qrdb/sdk/go/statemachine"
 	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
@@ -134,7 +134,7 @@ func NewPebble(path string) (*Backend, error) {
 // error logged from a goroutine nobody is waiting on. For a key store that is
 // silent data loss.
 func newEmbedded(store qrdbstorage.Storage, engine string) (*Backend, error) {
-	fsm := qrdbstatemachine.NewFastStateMachine(1, 1, store)
+	fsm := qrdbsm.NewFastStateMachine(1, 1, store)
 	host := qrdbbackend.NewLocalBackend(fsm)
 	kvSvc := qrdbsdk.NewKVService(host, 1)
 	adminSvc := qrdbsdk.NewAdminService(host)

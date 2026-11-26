@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
