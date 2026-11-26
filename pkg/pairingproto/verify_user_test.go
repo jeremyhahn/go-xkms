@@ -80,6 +80,42 @@ func TestVerifyUserIsALocalMethod(t *testing.T) {
 	assert.False(t, IsLocalMethod("local.verifyuser"), "method names are case-sensitive")
 }
 
+// TestVerifyUserRefusalCodes pins the wire code of each phone-side refusal of
+// local.verifyUser (#1712) and the typed error the desktop maps it to. The
+// four must stay apart: a refusal the desktop cannot tell from another is one
+// it cannot report.
+func TestVerifyUserRefusalCodes(t *testing.T) {
+	refusals := []struct {
+		name     string
+		code     int
+		wantCode int
+		want     error
+	}{
+		{"user cancelled", ErrorCodeUserCancelled, -32001, ErrUserCancelled},
+		{"no biometric enrolled", ErrorCodeVerifyUserNotEnrolled, -32041, ErrUserVerificationNotEnrolled},
+		{"lockout", ErrorCodeVerifyUserLockout, -32042, ErrUserVerificationLockout},
+		{"not paired", ErrorCodeNotPaired, -32043, ErrNotPaired},
+	}
+	for i, tt := range refusals {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.wantCode, tt.code)
+			err := MapVerifyUserRPCError(&RPCError{Code: tt.code, Message: "refused"})
+			require.ErrorIs(t, err, tt.want)
+			for j, other := range refusals {
+				if j != i {
+					assert.NotErrorIs(t, err, other.want, "%s must not read as %s", tt.name, other.name)
+				}
+			}
+		})
+	}
+
+	t.Run("other codes map as any response", func(t *testing.T) {
+		assert.ErrorIs(t, MapVerifyUserRPCError(&RPCError{Code: ErrorCodeBiometricFailed}), ErrBiometricFailed)
+		assert.ErrorIs(t, MapVerifyUserRPCError(&RPCError{Code: -1}), ErrProtocolError)
+		assert.NoError(t, MapVerifyUserRPCError(nil))
+	})
+}
+
 func TestValidateVerifyUserRPName(t *testing.T) {
 	t.Run("accepts a name up to the bound", func(t *testing.T) {
 		require.NoError(t, ValidateVerifyUserRPName("example.com"))
