@@ -52,13 +52,27 @@ const (
 	listPageSize = 1000
 )
 
-// ValidateName applies the record-name rule: a name is 1-253 bytes and holds
-// no '/' that could escape its key prefix. It also refuses "." and "..": a
-// client puts the name in a URL path segment, and URL normalization resolves
-// those segments away, so a record so named could never be read or deleted.
-// It returns a *NameError.
+// ValidateName applies the record-name rule of a write: a name is 1-253 bytes
+// and holds no '/' that could escape its key prefix. It also refuses "." and
+// "..": a client puts the name in a URL path segment, and URL normalization
+// resolves those segments away, so a record so named could never be read or
+// deleted over REST. It returns a *NameError.
 func ValidateName(name string) error {
-	if name == "" || name == "." || name == ".." || len(name) > maxNameLen || strings.ContainsRune(name, '/') {
+	if err := validateStoredName(name); err != nil {
+		return err
+	}
+	if name == "." || name == ".." {
+		return &NameError{Name: name}
+	}
+	return nil
+}
+
+// validateStoredName applies the rule a stored record's name is addressed
+// by: 1-253 bytes and no '/'. It accepts "." and "..", which ValidateName
+// refuses for a write, so a record stored under one of them before that rule
+// can still be read and deleted. It returns a *NameError.
+func validateStoredName(name string) error {
+	if name == "" || len(name) > maxNameLen || strings.ContainsRune(name, '/') {
 		return &NameError{Name: name}
 	}
 	return nil
@@ -86,15 +100,15 @@ func NewStore(cfg StoreConfig) (*Store, error) {
 	if cfg.DAOs == nil {
 		return nil, &ConfigError{Field: "DAOs", Reason: "is required"}
 	}
-	endorsements, err := openCollection[Endorsement](cfg.DAOs, endorsementFeature, endorsementEntityType, ValidateName)
+	endorsements, err := openCollection[Endorsement](cfg.DAOs, endorsementFeature, endorsementEntityType, ValidateName, validateStoredName)
 	if err != nil {
 		return nil, err
 	}
-	referenceValues, err := openCollection[ReferenceValues](cfg.DAOs, referenceValuesFeature, referenceValuesEntityType, ValidateName)
+	referenceValues, err := openCollection[ReferenceValues](cfg.DAOs, referenceValuesFeature, referenceValuesEntityType, ValidateName, validateStoredName)
 	if err != nil {
 		return nil, err
 	}
-	signingKeys, err := openCollection[SigningKeyBinding](cfg.DAOs, signingKeyFeature, signingKeyEntityType, ValidateRepository)
+	signingKeys, err := openCollection[SigningKeyBinding](cfg.DAOs, signingKeyFeature, signingKeyEntityType, ValidateRepository, ValidateRepository)
 	if err != nil {
 		return nil, err
 	}
@@ -188,24 +202,27 @@ func (e *recordEntity[T]) EntityID() uint64 { return e.ID }
 func (e *recordEntity[T]) SetEntityID(id uint64) { e.ID = id }
 
 // collection is one record kind's DAO, keyed per tenant under a feature.
-// validate is the kind's record-name rule.
+// validate is the kind's record-name rule for a write; address is the rule a
+// stored record's name is read and deleted by, which accepts every name a
+// record was ever stored under.
 type collection[T any] struct {
 	feature  string
 	validate func(name string) error
+	address  func(name string) error
 	records  qrdbsdk.GenericDAO[*recordEntity[T]]
 }
 
 // openCollection opens the DAO of one record kind, whose names validate
-// accepts. The entity ID is a hash of the key, so putting a key again
-// replaces its record.
-func openCollection[T any](daos *qrdbsdk.DAOFactory, feature, entityType string, validate func(string) error) (collection[T], error) {
+// accepts for a write and address accepts for a read or delete. The entity
+// ID is a hash of the key, so putting a key again replaces its record.
+func openCollection[T any](daos *qrdbsdk.DAOFactory, feature, entityType string, validate, address func(string) error) (collection[T], error) {
 	newEntity := func() *recordEntity[T] { return &recordEntity[T]{} }
 	records, err := dao.New(daos, DatabaseName, entityType, newEntity,
 		qrdbsdk.WithIDGenerator(qrdbsdk.NewCryptoFieldHashGenerator("Key")))
 	if err != nil {
 		return collection[T]{}, &ConfigError{Field: "DAOs", Reason: "cannot open the " + entityType + " DAO", Cause: err}
 	}
-	return collection[T]{feature: feature, validate: validate, records: records}, nil
+	return collection[T]{feature: feature, validate: validate, address: address, records: records}, nil
 }
 
 // prefix returns the tenant's key prefix.
@@ -219,7 +236,7 @@ func (c collection[T]) prefix(tenant string) (string, error) {
 
 // key returns the tenant-scoped key of name.
 func (c collection[T]) key(tenant, name string) (string, error) {
-	if err := c.validate(name); err != nil {
+	if err := c.address(name); err != nil {
 		return "", err
 	}
 	prefix, err := c.prefix(tenant)
@@ -230,6 +247,9 @@ func (c collection[T]) key(tenant, name string) (string, error) {
 }
 
 func (c collection[T]) put(ctx context.Context, tenant, name string, record *T) error {
+	if err := c.validate(name); err != nil {
+		return err
+	}
 	key, err := c.key(tenant, name)
 	if err != nil {
 		return err
