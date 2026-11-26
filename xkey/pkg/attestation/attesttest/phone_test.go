@@ -15,6 +15,7 @@ package attesttest
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -191,6 +192,103 @@ func TestPhoneRun_RefusesWhatTheContractDoesNotAllow(t *testing.T) {
 			send(t, session, tr, tt.method, tt.params)
 
 			require.Error(t, <-done)
+		})
+	}
+}
+
+func TestPhoneRun_AnswersVerifyUserWithTheUVK(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	uvk := NewUVK(t, NewCA(t, "root"), UserVerificationKeyClaims())
+	phone := NewPhone(t, NewDAK(t, nil, GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState()))
+	phone.UVK = uvk
+	session, tr, done := startPhone(t, phone, false, 1)
+	handshake(t, session, tr)
+	nonce := FixedBytes(0x01, pairingproto.AttestNonceSize)
+
+	resp := exchange(t, session, tr, pairingproto.MethodLocalVerifyUser, &pairingproto.LocalVerifyUserParams{
+		ProtocolVersion: pairingproto.AttestProtocolV2, Nonce: nonce, RPName: "example.com",
+	})
+	res, err := pairingproto.DecodeResult[pairingproto.LocalVerifyUserResult](resp)
+	require.NoError(t, err)
+	require.Equal(t, uvk.Chain, res.CertificateChain)
+	require.Equal(t, "example.com", phone.VerifyUserRPName())
+
+	// The answer is bound to this session: it verifies under the binding the
+	// initiator derives, over the RP name it asked for.
+	binding, err := pairingproto.AttestChannelBinding(session)
+	require.NoError(t, err)
+	transcript, err := pairingproto.BuildVerifyUserTranscript(nonce, binding, uvk.FP, "example.com")
+	require.NoError(t, err)
+	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
+	require.NoError(t, <-done)
+}
+
+func TestPhoneRun_MutateVerifyUserDamagesTheAnswerOnTheWire(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	uvk := NewUVK(t, NewCA(t, "root"), UserVerificationKeyClaims())
+	phone := NewPhone(t, NewDAK(t, nil, GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState()))
+	phone.UVK = uvk
+	phone.MutateVerifyUser = func(res *pairingproto.LocalVerifyUserResult) { res.ProtocolVersion = 1 }
+	session, tr, done := startPhone(t, phone, false, 1)
+	handshake(t, session, tr)
+	nonce := FixedBytes(0x01, pairingproto.AttestNonceSize)
+
+	resp := exchange(t, session, tr, pairingproto.MethodLocalVerifyUser, &pairingproto.LocalVerifyUserParams{
+		ProtocolVersion: pairingproto.AttestProtocolV2, Nonce: nonce, RPName: "example.com",
+	})
+	res, err := pairingproto.DecodeResult[pairingproto.LocalVerifyUserResult](resp)
+	require.NoError(t, err)
+	require.Equal(t, 1, res.ProtocolVersion)
+
+	// The damage came after an honest answer was signed: the signature still
+	// verifies, so only the downgraded version is wrong.
+	binding, err := pairingproto.AttestChannelBinding(session)
+	require.NoError(t, err)
+	transcript, err := pairingproto.BuildVerifyUserTranscript(nonce, binding, uvk.FP, "example.com")
+	require.NoError(t, err)
+	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
+	require.NoError(t, <-done)
+}
+
+func TestPhoneRun_RefusesVerifyUserOutsideTheContract(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	uvk := NewUVK(t, NewCA(t, "root"), UserVerificationKeyClaims())
+	nonce := FixedBytes(0x01, pairingproto.AttestNonceSize)
+	tests := map[string]struct {
+		uvk    *DAK
+		params *pairingproto.LocalVerifyUserParams
+	}{
+		"no user-verification key": {nil, &pairingproto.LocalVerifyUserParams{
+			ProtocolVersion: pairingproto.AttestProtocolV2, Nonce: nonce, RPName: "example.com",
+		}},
+		"legacy protocol version": {uvk, &pairingproto.LocalVerifyUserParams{
+			ProtocolVersion: 1, Nonce: nonce, RPName: "example.com",
+		}},
+		"empty RP name": {uvk, &pairingproto.LocalVerifyUserParams{
+			ProtocolVersion: pairingproto.AttestProtocolV2, Nonce: nonce,
+		}},
+		"over-long RP name": {uvk, &pairingproto.LocalVerifyUserParams{
+			ProtocolVersion: pairingproto.AttestProtocolV2, Nonce: nonce,
+			RPName: strings.Repeat("a", pairingproto.VerifyUserRPNameMaxLen+1),
+		}},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			phone := NewPhone(t, NewDAK(t, nil, GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, AttestedBootState()))
+			phone.UVK = tt.uvk
+			session, tr, done := startPhone(t, phone, false, 1)
+			handshake(t, session, tr)
+
+			send(t, session, tr, pairingproto.MethodLocalVerifyUser, tt.params)
+
+			require.Error(t, <-done)
+			require.Empty(t, phone.VerifyUserRPName(), "a refused request must not reach the prompt")
 		})
 	}
 }
