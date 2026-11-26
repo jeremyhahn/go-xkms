@@ -508,7 +508,8 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 					return
 				}
 
-				serialNumber, pem, err = s.finalizeTCGCSR(
+				var tcgHookCtx *OrderFinalizeHookContext
+				serialNumber, pem, tcgHookCtx, err = s.finalizeTCGCSR(
 					order.Identifiers[0].Value, csrDER, r, account, order, validatedChallenges)
 				if err != nil {
 					// finalizeTCGCSR returns *entities.Error or common errors
@@ -521,7 +522,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 				}
 
 				// Send the final order response
-				s.sendFinalizeResponse(ctx, orderDAO, order, account, start, serialNumber, pem, w)
+				s.sendFinalizeResponse(ctx, orderDAO, order, account, start, serialNumber, pem, tcgHookCtx, w)
 				return
 			}
 		}
@@ -1014,8 +1015,11 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Execute order finalization hooks if registered
-	if s.params != nil && s.params.OrderFinalizeHooks != nil {
-		hookCtx := &OrderFinalizeHookContext{
+	// The finalize hooks see this context before persistence; the commit
+	// hooks see the same context in sendFinalizeResponse after the saves.
+	var hookCtx *OrderFinalizeHookContext
+	if s.params != nil && (s.params.OrderFinalizeHooks != nil || s.params.OrderFinalizeCommitHooks != nil) {
+		hookCtx = &OrderFinalizeHookContext{
 			Context:        ctx,
 			Order:          order,
 			Certificate:    cert,
@@ -1024,13 +1028,18 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 			ClientIP:       r.RemoteAddr,
 			IsTCGCSR:       false,
 		}
+	}
 
+	if s.params != nil && s.params.OrderFinalizeHooks != nil {
 		s.logger.Info("Executing order finalization hooks",
 			"hook_count", s.params.OrderFinalizeHooks.Count(),
 			"is_tcg_csr", false,
 			"client_ip", r.RemoteAddr)
 
 		if err := s.params.OrderFinalizeHooks.Execute(hookCtx); err != nil {
+			// A hook vetoed issuance: an earlier hook may have staged
+			// state, so the commit hooks undo it with the veto error.
+			s.runOrderFinalizeCommitHooks(hookCtx, err)
 			s.failOrder(ctx, orderDAO, order, account, start, w,
 				common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err)))
 			return
@@ -1042,7 +1051,7 @@ func (s *RestService) OrderFinalizeHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Send the final order response
-	s.sendFinalizeResponse(ctx, orderDAO, order, account, start, serialNumber, pem, w)
+	s.sendFinalizeResponse(ctx, orderDAO, order, account, start, serialNumber, pem, hookCtx, w)
 }
 
 // sendFinalizeResponse sends the final order response to the client. It is
@@ -1060,6 +1069,7 @@ func (s *RestService) sendFinalizeResponse(
 	start time.Time,
 	serialNumber string,
 	pem []byte,
+	hookCtx *OrderFinalizeHookContext,
 	w http.ResponseWriter) {
 
 	certURL := fmt.Sprintf("%s/acme/cert/%s", s.baseRESTURI, serialNumber)
@@ -1074,6 +1084,7 @@ func (s *RestService) sendFinalizeResponse(
 
 	certDAO, err := s.storageFactory.CertificateDAO()
 	if err != nil {
+		s.runOrderFinalizeCommitHooks(hookCtx, err)
 		writeError(w, common.ServerInternal("Failed to create certificate DAO"))
 		return
 	}
@@ -1084,6 +1095,7 @@ func (s *RestService) sendFinalizeResponse(
 				"wanted_serial", collisionErr.Wanted,
 				"existing_serial", collisionErr.Existing)
 		}
+		s.runOrderFinalizeCommitHooks(hookCtx, err)
 		writeError(w, common.ServerInternal("Failed to save certificate"))
 		return
 	}
@@ -1091,9 +1103,14 @@ func (s *RestService) sendFinalizeResponse(
 	order.Status = common.StatusValid
 	order.Certificate = certURL
 	if err := orderDAO.Save(ctx, order); err != nil {
+		s.runOrderFinalizeCommitHooks(hookCtx, err)
 		writeError(w, common.ServerInternal("Failed to update order"))
 		return
 	}
+
+	// Both the certificate and the order are persisted: the commit hooks may
+	// now make the consumer's state durable.
+	s.runOrderFinalizeCommitHooks(hookCtx, nil)
 
 	metrics.DecActiveOrders()
 	if account.TenantID != "" {
@@ -1103,6 +1120,19 @@ func (s *RestService) sendFinalizeResponse(
 	metrics.ObserveCertificateIssuanceDuration(time.Since(start).Seconds())
 
 	s.orderResponse(w, order)
+}
+
+// runOrderFinalizeCommitHooks runs the registered order finalize commit hooks
+// once, after persistence was attempted: persistErr is nil when the
+// certificate and the order were both saved, the save error otherwise. The
+// hooks cannot change the response.
+func (s *RestService) runOrderFinalizeCommitHooks(hookCtx *OrderFinalizeHookContext, persistErr error) {
+	if hookCtx == nil || s.params == nil || s.params.OrderFinalizeCommitHooks == nil {
+		return
+	}
+	s.logger.Info("Executing order finalize commit hooks",
+		"hook_count", s.params.OrderFinalizeCommitHooks.Count())
+	s.params.OrderFinalizeCommitHooks.Execute(hookCtx, persistErr)
 }
 
 // matchesIdentifier verifies that a CSR's complete identity set corresponds
@@ -1508,14 +1538,14 @@ func (s *RestService) finalizeTCGCSR(
 	account *entities.ACMEAccount,
 	order *entities.ACMEOrder,
 	validatedChallenges []string,
-) (string, []byte, error) {
+) (string, []byte, *OrderFinalizeHookContext, error) {
 	var pem []byte
 	ctx := r.Context()
 
 	// Unmarshal the TCG-CSR-IDEVID
 	tcgCSR, err := xkmssdk.UnmarshalIDevIDCSR(csrDER)
 	if err != nil {
-		return "", nil, common.MalformedError("Failed to parse TCG-CSR-IDEVID", nil)
+		return "", nil, nil, common.MalformedError("Failed to parse TCG-CSR-IDEVID", nil)
 	}
 
 	// Get the CA's issuing certificate to populate the subject fields
@@ -1524,7 +1554,7 @@ func (s *RestService) finalizeTCGCSR(
 	if err != nil || caCert == nil {
 		caCert, err = s.ca.TrustedRoot()
 		if err != nil {
-			return "", nil, common.ServerInternal("Failed to get CA certificate")
+			return "", nil, nil, common.ServerInternal("Failed to get CA certificate")
 		}
 	}
 
@@ -1584,7 +1614,7 @@ func (s *RestService) finalizeTCGCSR(
 		// Parse EK certificate for hook context (same as post-issuance hooks)
 		ekcert, ekErr := x509.ParseCertificate(tcgCSR.CsrContents.EkCert)
 		if ekErr != nil {
-			return "", nil, common.ServerInternal("Failed to parse EK certificate for pre-issuance hook")
+			return "", nil, nil, common.ServerInternal("Failed to parse EK certificate for pre-issuance hook")
 		}
 
 		// Build TCG enrollment data for hook context
@@ -1624,7 +1654,7 @@ func (s *RestService) finalizeTCGCSR(
 				"order_id", order.ID,
 				"account_id", account.ID,
 				"product_serial", string(tcgCSR.CsrContents.ProdSerial))
-			return "", nil, common.Unauthorized(fmt.Sprintf("Pre-issuance check failed: %v", err))
+			return "", nil, nil, common.Unauthorized(fmt.Sprintf("Pre-issuance check failed: %v", err))
 		}
 	}
 
@@ -1645,7 +1675,7 @@ func (s *RestService) finalizeTCGCSR(
 		}
 		extraExts, hookErr := s.preSignHooks.Execute(preSignCtx)
 		if hookErr != nil {
-			return "", nil, common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr))
+			return "", nil, nil, common.ServerInternal(fmt.Sprintf("Pre-sign hook failed: %v", hookErr))
 		}
 		tcgCSRRequest.ExtraExtensions = append(tcgCSRRequest.ExtraExtensions, extraExts...)
 	}
@@ -1660,7 +1690,7 @@ func (s *RestService) finalizeTCGCSR(
 	if issuerErr != nil {
 		s.logger.Error("Failed to resolve cluster CA issuer for enroll-01 issuance",
 			"cluster_ca_cn", s.clusterCACN, "error", issuerErr.Error())
-		return "", nil, common.ServerInternal("Failed to resolve cluster CA issuer")
+		return "", nil, nil, common.ServerInternal("Failed to resolve cluster CA issuer")
 	}
 	if clusterSigner != nil {
 		tcgCSRRequest.Signer = clusterSigner
@@ -1675,12 +1705,12 @@ func (s *RestService) finalizeTCGCSR(
 			"account_id", account.ID,
 			"permanent_identifier", idevidCN,
 			"error", err.Error())
-		return "", nil, common.ServerInternal("Failed to sign TCG-CSR-IDEVID")
+		return "", nil, nil, common.ServerInternal("Failed to sign TCG-CSR-IDEVID")
 	}
 
 	idevidCert, err := x509.ParseCertificate(idevidDER)
 	if err != nil {
-		return "", nil, common.ServerInternal("Failed to parse certificate")
+		return "", nil, nil, common.ServerInternal("Failed to parse certificate")
 	}
 
 	// The IAK certificate's subject is the CA's business: SignTCGCSRIDevID
@@ -1701,7 +1731,7 @@ func (s *RestService) finalizeTCGCSR(
 	// Parse EK certificate for hook context
 	ekcert, err := x509.ParseCertificate(tcgCSR.CsrContents.EkCert)
 	if err != nil {
-		return "", nil, common.ServerInternal("Failed to parse EK certificate")
+		return "", nil, nil, common.ServerInternal("Failed to parse EK certificate")
 	}
 
 	// enroll-01 binds a device identity to a TPM, so the trail records both the
@@ -1710,7 +1740,7 @@ func (s *RestService) finalizeTCGCSR(
 	if auditErr := s.recordAudit(audit.EventTPMEnrollment, audit.LogTPMEnrollment(auditCtx, s.auditLog,
 		auditAccountID(account.ID), idevidCN,
 		ekcert.Subject.CommonName, idevidCert.Subject.CommonName)); auditErr != nil {
-		return "", nil, common.ServerInternal("Failed to record audit event")
+		return "", nil, nil, common.ServerInternal("Failed to record audit event")
 	}
 	if auditErr := s.recordAudit(audit.EventCertificateIssued, audit.LogCertificateIssued(auditCtx, s.auditLog,
 		auditAccountID(account.ID),
@@ -1718,12 +1748,16 @@ func (s *RestService) finalizeTCGCSR(
 		idevidCert.Subject.CommonName,
 		auditValidityDays(idevidCert),
 		idevidCert.SerialNumber.String())); auditErr != nil {
-		return "", nil, common.ServerInternal("Failed to record audit event")
+		return "", nil, nil, common.ServerInternal("Failed to record audit event")
 	}
 
-	// Execute order finalization hooks if registered
-	if s.params != nil && s.params.OrderFinalizeHooks != nil {
-		hookCtx := &OrderFinalizeHookContext{
+	// The hook context is built whenever finalize or commit hooks are
+	// registered: the finalize hooks see it here, before persistence, and
+	// the commit hooks see the same context in sendFinalizeResponse, after
+	// the certificate and order saves.
+	var hookCtx *OrderFinalizeHookContext
+	if s.params != nil && (s.params.OrderFinalizeHooks != nil || s.params.OrderFinalizeCommitHooks != nil) {
+		hookCtx = &OrderFinalizeHookContext{
 			Context:        r.Context(),
 			Certificate:    idevidCert,
 			CertificatePEM: pem,
@@ -1742,7 +1776,10 @@ func (s *RestService) finalizeTCGCSR(
 				ProdCaData:           tcgCSR.CsrContents.ProdCaData,
 			},
 		}
+	}
 
+	// Execute order finalization hooks if registered
+	if s.params != nil && s.params.OrderFinalizeHooks != nil {
 		s.logger.Info("Executing TCG CSR order finalization hooks",
 			"hook_count", s.params.OrderFinalizeHooks.Count(),
 			"is_tcg_csr", true,
@@ -1753,7 +1790,10 @@ func (s *RestService) finalizeTCGCSR(
 			"eventlog_size", len(tcgCSR.CsrContents.BootEvntLog))
 
 		if err := s.params.OrderFinalizeHooks.Execute(hookCtx); err != nil {
-			return "", nil, common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err))
+			// A hook vetoed issuance: an earlier hook may have staged
+			// state, so the commit hooks undo it with the veto error.
+			s.runOrderFinalizeCommitHooks(hookCtx, err)
+			return "", nil, nil, common.ServerInternal(fmt.Sprintf("Order finalization hook failed: %v", err))
 		}
 	} else {
 		s.logger.Warn("No order finalization hooks registered for TCG CSR")
@@ -1772,11 +1812,12 @@ func (s *RestService) finalizeTCGCSR(
 	// The IDevID certificate's full serial number, never truncated - see the
 	// identical treatment in OrderFinalizeHandler above.
 	if idevidCert.SerialNumber == nil {
-		return "", nil, common.ServerInternal("Certificate serial number is nil")
+		s.runOrderFinalizeCommitHooks(hookCtx, errors.New("certificate serial number is nil"))
+		return "", nil, nil, common.ServerInternal("Certificate serial number is nil")
 	}
 	serialNumber := idevidCert.SerialNumber.Text(16)
 
-	return serialNumber, pem, nil
+	return serialNumber, pem, hookCtx, nil
 }
 
 // encodeCertificatePEM encodes DER-encoded certificate data to PEM format.
