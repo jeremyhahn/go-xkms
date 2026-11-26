@@ -136,7 +136,7 @@ require (
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/jeremyhahn/go-codec v1.4.0 // indirect
 	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
-	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // indirect
+	github.com/jeremyhahn/go-luks2 v1.0.1-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.7.0-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.58.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.24.2-alpha // indirect

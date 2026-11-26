@@ -3,4 +3,4 @@
   - `sdk/go` re-exports `ShamirProtectedShare` in place of the removed `ShamirShare`.
   - The embedded node sets qrdb's `Auth.ClusterTrustDomain`, which replaces `Auth.SPIFFETrustDomain`.
   - Protected memory uses go-enclave v0.10's `ByteAccess` and value-typed `Allocator`.
-  - `pkg/luks`, `sdk/go/luks` and xkey's `pkg/usb`, `pkg/luks`, `pkg/gui`, `cmd/xkey` and `tools/skillgen` need a go-luks2 release built against go-enclave v0.10.0-alpha; v1.0.0-rc.4 still uses the removed `MemoryEnclave`.
+  - go-luks2 moves from v1.0.0-rc.4 to v1.0.1-alpha, the release built against go-enclave v0.10.0-alpha, in the root, `sdk/go` and `xkey` modules. `pkg/luks` and xkey's `pkg/usb` pass LUKS passphrases as `enclave.ByteAccess`, and xkey freezes a passphrase copy through go-enclave's `Freezer` capability, refusing a handle without it with `usb.ErrPassphraseNotFreezable`.
