@@ -55,6 +55,11 @@ entries and checks every tree head under the CA key before it answers.
 - Every head is opened under the CA key, and its origin, size and root must
   match the head go-qrdb reported (`treeHead`, `log.go:192`).
 - `VerifyCheckpoint` opens a note under the CA key and checks its origin.
+- `OpenOrCreate` (`log.go:111`) opens the log if it exists and creates it
+  otherwise. A reopened log is checked at startup (`checkExisting`,
+  `log.go:140`): its latest checkpoint must verify under the configured
+  origin and CA key, or, when it has none, a newly signed head must. If
+  either fails, startup fails with `ErrExistingLogMismatch`.
 
 ### Errors
 
@@ -70,6 +75,8 @@ Every refusal is typed, in `pkg/ca/tlog/errors.go`:
 | `ErrMalformedEntry`, `ErrUnsupportedVersion`, `ErrUnknownKind` | `Unmarshal` refused bytes |
 | `ErrNoKeyProvider`, `ErrCAKeyUnavailable`, `ErrUnsupportedCAKey` | the CA key is missing, not initialized, or neither Ed25519 nor P-256 |
 | `ErrKeyTypeMismatch`, `ErrKeyRefMismatch` | go-qrdb asked for another key type or key ref |
+| `ErrLogOutOfScope` | go-qrdb asked the head signer for a log other than the CA log |
+| `ErrExistingLogMismatch` | a reopened log does not verify under the configured origin and CA key |
 
 ### Expiring bodies
 
@@ -106,19 +113,26 @@ encoding.
 
 ## Head signer
 
-`HeadSignerProvider` (`headsigner.go:42`) is go-qrdb's head-signer seam over
+`HeadSignerProvider` (`headsigner.go:47`) is go-qrdb's head-signer seam over
 the CA key, installed with `WithHeadSignerProvider`. It is built with
-`NewHeadSignerProvider(keys, keyName)` (`:52`).
+`NewHeadSignerProvider(keys, keyName, scope)` (`:78`).
 
-- `CreateKey` (`:81`) returns the CA key as the log's key. Its ref is the
+- The provider serves only the CA log. `scope` is its tenant, database and
+  log name (`LogScope`, `:57`); `ServiceLogScope` (`:66`) gives the service
+  principal's `system` tenant and database. `CreateKey` and `HeadSigner`
+  check the request's scope first (`checkScope`, `:92`) and refuse any other
+  log with `ErrLogOutOfScope`, so no other log on the node can have its
+  heads signed by the CA key.
+
+- `CreateKey` (`:118`) returns the CA key as the log's key. Its ref is the
   hex SHA-256 of the key's DER SPKI. A request for another signature type
   fails with `ErrKeyTypeMismatch`.
-- `HeadSigner` (`:98`) refuses any other ref with `ErrKeyRefMismatch`. The
+- `HeadSigner` (`:138`) refuses any other ref with `ErrKeyRefMismatch`. The
   signer's key hash is go-qrdb's `HeadKeyHash`, which is the signed-note key
-  ID. `Sign` (`:170`) signs the checkpoint body through `checkpoint.Sign`,
+  ID. `Sign` (`:213`) signs the checkpoint body through `checkpoint.Sign`,
   verifies the result, and returns the signature without its 4-byte key ID,
   because go-qrdb writes that ID into the signature line itself.
-- `Verifier` (`:69`) returns the CA key's checkpoint verifier.
+- `Verifier` (`:106`) returns the CA key's checkpoint verifier.
 - Only Ed25519 (signed-note type `0x01`) and ECDSA P-256 (type `0x02`) CA
   keys are supported. Any other key fails with `ErrUnsupportedCAKey`.
 
