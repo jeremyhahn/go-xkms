@@ -1014,3 +1014,6 @@ func (*noopClient) DeleteSigningKeyBinding(context.Context, *transport.DeleteSig
 func (*noopClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
 	return nil, nil
 }
+func (*noopClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	return nil, nil
+}
