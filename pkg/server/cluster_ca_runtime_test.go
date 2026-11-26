@@ -165,8 +165,12 @@ func TestClusterSecretDeliveryService_StrategyDeliversNoMaterial(t *testing.T) {
 // stays empty here), so a cluster-ACME deployment's CA composes with no
 // backends.* section configured at all.
 func TestInitializeCA_ClusterKeyStrategyRoutesKeystore(t *testing.T) {
+	// No embedded node hosts a transparency log here, so the log is off;
+	// transparency_log_test.go covers the CA with its log.
+	tlogOff := false
 	s := newMinimalServer(t, &config.Config{
-		Datastore: config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
+		TransparencyLog: config.TransparencyLogConfig{Enabled: &tlogOff},
+		Datastore:       config.DatastoreConfig{Engine: "memory", Path: t.TempDir()},
 		CA: &ca.MultiIdentityCAConfig{
 			SelectedCA: 0,
 			Identity: []ca.Identity{{

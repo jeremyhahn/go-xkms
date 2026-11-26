@@ -169,6 +169,61 @@ If the append fails, the revocation stands, and the call returns
 its key and certificate cleanup and joins that error with the cleanup's. A
 reason outside 0–255 cannot be encoded and is reported the same way.
 
+### image-signed
+
+`image.SignerConfig.TransparencyLog` (`pkg/image/signer.go:55`) takes an
+`image.TransparencyLog` (`pkg/image/transparency_log.go:26`), which holds
+`AppendImageSigned`; `*tlog.Log` satisfies it. When it is set, every
+signature is appended as an `image-signed` entry (image digest, envelope
+digest, signer) before it is pushed. If the append fails, the signer pushes
+nothing and returns `ErrTransparencyLogAppend`, so it fails closed.
+`tlog.OpenOrCreate` opens the log, creating it on first use. xkmsd composes
+no image signer, so an SDK caller (`xkms.ImageSignerConfig`) sets the log.
+
+## xkmsd wiring
+
+xkmsd attaches the CA's log in two places:
+
+1. `initEmbeddedQRDBNode` (`pkg/server/qrdb_node.go`) adds
+   `WithHeadSignerProvider` to the embedded node's options, via
+   `transparencyLogNodeOptions` (`pkg/server/transparency_log.go:47`). The
+   provider sits over a `clusterca.KeyProvider` that has no binding yet,
+   because the CA does not exist when the node starts.
+2. `initializeCA` (`pkg/server/server.go`) composes the CA, then calls
+   `openTransparencyLog` (`transparency_log.go:66`) before the TLS server
+   certificate is issued, so that certificate is logged as well. That call:
+   - binds the key provider to the TrustedCA;
+   - runs `tlog.OpenOrCreate` on the node, with not-leader retries;
+   - checks that the CA is a `*ca.CA` and calls `SetTransparencyLog`.
+
+The log is named `ca`. A CA request's context carries the caller's identity,
+or none, so `serviceTransparencyLog` (`transparency_log.go:104`) runs every
+append under the node's `ServiceContext`.
+
+### Configuration
+
+```yaml
+transparency_log:
+  enabled: true                 # unset: on with qrdb_vlog, off without it
+  origin: ca.example.com/tlog   # unset: <CA common name, spaces as "-">/tlog
+```
+
+`Config.TransparencyLogEnabled` (`pkg/config/config.go`) resolves an unset
+switch to the build default, `transparencyLogDefault`. That default is
+`pkg/config/transparency_log_vlog.go` when the binary is built with the tag,
+and `transparency_log_novlog.go` when it is not.
+
+Without the tag, xkmsd builds and starts with the log off, and issuance is
+unchanged. When the log is on, start-up fails in `initializeCA` with
+`*server.ErrTransparencyLog` instead of falling back to an unlogged CA.
+`openTransparencyLog` returns it when:
+
+| Cause | Wrapped error |
+|---|---|
+| no embedded node, or a node without the head signer | `ErrTransparencyLogUnavailable` |
+| a composed CA that is not `*ca.CA` | `ErrTransparencyLogCAUnsupported` |
+| a failed bind, service context or `OpenOrCreate`, including `enabled: true` in a build without the tag, where every vlog request fails | the cause |
+
 ## Service-principal grant
 
 The embedded node's service principal gets only the vlog actions the log
@@ -185,9 +240,12 @@ tag. Without the tag, every vlog request to an embedded node fails. The
 node-backed tests in `pkg/ca/tlog` (`node_test.go`, `log_test.go`) and
 `pkg/ca/transparency_log_test.go` carry the tag.
 
-The Makefile's `TEST_TAGS` and `SERVER_BUILD_TAGS` include `qrdb_vlog`, so
-`make test`, the vet and lint gates (which use `TEST_TAGS`) and xkmsd's
-embedded node all build with it. `coverage-ca` adds it to `BUILD_TAGS`.
+The Makefile's `TEST_TAGS` and `BUILD_TAGS` include `qrdb_vlog`, so
+`make test` and the vet and lint gates (which use `TEST_TAGS`) build with
+it. `coverage-ca` adds it to `BUILD_TAGS`. `SERVER_BUILD_TAGS`
+(`Makefile:86`) does not include the tag, so an xkmsd built by `make` has
+the log off unless the configuration sets `transparency_log.enabled`, and
+setting it fails start-up.
 
 Specifications, both pinned at C2SP commit `e5746a0b`:
 [c2sp-tlog-checkpoint.md](../references/c2sp-tlog-checkpoint.md) and
@@ -403,6 +461,21 @@ in-memory node, its heads signed with the CA key. It checks:
 - with no log set, nothing is appended;
 - against a log the node never created, issuance fails with no certificate
   stored, and a revocation stands with `ErrTransparencyLogEntryMissing`.
+
+`pkg/server/transparency_log_vlog_test.go` starts xkmsd's CA on an in-memory
+node that has the production service principal and the head-signer option.
+It checks:
+
+- an issuance on a bare context leaves one `cert-issued` entry whose
+  inclusion proof verifies, while a direct append on that context is
+  refused, which shows the append carries the service principal;
+- a second open finds the existing log;
+- a node without the head signer fails start-up with
+  `ErrTransparencyLogUnavailable`.
+
+`pkg/server/transparency_log_test.go` covers the origin, the node option,
+the switch off (issuance unchanged), and the switch on with no node (start-up
+fails with `*ErrTransparencyLog`).
 
 The tests without the tag cover the entry encoding and its refusals, and the
 head signer: its key hash equals `HeadKeyHash`, its signature verifies as the

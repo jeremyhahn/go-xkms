@@ -353,6 +353,32 @@ func (e *ErrCAInit) Unwrap() error {
 	return e.Err
 }
 
+// ErrTransparencyLogUnavailable is the cause of an ErrTransparencyLog when
+// transparency_log.enabled is on but xkmsd hosts no embedded node with the
+// log's head signer to open the log on.
+var ErrTransparencyLogUnavailable = errors.New("server: transparency log unavailable: no embedded node with its head signer")
+
+// ErrTransparencyLogCAUnsupported is the cause of an ErrTransparencyLog when
+// the composed CA is not a *ca.CA, so it cannot take a transparency log.
+var ErrTransparencyLogCAUnsupported = errors.New("server: the composed CA does not take a transparency log")
+
+// ErrTransparencyLog represents a failure to open the CA's transparency log
+// or attach it to the CA at start-up.
+type ErrTransparencyLog struct {
+	Operation string
+	Err       error
+}
+
+// Error returns the error message.
+func (e *ErrTransparencyLog) Error() string {
+	return fmt.Sprintf("transparency log: failed to %s: %s", e.Operation, e.Err)
+}
+
+// Unwrap returns the underlying error.
+func (e *ErrTransparencyLog) Unwrap() error {
+	return e.Err
+}
+
 // ErrTLSCertOp represents a failure during a TLS certificate operation.
 // When Sentinel is set, errors.Is will match both the Sentinel and the wrapped Err.
 // ErrTLSCertChainCAUnavailable is the cause of an ErrTLSCertOp when a
