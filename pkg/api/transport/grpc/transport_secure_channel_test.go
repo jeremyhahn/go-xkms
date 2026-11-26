@@ -71,6 +71,29 @@ func TestNew_AdmitsSecureOrOptedOutEndpoints(t *testing.T) {
 	assert.True(t, tr.Config().AllowInsecureTransport, "the option sets the opt-out")
 }
 
+// TestConnect_GuardsTheConfigItDials: NewWithConfig keeps the caller's
+// *Config, so a Config that passed the guard with TLS on and was flipped to
+// plaintext before Connect must not dial plaintext TCP.
+func TestConnect_GuardsTheConfigItDials(t *testing.T) {
+	guardOn(t)
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	srv := grpc.NewServer()
+	pb.RegisterKeystoreServiceServer(srv, &signImageRecorder{})
+	go func() { _ = srv.Serve(lis) }()
+	t.Cleanup(srv.Stop)
+
+	cfg := &transport.Config{Address: lis.Addr().String(), TLSEnabled: true}
+	tr, err := NewWithConfig(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tr.Close() })
+
+	cfg.TLSEnabled = false
+	err = tr.Connect(context.Background())
+	require.ErrorIs(t, err, transport.ErrInsecureTransport)
+	assert.Nil(t, tr.Conn(), "Connect must refuse before it creates a client")
+}
+
 func TestSignImage_RefusesRegistryCredentialsOverPlaintext(t *testing.T) {
 	guardOn(t)
 	cfg := &transport.Config{Address: "127.0.0.1:9090", AllowInsecureTransport: true}
