@@ -134,6 +134,23 @@ func TestVerifyEnvelope_AnySignature(t *testing.T) {
 	require.ErrorIs(t, verifyEnvelope(env, key.Public()), ErrSignatureInvalid)
 }
 
+func TestVerifyEnvelope_ECDSALegacySHA256(t *testing.T) {
+	payload := []byte(`{"_type":"https://in-toto.io/Statement/v1"}`)
+	for name, curve := range map[string]elliptic.Curve{"P-384": elliptic.P384(), "P-521": elliptic.P521()} {
+		t.Run(name, func(t *testing.T) {
+			key, err := ecdsa.GenerateKey(curve, rand.Reader)
+			require.NoError(t, err)
+			sig, err := ecdsa.SignASN1(rand.Reader, key, sha256Sum(PAE(PayloadTypeInToto, payload)))
+			require.NoError(t, err)
+			env := &Envelope{PayloadType: PayloadTypeInToto, Payload: payload, Signatures: []EnvelopeSignature{{Sig: sig}}}
+			require.NoError(t, verifyEnvelope(env, key.Public()), "a SHA-256 signature made before the per-curve digest still verifies")
+
+			env.Payload = []byte(`{}`)
+			require.ErrorIs(t, verifyEnvelope(env, key.Public()), ErrSignatureInvalid)
+		})
+	}
+}
+
 func TestParseEnvelope(t *testing.T) {
 	env, err := signEnvelope(newECDSAKey(t), PayloadTypeInToto, []byte(`{"a":1}`))
 	require.NoError(t, err)
