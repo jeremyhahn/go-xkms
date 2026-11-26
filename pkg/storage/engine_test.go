@@ -20,7 +20,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 

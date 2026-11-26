@@ -148,6 +148,10 @@ func (m *mcpMockRoleClient) UnassignRole(ctx context.Context, userID uint64, rol
 func (m *mcpMockRoleClient) ListPermissions(ctx context.Context) (*qrdbtransport.ListPermissionsResponse, error) {
 	return nil, errMCPMockUnused
 }
+func (m *mcpMockRoleClient) ReconcileBuiltInRolesAllTenants(ctx context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
+	return &qrdbtransport.ReconcileAllTenantsRolesResponse{}, nil
+}
+
 func (m *mcpMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
 	return nil, errMCPMockUnused
 }

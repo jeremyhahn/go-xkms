@@ -207,6 +207,10 @@ func (f *grpcFakeRoleClient) ListPermissions(context.Context) (*qrdbtransport.Li
 func (f *grpcFakeRoleClient) ResolvePermissions(context.Context, *qrdbtransport.ResolvePermissionsRequest) (*qrdbtransport.ResolvePermissionsResponse, error) {
 	return nil, errors.New("not used")
 }
+func (f *grpcFakeRoleClient) ReconcileBuiltInRolesAllTenants(context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
+	return &qrdbtransport.ReconcileAllTenantsRolesResponse{}, nil
+}
+
 func (f *grpcFakeRoleClient) ReconcileBuiltInRoles(context.Context, *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
 	return nil, errors.New("not used")
 }

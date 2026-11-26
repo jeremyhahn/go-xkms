@@ -185,6 +185,10 @@ func (m *restMockRoleClient) ListPermissions(ctx context.Context) (*qrdbtranspor
 // ReconcileBuiltInRoles is not exercised by the user handlers under test, so
 // this mock reports the verb as unused exactly as its other unexercised methods
 // do. The convergence itself is go-qrdb's, served by its transports.
+func (m *restMockRoleClient) ReconcileBuiltInRolesAllTenants(ctx context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
+	return &qrdbtransport.ReconcileAllTenantsRolesResponse{}, nil
+}
+
 func (m *restMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
 	return nil, errRestMockUnused
 }
