@@ -135,13 +135,12 @@ func MigrateLegacyCredentials(ctx context.Context, m LegacyCredentialMigration) 
 			return report, WrapError("migrate legacy credentials", err)
 		}
 		owner, ownerKnown, moved, err := m.migrateOne(ctx, key, records[key])
-		switch {
-		case err != nil:
+		if err != nil {
 			report.fail(err)
-		case moved:
+		} else if moved {
 			report.Migrated++
 			continue
-		default:
+		} else {
 			report.Skipped++
 		}
 		if ownerKnown {
