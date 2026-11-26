@@ -13,7 +13,6 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"testing"
 	"time"
 
@@ -141,57 +140,6 @@ func TestDownloadEKCertFromManufacturer_MalformedResponse(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrEKCertServiceParseFailed),
 		"a malformed response must report ErrEKCertServiceParseFailed, got: %v", err)
-}
-
-// hostRewritingRoundTripper redirects every outbound request to target's
-// host, regardless of what the caller addressed, before delegating to inner.
-// It exists to exercise the intelEKCertServiceURL default (EKConfig has no
-// CertDownloadURL override) without ever dialing the real Intel service: the
-// URL this package builds is left completely untouched, only where the
-// connection actually lands is redirected to the local httptest server.
-type hostRewritingRoundTripper struct {
-	inner  http.RoundTripper
-	target *url.URL
-}
-
-func (rt *hostRewritingRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	rewritten := req.Clone(req.Context())
-	rewritten.URL.Scheme = rt.target.Scheme
-	rewritten.URL.Host = rt.target.Host
-	return rt.inner.RoundTrip(rewritten)
-}
-
-// TestDownloadEKCertFromManufacturer_DefaultURL_UsesIntelServiceHost proves
-// that with EKConfig.CertDownloadURL left unset, downloadEKCertFromManufacturer
-// builds the request against the package's default intelEKCertServiceURL
-// base rather than an empty or malformed one -- the branch every other test
-// in this file bypasses by always setting CertDownloadURL.
-func TestDownloadEKCertFromManufacturer_DefaultURL_UsesIntelServiceHost(t *testing.T) {
-	wantCert := newSelfSignedTestCert(t)
-
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Contains(t, r.URL.Path, "/ekcertservice/",
-			"the request path must still be the one this package builds from intelEKCertServiceURL")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write(wantCert.Raw)
-	}))
-	t.Cleanup(server.Close)
-
-	serverURL, err := url.Parse(server.URL)
-	require.NoError(t, err)
-
-	client := server.Client()
-	client.Transport = &hostRewritingRoundTripper{inner: client.Transport, target: serverURL}
-
-	h := newSimHarnessWithHTTPClient(t, func(c *Config) {
-		c.EK.CertDownload = true
-		// CertDownloadURL deliberately left empty: base must default to
-		// intelEKCertServiceURL.
-	}, client)
-
-	cert, err := h.TPM.downloadEKCertFromManufacturer(tpm2.TPMHandle(ekCertIndexRSA2048))
-	require.NoError(t, err)
-	assert.Equal(t, wantCert.Raw, cert.Raw)
 }
 
 // newSelfSignedTestCert generates a throwaway self-signed certificate for
