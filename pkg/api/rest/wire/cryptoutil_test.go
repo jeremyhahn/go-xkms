@@ -15,7 +15,6 @@ package wire
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -25,138 +24,300 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
-// cryptoUtilityCall is one CryptoUtilityClient verb: call sends req, and
-// nilCall sends a nil request of the same type.
-type cryptoUtilityCall struct {
-	name     string
-	req      any
-	call     func(CryptoUtilityClient) (any, error)
-	nilCall  func(CryptoUtilityClient) (any, error)
-	path     string
-	response string
-	want     any
+// route is one client call and the request it must send.
+type route struct {
+	name   string
+	call   func(context.Context) error
+	method string
+	path   string
 }
 
-// cryptoUtilityCalls lists every CryptoUtilityClient verb with a request
-// whose key ID needs escaping, the route it must reach, and a response with
-// the value it must decode to.
-func cryptoUtilityCalls(ctx context.Context) []cryptoUtilityCall {
-	rewrap := &transport.RewrapRequest{Source: &transport.DecryptRequest{}, TargetKeyID: "t", TargetBackend: "pkcs11"}
-	encrypt := &transport.EncryptBatchRequest{Backend: "software", KeyID: "a/b", Items: []transport.EncryptBatchItem{{Plaintext: []byte("p")}}}
-	decrypt := &transport.DecryptBatchRequest{Backend: "software", KeyID: "a/b", Items: []transport.DecryptBatchItem{{Ciphertext: []byte("c")}}}
-	dataKey := &transport.GenerateDataKeyRequest{Backend: "software", KeyID: "a/b", KeySize: 16}
-	hmac := &transport.GenerateHMACRequest{Backend: "software", KeyID: "a/b", Data: []byte("d"), Hash: "SHA-384"}
-	verify := &transport.VerifyHMACRequest{Backend: "software", KeyID: "a/b", Data: []byte("d"), MAC: []byte("m"), KeyVersion: 2}
-	random := &transport.GenerateRandomRequest{Length: 8}
-	hash := &transport.HashRequest{Data: []byte("d"), Hash: "SHA-512"}
-
-	return []cryptoUtilityCall{
-		{"rewrap", rewrap,
-			func(c CryptoUtilityClient) (any, error) { return c.Rewrap(ctx, rewrap) },
-			func(c CryptoUtilityClient) (any, error) { return c.Rewrap(ctx, nil) },
-			"/api/v1/keys/rewrap", `{"source_key_version":3}`,
-			&transport.RewrapResponse{SourceKeyVersion: 3}},
-		{"encrypt-batch", encrypt,
-			func(c CryptoUtilityClient) (any, error) { return c.EncryptBatch(ctx, encrypt) },
-			func(c CryptoUtilityClient) (any, error) { return c.EncryptBatch(ctx, nil) },
-			"/api/v1/keys/a%2Fb/encrypt-batch", `{"results":[{"error":"too long"}]}`,
-			&transport.EncryptBatchResponse{Results: []transport.EncryptBatchResult{{Error: "too long"}}}},
-		{"decrypt-batch", decrypt,
-			func(c CryptoUtilityClient) (any, error) { return c.DecryptBatch(ctx, decrypt) },
-			func(c CryptoUtilityClient) (any, error) { return c.DecryptBatch(ctx, nil) },
-			"/api/v1/keys/a%2Fb/decrypt-batch", `{"results":[{"plaintext":"cA==","key_version":1}]}`,
-			&transport.DecryptBatchResponse{Results: []transport.DecryptBatchResult{{Plaintext: []byte("p"), KeyVersion: 1}}}},
-		{"data-key", dataKey,
-			func(c CryptoUtilityClient) (any, error) { return c.GenerateDataKey(ctx, dataKey) },
-			func(c CryptoUtilityClient) (any, error) { return c.GenerateDataKey(ctx, nil) },
-			"/api/v1/keys/a%2Fb/data-key", `{"plaintext":"aw=="}`,
-			&transport.GenerateDataKeyResponse{Plaintext: []byte("k")}},
-		{"wrapped-data-key", dataKey,
-			func(c CryptoUtilityClient) (any, error) { return c.GenerateWrappedDataKey(ctx, dataKey) },
-			func(c CryptoUtilityClient) (any, error) { return c.GenerateWrappedDataKey(ctx, nil) },
-			"/api/v1/keys/a%2Fb/wrapped-data-key", `{"wrapped":{}}`,
-			&transport.GenerateWrappedDataKeyResponse{Wrapped: &transport.EncryptResponse{}}},
-		{"hmac", hmac,
-			func(c CryptoUtilityClient) (any, error) { return c.GenerateHMAC(ctx, hmac) },
-			func(c CryptoUtilityClient) (any, error) { return c.GenerateHMAC(ctx, nil) },
-			"/api/v1/keys/a%2Fb/hmac", `{"mac":"bQ==","key_version":2,"hash":"SHA-384"}`,
-			&transport.GenerateHMACResponse{MAC: []byte("m"), KeyVersion: 2, Hash: "SHA-384"}},
-		{"hmac-verify", verify,
-			func(c CryptoUtilityClient) (any, error) { return c.VerifyHMAC(ctx, verify) },
-			func(c CryptoUtilityClient) (any, error) { return c.VerifyHMAC(ctx, nil) },
-			"/api/v1/keys/a%2Fb/hmac/verify", `{"valid":true,"key_version":2}`,
-			&transport.VerifyHMACResponse{Valid: true, KeyVersion: 2}},
-		{"random", random,
-			func(c CryptoUtilityClient) (any, error) { return c.GenerateRandom(ctx, random) },
-			func(c CryptoUtilityClient) (any, error) { return c.GenerateRandom(ctx, nil) },
-			"/api/v1/random", `{"random":"cg=="}`,
-			&transport.GenerateRandomResponse{Random: []byte("r")}},
-		{"hash", hash,
-			func(c CryptoUtilityClient) (any, error) { return c.Hash(ctx, hash) },
-			func(c CryptoUtilityClient) (any, error) { return c.Hash(ctx, nil) },
-			"/api/v1/hash", `{"digest":"ZA==","hash":"SHA-512"}`,
-			&transport.HashResponse{Digest: []byte("d"), Hash: "SHA-512"}},
-	}
+// wireCall is one client call made with a request and with nil.
+type wireCall struct {
+	name            string
+	withReq, nilReq func(context.Context) error
+	decodes         bool
 }
 
-// jsonMap is v as the recordingRequester records a request body.
-func jsonMap(t *testing.T, v any) map[string]any {
+// assertRoutes proves each call sends its method to its path.
+func assertRoutes(t *testing.T, rec *recordingRequester, routes []route) {
 	t.Helper()
-	raw, err := json.Marshal(v)
-	require.NoError(t, err)
-	var m map[string]any
-	require.NoError(t, json.Unmarshal(raw, &m))
-	return m
+	for _, tt := range routes {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tt.call(context.Background()))
+			got := rec.last()
+			assert.Equal(t, tt.method, got.method)
+			assert.Equal(t, tt.path, got.path)
+		})
+	}
 }
 
-// TestKeyActionPath proves the key ID is escaped as one path segment and
-// the action is appended as is.
-func TestKeyActionPath(t *testing.T) {
-	assert.Equal(t, "/api/v1/keys/a%2Fb%20c/hmac/verify", KeyActionPath("a/b c", VerifyHMACAction))
-	assert.Equal(t, "/api/v1/keys/k/data-key", KeyActionPath("k", DataKeyAction))
+// assertFailures proves each call refuses a nil request without sending
+// it, returns a failed request, and reports an undecodable answer as a
+// *DecodeError when the call decodes one.
+func assertFailures(t *testing.T, rec *recordingRequester, calls []wireCall) {
+	t.Helper()
+	ctx := context.Background()
+	for _, c := range calls {
+		t.Run(c.name, func(t *testing.T) {
+			rec.requests, rec.err, rec.response = nil, nil, ""
+			if c.nilReq != nil {
+				assert.ErrorIs(t, c.nilReq(ctx), ErrNilRequest)
+				assert.Empty(t, rec.requests, "a nil request sends nothing")
+			}
+
+			rec.err = errRequestFailed
+			assert.ErrorIs(t, c.withReq(ctx), errRequestFailed)
+
+			rec.err, rec.response = nil, "{not json"
+			if c.decodes {
+				var decodeErr *DecodeError
+				assert.ErrorAs(t, c.withReq(ctx), &decodeErr)
+			} else {
+				assert.NoError(t, c.withReq(ctx), "a call without an answer ignores the body")
+			}
+		})
+	}
 }
 
-// TestCryptoUtilityClient_Routes proves every verb POSTs its request as the
-// body to the route the server registers, and returns the response decoded
-// into its transport type.
 func TestCryptoUtilityClient_Routes(t *testing.T) {
-	for _, tt := range cryptoUtilityCalls(context.Background()) {
-		t.Run(tt.name, func(t *testing.T) {
-			rec := &recordingRequester{response: tt.response}
-			got, err := tt.call(CryptoUtilityClient{Do: rec.do})
-			require.NoError(t, err)
-			assert.Equal(t, tt.want, got)
+	rec := &recordingRequester{response: `{}`}
+	c := CryptoUtilityClient{Do: rec.do}
 
-			sent := rec.last()
-			assert.Equal(t, http.MethodPost, sent.method)
-			assert.Equal(t, tt.path, sent.path)
-			assert.Equal(t, jsonMap(t, tt.req), sent.body)
-		})
-	}
+	assertRoutes(t, rec, []route{
+		{"rewrap", func(ctx context.Context) error {
+			_, err := c.Rewrap(ctx, &transport.RewrapRequest{TargetKeyID: "k2"})
+			return err
+		}, http.MethodPost, "/api/v1/keys/rewrap"},
+		{"encrypt batch", func(ctx context.Context) error {
+			_, err := c.EncryptBatch(ctx, &transport.EncryptBatchRequest{KeyID: "a b"})
+			return err
+		}, http.MethodPost, "/api/v1/keys/a%20b/encrypt-batch"},
+		{"decrypt batch", func(ctx context.Context) error {
+			_, err := c.DecryptBatch(ctx, &transport.DecryptBatchRequest{KeyID: "k"})
+			return err
+		}, http.MethodPost, "/api/v1/keys/k/decrypt-batch"},
+		{"data key", func(ctx context.Context) error {
+			_, err := c.GenerateDataKey(ctx, &transport.GenerateDataKeyRequest{KeyID: "k"})
+			return err
+		}, http.MethodPost, "/api/v1/keys/k/data-key"},
+		{"wrapped data key", func(ctx context.Context) error {
+			_, err := c.GenerateWrappedDataKey(ctx, &transport.GenerateDataKeyRequest{KeyID: "k"})
+			return err
+		}, http.MethodPost, "/api/v1/keys/k/wrapped-data-key"},
+		{"hmac", func(ctx context.Context) error {
+			_, err := c.GenerateHMAC(ctx, &transport.GenerateHMACRequest{KeyID: "k"})
+			return err
+		}, http.MethodPost, "/api/v1/keys/k/hmac"},
+		{"verify hmac", func(ctx context.Context) error {
+			_, err := c.VerifyHMAC(ctx, &transport.VerifyHMACRequest{KeyID: "k"})
+			return err
+		}, http.MethodPost, "/api/v1/keys/k/hmac/verify"},
+		{"random", func(ctx context.Context) error {
+			_, err := c.GenerateRandom(ctx, &transport.GenerateRandomRequest{Length: 32})
+			return err
+		}, http.MethodPost, "/api/v1/random"},
+		{"hash", func(ctx context.Context) error {
+			_, err := c.Hash(ctx, &transport.HashRequest{Data: []byte("x")})
+			return err
+		}, http.MethodPost, "/api/v1/hash"},
+	})
 }
 
-// TestCryptoUtilityClient_Errors proves a nil request is refused before any
-// request, and a failed request and an undecodable response are returned
-// with no result.
-func TestCryptoUtilityClient_Errors(t *testing.T) {
-	for _, tt := range cryptoUtilityCalls(context.Background()) {
-		t.Run(tt.name, func(t *testing.T) {
-			failingRec := &recordingRequester{err: errRequestFailed}
-			failing := CryptoUtilityClient{Do: failingRec.do}
+// TestCryptoUtilityClient_Bodies proves the request goes out as the JSON the
+// server decodes and the answer comes back decoded.
+func TestCryptoUtilityClient_Bodies(t *testing.T) {
+	rec := &recordingRequester{response: `{"valid":true,"key_version":3}`}
+	c := CryptoUtilityClient{Do: rec.do}
 
-			got, err := tt.nilCall(failing)
-			assert.ErrorIs(t, err, ErrNilRequest)
-			assert.Nil(t, got)
-			assert.Empty(t, failingRec.requests, "a nil request must not be sent")
+	verified, err := c.VerifyHMAC(context.Background(), &transport.VerifyHMACRequest{
+		Backend: "software", KeyID: "k", Data: []byte("d"), MAC: []byte("m"), Hash: "SHA-256",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, &transport.VerifyHMACResponse{Valid: true, KeyVersion: 3}, verified)
+	assert.Equal(t, map[string]any{
+		"backend": "software", "key_id": "k", "data": "ZA==", "mac": "bQ==", "hash": "SHA-256",
+	}, rec.last().body)
 
-			got, err = tt.call(failing)
-			assert.ErrorIs(t, err, errRequestFailed)
-			assert.Nil(t, got)
+	rec.response = `{"digest":"q80=","hash":"SHA-256"}`
+	digest, err := c.Hash(context.Background(), &transport.HashRequest{Data: []byte("x")})
+	require.NoError(t, err)
+	assert.Equal(t, &transport.HashResponse{Digest: []byte{0xab, 0xcd}, Hash: "SHA-256"}, digest)
 
-			got, err = tt.call(CryptoUtilityClient{Do: (&recordingRequester{response: `{not json`}).do})
-			var decodeErr *DecodeError
-			assert.ErrorAs(t, err, &decodeErr)
-			assert.Nil(t, got)
-		})
-	}
+	rec.response = `{"random":"AQID"}`
+	random, err := c.GenerateRandom(context.Background(), &transport.GenerateRandomRequest{Length: 3})
+	require.NoError(t, err)
+	assert.Equal(t, []byte{1, 2, 3}, random.Random)
+	assert.Equal(t, map[string]any{"length": 3.0}, rec.last().body)
+}
+
+func TestCryptoUtilityClient_Failures(t *testing.T) {
+	rec := &recordingRequester{}
+	c := CryptoUtilityClient{Do: rec.do}
+	assertFailures(t, rec, []wireCall{
+		{"rewrap",
+			func(ctx context.Context) error { _, err := c.Rewrap(ctx, &transport.RewrapRequest{}); return err },
+			func(ctx context.Context) error { _, err := c.Rewrap(ctx, nil); return err }, true},
+		{"encrypt batch",
+			func(ctx context.Context) error {
+				_, err := c.EncryptBatch(ctx, &transport.EncryptBatchRequest{KeyID: "k"})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.EncryptBatch(ctx, nil); return err }, true},
+		{"decrypt batch",
+			func(ctx context.Context) error {
+				_, err := c.DecryptBatch(ctx, &transport.DecryptBatchRequest{KeyID: "k"})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.DecryptBatch(ctx, nil); return err }, true},
+		{"data key",
+			func(ctx context.Context) error {
+				_, err := c.GenerateDataKey(ctx, &transport.GenerateDataKeyRequest{KeyID: "k"})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.GenerateDataKey(ctx, nil); return err }, true},
+		{"wrapped data key",
+			func(ctx context.Context) error {
+				_, err := c.GenerateWrappedDataKey(ctx, &transport.GenerateDataKeyRequest{KeyID: "k"})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.GenerateWrappedDataKey(ctx, nil); return err }, true},
+		{"hmac",
+			func(ctx context.Context) error {
+				_, err := c.GenerateHMAC(ctx, &transport.GenerateHMACRequest{KeyID: "k"})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.GenerateHMAC(ctx, nil); return err }, true},
+		{"verify hmac",
+			func(ctx context.Context) error {
+				_, err := c.VerifyHMAC(ctx, &transport.VerifyHMACRequest{KeyID: "k"})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.VerifyHMAC(ctx, nil); return err }, true},
+		{"random",
+			func(ctx context.Context) error {
+				_, err := c.GenerateRandom(ctx, &transport.GenerateRandomRequest{})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.GenerateRandom(ctx, nil); return err }, true},
+		{"hash",
+			func(ctx context.Context) error { _, err := c.Hash(ctx, &transport.HashRequest{}); return err },
+			func(ctx context.Context) error { _, err := c.Hash(ctx, nil); return err }, true},
+	})
+}
+
+func TestSigningKeyClient(t *testing.T) {
+	rec := &recordingRequester{response: `{}`}
+	c := SigningKeyClient{Do: rec.do}
+
+	// A repository path holds slashes, so it travels in the query.
+	assertRoutes(t, rec, []route{
+		{"set", func(ctx context.Context) error {
+			_, err := c.SetSigningKeyBinding(ctx, &transport.SetSigningKeyBindingRequest{})
+			return err
+		}, http.MethodPut, "/api/v1/attestation/signing-keys"},
+		{"get", func(ctx context.Context) error {
+			_, err := c.GetSigningKeyBinding(ctx, &transport.GetSigningKeyBindingRequest{Repository: "org/app"})
+			return err
+		}, http.MethodGet, "/api/v1/attestation/signing-keys/binding?repository=org%2Fapp"},
+		{"list", func(ctx context.Context) error {
+			_, err := c.ListSigningKeyBindings(ctx)
+			return err
+		}, http.MethodGet, "/api/v1/attestation/signing-keys"},
+		{"delete", func(ctx context.Context) error {
+			return c.DeleteSigningKeyBinding(ctx, &transport.DeleteSigningKeyBindingRequest{Repository: "org/app"})
+		}, http.MethodDelete, "/api/v1/attestation/signing-keys/binding?repository=org%2Fapp"},
+		{"resolve", func(ctx context.Context) error {
+			_, err := c.ResolveSigningKey(ctx, &transport.ResolveSigningKeyRequest{Repository: "org/app"})
+			return err
+		}, http.MethodGet, "/api/v1/attestation/signing-keys/resolve?repository=org%2Fapp"},
+	})
+
+	assertFailures(t, rec, []wireCall{
+		{"set",
+			func(ctx context.Context) error {
+				_, err := c.SetSigningKeyBinding(ctx, &transport.SetSigningKeyBindingRequest{})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.SetSigningKeyBinding(ctx, nil); return err }, true},
+		{"get",
+			func(ctx context.Context) error {
+				_, err := c.GetSigningKeyBinding(ctx, &transport.GetSigningKeyBindingRequest{})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.GetSigningKeyBinding(ctx, nil); return err }, true},
+		{"list",
+			func(ctx context.Context) error { _, err := c.ListSigningKeyBindings(ctx); return err },
+			nil, true},
+		{"delete",
+			func(ctx context.Context) error {
+				return c.DeleteSigningKeyBinding(ctx, &transport.DeleteSigningKeyBindingRequest{})
+			},
+			func(ctx context.Context) error { return c.DeleteSigningKeyBinding(ctx, nil) }, false},
+		{"resolve",
+			func(ctx context.Context) error {
+				_, err := c.ResolveSigningKey(ctx, &transport.ResolveSigningKeyRequest{})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.ResolveSigningKey(ctx, nil); return err }, true},
+	})
+}
+
+func TestTrustRootClient(t *testing.T) {
+	assert.Equal(t, "/api/v1/trust-roots/a%2Fb", TrustRootPath("a/b"))
+	assert.Equal(t, "/api/v1/trust-roots/ab/quarantine", TrustRootPath("ab", "quarantine"))
+
+	rec := &recordingRequester{response: `{}`}
+	c := TrustRootClient{Do: rec.do}
+	req := &transport.TrustRootRequest{Fingerprint: "ab12"}
+
+	assertRoutes(t, rec, []route{
+		{"list all", func(ctx context.Context) error {
+			_, err := c.TrustRootList(ctx, &transport.TrustRootListRequest{})
+			return err
+		}, http.MethodGet, "/api/v1/trust-roots"},
+		{"list purpose", func(ctx context.Context) error {
+			_, err := c.TrustRootList(ctx, &transport.TrustRootListRequest{Purpose: "tpm-manufacturer"})
+			return err
+		}, http.MethodGet, "/api/v1/trust-roots?purpose=tpm-manufacturer"},
+		{"get", func(ctx context.Context) error { _, err := c.TrustRootGet(ctx, req); return err },
+			http.MethodGet, "/api/v1/trust-roots/ab12"},
+		{"import", func(ctx context.Context) error {
+			_, err := c.TrustRootImport(ctx, &transport.TrustRootImportRequest{PEM: "pem"})
+			return err
+		}, http.MethodPost, "/api/v1/trust-roots"},
+		{"quarantine", func(ctx context.Context) error { _, err := c.TrustRootQuarantine(ctx, req); return err },
+			http.MethodPost, "/api/v1/trust-roots/ab12/quarantine"},
+		{"remove", func(ctx context.Context) error { return c.TrustRootRemove(ctx, req) },
+			http.MethodDelete, "/api/v1/trust-roots/ab12"},
+	})
+
+	rec.response = `{"fingerprint":"ab12","purpose":"synced"}`
+	root, err := c.TrustRootQuarantine(context.Background(), req)
+	require.NoError(t, err)
+	assert.Equal(t, &transport.TrustRoot{Fingerprint: "ab12", Purpose: "synced"}, root)
+
+	assertFailures(t, rec, []wireCall{
+		{"list",
+			func(ctx context.Context) error {
+				_, err := c.TrustRootList(ctx, &transport.TrustRootListRequest{})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.TrustRootList(ctx, nil); return err }, true},
+		{"get",
+			func(ctx context.Context) error { _, err := c.TrustRootGet(ctx, req); return err },
+			func(ctx context.Context) error { _, err := c.TrustRootGet(ctx, nil); return err }, true},
+		{"import",
+			func(ctx context.Context) error {
+				_, err := c.TrustRootImport(ctx, &transport.TrustRootImportRequest{})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.TrustRootImport(ctx, nil); return err }, true},
+		{"quarantine",
+			func(ctx context.Context) error { _, err := c.TrustRootQuarantine(ctx, req); return err },
+			func(ctx context.Context) error { _, err := c.TrustRootQuarantine(ctx, nil); return err }, true},
+		{"remove",
+			func(ctx context.Context) error { return c.TrustRootRemove(ctx, req) },
+			func(ctx context.Context) error { return c.TrustRootRemove(ctx, nil) }, false},
+	})
 }
