@@ -124,6 +124,38 @@ func TestGetPinUvAuthTokenUsingUv_MintsAfterVerification(t *testing.T) {
 	}
 }
 
+// TestGetPinUvAuthTokenUsingUv_AuthenticatorWidePermissionNamesNoRP pins the
+// consent scope: a permission whose rpId CTAP 2.1 §6.5.5.7 ignores carries
+// authenticator-wide authority, so the user is never asked on behalf of the
+// RP the request names. A credentialMgmt token, which §6.8 scopes to its
+// rpId, is still asked for on behalf of that RP.
+func TestGetPinUvAuthTokenUsingUv_AuthenticatorWidePermissionNamesNoRP(t *testing.T) {
+	tests := []struct {
+		name        string
+		permissions uint8
+		wantRPID    string
+	}{
+		{"authenticatorConfig", PINPermissionAuthenticatorCfg, ""},
+		{"largeBlobWrite", PINPermissionLargeBlobWrite, ""},
+		{"credentialMgmt with authenticatorConfig", PINPermissionCredentialMgmt | PINPermissionAuthenticatorCfg, ""},
+		{"makeCredential with authenticatorConfig", PINPermissionMakeCredential | PINPermissionAuthenticatorCfg, ""},
+		{"credentialMgmt", PINPermissionCredentialMgmt, "example.com"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+			auth := newVerifyingAuthenticator(t, backend)
+
+			reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, tt.permissions, "example.com")
+			resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+			require.NoError(t, err)
+			require.Equal(t, byte(StatusOK), resp[0])
+			require.Equal(t, 1, backend.calls)
+			require.Equal(t, tt.wantRPID, backend.rpID)
+		})
+	}
+}
+
 // TestGetPinUvAuthTokenUsingUv_NoRPAsksWithoutOne pins that a request for
 // permissions that are not RP-scoped, which carries no rpId, reaches the
 // verifier with an empty RP ID rather than one the platform did not send.

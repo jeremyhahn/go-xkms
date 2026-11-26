@@ -843,6 +843,27 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 	return a.successResponse(data), nil
 }
 
+// rpIDIgnoredPermissions are the permissions CTAP 2.1 §6.5.5.7 marks
+// "RP ID: Ignored": bioEnrollment, largeBlobWrite and authenticatorConfig act
+// on the whole authenticator, and the rpId parameter does not narrow them.
+const rpIDIgnoredPermissions = PINPermissionBioEnrollment | PINPermissionLargeBlobWrite | PINPermissionAuthenticatorCfg
+
+// uvConsentRPID names the RP the user is asked to consent for in the built-in
+// user verification of getPinUvAuthTokenUsingUvWithPermissions. The prompt
+// must not claim a narrower scope than the token carries. mc and ga are bound
+// to the rpId (CTAP 2.1 §6.5.5.7), and so is cm: a credentialMgmt token with
+// a permissions RP ID manages that RP's credentials only (§6.8.3-§6.8.6). A
+// permission whose rpId is ignored is authenticator-wide whatever rpId the
+// request names, so a request carrying one asks for authenticator-wide
+// consent: the empty RP ID, which the verifier presents as the authenticator
+// itself (keybackend.UserVerifier).
+func uvConsentRPID(req *ClientPINRequest) string {
+	if req.Permissions&rpIDIgnoredPermissions != 0 {
+		return ""
+	}
+	return req.RPID
+}
+
 // handleGetPinUvAuthTokenUsingUvWithPermissions mints a pinUvAuthToken on the
 // strength of the key backend's built-in user verification (CTAP 2.1
 // §6.5.5.7.3, ruling 167). The token is minted only after the backend's
@@ -866,7 +887,7 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *Clien
 		return nil, err
 	}
 
-	verifyErr := verifier.VerifyUser(a.commandContext(), req.RPID)
+	verifyErr := verifier.VerifyUser(a.commandContext(), uvConsentRPID(req))
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
