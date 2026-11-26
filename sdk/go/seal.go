@@ -155,6 +155,11 @@ var NewCredentials = seal.NewCredentials
 // zero SealCredentials ("no credentials supplied") rather than an error.
 var CredentialsFor = seal.CredentialsFor
 
+// DestroyCredentials destroys a credential's protected secret; it is nil-safe,
+// so it also takes the zero SealCredentials CredentialsFor yields for an empty
+// secret.
+var DestroyCredentials = seal.DestroyCredentials
+
 // MustCredentials is NewCredentials for fixtures; it panics where
 // NewCredentials would return an error.
 var MustCredentials = seal.MustCredentials
