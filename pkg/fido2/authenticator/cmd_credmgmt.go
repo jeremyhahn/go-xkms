@@ -263,6 +263,13 @@ func (a *Authenticator) handleEnumerateRPsGetNextRP() ([]byte, error) {
 		return nil, ErrNoEnumerationInProgress
 	}
 
+	// CTAP 2.1 §6.8.3 and §6.5.5.7: the continuation is authorized by the
+	// current pinUvAuthToken, not by the one that began the enumeration, so
+	// a token scoped to one RP never reads the authenticator-wide RP list.
+	if a.pinState.protocol.tokenRPID != "" {
+		return nil, ErrPINAuthInvalid
+	}
+
 	// Move to next RP.
 	a.credMgmtState.currentRPIndex++
 
@@ -328,6 +335,13 @@ func (a *Authenticator) handleEnumerateCredentialsGetNextCredential() ([]byte, e
 
 	if a.credMgmtState == nil || len(a.credMgmtState.credList) == 0 {
 		return nil, ErrNoEnumerationInProgress
+	}
+
+	// CTAP 2.1 §6.8.4 and §6.5.5.7: the current pinUvAuthToken's permissions
+	// RP ID must cover the RP being enumerated, so a token scoped to another
+	// RP cannot read this enumeration's remaining credentials.
+	if !a.credMgmtTokenCoversRPLocked(a.credMgmtState.enumerationRPIDHash) {
+		return nil, ErrPINAuthInvalid
 	}
 
 	// Move to next credential.

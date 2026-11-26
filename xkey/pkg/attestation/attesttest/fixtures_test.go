@@ -153,7 +153,7 @@ func TestDAKSignVerifyUserRaw_VerifiesUnderTheProductionTranscript(t *testing.T)
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
-			transcript, err := pairingproto.BuildVerifyUserTranscript(nonce, binding, uvk.FP, tt.rpName)
+			transcript, err := pairingproto.BuildVerifyUserTranscript(tt.rpName, nonce, binding, uvk.FP)
 			require.NoError(t, err)
 
 			err = pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, pairingproto.AttestSignatureES256, sig, transcript)
@@ -177,13 +177,13 @@ func TestDAKRespondVerifyUser_IsAVersion2AnswerOverTheRPName(t *testing.T) {
 	require.Equal(t, pairingproto.AttestSignatureES256, res.SignatureAlgorithm)
 	require.Equal(t, uvk.Chain, res.CertificateChain)
 
-	transcript, err := pairingproto.BuildVerifyUserTranscript(nonce, binding, uvk.FP, "example.com")
+	transcript, err := pairingproto.BuildVerifyUserTranscript("example.com", nonce, binding, uvk.FP)
 	require.NoError(t, err)
 	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
 
 	// The UVK's fingerprint is in the transcript: the answer does not stand
 	// for another key.
-	other, err := pairingproto.BuildVerifyUserTranscript(nonce, binding, FixedBytes(0x77, len(uvk.FP)), "example.com")
+	other, err := pairingproto.BuildVerifyUserTranscript("example.com", nonce, binding, FixedBytes(0x77, len(uvk.FP)))
 	require.NoError(t, err)
 	require.Error(t, pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, res.SignatureAlgorithm, res.Signature, other))
 }

@@ -88,7 +88,7 @@ These methods are sent by the laptop and executed on the phone's Android Keystor
 | `local.setKeyPolicy` | Update sharing and authentication policy for a key |
 | `local.attestKey` | Get Android Key Attestation for a key |
 | `local.attestDevice` | Device-level attestation (see [attestation.md](attestation.md)) |
-| `local.verifyUser` | Fresh biometric proof by the user-verification key (see [phone-hsm/engineering.md](../phone-hsm/engineering.md#on-demand-user-verification-ruling-167)) |
+| `local.verifyUser` | Fresh user-authentication proof (biometric or device credential), for a named RP, by the user-verification key (see [phone-hsm/engineering.md](../phone-hsm/engineering.md#on-demand-user-verification-ruling-167)) |
 | `local.getCapabilities` | Query phone capabilities and algorithms |
 | `local.listFido2Credentials` | Discover FIDO2 credentials on the phone |
 | `local.signFido2Assertion` | Sign a FIDO2 assertion with a phone credential |

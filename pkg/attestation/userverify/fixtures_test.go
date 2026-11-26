@@ -164,7 +164,7 @@ func newPhoneKey(t *testing.T, issuer *testCA, genesis []byte, claims *android.A
 
 // sign signs the version 2 transcript for purpose, built by hand from the
 // wire layout rather than by the verifier's builder; rpName, when non-empty,
-// is appended length-prefixed as verify-user does.
+// is appended as its SHA-256, as verify-user does.
 func (k *phoneKey) sign(t *testing.T, purpose string, nonce, channelBinding []byte, rpName string) []byte {
 	t.Helper()
 
@@ -175,8 +175,8 @@ func (k *phoneKey) sign(t *testing.T, purpose string, nonce, channelBinding []by
 	transcript = append(transcript, channelBinding...)
 	transcript = append(transcript, k.fp...)
 	if rpName != "" {
-		transcript = append(transcript, byte(len(rpName)))
-		transcript = append(transcript, rpName...)
+		rpNameHash := sha256.Sum256([]byte(rpName))
+		transcript = append(transcript, rpNameHash[:]...)
 	}
 	digest := sha256.Sum256(transcript)
 	sig, err := ecdsa.SignASN1(rand.Reader, k.key, digest[:])

@@ -219,7 +219,7 @@ func TestPhoneRun_AnswersVerifyUserWithTheUVK(t *testing.T) {
 	// initiator derives, over the RP name it asked for.
 	binding, err := pairingproto.AttestChannelBinding(session)
 	require.NoError(t, err)
-	transcript, err := pairingproto.BuildVerifyUserTranscript(nonce, binding, uvk.FP, "example.com")
+	transcript, err := pairingproto.BuildVerifyUserTranscript("example.com", nonce, binding, uvk.FP)
 	require.NoError(t, err)
 	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
 	require.NoError(t, <-done)
@@ -248,7 +248,7 @@ func TestPhoneRun_MutateVerifyUserDamagesTheAnswerOnTheWire(t *testing.T) {
 	// verifies, so only the downgraded version is wrong.
 	binding, err := pairingproto.AttestChannelBinding(session)
 	require.NoError(t, err)
-	transcript, err := pairingproto.BuildVerifyUserTranscript(nonce, binding, uvk.FP, "example.com")
+	transcript, err := pairingproto.BuildVerifyUserTranscript("example.com", nonce, binding, uvk.FP)
 	require.NoError(t, err)
 	require.NoError(t, pairingproto.VerifyAttestChallengeSignature(uvk.Leaf, res.SignatureAlgorithm, res.Signature, transcript))
 	require.NoError(t, <-done)

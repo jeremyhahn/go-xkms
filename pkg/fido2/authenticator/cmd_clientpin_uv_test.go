@@ -279,6 +279,71 @@ func TestGetPinUvAuthTokenUsingUv_VerifierRefusalBlocksMinting(t *testing.T) {
 	require.Equal(t, DefaultUVRetries-1, auth.state.UVRetries())
 }
 
+// TestPINTokenRestoresUVRetries covers CTAP 2.1 §6.5.5.5 and §6.5.5.7.1: a
+// matching PIN sets uvRetries back to its maximum, so built-in user
+// verification blocked by failed ceremonies works again without a reset.
+func TestPINTokenRestoresUVRetries(t *testing.T) {
+	const pin = "1234"
+	tests := []struct {
+		name       string
+		subCommand uint8
+		extra      map[int]interface{}
+	}{
+		{name: "getPinToken", subCommand: ClientPINSubCmdGetPINToken},
+		{
+			name:       "getPinUvAuthTokenUsingPinWithPermissions",
+			subCommand: ClientPINSubCmdGetPinUvAuthTokenUsingPinWithPermissions,
+			extra: map[int]interface{}{
+				clientPINKeyPermissions:     PINPermissionCredentialMgmt,
+				clientPINKeyPermissionsRPID: "example.com",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}, err: errUserNotVerified}
+			auth := newVerifyingAuthenticator(t, backend)
+			require.NoError(t, auth.SetInitialPIN([]byte(pin)))
+
+			for range DefaultUVRetries {
+				reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+				_, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+				require.Error(t, err)
+			}
+			require.Equal(t, 0, auth.state.UVRetries())
+
+			require.NoError(t, initKeyAgreement(t, auth))
+			auth.mu.Lock()
+			platformCOSE, _, aesKey, err := auth.generatePlatformKeyAgreementV2()
+			auth.mu.Unlock()
+			require.NoError(t, err)
+			pinHashEnc, err := encryptPINHashV2(aesKey, pin)
+			require.NoError(t, err)
+			req := map[int]interface{}{
+				clientPINKeyPinUvAuthProtocol: PINProtocol2,
+				clientPINKeySubCommand:        tt.subCommand,
+				clientPINKeyKeyAgreement:      rawCOSEToMap(t, platformCOSE),
+				clientPINKeyPinHashEnc:        pinHashEnc,
+			}
+			for key, value := range tt.extra {
+				req[key] = value
+			}
+			reqBytes, err := cbor.Marshal(req)
+			require.NoError(t, err)
+			resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+			require.NoError(t, err)
+			require.Equal(t, byte(StatusOK), resp[0])
+			require.Equal(t, DefaultUVRetries, auth.state.UVRetries())
+
+			backend.err = nil
+			reqBytes, _ = uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+			resp, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
+			require.NoError(t, err)
+			require.Equal(t, byte(StatusOK), resp[0], "built-in UV works again after the PIN")
+		})
+	}
+}
+
 // TestGetPinUvAuthTokenUsingUv_Blocked pins the uvRetries counter: the last
 // failed verification answers CTAP2_ERR_UV_BLOCKED, and once it is spent the
 // user is never asked again.

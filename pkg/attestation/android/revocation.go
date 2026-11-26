@@ -221,7 +221,15 @@ func LoadStatusListFile(path string) (_ *StatusList, err error) {
 	if err != nil {
 		return nil, &StatusListUnavailableError{Source: path, Cause: err}
 	}
-	return ParseStatusList(data)
+	// A file that does not parse supplies no list, the way an HTTP body that
+	// does not parse does: the error matches ErrStatusListUnavailable as well
+	// as ErrStatusListMalformed, so a caller treats it as an outage of the
+	// source and not as a verdict on the certificate chain.
+	list, err := ParseStatusList(data)
+	if err != nil {
+		return nil, &StatusListUnavailableError{Source: path, Cause: err}
+	}
+	return list, nil
 }
 
 // readBounded reads r to the end, refusing more than limit bytes.
