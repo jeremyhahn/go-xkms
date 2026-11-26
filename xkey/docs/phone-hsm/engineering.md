@@ -1071,7 +1071,7 @@ in this order. Steps 2 to 7 are the library decision `userverify.Verify`
    certificate of the presented and the verified chain, the anchor included,
    is checked against Google's attestation certificate revocation status list
    (`docs/references/android-key-attestation.md` §Certificate revocation status
-   list; `CheckRevocation`, `pkg/attestation/android/revocation.go:295`). A
+   list; `CheckRevocation`, `pkg/attestation/android/revocation.go:303`). A
    `REVOKED` or `SUSPENDED` entry is `ErrAndroidCertificateRevoked`. The list
    comes from `phone.attestation_status_file` when set, else is fetched from
    `phone.attestation_status_url` (default Google's
@@ -1079,7 +1079,7 @@ in this order. Steps 2 to 7 are the library decision `userverify.Verify`
    freshness the response allows (RFC 9111 §4.2); `attestation.RevocationSource`
    (`xkey/pkg/attestation/revocation.go:34`) resolves it. The check fails
    closed: no source is `ErrNoAndroidRevocationSource`
-   (`pkg/attestation/android_device.go:81`), and a list that cannot be read or
+   (`pkg/attestation/android_device.go:82`), and a list that cannot be read or
    fetched fresh is `ErrAndroidStatusListUnavailable`; there is no fail-open
    setting (ruling 180).
 4. The leaf's attestation challenge begins with `xkey-user-verification-v1`
@@ -1114,7 +1114,7 @@ connected session through `PhoneKeyBackendConfig.VerifyUser`, which
 without that function refuses with `ErrUserVerifierUnavailable`. When the key
 backend is a `UserVerifier`, `getInfo` reports `uv` and `pinUvAuthToken`, and
 clientPIN subcommand `0x06` calls `VerifyUser` with the request's `rpId`
-before it mints the token (`pkg/fido2/authenticator/cmd_clientpin.go:867`). A refusal spends one `uvRetries`
+before it mints the token (`pkg/fido2/authenticator/cmd_clientpin.go:877`). A refusal spends one `uvRetries`
 and answers `CTAP2_ERR_UV_INVALID`, or `CTAP2_ERR_UV_BLOCKED` once the retries
 are spent; a cancelled request spends none.
 
@@ -1129,7 +1129,7 @@ Status: shipped on the desktop. The wire definition (`pkg/pairingproto/verify_us
 the verifier (`pkg/attestation/userverify/userverify.go:120`, through
 `sdk/go/userverify`), its exchange (`xkey/pkg/attestation/verify_user.go:45`), the phone backend
 (`xkey/pkg/phone/phone.go:789`) and the authenticator path
-(`pkg/fido2/authenticator/cmd_clientpin.go:867`) are in place, tested end
+(`pkg/fido2/authenticator/cmd_clientpin.go:877`) are in place, tested end
 to end against the `attesttest` phone (`device_session_verify_user_test.go`);
 the authenticator no longer refuses UV tokens when its key backend is a
 `UserVerifier` (#1145). Ruling 180 settled two of ruling 167's open choices:
