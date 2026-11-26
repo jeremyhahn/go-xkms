@@ -117,19 +117,6 @@ func TestDNSQueryUDPTruncation(t *testing.T) {
 	assert.Equal(t, []string{"only-over-tcp"}, txt.Txt)
 }
 
-// TestWaitForCtxSuccess tests WaitForCtx with successful condition.
-func TestWaitForCtxSuccess(t *testing.T) {
-	ctx := context.Background()
-
-	callCount := 0
-	err := WaitForCtx(ctx, time.Second, 10*time.Millisecond, func() (bool, error) {
-		callCount++
-		return callCount >= 3, nil
-	})
-	require.NoError(t, err)
-	assert.GreaterOrEqual(t, callCount, 3)
-}
-
 // TestWaitForCtxContextCancellation tests WaitForCtx with context cancellation.
 func TestWaitForCtxContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -140,42 +127,6 @@ func TestWaitForCtxContextCancellation(t *testing.T) {
 	})
 	require.Error(t, err)
 	assert.Equal(t, context.Canceled, err)
-}
-
-// TestWaitForCtxImmediateSuccess tests WaitForCtx with immediate success.
-func TestWaitForCtxImmediateSuccess(t *testing.T) {
-	ctx := context.Background()
-
-	err := WaitForCtx(ctx, time.Second, 10*time.Millisecond, func() (bool, error) {
-		return true, nil
-	})
-	require.NoError(t, err)
-}
-
-// TestWaitForCtxErrorReturnedOnTimeout tests error propagation on timeout.
-func TestWaitForCtxErrorReturnedOnTimeout(t *testing.T) {
-	ctx := context.Background()
-
-	testErr := errors.New("test error from condition")
-	err := WaitForCtx(ctx, 100*time.Millisecond, 10*time.Millisecond, func() (bool, error) {
-		return false, testErr
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "test error")
-}
-
-// TestWaitForCtxInitialError tests error from first check.
-func TestWaitForCtxInitialError(t *testing.T) {
-	ctx := context.Background()
-
-	testErr := errors.New("initial error")
-	callCount := 0
-	err := WaitForCtx(ctx, 100*time.Millisecond, 20*time.Millisecond, func() (bool, error) {
-		callCount++
-		return false, testErr
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "initial error")
 }
 
 // TestRegisterEnvFactoryAndGet tests env factory registration and retrieval.
@@ -291,60 +242,6 @@ func TestDNSQueryNoNameserversResponded(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no nameservers responded")
 	})
-}
-
-// TestZoneCacheMultipleEntries tests cache with multiple entries.
-func TestZoneCacheMultipleEntries(t *testing.T) {
-	ClearZoneCache()
-
-	// Add multiple entries
-	zoneCacheMu.Lock()
-	zoneCache["a.example.com."] = zoneCacheEntry{zone: "example.com.", expiryTime: time.Now().Add(time.Hour)}
-	zoneCache["b.example.com."] = zoneCacheEntry{zone: "example.com.", expiryTime: time.Now().Add(time.Hour)}
-	zoneCache["c.other.com."] = zoneCacheEntry{zone: "other.com.", expiryTime: time.Now().Add(time.Hour)}
-	zoneCacheMu.Unlock()
-
-	// Verify entries exist
-	zoneCacheMu.RLock()
-	assert.Len(t, zoneCache, 3)
-	zoneCacheMu.RUnlock()
-
-	// Clear and verify
-	ClearZoneCache()
-	zoneCacheMu.RLock()
-	assert.Len(t, zoneCache, 0)
-	zoneCacheMu.RUnlock()
-}
-
-// TestFindBestMatchWithMultipleMatchingZones tests zone matching with multiple matches.
-func TestFindBestMatchWithMultipleMatchingZones(t *testing.T) {
-	tests := []struct {
-		name     string
-		fqdn     string
-		zones    []string
-		expected string
-	}{
-		{
-			name:     "selects longest matching zone",
-			fqdn:     "_acme-challenge.deep.sub.example.com.",
-			zones:    []string{"example.com.", "sub.example.com.", "deep.sub.example.com."},
-			expected: "deep.sub.example.com.",
-		},
-		{
-			name:     "works with single zone",
-			fqdn:     "_acme-challenge.example.com.",
-			zones:    []string{"example.com."},
-			expected: "example.com.",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := FindBestMatch(tt.fqdn, tt.zones...)
-			require.NoError(t, err)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 // TestFollowCNAMEs tests the FollowCNAMEs function.

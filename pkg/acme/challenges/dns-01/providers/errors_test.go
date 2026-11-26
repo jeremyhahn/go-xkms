@@ -60,20 +60,10 @@ func TestProviderError(t *testing.T) {
 			err := NewProviderError(tt.provider, tt.operation, tt.domain, tt.err)
 			assert.Equal(t, tt.expected, err.Error())
 			assert.ErrorIs(t, err, tt.err)
+			assert.Equal(t, tt.err, errors.Unwrap(err))
+			assert.NotErrorIs(t, err, ErrRecordNotFound)
 		})
 	}
-}
-
-func TestProviderErrorUnwrap(t *testing.T) {
-	underlying := errors.New("underlying error")
-	err := NewProviderError("test", "operation", "domain.com", underlying)
-
-	// Test Unwrap
-	unwrapped := errors.Unwrap(err)
-	assert.Equal(t, underlying, unwrapped)
-
-	// Test errors.Is
-	assert.True(t, errors.Is(err, underlying))
 }
 
 func TestConfigError(t *testing.T) {
@@ -145,40 +135,4 @@ func TestAPIError(t *testing.T) {
 			assert.Equal(t, tt.requestID, err.RequestID)
 		})
 	}
-}
-
-func TestSentinelErrors(t *testing.T) {
-	sentinels := []struct {
-		name string
-		err  error
-	}{
-		{"ErrProviderNotFound", ErrProviderNotFound},
-		{"ErrInvalidConfig", ErrInvalidConfig},
-		{"ErrMissingCredentials", ErrMissingCredentials},
-		{"ErrAmbientCredentialsDisabled", ErrAmbientCredentialsDisabled},
-		{"ErrZoneNotFound", ErrZoneNotFound},
-		{"ErrRecordNotFound", ErrRecordNotFound},
-		{"ErrRecordCreateFailed", ErrRecordCreateFailed},
-		{"ErrRecordDeleteFailed", ErrRecordDeleteFailed},
-		{"ErrPropagationTimeout", ErrPropagationTimeout},
-		{"ErrAPIError", ErrAPIError},
-		{"ErrInvalidCredentials", ErrInvalidCredentials},
-		{"ErrRateLimited", ErrRateLimited},
-	}
-
-	for _, s := range sentinels {
-		t.Run(s.name, func(t *testing.T) {
-			assert.NotNil(t, s.err)
-			assert.NotEmpty(t, s.err.Error())
-		})
-	}
-}
-
-func TestErrorWrapping(t *testing.T) {
-	// Test that wrapped errors work with errors.Is
-	baseErr := ErrZoneNotFound
-	wrapped := NewProviderError("test", "get zone", "example.com", baseErr)
-
-	assert.True(t, errors.Is(wrapped, ErrZoneNotFound))
-	assert.False(t, errors.Is(wrapped, ErrRecordNotFound))
 }
