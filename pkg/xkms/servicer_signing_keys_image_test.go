@@ -34,6 +34,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/image"
 )
 
@@ -402,4 +403,26 @@ func TestSignImage_NotConfigured(t *testing.T) {
 	ctx := withSigningKeys(t, svc, corimSignPermission)
 	_, err = svc.SignImage(ctx, signImageRequest())
 	require.ErrorIs(t, err, ErrNotConfigured, "no CA")
+}
+
+// failingImageLog is a transparency log whose image-signed append fails.
+type failingImageLog struct {
+	TransparencyLog
+	appends int
+}
+
+func (l *failingImageLog) AppendImageSigned(context.Context, tlog.ImageSigned) (uint64, error) {
+	l.appends++
+	return 0, errors.New("append refused")
+}
+
+func TestSignImage_FailedTransparencyLogAppendPushesNothing(t *testing.T) {
+	svc, ctx, _, registry, _ := imageSigningService(t, corimSignPermission)
+	log := &failingImageLog{}
+	svc.SetTransparencyLog(log)
+
+	_, err := svc.SignImage(ctx, signImageRequest())
+	require.ErrorIs(t, err, image.ErrTransparencyLogAppend)
+	assert.Equal(t, 1, log.appends)
+	assert.Empty(t, registry.pushed)
 }
