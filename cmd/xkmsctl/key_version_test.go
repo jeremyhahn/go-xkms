@@ -236,6 +236,23 @@ func TestVerifyAndDecryptCmds_SendKeyVersion(t *testing.T) {
 	assert.Zero(t, mock.requests["decrypt"].(*client.DecryptRequest).KeyVersion)
 }
 
+func TestKeyDecryptCmd_SendsOAEPByDefault(t *testing.T) {
+	mock := &mockKeyVersionClient{}
+	ct := base64.StdEncoding.EncodeToString([]byte("ct"))
+
+	_, code := runKeyVersionCmd(t, mock, "text", keyDecryptCmd, []string{"k", ct}, nil)
+	assert.Equal(t, -1, code)
+	req := mock.requests["decrypt"].(*client.DecryptRequest)
+	assert.Equal(t, "oaep", req.Padding)
+	assert.Equal(t, "sha256", req.Hash)
+
+	_, code = runKeyVersionCmd(t, mock, "text", keyDecryptCmd, []string{"k", ct}, map[string]string{"hash": "sha384"})
+	assert.Equal(t, -1, code)
+	req = mock.requests["decrypt"].(*client.DecryptRequest)
+	assert.Equal(t, "oaep", req.Padding)
+	assert.Equal(t, "sha384", req.Hash)
+}
+
 // TestPrinters_KeyVersion prints the key version in JSON beside a signature
 // and ciphertext, keeps the text signature bare, and adds a line to the text
 // encryption.
