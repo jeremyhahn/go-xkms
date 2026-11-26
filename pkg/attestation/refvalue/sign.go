@@ -62,7 +62,8 @@ var ecdsaAlgorithms = map[elliptic.Curve]cose.Algorithm{
 // draft-ietf-rats-corim-11 §4.2, signed directly: the protected header
 // (§4.2.1) carries alg, the content type application/rim+cbor and meta
 // as corim-meta, and the payload is the tagged-unsigned-corim-map (#6.501).
-// unsigned is the CBOR unsigned-corim-map, tagged or not. The algorithm
+// unsigned is the CBOR unsigned-corim-map, tagged or not; it is validated
+// and signed byte for byte, extension entries (§4.1) included. The algorithm
 // follows the signer's key: ES256, ES384 or ES512 for ECDSA P-256, P-384 or
 // P-521, PS256, PS384 or PS512 for RSA by modulus size, and EdDSA for
 // Ed25519, the algorithms VerifySigned accepts. The result verifies with
@@ -133,8 +134,14 @@ func rsaAlgorithm(bits int) (cose.Algorithm, error) {
 	}
 }
 
-// taggedUnsignedCorim validates an unsigned CoRIM and encodes it as the
-// tagged-unsigned-corim-map payload of §4.2.
+// cborMajorMap is the CBOR major type of a map, RFC 8949 §3.1.
+const cborMajorMap = 5
+
+// taggedUnsignedCorim validates an unsigned CoRIM and wraps it as the
+// tagged-unsigned-corim-map payload of §4.2. The payload carries the
+// caller's corim-map bytes unchanged: the decoder only checks the map, so
+// re-encoding it would drop the $$corim-map-extension entries of §4.1 and
+// sign a different manifest.
 func taggedUnsignedCorim(unsigned []byte) ([]byte, error) {
 	var tag cbor.RawTag
 	if err := cbor.Unmarshal(unsigned, &tag); err == nil {
@@ -143,6 +150,12 @@ func taggedUnsignedCorim(unsigned []byte) ([]byte, error) {
 		}
 		unsigned = tag.Content
 	}
+	if err := cbor.Wellformed(unsigned); err != nil {
+		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+	}
+	if unsigned[0]>>5 != cborMajorMap {
+		return nil, ErrMalformed
+	}
 	var u corim.UnsignedCorim
 	if err := u.FromCBOR(unsigned); err != nil {
 		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
@@ -150,11 +163,7 @@ func taggedUnsignedCorim(unsigned []byte) ([]byte, error) {
 	if err := u.Valid(); err != nil {
 		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
 	}
-	content, err := u.ToCBOR()
-	if err != nil {
-		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
-	}
-	payload, err := cbor.Marshal(cbor.RawTag{Number: tagUnsignedCorim, Content: content})
+	payload, err := cbor.Marshal(cbor.RawTag{Number: tagUnsignedCorim, Content: unsigned})
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
 	}
