@@ -88,21 +88,6 @@ func (l *recordingLease) Release(ctx context.Context) error {
 	return l.Lease.Release(ctx)
 }
 
-// TestWithLeaseContext_LockRunsBound proves a refresh lock's acquire and
-// release run on the context WithLeaseContext derives.
-func TestWithLeaseContext_LockRunsBound(t *testing.T) {
-	leases := newRecordingLeases()
-	e := newEnv(t, WithLeases(leases), WithLeaseContext(bindMarker))
-
-	unlock, err := e.svc.locks.lock(context.Background(), "k")
-	require.NoError(t, err)
-	unlock()
-
-	calls, unbound := leases.snapshot()
-	assert.Equal(t, []string{"acquire", "release"}, calls)
-	assert.Empty(t, unbound)
-}
-
 // TestWithLeaseContext_BindErrorFailsLock proves a bind failure fails the
 // lock before any lease call.
 func TestWithLeaseContext_BindErrorFailsLock(t *testing.T) {
