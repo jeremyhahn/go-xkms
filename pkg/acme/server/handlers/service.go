@@ -1246,7 +1246,7 @@ func parseSignedRequest(r *http.Request) (*jose.JSONWebSignature, error) {
 		return nil, caerrors.MalformedError("failed to read request body: %v", err)
 	}
 
-	jws, err := jose.ParseSigned(strings.TrimSpace(string(body)), server.AllowedJOSEAlgorithms)
+	jws, err := parseSignedAny(strings.TrimSpace(string(body)), server.AllowedJOSEAlgorithms)
 	if err != nil {
 		return nil, caerrors.MalformedError("failed to parse JWS: %v", err)
 	}
