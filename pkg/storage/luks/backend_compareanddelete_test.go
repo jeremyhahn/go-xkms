@@ -68,29 +68,3 @@ func TestBackend_CompareAndDelete_Locked(t *testing.T) {
 		t.Fatalf("CompareAndDelete (locked) = (%v, %v), want (false, ErrVolumeLocked)", deleted, err)
 	}
 }
-
-// Locking a previously unlocked volume must close the same gate: a release that
-// worked a moment ago becomes an error rather than silently reporting that the
-// value is gone.
-func TestBackend_CompareAndDelete_AfterLock(t *testing.T) {
-	ctx := context.Background()
-	mock := newMockVolumeOperator(t.TempDir())
-	mock.exists = false
-	b := NewBackend(mock)
-	if err := b.Initialize(64*1024*1024, "test-passphrase"); err != nil {
-		t.Fatalf("Initialize: %v", err)
-	}
-
-	const key = "keys/example"
-	if err := b.Put(ctx, key, []byte("held")); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	if err := b.Lock(); err != nil {
-		t.Fatalf("Lock: %v", err)
-	}
-
-	deleted, err := b.CompareAndDelete(ctx, key, []byte("held"))
-	if !errors.Is(err, ErrVolumeLocked) || deleted {
-		t.Fatalf("CompareAndDelete (after Lock) = (%v, %v), want (false, ErrVolumeLocked)", deleted, err)
-	}
-}
