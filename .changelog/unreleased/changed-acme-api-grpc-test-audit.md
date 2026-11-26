@@ -1,0 +1,1 @@
+- `pkg/acme/api/grpc`: removed three tests that repeated a path another kept test covers and asserted nothing it does not (#1794).
