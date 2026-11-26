@@ -57,6 +57,7 @@ const (
 	AttestPurposeReattest            = pairingproto.AttestPurposeReattest
 	AttestPurposeVerifyUser          = pairingproto.AttestPurposeVerifyUser
 	UserVerificationGenesisChallenge = pairingproto.UserVerificationGenesisChallenge
+	VerifyUserRPNameMaxLen           = pairingproto.VerifyUserRPNameMaxLen
 	AttestSignatureES256             = pairingproto.AttestSignatureES256
 	AttestTranscriptDomain           = pairingproto.AttestTranscriptDomain
 )
@@ -176,6 +177,7 @@ type (
 	Fragmenter           = pairingproto.Fragmenter
 	HandshakeConfig      = pairingproto.HandshakeConfig
 	LiveAttestFunc       = pairingproto.LiveAttestFunc
+	VerifyUserFunc       = pairingproto.VerifyUserFunc
 	RPCError             = pairingproto.RPCError
 	RPCExchange          = pairingproto.RPCExchange
 	Reassembler          = pairingproto.Reassembler
@@ -339,6 +341,8 @@ var (
 	VerifyAttestChallengeSignature         = pairingproto.VerifyAttestChallengeSignature
 	VerifyGenesisChallenge                 = pairingproto.VerifyGenesisChallenge
 	VerifyUserVerificationGenesisChallenge = pairingproto.VerifyUserVerificationGenesisChallenge
+	BuildVerifyUserTranscript              = pairingproto.BuildVerifyUserTranscript
+	ValidateVerifyUserRPName               = pairingproto.ValidateVerifyUserRPName
 )
 
 // DecodeResult decodes the result of a successful response into a T. A
@@ -352,6 +356,7 @@ func DecodeResult[T any](resp *Response) (*T, error) {
 var (
 	ErrAttestProtocolDowngrade          = pairingproto.ErrAttestProtocolDowngrade
 	ErrUserVerificationGenesisChallenge = pairingproto.ErrUserVerificationGenesisChallenge
+	ErrVerifyUserRPName                 = pairingproto.ErrVerifyUserRPName
 	ErrAttestationFailed                = pairingproto.ErrAttestationFailed
 	ErrAttestationNotSupported          = pairingproto.ErrAttestationNotSupported
 	ErrBackendClosed                    = pairingproto.ErrBackendClosed

@@ -15,6 +15,7 @@ package pairingproto
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -48,9 +49,13 @@ func TestVerifyUserVerificationGenesisChallenge(t *testing.T) {
 // TestVerifyUserWireFieldNames pins the JSON the Kotlin peer reads and writes:
 // a renamed field silently decodes to its zero value on the other side.
 func TestVerifyUserWireFieldNames(t *testing.T) {
-	params, err := json.Marshal(LocalVerifyUserParams{ProtocolVersion: AttestProtocolV2, Nonce: []byte{0x01}})
+	params, err := json.Marshal(LocalVerifyUserParams{
+		ProtocolVersion: AttestProtocolV2,
+		Nonce:           []byte{0x01},
+		RPName:          "example.com",
+	})
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"protocolVersion":2,"nonce":"AQ=="}`, string(params))
+	assert.JSONEq(t, `{"protocolVersion":2,"nonce":"AQ==","rpName":"example.com"}`, string(params))
 
 	result, err := json.Marshal(LocalVerifyUserResult{
 		ProtocolVersion:    AttestProtocolV2,
@@ -72,4 +77,54 @@ func TestVerifyUserIsALocalMethod(t *testing.T) {
 	assert.Equal(t, "local.verifyUser", MethodLocalVerifyUser)
 	assert.True(t, IsLocalMethod(MethodLocalVerifyUser))
 	assert.False(t, IsLocalMethod("local.verifyuser"), "method names are case-sensitive")
+}
+
+func TestValidateVerifyUserRPName(t *testing.T) {
+	t.Run("accepts a domain, a display name and the maximum length", func(t *testing.T) {
+		require.NoError(t, ValidateVerifyUserRPName("example.com"))
+		require.NoError(t, ValidateVerifyUserRPName("Exämple Bank"))
+		require.NoError(t, ValidateVerifyUserRPName(strings.Repeat("a", VerifyUserRPNameMaxLen)))
+	})
+
+	refused := map[string]string{
+		"empty":        "",
+		"over-long":    strings.Repeat("a", VerifyUserRPNameMaxLen+1),
+		"invalid UTF8": "example\xff.com",
+	}
+	for name, rpName := range refused {
+		t.Run("refuses "+name, func(t *testing.T) {
+			require.ErrorIs(t, ValidateVerifyUserRPName(rpName), ErrVerifyUserRPName)
+		})
+	}
+}
+
+func TestBuildVerifyUserTranscript(t *testing.T) {
+	nonce, binding, fingerprint := vecRamp(0x00), vecRamp(0x40), vecRamp(0x80)
+
+	t.Run("appends the length-prefixed RP name to the verify-user transcript", func(t *testing.T) {
+		base, err := BuildAttestTranscript(AttestPurposeVerifyUser, nonce, binding, fingerprint)
+		require.NoError(t, err)
+
+		transcript, err := BuildVerifyUserTranscript(nonce, binding, fingerprint, "rp")
+		require.NoError(t, err)
+		assert.Equal(t, append(base, 0x02, 'r', 'p'), transcript)
+	})
+
+	t.Run("a different RP name is a different transcript", func(t *testing.T) {
+		a, err := BuildVerifyUserTranscript(nonce, binding, fingerprint, "a.example")
+		require.NoError(t, err)
+		b, err := BuildVerifyUserTranscript(nonce, binding, fingerprint, "b.example")
+		require.NoError(t, err)
+		assert.NotEqual(t, a, b)
+	})
+
+	t.Run("refuses an invalid RP name", func(t *testing.T) {
+		_, err := BuildVerifyUserTranscript(nonce, binding, fingerprint, "")
+		require.ErrorIs(t, err, ErrVerifyUserRPName)
+	})
+
+	t.Run("refuses a short nonce", func(t *testing.T) {
+		_, err := BuildVerifyUserTranscript(nonce[:31], binding, fingerprint, "example.com")
+		require.ErrorIs(t, err, ErrAttestTranscriptField)
+	})
 }
