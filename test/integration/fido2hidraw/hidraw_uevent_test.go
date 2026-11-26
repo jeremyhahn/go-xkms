@@ -8,9 +8,12 @@ import (
 // ueventMatchesUniq reports whether a sysfs uevent file carries HID_UNIQ=uniq,
 // ignoring the case of the value.
 func ueventMatchesUniq(uevent, uniq string) bool {
-	want := "HID_UNIQ=" + strings.ToLower(uniq)
+	if uniq == "" {
+		return false
+	}
 	for _, line := range strings.Split(uevent, "\n") {
-		if strings.ToLower(strings.TrimSpace(line)) == want {
+		value, ok := strings.CutPrefix(strings.TrimSpace(line), "HID_UNIQ=")
+		if ok && strings.EqualFold(value, uniq) {
 			return true
 		}
 	}
