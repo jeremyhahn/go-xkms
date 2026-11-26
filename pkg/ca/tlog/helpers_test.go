@@ -14,7 +14,6 @@
 package tlog
 
 import (
-	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -27,11 +26,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
-	"github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 )
 
 const (
@@ -87,38 +82,4 @@ func newProvider(t *testing.T, signer crypto.Signer) *HeadSignerProvider {
 	p, err := NewHeadSignerProvider(newCAKeys(t, signer), testKeyName)
 	require.NoError(t, err)
 	return p
-}
-
-// newVlogClient starts an in-memory standalone go-qrdb node whose logs are
-// signed by p, and returns its verifiable-log client with a context carrying
-// the node's service principal.
-func newVlogClient(t *testing.T, p *HeadSignerProvider) (transport.VlogClient, context.Context) {
-	t.Helper()
-	cfg := qrdbsdk.DefaultDaemonConfig()
-	cfg.Raft.DataDir = t.TempDir()
-	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
-	cfg.Protocols.REST = false
-	cfg.Protocols.GRPC = false
-	cfg.Protocols.QUIC = false
-	cfg.Protocols.Unix = false
-	cfg.Protocols.MCP = false
-	cfg.Seal.Enabled = false
-
-	node, err := qrdbnode.NewStandaloneNode(context.Background(), cfg, nil,
-		serviceprincipal.Option(), qrdbnode.WithHeadSignerProvider(p))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, node.Close()) })
-	ctx, err := node.ServiceContext(t.Context())
-	require.NoError(t, err)
-	return node.Client().Vlog(), ctx
-}
-
-// newLog creates a log on a fresh node, signed by a CA key of signer.
-func newLog(t *testing.T, signer crypto.Signer) (*Log, transport.VlogClient, context.Context) {
-	t.Helper()
-	p := newProvider(t, signer)
-	client, ctx := newVlogClient(t, p)
-	l, err := Create(ctx, client, Config{Name: "certs", Origin: testOrigin}, p)
-	require.NoError(t, err)
-	return l, client, ctx
 }
