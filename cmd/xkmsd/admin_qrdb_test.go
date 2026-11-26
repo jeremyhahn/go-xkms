@@ -91,7 +91,7 @@ func embeddedQRDBConfig(t *testing.T) *config.Config {
 			SocketPath: filepath.Join(testsupport.SocketDir(t), "xkms.sock"),
 		},
 		Logging:   config.LoggingConfig{Level: "error", Format: "json"},
-		TLS:       config.TLSConfig{Enabled: true},
+		TLS:       config.TLSConfig{Enabled: true, ServerCN: "localhost"},
 		Auth:      jwtAuthConfig(t, tempDir),
 		Datastore: config.DatastoreConfig{Path: tempDir},
 		Default:   config.DefaultConfig("software"),

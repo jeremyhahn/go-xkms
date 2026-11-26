@@ -94,7 +94,7 @@ func (id ID) Validate() error {
 	if strings.TrimSpace(id.TenantID) == "" {
 		return ErrTenantEmpty
 	}
-	if err := validateTrustDomain(id.TenantID); err != nil {
+	if err := ValidateTrustDomain(id.TenantID); err != nil {
 		return err
 	}
 	if id.Kind != KindUser && id.Kind != KindService {
@@ -144,7 +144,7 @@ func (id ID) String() string {
 // (ErrTenantIsClusterTrustDomain), since login would refuse the certificate.
 // The issuer pairs the SAN with tenantID as the Subject's first OU.
 func BuildURI(clusterTrustDomain, tenantID, kind, name string) (*url.URL, error) {
-	if err := validateTrustDomain(clusterTrustDomain); err != nil {
+	if err := ValidateTrustDomain(clusterTrustDomain); err != nil {
 		return nil, err
 	}
 	if tenantID == clusterTrustDomain {
