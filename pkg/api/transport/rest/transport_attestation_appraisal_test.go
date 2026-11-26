@@ -15,9 +15,11 @@ package rest
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
@@ -40,4 +42,20 @@ func TestAttestationAppraisal_NotConnected(t *testing.T) {
 	for name, call := range appraisaltest.Calls(context.Background(), &Transport{}) {
 		t.Run(name, func(t *testing.T) { assert.ErrorIs(t, call(), ErrNotConnected) })
 	}
+}
+
+// TestAttestationAppraisal_ListReferenceValues checks the connected transport
+// lists stored reference values over REST and surfaces a server failure.
+func TestAttestationAppraisal_ListReferenceValues(t *testing.T) {
+	rec := newRouteRecorder(t, http.StatusOK, `{"reference_values":[{"name":"fw","manifest_id":"m1"}]}`)
+	resp, err := rec.connect(t).ListAttestationReferenceValues(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "GET /api/v1/attestation/reference-values", rec.request(t).route)
+	require.Len(t, resp.ReferenceValues, 1)
+	assert.Equal(t, "fw", resp.ReferenceValues[0].Name)
+	assert.Equal(t, "m1", resp.ReferenceValues[0].ManifestID)
+
+	failing := newRouteRecorder(t, http.StatusInternalServerError, `{"error":"store unavailable"}`)
+	_, err = failing.connect(t).ListAttestationReferenceValues(context.Background())
+	assert.Error(t, err)
 }

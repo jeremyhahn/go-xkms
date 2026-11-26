@@ -134,7 +134,10 @@ func (s *appraisalRecordingServer) PutAttestationReferenceValues(_ context.Conte
 
 func (s *appraisalRecordingServer) GetAttestationReferenceValues(_ context.Context, r *pb.GetAttestationReferenceValuesRequest) (*pb.AttestationReferenceValues, error) {
 	s.names = append(s.names, r.GetName())
-	return nil, status.Error(codes.NotFound, "no reference values")
+	if r.GetName() != "fleet-baseline" {
+		return nil, status.Error(codes.NotFound, "no reference values")
+	}
+	return &pb.AttestationReferenceValues{Name: r.GetName(), ManifestId: "m1", PcrIndices: []uint32{0, 7}}, nil
 }
 
 func (s *appraisalRecordingServer) ListAttestationReferenceValues(context.Context, *pb.ListAttestationReferenceValuesRequest) (*pb.ListAttestationReferenceValuesResponse, error) {
@@ -176,6 +179,11 @@ func TestAttestationAppraisalClient_OverTheWire(t *testing.T) {
 	_, err = c.GetAttestationReferenceValues(ctx, &transport.GetAttestationReferenceValuesRequest{Name: "missing"})
 	assert.Equal(t, codes.NotFound, status.Code(err))
 
+	fetched, err := c.GetAttestationReferenceValues(ctx, &transport.GetAttestationReferenceValuesRequest{Name: "fleet-baseline"})
+	require.NoError(t, err)
+	assert.Equal(t, "m1", fetched.ManifestID)
+	assert.Equal(t, []uint32{0, 7}, fetched.PCRIndices)
+
 	list, err := c.ListAttestationReferenceValues(ctx)
 	require.NoError(t, err)
 	require.Len(t, list.ReferenceValues, 1)
@@ -186,7 +194,7 @@ func TestAttestationAppraisalClient_OverTheWire(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.Verified)
 
-	assert.Equal(t, []string{"fleet-root", "reference-signer", "old-root", "fleet-baseline", "missing", "stale", "fleet-baseline"}, srv.names)
+	assert.Equal(t, []string{"fleet-root", "reference-signer", "old-root", "fleet-baseline", "missing", "fleet-baseline", "stale", "fleet-baseline"}, srv.names)
 }
 
 // TestAttestationAppraisalClient_NilRequests proves a nil request is refused

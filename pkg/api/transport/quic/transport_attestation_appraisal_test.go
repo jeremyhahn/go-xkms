@@ -15,9 +15,11 @@ package quic
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
@@ -39,4 +41,23 @@ func TestAttestationAppraisal_NotConnected(t *testing.T) {
 	for name, call := range appraisaltest.Calls(context.Background(), newDisconnected(t)) {
 		t.Run(name, func(t *testing.T) { assert.ErrorIs(t, call(), ErrNotConnected) })
 	}
+}
+
+// TestAttestationAppraisal_ListReferenceValues checks the connected transport
+// lists stored reference values from the server and surfaces a server failure.
+func TestAttestationAppraisal_ListReferenceValues(t *testing.T) {
+	tr, rec := newWireTransport(t, http.StatusOK, `{"reference_values":[{"name":"fw","manifest_id":"m1"}]}`)
+	resp, err := tr.ListAttestationReferenceValues(context.Background())
+	require.NoError(t, err)
+	got := rec.take()
+	require.Len(t, got, 1)
+	assert.Equal(t, http.MethodGet, got[0].Method)
+	assert.Equal(t, "/api/v1/attestation/reference-values", got[0].Path)
+	require.Len(t, resp.ReferenceValues, 1)
+	assert.Equal(t, "fw", resp.ReferenceValues[0].Name)
+	assert.Equal(t, "m1", resp.ReferenceValues[0].ManifestID)
+
+	failing, _ := newWireTransport(t, http.StatusInternalServerError, `{"error":"store unavailable"}`)
+	_, err = failing.ListAttestationReferenceValues(context.Background())
+	assert.Error(t, err)
 }
