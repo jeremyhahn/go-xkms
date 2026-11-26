@@ -17,13 +17,16 @@
 package xkms_test
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
+	"net/url"
 	"testing"
 	"time"
 
@@ -32,6 +35,7 @@ import (
 	"github.com/transparency-dev/merkle/rfc6962"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tlogtest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -150,6 +154,110 @@ func TestGetTransparencyLog_NotConfigured(t *testing.T) {
 	svc.SetTransparencyLog(nil)
 	_, err = svc.GetTransparencyLogHead(ctx, &transport.GetTransparencyLogHeadRequest{})
 	require.ErrorIs(t, err, xkms.ErrTransparencyLogNotConfigured, "nil removes the log")
+}
+
+// callerContext returns ctx carrying a verified client certificate whose URI
+// SANs are uris, the way a transport attaches the connection's TLS state.
+func callerContext(t *testing.T, ctx context.Context, uris ...string) context.Context {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(7),
+		Subject:      pkix.Name{CommonName: "caller"},
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	for _, s := range uris {
+		u, err := url.Parse(s)
+		require.NoError(t, err)
+		tmpl.URIs = append(tmpl.URIs, u)
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, key.Public(), key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return auth.WithTLSState(ctx, &tls.ConnectionState{VerifiedChains: [][]*x509.Certificate{{cert}}})
+}
+
+func TestAppendTransparencyLogExternal_RecordsTheCallersSPIFFEID(t *testing.T) {
+	svc, f, _ := newTLogService(t)
+	const caller = "spiffe://acme/svc/billing"
+	ctx := callerContext(t, f.Ctx, "https://acme.example/profile", caller)
+
+	appended, err := svc.AppendTransparencyLogExternal(ctx, &transport.AppendTransparencyLogExternalRequest{Payload: []byte("invoice 7")})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), appended.Index, "the entry follows the fixture's issuance")
+
+	head, err := svc.GetTransparencyLogHead(f.Ctx, &transport.GetTransparencyLogHeadRequest{})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), head.Size)
+
+	entry, err := svc.GetTransparencyLogEntry(f.Ctx, &transport.GetTransparencyLogEntryRequest{Index: appended.Index})
+	require.NoError(t, err)
+	decoded, err := tlog.Unmarshal(entry.Entry)
+	require.NoError(t, err)
+	require.Equal(t, tlog.External{SPIFFEID: caller, Payload: []byte("invoice 7")}, decoded,
+		"the log names the authenticated caller, not anything the request carried")
+
+	inclusion, err := svc.GetTransparencyLogInclusionProof(f.Ctx, &transport.GetTransparencyLogInclusionProofRequest{Index: appended.Index, TreeSize: head.Size})
+	require.NoError(t, err)
+	leaf := rfc6962.DefaultHasher.HashLeaf(entry.Entry)
+	require.NoError(t, proof.VerifyInclusion(rfc6962.DefaultHasher, appended.Index, head.Size, leaf, inclusion.Hashes, head.RootHash))
+}
+
+func TestAppendTransparencyLogExternal_NotConfigured(t *testing.T) {
+	svc := &xkms.XKMSService{}
+	ctx := callerContext(t, t.Context(), "spiffe://acme/svc/billing")
+
+	_, err := svc.AppendTransparencyLogExternal(ctx, &transport.AppendTransparencyLogExternalRequest{Payload: []byte{1}})
+	require.ErrorIs(t, err, xkms.ErrTransparencyLogNotConfigured)
+}
+
+func TestAppendTransparencyLogExternal_NilRequest(t *testing.T) {
+	svc, f, _ := newTLogService(t)
+
+	_, err := svc.AppendTransparencyLogExternal(f.Ctx, nil)
+	require.ErrorIs(t, err, xkms.ErrNilRequest)
+}
+
+func TestAppendTransparencyLogExternal_RefusesACallerWithoutOneSPIFFEID(t *testing.T) {
+	svc, f, _ := newTLogService(t)
+	req := &transport.AppendTransparencyLogExternalRequest{Payload: []byte{1}}
+
+	tests := map[string]context.Context{
+		"no TLS state":         f.Ctx,
+		"no verified chain":    auth.WithTLSState(f.Ctx, &tls.ConnectionState{}),
+		"no SPIFFE URI":        callerContext(t, f.Ctx, "https://acme.example/profile"),
+		"two SPIFFE URIs":      callerContext(t, f.Ctx, "spiffe://acme/svc/billing", "spiffe://acme/user/alice"),
+		"malformed SPIFFE URI": callerContext(t, f.Ctx, "spiffe://acme/role/admin"),
+	}
+	for name, ctx := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.AppendTransparencyLogExternal(ctx, req)
+			require.ErrorIs(t, err, xkms.ErrTransparencyLogNoCallerSPIFFEID)
+		})
+	}
+
+	head, err := svc.GetTransparencyLogHead(f.Ctx, &transport.GetTransparencyLogHeadRequest{})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), head.Size, "a refused append records nothing")
+}
+
+func TestAppendTransparencyLogExternal_RefusesAnInvalidPayload(t *testing.T) {
+	svc, f, _ := newTLogService(t)
+	ctx := callerContext(t, f.Ctx, "spiffe://acme/svc/billing")
+
+	tests := map[string][]byte{
+		"empty":     nil,
+		"oversized": make([]byte, 1<<16),
+	}
+	for name, payload := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.AppendTransparencyLogExternal(ctx, &transport.AppendTransparencyLogExternalRequest{Payload: payload})
+			require.ErrorIs(t, err, tlog.ErrInvalidEntry)
+		})
+	}
 }
 
 // An index or size outside the signed tree head is ErrTransparencyLogRange.

@@ -416,6 +416,11 @@ var (
 	// log's current signed tree head does not cover, or a consistency proof
 	// whose first size is zero or exceeds its second.
 	ErrTransparencyLogRange = errors.New("keystore: transparency log index or size out of range")
+
+	// ErrTransparencyLogNoCallerSPIFFEID indicates an external append from
+	// a caller the request carries no SPIFFE ID for: no verified mTLS client
+	// certificate, or one whose URI SANs name no SPIFFE ID, or more than one.
+	ErrTransparencyLogNoCallerSPIFFEID = errors.New("keystore: transparency log append needs the caller's SPIFFE ID")
 )
 
 var (

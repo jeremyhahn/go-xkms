@@ -22,9 +22,13 @@ import (
 // signed tree head, which the REST and QUIC clients share.
 const TransparencyLogHeadPath = "/api/v1/ca/transparency-log/head"
 
+// TransparencyLogEntriesPath is the HTTP path an external entry is POSTed to,
+// which the REST and QUIC clients share.
+const TransparencyLogEntriesPath = "/api/v1/ca/transparency-log/entries"
+
 // TransparencyLogEntryPath returns the HTTP path of the log entry at index.
 func TransparencyLogEntryPath(index uint64) string {
-	return "/api/v1/ca/transparency-log/entries/" + strconv.FormatUint(index, 10)
+	return TransparencyLogEntriesPath + "/" + strconv.FormatUint(index, 10)
 }
 
 // TransparencyLogInclusionProofPath returns the HTTP path of the inclusion
