@@ -41,7 +41,7 @@ func TestValidateRejectsMTLSAdminWithoutClientAuth(t *testing.T) {
 		{"mtls flag", func(c *Config) { c.Auth.Type = "jwt"; c.Auth.MTLS = true }},
 	}
 	for _, tc := range cases {
-		for _, ca := range []string{"none", ""} {
+		for _, ca := range []string{"none", "", "Verify", " verify", "REQUEST", "optional"} {
 			t.Run(tc.name+"/"+ca, func(t *testing.T) {
 				cfg, err := Load(path)
 				if err != nil {
