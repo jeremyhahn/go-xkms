@@ -21,17 +21,27 @@ func TestEKCertificate_RoundTripsByKeyType(t *testing.T) {
 		}
 	}
 
-	for _, curve := range []string{"P-256", "P-384", "P-521"} {
-		t.Run(curve, func(t *testing.T) {
+	t.Run("P-256", func(t *testing.T) {
+		soPIN := []byte("so-pin-1960-P-256")
+		h := newOwnedSimHarness(t, eccEK("P-256"), soPIN)
+		certDER := createTestCertDER(t)
+
+		require.NoError(t, h.TPM.ProvisionEKCert(soPIN, certDER))
+
+		got, err := h.TPM.EKCertificate()
+		require.NoError(t, err)
+		assert.Equal(t, certDER, got.Raw)
+	})
+
+	// CreateEK has no P-384 or P-521 template, so their certificate
+	// indexes are refused rather than written for a key the TPM never made.
+	for _, curve := range []string{"P-384", "P-521"} {
+		t.Run(curve+" is refused", func(t *testing.T) {
 			soPIN := []byte("so-pin-1960-" + curve)
 			h := newOwnedSimHarness(t, eccEK(curve), soPIN)
-			certDER := createTestCertDER(t)
 
-			require.NoError(t, h.TPM.ProvisionEKCert(soPIN, certDER))
-
-			got, err := h.TPM.EKCertificate()
-			require.NoError(t, err)
-			assert.Equal(t, certDER, got.Raw)
+			err := h.TPM.ProvisionEKCert(soPIN, createTestCertDER(t))
+			assert.ErrorIs(t, err, ErrEKCertKeyType)
 		})
 	}
 
