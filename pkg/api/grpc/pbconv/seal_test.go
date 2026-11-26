@@ -38,7 +38,7 @@ func TestSealConversions_CarryTheTPMFields(t *testing.T) {
 
 	sealed := &transport.SealResponse{
 		Backend: "tpm2", TPMPublic: []byte("pub"), TPMPrivate: []byte("priv"),
-		WrappedDEK: []byte("dek"), KeyID: "vault", Metadata: map[string][]byte{"tpm:handle": {0x80}},
+		WrappedDEK: []byte("dek"), KeyID: "vault", KeyVersion: 4, Metadata: map[string][]byte{"tpm:handle": {0x80}},
 	}
 	back, err := SealResponseFromProto(SealResponseToProto(sealed))
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func TestSealConversions_CarryTheTPMFields(t *testing.T) {
 
 	unseal := &transport.UnsealRequest{
 		Backend: "tpm2", KeyID: "vault", TPMPublic: []byte("pub"), TPMPrivate: []byte("priv"),
-		WrappedDEK: []byte("dek"), Metadata: map[string][]byte{"k": []byte("v")}, Password: []byte("pw"),
+		WrappedDEK: []byte("dek"), KeyVersion: 4, Metadata: map[string][]byte{"k": []byte("v")}, Password: []byte("pw"),
 	}
 	u, err := UnsealRequestFromProto(UnsealRequestToProto(unseal), "acme")
 	require.NoError(t, err)
