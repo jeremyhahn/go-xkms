@@ -217,11 +217,11 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		userResolver token.UserResolver
 	)
 	if p.QRDBClient != nil {
-		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV())
+		qs, storeErr := newRefreshStore(p.QRDBClient.KV(), p.CallContext)
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
-		refreshStore = bindRefreshStore(qs, p.CallContext)
+		refreshStore = qs
 		if p.NodeUsers != nil {
 			userResolver = auth.NewNodeUserResolver(auth.NewNodeUserClient(p.NodeUsers))
 		} else {
