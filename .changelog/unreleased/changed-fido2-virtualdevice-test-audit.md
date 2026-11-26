@@ -1,0 +1,1 @@
+fido2: the `pkg/fido2/virtualdevice` tests test each behaviour once (#1794): the storage, HID-accessor and authenticator-accessor tests that repeated the create tests, and the interface test that repeated the package's compile-time check, are removed, and the both-IDs enumeration cases move into the enumerate test.
