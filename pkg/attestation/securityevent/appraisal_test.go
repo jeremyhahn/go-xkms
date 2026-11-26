@@ -318,6 +318,13 @@ func TestAppraiseRejectsMalformedEvidence(t *testing.T) {
 				claimsWith(t, verifierNonce, map[string]any{SubmoduleName: []any{-16, digest, 0}})),
 			want: ErrMalformedEvidence,
 		},
+		"hash algorithm below the int64 range": {
+			evidence: sign(t, d.aliasKey, cose.AlgorithmES256,
+				claimsWith(t, verifierNonce, map[string]any{SubmoduleName: []any{
+					cbor.RawMessage{0x3b, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}, digest,
+				}})),
+			want: ErrMalformedEvidence,
+		},
 		"unsupported hash algorithm": {
 			evidence: sign(t, d.aliasKey, cose.AlgorithmES256,
 				claimsWith(t, verifierNonce, digestSubmods("SHA-1", digest))),
