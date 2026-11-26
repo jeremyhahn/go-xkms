@@ -34,6 +34,7 @@ import (
 	"golang.org/x/crypto/hkdf"
 
 	"github.com/jeremyhahn/go-xkms/pkg/fido2/authenticator/keybackend"
+	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 )
 
 // CTAP2 ClientPIN request parameter keys (CBOR map indices).
@@ -937,6 +938,15 @@ func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) ([]byte, err
 	// CTAP2_ERR_MISSING_PARAMETER (§8.2) before the user is asked instead.
 	if req.Permissions&(PINPermissionMakeCredential|PINPermissionGetAssertion) != 0 && req.RPID == "" {
 		return nil, ErrMissingRPID
+	}
+	// The user is asked on behalf of the RP by name, so an rpId the
+	// verifier cannot name is refused here as a malformed request: refused
+	// by the verifier, it would count as a failed verification and spend
+	// uvRetries although the user was never asked.
+	if rpName := uvConsentRPID(req); rpName != "" {
+		if err := pairingproto.ValidateVerifyUserRPName(rpName); err != nil {
+			return nil, &SentinelCauseError{Sentinel: ErrInvalidParameter, Cause: err}
+		}
 	}
 	if a.state.UVRetries() <= 0 {
 		return nil, ErrUVBlocked

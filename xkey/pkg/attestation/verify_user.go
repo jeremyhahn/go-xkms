@@ -19,6 +19,7 @@ import (
 	"log/slog"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
 	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/userverify"
 )
@@ -53,7 +54,9 @@ func NewUserVerifier(
 	return func(ctx context.Context, exchange pairingproto.RPCExchange, channelBinding []byte, rpName string) error {
 		trust, err := loadTrust()
 		if err != nil {
-			return &SentinelCauseError{Sentinel: userverify.ErrVerificationFailed, Cause: err}
+			// No trust to judge an answer against is no decision about
+			// the user, so the authenticator spends no uvRetries on it.
+			return &SentinelCauseError{Sentinel: keybackend.ErrUserVerificationUnavailable, Cause: err}
 		}
 
 		challenge, err := userverify.NewChallenge(channelBinding, rpName)
