@@ -136,7 +136,6 @@ func TestHidrawWriteCarriesReportIDZero(t *testing.T) {
 // the given HID_UNIQ and returns its name (hidrawN).
 func findHidrawNode(t *testing.T, uniq string) string {
 	t.Helper()
-	want := "HID_UNIQ=" + strings.ToLower(uniq)
 	deadline := time.Now().Add(waitTimeout)
 	for time.Now().Before(deadline) {
 		entries, _ := os.ReadDir(hidrawClassDir)
@@ -145,10 +144,8 @@ func findHidrawNode(t *testing.T, uniq string) string {
 			if err != nil {
 				continue
 			}
-			for _, line := range strings.Split(string(uevent), "\n") {
-				if strings.ToLower(strings.TrimSpace(line)) == want {
-					return e.Name()
-				}
+			if ueventMatchesUniq(string(uevent), uniq) {
+				return e.Name()
 			}
 		}
 		time.Sleep(50 * time.Millisecond)
