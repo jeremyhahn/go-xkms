@@ -75,14 +75,15 @@ var hashByCOSEAlgorithm = map[any]crypto.Hash{
 
 // decMode decodes the evidence's submods claim and its digest. Duplicate map
 // keys and indefinite lengths are refused so that a claim has exactly one
-// reading.
+// reading, and an integer outside the int64 range is refused so that a hash
+// algorithm always decodes to a comparable map key.
 var decMode = mustDecMode()
 
 func mustDecMode() cbor.DecMode {
 	mode, err := cbor.DecOptions{
 		DupMapKey:   cbor.DupMapKeyEnforcedAPF,
 		IndefLength: cbor.IndefLengthForbidden,
-		IntDec:      cbor.IntDecConvertSigned,
+		IntDec:      cbor.IntDecConvertSignedOrFail,
 	}.DecMode()
 	if err != nil {
 		panic(err)
