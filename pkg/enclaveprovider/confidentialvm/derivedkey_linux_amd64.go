@@ -29,8 +29,8 @@ type guestRequest struct {
 
 // openDevice opens and closes device, so a missing or refused device fails
 // construction as a *DerivedKeyError with Op "open".
-func openDevice(device string) error {
-	f, err := os.OpenFile(device, os.O_RDWR, 0) //nolint:gosec // G304: the fixed guest device path
+func openDevice(sevGuestPath string) error {
+	f, err := os.OpenFile(sevGuestPath, os.O_RDWR, 0) //nolint:gosec // G304: the fixed guest device path
 	if err != nil {
 		return &DerivedKeyError{Op: "open", Cause: err}
 	}
@@ -42,11 +42,11 @@ func openDevice(device string) error {
 // device is a *DerivedKeyError with Op "open"; a refused request one with Op
 // "derived-key" and a *FirmwareError cause. A refused call writes nothing
 // into dst, and the response buffer is wiped.
-func deriveKey(ctx context.Context, device string, r keyRequest, dst []byte) error {
+func deriveKey(ctx context.Context, sevGuestPath string, r keyRequest, dst []byte) error {
 	if err := ctxErr(ctx); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(device, os.O_RDWR, 0) //nolint:gosec // G304: the fixed guest device path
+	f, err := os.OpenFile(sevGuestPath, os.O_RDWR, 0) //nolint:gosec // G304: the fixed guest device path
 	if err != nil {
 		return &DerivedKeyError{Op: "open", Cause: err}
 	}
