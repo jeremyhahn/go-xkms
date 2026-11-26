@@ -1264,17 +1264,21 @@ func TestGenerateKeyPairEdgeCases(t *testing.T) {
 		alg     string
 		size    int
 		wantErr bool
+		// wantECBits is the curve size an ECDSA case must return; 0 means
+		// the case is not ECDSA. A request for P-384 or P-521 that silently
+		// yields P-256 fails here.
+		wantECBits int
 	}{
-		{"ecdsa default", "ecdsa", 0, false},
-		{"ecdsa P-256", "ecdsa", 256, false},
-		{"ecdsa P-384", "ecdsa", 384, false},
-		{"ecdsa P-521", "ecdsa", 521, false},
-		{"ec alias", "ec", 0, false},
-		{"rsa 4096 ok", "rsa", 4096, false},
+		{"ecdsa default", "ecdsa", 0, false, 256},
+		{"ecdsa P-256", "ecdsa", 256, false, 256},
+		{"ecdsa P-384", "ecdsa", 384, false, 384},
+		{"ecdsa P-521", "ecdsa", 521, false, 521},
+		{"ec alias", "ec", 0, false, 256},
+		{"rsa 4096 ok", "rsa", 4096, false, 0},
 		// go-xkms#1260: rsa.GenerateKey cannot be cancelled and its cost
 		// grows with the cube of the modulus size, so an oversized
 		// --key-size must be refused rather than generated.
-		{"rsa oversized refused", "rsa", 65536, true},
+		{"rsa oversized refused", "rsa", 65536, true, 0},
 	}
 
 	for _, tt := range tests {
@@ -1290,7 +1294,17 @@ func TestGenerateKeyPairEdgeCases(t *testing.T) {
 				t.Fatalf("generateKeyPair(%q, %d) error = %v", tt.alg, tt.size, err)
 			}
 			if key == nil {
-				t.Error("generateKeyPair() returned nil key without error")
+				t.Fatal("generateKeyPair() returned nil key without error")
+			}
+			if tt.wantECBits == 0 {
+				return
+			}
+			ecKey, ok := key.(*ecdsa.PrivateKey)
+			if !ok {
+				t.Fatalf("generateKeyPair(%q, %d) returned %T, want *ecdsa.PrivateKey", tt.alg, tt.size, key)
+			}
+			if got := ecKey.Curve.Params().BitSize; got != tt.wantECBits {
+				t.Errorf("generateKeyPair(%q, %d) curve bit size = %d, want %d", tt.alg, tt.size, got, tt.wantECBits)
 			}
 		})
 	}
