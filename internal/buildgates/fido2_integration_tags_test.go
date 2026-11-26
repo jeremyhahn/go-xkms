@@ -34,3 +34,15 @@ func TestFIDO2IntegrationTargetsBuildWithCodecJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestGoTestTags_ExpandsBuildTagsAndSpaces(t *testing.T) {
+	makefile := "BUILD_TAGS := codec_cbor codec_json\n" +
+		"x:\n\t$(GO) test -v -tags='$(call go_tags,integration fido2 $(BUILD_TAGS))' ./...\n" +
+		"y:\n\t$(GO) test -tags='$(call go_tags,integration$(comma)fido2)' ./...\n"
+	if got, want := goTestTags(t, makefile, "x"), []string{"integration", "fido2", "codec_cbor", "codec_json"}; !slices.Equal(got, want) {
+		t.Errorf("x tags = %v, want %v", got, want)
+	}
+	if got, want := goTestTags(t, makefile, "y"), []string{"integration", "fido2"}; !slices.Equal(got, want) {
+		t.Errorf("y tags = %v, want %v", got, want)
+	}
+}
