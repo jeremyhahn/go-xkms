@@ -57,7 +57,7 @@ func newTLogFixture(t *testing.T) *tlogFixture {
 	require.NoError(t, err)
 	keys, err := qrdbsdk.NewCAKeyStaticProvider(c, caCert)
 	require.NoError(t, err)
-	signers, err := tlog.NewHeadSignerProvider(keys, "ca-tlog")
+	signers, err := tlog.NewHeadSignerProvider(keys, "ca-tlog", tlog.ServiceLogScope("certs"))
 	require.NoError(t, err)
 
 	cfg := qrdbsdk.DefaultDaemonConfig()
