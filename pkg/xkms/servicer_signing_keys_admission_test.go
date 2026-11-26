@@ -156,6 +156,44 @@ func TestSignImage_AdmittedThroughTheKeyPolicy(t *testing.T) {
 	}
 }
 
+// SignImage signs twice with the release key, the code-signing CSR and the
+// DSSE envelope, so it is charged two uses: a key limited to one use refuses
+// it, and a key limited to two admits it and records both.
+func TestSignImage_ChargesBothSignaturesToTheUsageLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		max      uint64
+		admitted bool
+		uses     uint64
+	}{
+		{name: "one use", max: 1, admitted: false, uses: 0},
+		{name: "two uses", max: 2, admitted: true, uses: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := admissionService(t)
+			ctx := withSigningKeys(t, svc, corimSignPermission, "attestation_signing_keys:bind")
+			svc.SetCA(newCodeSigningCA(t))
+			(&memoryRegistry{}).install(svc)
+			generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+			_, err := svc.SetKeyPolicy(context.Background(), &transport.SetKeyPolicyRequest{
+				Backend: "software", KeyID: appraisal.ReleaseSigningKeyID, TenantID: "tenant-a",
+				Policy: &transport.KeyPolicy{MaxUsageCount: tc.max},
+			})
+			require.NoError(t, err)
+
+			_, err = svc.SignImage(ctx, signImageRequest())
+			if tc.admitted {
+				require.NoError(t, err)
+			} else {
+				refusedByPolicy(t, err)
+			}
+			rec, _, err := svc.KeyPolicyStore().Load(context.Background(), "tenant-a", "software", appraisal.ReleaseSigningKeyID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.uses, rec.Usage.Uses, "every signature SignImage makes is charged")
+		})
+	}
+}
+
 func TestSigningPublicKey_NotAdmittedForSigning(t *testing.T) {
 	svc := admissionService(t)
 	want := generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
