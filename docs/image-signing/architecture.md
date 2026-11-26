@@ -98,7 +98,8 @@ signs with it as ES256 and DSSE over SHA-256.
   generates the key and the other signs with it.
 - Only the default resolution provisions. A repository bound to a key the
   tenant does not hold fails with `ErrKeyNotFound`.
-- The system tenant is never provisioned (owner-queue item 153).
+- The system tenant is never provisioned: it never signs images (owner
+  ruling 165).
 - A generate failure is `ReleaseKeyProvisionError` (`:122`), which names the
   tenant and unwraps to the backend's error.
 
@@ -179,10 +180,12 @@ HTTP(S) by `pkg/image`; nothing is persisted locally.
 - **No transparency-log append.** Appending each signature to the
   transparency log waits on the transparency-log rows (#1549); nothing here
   stubs it.
-- **No signing for the system tenant.** It has no release signing key, so
-  `SignImage` refuses it with `ErrSystemTenantImageSigning`
-  (`pkg/xkms/servicer_signing_keys.go:96`, `:383`) until the owner decides
-  otherwise (owner-queue item 153), and no release key is provisioned for it.
+- **No signing for the system tenant.** The system tenant never signs
+  images; only a data tenant does (owner ruling 165). `SignImage` refuses it
+  with `ErrSystemTenantImageSigning` (`pkg/xkms/servicer_signing_keys.go:96`,
+  `:383`), and no release key is provisioned for it. A deployment that must
+  sign its first image creates a data tenant for it and signs as that tenant,
+  whose release key is provisioned on that first use.
 - **No non-SHA-256 digests.** A `sha512-<hex>.att` tag would exceed the
   128-character OCI tag limit, so `AttestationTag` refuses any other
   algorithm (`pkg/image/reference.go:185`), and signing or verifying an image

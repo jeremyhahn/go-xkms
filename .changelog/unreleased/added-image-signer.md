@@ -8,8 +8,10 @@
   call only and wiped. It is served over REST
   (`POST /api/v1/attestation/signing-keys/sign-image`), gRPC, Unix, QUIC, MCP
   (`attestation.signing_key.sign_image`) and embedded, gated by
-  `attestation_signing_keys:sign`; USB refuses it. The system tenant is
-  refused with `ErrSystemTenantImageSigning` pending owner-queue item 153.
+  `attestation_signing_keys:sign`; USB refuses it. The system tenant never
+  signs images and is refused with `ErrSystemTenantImageSigning` (owner
+  ruling 165); a deployment that must sign its first image creates a data
+  tenant for it.
   `sdk/go` re-exports `SignAttestationImageRequest` and
   `SignedAttestationImage`, and the TypeScript SDK adds
   `client.signingKeys.signImage`. Code: `pkg/xkms/servicer_signing_keys.go`;
