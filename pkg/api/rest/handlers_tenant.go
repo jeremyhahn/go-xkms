@@ -318,7 +318,8 @@ func (h *TenantHandlers) UpdateTenantQuotasHandler(w http.ResponseWriter, r *htt
 // the appropriate error response.
 func handleTenantError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, xkms.ErrTenantStatusUnsupported):
+	case errors.Is(err, xkms.ErrTenantStatusUnsupported),
+		errors.Is(err, xkms.ErrInvalidTenantID):
 		writeError(w, err, http.StatusBadRequest)
 	case errors.Is(err, seal.ErrTenantNotFound):
 		writeError(w, err, http.StatusNotFound)
