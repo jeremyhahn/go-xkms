@@ -15,30 +15,50 @@ package securityevent
 
 import "errors"
 
-// Decode errors. Each wraps the detail of the rule the input breaks; test
-// for them with errors.Is.
 var (
-	// ErrMalformed reports input that is not one well-formed CBOR item of
-	// the record's shape: invalid or truncated CBOR, trailing bytes, a tag,
-	// a duplicate map key, or a member of the wrong type.
-	ErrMalformed = errors.New("securityevent: malformed Claims-Set")
+	// ErrNilEvidence indicates Appraise was given no evidence.
+	ErrNilEvidence = errors.New("securityevent: nil evidence")
 
-	// ErrUnknownKey reports a map key the format does not define.
-	ErrUnknownKey = errors.New("securityevent: unknown key")
+	// ErrNilOptions indicates Appraise was given no options.
+	ErrNilOptions = errors.New("securityevent: nil options")
 
-	// ErrMissingKey reports a member the format requires and the input
-	// leaves out.
-	ErrMissingKey = errors.New("securityevent: missing key")
+	// ErrNonceRequired indicates the caller supplied no Verifier nonce. The
+	// nonce is the only freshness the evidence carries (RFC 9334 §10).
+	ErrNonceRequired = errors.New("securityevent: a verifier nonce is required")
 
-	// ErrOutOfRange reports a value too wide for its field, or negative.
-	ErrOutOfRange = errors.New("securityevent: value out of range")
+	// ErrMalformedChain indicates the signer's certificate chain is empty or
+	// a certificate in it does not parse.
+	ErrMalformedChain = errors.New("securityevent: malformed signer certificate chain")
 
-	// ErrNotDeterministic reports input that decodes to a valid record but
-	// is not its core deterministic encoding (RFC 8949 §4.2.1): a longer
-	// than shortest argument, an indefinite length, or keys out of order.
-	ErrNotDeterministic = errors.New("securityevent: not core deterministic encoding")
+	// ErrUntrustedSigner indicates the signer's chain failed DICE verification,
+	// so nothing it signed can be attributed to the device.
+	ErrUntrustedSigner = errors.New("securityevent: signer chain failed DICE verification")
+
+	// ErrMalformedEvidence indicates the evidence is not a COSE_Sign1 whose
+	// payload is an EAT Claims-Set.
+	ErrMalformedEvidence = errors.New("securityevent: malformed evidence")
+
+	// ErrSignature indicates the evidence's signature does not verify under
+	// the DICE leaf's key.
+	ErrSignature = errors.New("securityevent: evidence signature does not verify")
+
+	// ErrNonceMismatch indicates the evidence's eat_nonce is not the nonce
+	// this Verifier issued, so the evidence may be a replay.
+	ErrNonceMismatch = errors.New("securityevent: eat_nonce mismatch")
+
+	// ErrNoDetachedDigest indicates the evidence carries no
+	// Detached-Submodule-Digest for the security-event record.
+	ErrNoDetachedDigest = errors.New("securityevent: no detached submodule digest for the record")
+
+	// ErrUnsupportedHashAlgorithm indicates the detached digest names a hash
+	// algorithm this Verifier does not compute.
+	ErrUnsupportedHashAlgorithm = errors.New("securityevent: unsupported detached digest hash algorithm")
+
+	// ErrRecordDigestMismatch indicates the record's digest is not the one the
+	// device signed: the record was changed, truncated or substituted.
+	ErrRecordDigestMismatch = errors.New("securityevent: record digest mismatch")
+
+	// ErrMalformedRecord indicates the record is not a well-formed CBOR
+	// Claims-Set.
+	ErrMalformedRecord = errors.New("securityevent: malformed record")
 )
-
-// ErrCountMismatch reports a record whose count is not the number of its
-// entries. Encode and Decode both refuse one.
-var ErrCountMismatch = errors.New("securityevent: count does not match entries")
