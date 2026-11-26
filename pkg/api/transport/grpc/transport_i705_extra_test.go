@@ -78,7 +78,7 @@ func TestLeaderAPIAddressFromError(t *testing.T) {
 // --- notLeaderInterceptor: the single-hop redirect-and-retry ---
 
 func TestNotLeaderInterceptor_PassesThroughSuccess(t *testing.T) {
-	tr := &Transport{credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	tr := &Transport{config: &transport.Config{AllowInsecureTransport: true}, credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
 	calls := 0
 	invoker := func(_ context.Context, _ string, _, _ interface{}, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
 		calls++
@@ -90,7 +90,7 @@ func TestNotLeaderInterceptor_PassesThroughSuccess(t *testing.T) {
 }
 
 func TestNotLeaderInterceptor_PassesThroughUnrelatedError(t *testing.T) {
-	tr := &Transport{credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	tr := &Transport{config: &transport.Config{AllowInsecureTransport: true}, credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
 	calls := 0
 	wantErr := status.Error(codes.Unavailable, "down")
 	invoker := func(_ context.Context, _ string, _, _ interface{}, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
@@ -110,7 +110,7 @@ func TestNotLeaderInterceptor_RedialsAndRetriesOnce(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = lis.Close() }()
 
-	tr := &Transport{credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	tr := &Transport{config: &transport.Config{AllowInsecureTransport: true}, credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
 
 	var seenConns []*grpc.ClientConn
 	first := true
@@ -131,7 +131,7 @@ func TestNotLeaderInterceptor_RedialsAndRetriesOnce(t *testing.T) {
 }
 
 func TestNotLeaderInterceptor_DialFailureReturnsOriginalError(t *testing.T) {
-	tr := &Transport{credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
+	tr := &Transport{config: &transport.Config{AllowInsecureTransport: true}, credsOpt: grpc.WithTransportCredentials(insecure.NewCredentials())}
 	original := notLeaderStatus(t, notLeaderReason, "\x7f:::not-a-valid-target")
 	invoker := func(_ context.Context, _ string, _, _ interface{}, _ *grpc.ClientConn, _ ...grpc.CallOption) error {
 		return original
