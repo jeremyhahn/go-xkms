@@ -1,0 +1,1 @@
+factor/decoy: the `pkg/factor/internal/decoy` tests pin each typed error's message, refuse a serial past the HKDF output limit, and take both ends of the NotBefore span whatever the certificate order, lifting the package from 87.0% to 90.7% coverage (#1794).
