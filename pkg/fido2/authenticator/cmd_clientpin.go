@@ -14,6 +14,7 @@
 package authenticator
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
@@ -301,18 +302,7 @@ func (a *Authenticator) handleClientPIN(data []byte) ([]byte, error) {
 		return a.handleGetPINToken(req)
 
 	case ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions:
-		// Unsupported, deliberately (#1145). Minting a token here requires a
-		// standalone built-in user verification ceremony whose success the
-		// authenticator can check (CTAP 2.1 §6.5.5.7.3), and no key backend
-		// offers one. keybackend.FIDO2KeyCapabilities.HandlesUserVerification
-		// means verification happens INSIDE the backend's own key operation
-		// (a phone biometric gating Sign), not that a user can be verified on
-		// demand, so it can never authorize a token that later drives
-		// credential management or authenticatorConfig. getOptions keeps the
-		// uv option off whenever pinUvAuthToken is advertised, so a
-		// conforming platform never sends this subcommand; the PIN path
-		// (subcommand 0x09) is the one way to obtain a pinUvAuthToken.
-		return nil, ErrInvalidSubcommand
+		return a.handleGetPinUvAuthTokenUsingUvWithPermissions(req)
 
 	case ClientPINSubCmdGetPinUvAuthTokenUsingPinWithPermissions:
 		return a.handleGetPinUvAuthTokenUsingPinWithPermissions(req)
@@ -473,12 +463,11 @@ func (a *Authenticator) establishPINLocked(newPIN []byte) error {
 	a.state.SetPINRetries(a.config.PINMaxRetries)
 
 	// CTAP 2.1 §6.5.2.1: a pinUvAuthToken must not outlive the PIN state it
-	// was minted under. This path runs only when no PIN was set, and today
-	// every minting path requires a PIN (getPinUvAuthTokenUsingUv is refused,
-	// #1145), so no token should be outstanding here. The invalidation stays
-	// so that guarantee does not depend on every future minting path
-	// remembering to check for a PIN: establishing a PIN must never leave a
-	// token minted without one usable.
+	// was minted under. This path runs only when no PIN was set, yet a token
+	// can be outstanding: getPinUvAuthTokenUsingUvWithPermissions mints one
+	// from the key backend's built-in user verification without a PIN
+	// (ruling 167). Establishing a PIN must never leave a token minted
+	// without one usable.
 	//
 	// Placed after the new PIN is accepted into a.state and before it is
 	// persisted, so a storage failure cannot leave a live token behind a PIN
@@ -850,6 +839,115 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingPinWithPermissions(req *Clie
 	}
 
 	return a.successResponse(data), nil
+}
+
+// handleGetPinUvAuthTokenUsingUvWithPermissions mints a pinUvAuthToken on the
+// strength of the key backend's built-in user verification (CTAP 2.1
+// §6.5.5.7.3, ruling 167). The token is minted only after the backend's
+// VerifyUser returned nil for this request; a key backend without a
+// keybackend.UserVerifier has no built-in method, and the subcommand is
+// refused as it always was.
+//
+// The ceremony runs without mu: it waits on a device and a human, and mu
+// guards state every other caller reads. cmdMu (ProcessCBORWithContext) still
+// serializes it against every other CTAP command.
+func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *ClientPINRequest) ([]byte, error) {
+	verifier := a.userVerifier()
+	if verifier == nil {
+		return nil, ErrInvalidSubcommand
+	}
+
+	a.mu.Lock()
+	encKey, err := a.prepareUvTokenLocked(req)
+	a.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+
+	verifyErr := verifier.VerifyUser(a.commandContext())
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if verifyErr != nil {
+		return nil, a.failUserVerificationLocked(verifyErr)
+	}
+	a.state.ResetUVRetries()
+
+	pinToken := make([]byte, PINTokenSize)
+	if _, err := rand.Read(pinToken); err != nil {
+		return nil, ErrCryptoError
+	}
+	a.beginUsingPinUvAuthTokenLocked(pinToken, req.Permissions, req.RPID)
+
+	encryptedToken, err := a.encryptData(encKey, req.PinUvAuthProtocol, pinToken)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := a.storage.SaveState(a.state); err != nil {
+		return nil, ErrStorageError
+	}
+
+	data, err := encodeCBOR(map[int]interface{}{
+		clientPINResponseKeyPinUvAuthToken: encryptedToken,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return a.successResponse(data), nil
+}
+
+// prepareUvTokenLocked runs the checks of CTAP 2.1 §6.5.5.7.3 that precede the
+// user verification ceremony, so a malformed request never prompts the user,
+// and returns the key the minted token is encrypted under.
+func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) ([]byte, error) {
+	if req.Permissions == 0 {
+		return nil, ErrInvalidParameter
+	}
+	if a.state.UVRetries() <= 0 {
+		return nil, ErrUVBlocked
+	}
+	if err := a.initPINProtocol(); err != nil {
+		return nil, err
+	}
+	if len(req.KeyAgreement) == 0 {
+		return nil, ErrMissingKeyAgreement
+	}
+
+	sharedSecret, err := a.deriveSharedSecret(req.KeyAgreement, req.PinUvAuthProtocol)
+	if err != nil {
+		return nil, err
+	}
+	a.pinState.protocol.sharedSecret = sharedSecret
+
+	if req.PinUvAuthProtocol == PINProtocol2 {
+		return a.pinState.protocol.aesKey, nil
+	}
+	return sharedSecret, nil
+}
+
+// failUserVerificationLocked records a failed built-in user verification and
+// returns the status for it: CTAP2_ERR_UV_INVALID, or CTAP2_ERR_UV_BLOCKED
+// once the uvRetries counter is spent (CTAP 2.1 §6.5.5.7.3). A platform that
+// cancelled the request did not fail a verification, so it spends no retry.
+func (a *Authenticator) failUserVerificationLocked(verifyErr error) error {
+	if errors.Is(verifyErr, context.Canceled) {
+		return verifyErr
+	}
+
+	remaining := a.state.DecrementUVRetries()
+	if err := a.storage.SaveState(a.state); err != nil {
+		return ErrStorageError
+	}
+	slog.Warn("[CTAP2] built-in user verification failed",
+		"error", verifyErr,
+		"uv_retries_remaining", remaining,
+	)
+	if remaining <= 0 {
+		return &SentinelCauseError{Sentinel: ErrUVBlocked, Cause: verifyErr}
+	}
+	return &SentinelCauseError{Sentinel: ErrUVInvalid, Cause: verifyErr}
 }
 
 // verifyPinHashAndConsumeRetryLocked implements the CTAP 2.1 §6.5.5.5
