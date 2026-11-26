@@ -406,6 +406,18 @@ var (
 )
 
 // Servicer request validation errors
+// Transparency log errors: the read verbs over the CA's transparency log.
+var (
+	// ErrTransparencyLogNotConfigured indicates a transparency-log read on a
+	// service with no log set: the server has no CA, or the log is off.
+	ErrTransparencyLogNotConfigured = errors.New("keystore: transparency log not configured")
+
+	// ErrTransparencyLogRange indicates an entry index or tree size the
+	// log's current signed tree head does not cover, or a consistency proof
+	// whose first size is zero or exceeds its second.
+	ErrTransparencyLogRange = errors.New("keystore: transparency log index or size out of range")
+)
+
 var (
 	// ErrNilRequest indicates a nil request was provided to a servicer method.
 	ErrNilRequest = errors.New("keystore: request cannot be nil")
