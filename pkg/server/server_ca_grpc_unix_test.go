@@ -152,6 +152,15 @@ func dialServerUnixGRPC(t *testing.T, s *Server) *grpc.ClientConn {
 	require.NoError(t, err)
 	roots := x509.NewCertPool()
 	roots.AddCert(leaf)
+	// With a CA and tls.server_cn the socket serves the CA-issued
+	// certificate instead (#2253): trust the one actually installed.
+	if s.unifiedTLS != nil {
+		if installed := s.unifiedTLS.cert.Load(); installed != nil && len(installed.Certificate) > 0 {
+			issued, parseErr := x509.ParseCertificate(installed.Certificate[0])
+			require.NoError(t, parseErr)
+			roots.AddCert(issued)
+		}
+	}
 
 	conn, err := grpc.NewClient("unix://"+socketPath,
 		grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12})),
