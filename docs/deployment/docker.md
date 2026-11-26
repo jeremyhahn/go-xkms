@@ -66,10 +66,6 @@ docker run -d --name xkms-server \
 Each image is tagged `go-xkms-<profile>:<VERSION>` and
 `go-xkms-<profile>:latest` (`Makefile:3497-3579`).
 
-The gRPC image's default command passes `--port` and `--data-dir`, which
-`xkmsd` does not accept (`cmd/xkmsd/main.go:105-110`); run it with
-`--config /etc/xkms/config.yaml` as the container command.
-
 ## Docker Compose
 
 ### Development Environment
@@ -530,7 +526,7 @@ curl -k https://localhost:8445/health
 ### Using CLI Tool
 
 The CLI image's entrypoint is `xkmsctl` (installed as
-`/usr/local/bin/xkms-cli`), so arguments go straight to it:
+`/usr/local/bin/xkmsctl`), so arguments go straight to it:
 
 ```bash
 # Build CLI image
