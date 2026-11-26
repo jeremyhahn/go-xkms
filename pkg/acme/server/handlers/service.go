@@ -318,6 +318,12 @@ type Params struct {
 	// device inventory updates, notifications, etc.
 	OrderFinalizeHooks *OrderFinalizeHookRegistry
 
+	// OrderFinalizeCommitHooks is the registry of hooks to execute once per
+	// finalized order after the certificate and order saves, told whether
+	// the saves succeeded. Durable state that must only exist for a
+	// delivered certificate is committed (or undone) here.
+	OrderFinalizeCommitHooks *OrderFinalizeCommitHookRegistry
+
 	// PreIssuanceHooks is the registry of hooks to execute BEFORE certificate signing.
 	// These hooks can validate compliance, attestation, or any other criteria and
 	// return an error to block certificate issuance.
@@ -521,6 +527,7 @@ type RestService struct {
 	nonceMaxUsed  int
 
 	orderFinalizeHooks  *OrderFinalizeHookRegistry
+	orderCommitHooks    *OrderFinalizeCommitHookRegistry
 	params              *Params
 	preIssuanceHooks    *PreIssuanceHookRegistry
 	preSignHooks        *OrderPreSignHookRegistry
@@ -876,6 +883,7 @@ func NewRestService(params *Params) (RestServicer, error) {
 		nonceLifetime:           nonceLifetime,
 		nonceMaxUsed:            nonceMaxUsed,
 		orderFinalizeHooks:      params.OrderFinalizeHooks,
+		orderCommitHooks:        params.OrderFinalizeCommitHooks,
 		params:                  params,
 		preIssuanceHooks:        params.PreIssuanceHooks,
 		preSignHooks:            params.OrderPreSignHooks,
@@ -921,6 +929,17 @@ func (s *RestService) SetOrderFinalizeHooks(registry *OrderFinalizeHookRegistry)
 	// Also update params for handler code that checks s.params.OrderFinalizeHooks
 	if s.params != nil {
 		s.params.OrderFinalizeHooks = registry
+	}
+}
+
+// SetOrderFinalizeCommitHooks sets the order finalize commit hook registry:
+// hooks that run after the certificate and order saves, told whether the
+// saves succeeded.
+func (s *RestService) SetOrderFinalizeCommitHooks(registry *OrderFinalizeCommitHookRegistry) {
+	s.orderCommitHooks = registry
+	// Also update params for handler code that checks s.params.OrderFinalizeCommitHooks
+	if s.params != nil {
+		s.params.OrderFinalizeCommitHooks = registry
 	}
 }
 

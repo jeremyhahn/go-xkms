@@ -68,7 +68,7 @@ func TestXkmsdMetrics_ACMERegistryReachesServerMetrics(t *testing.T) {
 			SocketPath: filepath.Join(tempDir, "xkms.sock"),
 		},
 		Logging:   config.LoggingConfig{Level: "error", Format: "json"},
-		TLS:       config.TLSConfig{Enabled: true},
+		TLS:       config.TLSConfig{Enabled: true, ServerCN: "localhost"},
 		Auth:      jwtAuthConfig(t, tempDir),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
 		Default:   config.DefaultConfig("software"),
