@@ -1,4 +1,5 @@
-package virtualdevice
+// Package fido2hid tracks CTAPHID packets so a CTAPHID_CANCEL reaches its channel's work.
+package fido2hid
 
 import (
 	"context"

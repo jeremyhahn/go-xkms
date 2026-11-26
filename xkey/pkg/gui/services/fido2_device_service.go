@@ -32,7 +32,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/presence"
 
-	hidqueue "github.com/jeremyhahn/go-xkms/pkg/fido2/virtualdevice"
+	hidqueue "github.com/jeremyhahn/go-xkms/xkey/pkg/fido2hid"
 )
 
 // fido2BridgeQueueSize bounds the HID packets waiting for the bridge worker.

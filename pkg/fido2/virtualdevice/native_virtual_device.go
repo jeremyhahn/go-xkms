@@ -144,6 +144,11 @@ type NativeVirtualDevice struct {
 
 // NewNativeVirtualDevice creates a new native virtual FIDO2 device.
 // The device uses the native Go authenticator implementation.
+// isCTAPHIDCancel reports whether packet is a CTAPHID_CANCEL init packet.
+func isCTAPHIDCancel(packet []byte) bool {
+	return len(packet) > 4 && packet[4] == 0x11|0x80
+}
+
 func NewNativeVirtualDevice(config *NativeVirtualDeviceConfig) (*NativeVirtualDevice, error) {
 	if config == nil {
 		config = &NativeVirtualDeviceConfig{}
@@ -283,7 +288,7 @@ func (d *NativeVirtualDevice) WriteContext(ctx context.Context, data []byte) (in
 	}
 
 	// CTAPHID_CANCEL must reach a command blocked inside another Write.
-	if IsCTAPHIDCancel(data) {
+	if isCTAPHIDCancel(data) {
 		d.hidHandler.HandleMessageContext(ctx, data)
 		return len(data), nil
 	}

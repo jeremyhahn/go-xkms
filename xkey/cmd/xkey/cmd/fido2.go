@@ -33,7 +33,6 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-enclave"
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/virtualdevice"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/authenticator"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/keybackend"
@@ -42,6 +41,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/cdp"
 	xkeyconfig "github.com/jeremyhahn/go-xkms/xkey/pkg/config"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/fido2hid"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/keyboard"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
@@ -1273,8 +1273,8 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 	// ends, so HandleMessage runs on a worker in arrival order while this
 	// goroutine keeps reading: a CTAPHID_CANCEL cancels the context of each
 	// queued or running packet of its channel.
-	work := make(chan *virtualdevice.HIDWork, fido2EventQueueSize)
-	pending := virtualdevice.NewHIDPending()
+	work := make(chan *fido2hid.HIDWork, fido2EventQueueSize)
+	pending := fido2hid.NewHIDPending()
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
@@ -1334,10 +1334,10 @@ func (d *fido2Device) eventLoop(ctx context.Context) error {
 			// CTAPHID_CANCEL cancels the channel's queued and running
 			// packets at once; it queues behind them only while some have
 			// not started, so it cannot overtake its target.
-			if virtualdevice.IsCTAPHIDCancel(packet) {
+			if fido2hid.IsCTAPHIDCancel(packet) {
 				if pending.Cancel(packet) {
 					select {
-					case work <- virtualdevice.NewHIDCancelWork(ctx, packet):
+					case work <- fido2hid.NewHIDCancelWork(ctx, packet):
 						continue
 					default:
 					}
