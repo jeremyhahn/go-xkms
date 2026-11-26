@@ -45,6 +45,7 @@ var tenantSentinelCodes = []struct {
 	{seal.ErrNilSystemBarrier, ErrCodeServiceUnavailable},
 	{xkms.ErrTenantPassphraseRequired, ErrCodeInvalidParams},
 	{xkms.ErrTenantSharesRequired, ErrCodeInvalidParams},
+	{xkms.ErrInvalidTenantID, ErrCodeInvalidParams},
 	// JSON-RPC has no FailedPrecondition code; these fall to the same
 	// internal floor mapKeyOpError's keyOpSentinelCodes doc explains.
 	{seal.ErrSealed, ErrCodeInternalError},

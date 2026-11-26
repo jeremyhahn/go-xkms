@@ -95,6 +95,7 @@ func createMinimalConfig(t *testing.T) *config.Config {
 		// authority gRPC uses for a unix target.
 		TLS: config.TLSConfig{
 			Enabled:              true,
+			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
 		},
 		Auth:      testJWTAuthConfig(t),
@@ -1707,6 +1708,7 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 		// authority gRPC uses for a unix target.
 		TLS: config.TLSConfig{
 			Enabled:              true,
+			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
 		},
 		Auth:      testJWTAuthConfig(t),
@@ -2725,6 +2727,7 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 		// authority gRPC uses for a unix target.
 		TLS: config.TLSConfig{
 			Enabled:              true,
+			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
 		},
 		Auth:      testJWTAuthConfig(t),
