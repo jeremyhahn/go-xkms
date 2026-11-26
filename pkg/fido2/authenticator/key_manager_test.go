@@ -72,6 +72,19 @@ func requireConcurrentKDFBudget(t *testing.T, mgr *SOPINManager, n int) {
 		"%d concurrent SO PIN derivations at %d KiB each exceed the test's Argon2id budget", n, memory)
 }
 
+// floorCostSOPINManager returns an unset SOPINManager dialled down to
+// Argon2's floor (memory >= 8*parallelism), for the subtests that fan SO PIN
+// derivations out and assert on concurrency, not on the KDF's cost, as
+// so_pin_test.go's concurrent-attempts subtest does. Every other test
+// exercises the derivation at the shipped parameters.
+func floorCostSOPINManager() *SOPINManager {
+	mgr := NewSOPINManager()
+	mgr.Iterations = 1
+	mgr.Memory = 8
+	mgr.Parallelism = 1
+	return mgr
+}
+
 // createUserPINHash generates a CTAP2-style PIN hash from a PIN string.
 // The hash is the left 16 bytes of SHA-256(PIN).
 func createUserPINHash(pin string) []byte {
@@ -2001,6 +2014,7 @@ func TestKeyManager_ConcurrentAccess(t *testing.T) {
 
 	t.Run("concurrent lock/unlock operations are safe", func(t *testing.T) {
 		state, config := createTestKeyManagerState()
+		state.SOPINManager = floorCostSOPINManager()
 		km := NewKeyManager(state, config)
 		err := km.InitializeSOPIN(testSOPIN)
 		require.NoError(t, err)
@@ -2287,6 +2301,7 @@ func TestKeyManager_InitializeSOPIN_Comprehensive(t *testing.T) {
 		configs := make([]*Config, 10)
 		for i := range states {
 			states[i], configs[i] = createTestKeyManagerState()
+			states[i].SOPINManager = floorCostSOPINManager()
 		}
 		requireConcurrentKDFBudget(t, states[0].SOPINManager, len(states))
 
