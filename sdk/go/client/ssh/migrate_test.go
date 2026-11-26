@@ -116,3 +116,51 @@ func TestMigrateLegacyStores_RefusesATenantPrefixedSource(t *testing.T) {
 		t.Fatalf("old key exists = %v, %v; want it kept", exists, err)
 	}
 }
+
+func TestMigrateLegacyStores_MigratesThroughTheSSHNamespaceView(t *testing.T) {
+	ctx := t.Context()
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	hostKey, err := gossh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatalf("public key: %v", err)
+	}
+	data, err := json.Marshal(map[string]any{
+		"v": 1, "scope": "user", "owner": "alice", "host": "example.com",
+		"fp": keys.Fingerprint(hostKey), "algo": hostKey.Type(), "pub": hostKey.Marshal(),
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	mem := storage.New()
+	// The view xkey/pkg/sshstore.ResolveBackend returns when the barrier is active.
+	view, err := storage.NewPrefixBackend(mem, "ssh/")
+	if err != nil {
+		t.Fatalf("NewPrefixBackend: %v", err)
+	}
+	if err := view.Put(ctx, legacyPinKey, data); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	daos := testutil.NewMemoryDAOFactory()
+
+	report, err := sdkssh.MigrateLegacyStores(ctx, view, daos)
+	if err != nil || report != (sdkssh.MigrateReport{Migrated: 1}) {
+		t.Fatalf("MigrateLegacyStores(ssh/ view) = %+v, %v", report, err)
+	}
+	stores, err := sdkssh.NewStores(daos)
+	if err != nil {
+		t.Fatalf("NewStores: %v", err)
+	}
+	acme, err := stores.Partition("acme")
+	if err != nil {
+		t.Fatalf("Partition: %v", err)
+	}
+	if _, err := acme.KnownHosts.Get(ctx, scope.User, "alice", "example.com"); err != nil {
+		t.Fatalf("migrated pin: %v", err)
+	}
+	if left, err := mem.List(ctx, ""); err != nil || len(left) != 0 {
+		t.Fatalf("old store keeps %v, %v; want nothing", left, err)
+	}
+}
