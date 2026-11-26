@@ -5,6 +5,8 @@ package authenticator
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -305,6 +307,33 @@ func TestGetPinUvAuthTokenUsingUv_VerifierRefusalBlocksMinting(t *testing.T) {
 	require.Equal(t, []byte{byte(StatusUVInvalid)}, resp)
 	require.Equal(t, want, auth.GetPinUvAuthToken(), "a refusal must not replace the outstanding token")
 	require.Equal(t, DefaultUVRetries-1, auth.state.UVRetries())
+}
+
+// TestGetPinUvAuthTokenUsingUv_FailureKeepsTheTokenProtocol checks that a
+// UV request refused under another PIN protocol leaves the outstanding
+// token verified under the protocol it was issued for: protocol 2's full
+// 32-byte HMAC, not protocol 1's 16 bytes.
+func TestGetPinUvAuthTokenUsingUv_FailureKeepsTheTokenProtocol(t *testing.T) {
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+	auth := newVerifyingAuthenticator(t, backend)
+
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
+	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	token := append([]byte(nil), auth.GetPinUvAuthToken()...)
+
+	backend.err = errUserNotVerified
+	reqBytes, _ = uvTokenRequest(t, auth, PINProtocol1, PINPermissionCredentialMgmt, "example.com")
+	_, err = auth.ProcessCBOR(CmdClientPIN, reqBytes)
+	require.ErrorIs(t, err, ErrUVInvalid)
+	require.Equal(t, token, auth.GetPinUvAuthToken(), "a refusal must not replace the outstanding token")
+
+	clientDataHash := sha256.Sum256([]byte("example.com request"))
+	mac := hmac.New(sha256.New, token)
+	mac.Write(clientDataHash[:])
+	require.True(t, auth.VerifyPinUvAuthToken(clientDataHash[:], mac.Sum(nil)),
+		"the outstanding protocol 2 token still verifies with its 32-byte HMAC")
 }
 
 // TestPINTokenRestoresUVRetries covers CTAP 2.1 §6.5.5.5 and §6.5.5.7.1: a
