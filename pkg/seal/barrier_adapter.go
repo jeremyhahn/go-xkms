@@ -28,8 +28,10 @@ import (
 // exist yet" from a real storage failure via errors.Is(err, ErrSecretNotFound),
 // but xkms storage backends (and the StorageBarrier wrapping them) report a
 // missing key as storage.ErrNotFound. This adapter translates that sentinel on
-// Get so tenant create/lookup behaves correctly; all other operations delegate
-// unchanged.
+// Get so tenant create/lookup behaves correctly, and forwards the guarded writes
+// go-qrdb's TenantService commits tenant records with (PutIfAllAbsent and
+// CompareAndSwap), which the embedded StorageBackend interface does not carry.
+// All other operations delegate unchanged.
 type tenantMetadataStore struct {
 	qrdbsdk.StorageBackend
 }
@@ -56,6 +58,28 @@ func (s tenantMetadataStore) PutIfAllAbsent(ctx context.Context, key string, val
 		return false, storage.ErrFencedCreateUnsupported
 	}
 	return fc.PutIfAllAbsent(ctx, key, value, fences...)
+}
+
+// guardedSwapper is the guarded swap go-qrdb's TenantService commits every
+// tenant record update through (go-qrdb v0.58 pkg/tenant record_swap.go): the
+// write lands only while the stored value still equals expected.
+type guardedSwapper interface {
+	CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error)
+}
+
+// CompareAndSwap forwards the guarded swap go-qrdb's TenantService updates a
+// tenant record with. The metadata store is the system barrier, whose own
+// CompareAndSwap compares the decrypted record with expected and hands its
+// base the ciphertext it read as the guard -- the xkms backend under
+// guardedStorageBackend, which decides it atomically. A store without the
+// capability reports storage.ErrCompareAndSwapUnsupported; there is no read
+// followed by an unguarded write.
+func (s tenantMetadataStore) CompareAndSwap(ctx context.Context, key string, expected, next []byte) (bool, error) {
+	cas, ok := s.StorageBackend.(guardedSwapper)
+	if !ok {
+		return false, storage.ErrCompareAndSwapUnsupported
+	}
+	return cas.CompareAndSwap(ctx, key, expected, next)
 }
 
 // guardedStorageBackend adapts an xkms storage.Backend to go-qrdb's

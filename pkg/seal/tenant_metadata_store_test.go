@@ -57,3 +57,44 @@ func TestTenantMetadataStore_PassesThroughValueAndOtherErrors(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 	assert.NotErrorIs(t, err, qrdbsdk.ErrSecretNotFound)
 }
+
+// fakeSwapBackend records the guarded swap it is handed and answers with a
+// fixed outcome.
+type fakeSwapBackend struct {
+	qrdbsdk.StorageBackend
+	swapped  bool
+	err      error
+	key      string
+	expected []byte
+	next     []byte
+}
+
+func (f *fakeSwapBackend) CompareAndSwap(_ context.Context, key string, expected, next []byte) (bool, error) {
+	f.key, f.expected, f.next = key, expected, next
+	return f.swapped, f.err
+}
+
+func TestTenantMetadataStore_CompareAndSwapForwards(t *testing.T) {
+	backend := &fakeSwapBackend{swapped: true}
+	store := tenantMetadataStore{backend}
+	swapped, err := store.CompareAndSwap(context.Background(), "tenants/t-1", []byte("old"), []byte("new"))
+	require.NoError(t, err)
+	assert.True(t, swapped)
+	assert.Equal(t, "tenants/t-1", backend.key)
+	assert.Equal(t, []byte("old"), backend.expected)
+	assert.Equal(t, []byte("new"), backend.next)
+
+	// A lost swap and a store failure reach the caller unchanged.
+	sentinel := errors.New("disk exploded")
+	lost := tenantMetadataStore{&fakeSwapBackend{err: sentinel}}
+	swapped, err = lost.CompareAndSwap(context.Background(), "tenants/t-1", []byte("old"), []byte("new"))
+	assert.ErrorIs(t, err, sentinel)
+	assert.False(t, swapped)
+}
+
+func TestTenantMetadataStore_CompareAndSwapRefusesStoreWithoutSwap(t *testing.T) {
+	store := tenantMetadataStore{fakeBackendGet{}}
+	swapped, err := store.CompareAndSwap(context.Background(), "tenants/t-1", []byte("old"), []byte("new"))
+	assert.ErrorIs(t, err, storage.ErrCompareAndSwapUnsupported)
+	assert.False(t, swapped)
+}
