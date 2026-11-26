@@ -310,6 +310,10 @@ type Server struct {
 	// when the log is off (see transparencyLogNodeOptions).
 	tlogKeys    *clustercapkg.KeyProvider
 	tlogSigners *tlog.HeadSignerProvider
+	// tlogService is the opened CA log, read and appended as the node's
+	// service principal; openTransparencyLog sets it and the XKMSService
+	// serves the transparency-log reads from it. Nil when the log is off.
+	tlogService *serviceTransparencyLog
 
 	// tenantService is the node's go-qrdb TenantService, built over the
 	// node's barrier registry with the node seal strategy injected. It owns the
@@ -932,6 +936,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// tenant as a SPIFFE SAN in the deployment's trust domain, the
 		// form qrdb's certificate-to-tenant rule reads (go-xkms#1240).
 		svc.SetSPIFFETrustDomain(s.TrustDomain())
+		s.wireTransparencyLog(svc)
 		stores.Wire(svc)
 		if s.tokenIssuer != nil {
 			// So DisableUser/DeleteUser can revoke every refresh-token

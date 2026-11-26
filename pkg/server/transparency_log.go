@@ -22,6 +22,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	clustercapkg "github.com/jeremyhahn/go-xkms/pkg/trust/clusterca"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // caTransparencyLogName is the CA's transparency log within the embedded
@@ -92,21 +93,74 @@ func (s *Server) openTransparencyLog(trustedCA ca.TrustedCA) error {
 	}); err != nil {
 		return &ErrTransparencyLog{Operation: "open the CA log", Err: err}
 	}
-	target.SetTransparencyLog(&serviceTransparencyLog{log: opened, callContext: s.qrdbNode.ServiceContext})
+	s.tlogService = &serviceTransparencyLog{log: opened, callContext: s.qrdbNode.ServiceContext}
+	target.SetTransparencyLog(s.tlogService)
 	s.logger.Info("CA transparency log attached", "log", cfg.Name, "origin", cfg.Origin)
 	return nil
 }
 
-// serviceTransparencyLog runs every append the CA makes as the embedded
-// node's service principal. The CA appends on the context of the request it
-// serves, which carries the caller's identity or none; the log is xkms's own
-// record, and the node's authentication chain refuses a bare context.
+// serviceTransparencyLog runs every append the CA makes, and every read the
+// XKMSService serves, as the embedded node's service principal. Both run on
+// the context of the request they serve, which carries the caller's identity
+// or none; the log is xkms's own record, the transport already authorized the
+// read against the vlog resource, and the node's authentication chain refuses
+// a bare context.
 type serviceTransparencyLog struct {
 	log         *tlog.Log
 	callContext func(context.Context) (context.Context, error)
 }
 
-var _ ca.TransparencyLog = (*serviceTransparencyLog)(nil)
+var (
+	_ ca.TransparencyLog         = (*serviceTransparencyLog)(nil)
+	_ xkms.TransparencyLogReader = (*serviceTransparencyLog)(nil)
+)
+
+// wireTransparencyLog gives svc the CA log to serve the transparency-log read
+// verbs from. With the log off or not opened, svc keeps answering
+// ErrTransparencyLogNotConfigured.
+func (s *Server) wireTransparencyLog(svc *xkms.XKMSService) {
+	if s.tlogService != nil {
+		svc.SetTransparencyLog(s.tlogService)
+	}
+}
+
+// SignedTreeHead returns the log's signed tree head as the service principal.
+func (l *serviceTransparencyLog) SignedTreeHead(ctx context.Context) (*tlog.TreeHead, error) {
+	ctx, err := l.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return l.log.SignedTreeHead(ctx)
+}
+
+// Entry returns the entry at index as the service principal.
+func (l *serviceTransparencyLog) Entry(ctx context.Context, index uint64) (tlog.Entry, []byte, error) {
+	ctx, err := l.callContext(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return l.log.Entry(ctx, index)
+}
+
+// InclusionProof returns the inclusion proof of index as the service
+// principal.
+func (l *serviceTransparencyLog) InclusionProof(ctx context.Context, index, size uint64) ([][]byte, error) {
+	ctx, err := l.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return l.log.InclusionProof(ctx, index, size)
+}
+
+// ConsistencyProof returns the consistency proof between two tree sizes as the
+// service principal.
+func (l *serviceTransparencyLog) ConsistencyProof(ctx context.Context, size1, size2 uint64) ([][]byte, error) {
+	ctx, err := l.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return l.log.ConsistencyProof(ctx, size1, size2)
+}
 
 // AppendCertIssued appends a cert-issued entry as the service principal.
 func (l *serviceTransparencyLog) AppendCertIssued(ctx context.Context, e tlog.CertIssued) (uint64, error) {

@@ -26,12 +26,16 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/require"
+	"github.com/transparency-dev/merkle/proof"
+	"github.com/transparency-dev/merkle/rfc6962"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tlogtest"
+	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
 // startTLogNode gives s a real in-memory embedded node with xkms's service
@@ -171,6 +175,75 @@ func TestServiceTransparencyLog_AppendWithoutServiceContext(t *testing.T) {
 	_, err = l.AppendRevoked(context.Background(), tlog.Revoked{Serial: big.NewInt(7), Reason: 1})
 	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
 	require.Equal(t, before, tlogtest.Size(ctx, t, opened), "a refused append records nothing")
+}
+
+// TestWireTransparencyLog_ServesReadsAsServicePrincipal proves the XKMSService
+// the server composes serves the CA log it opened: a certificate the CA
+// issues is the entry at the head, its inclusion proof verifies against the
+// head, and the head before it is consistent with the head after. Every read
+// runs on a bare context, which the node refuses: the reads succeed only
+// because the log carries the node's service principal.
+func TestWireTransparencyLog_ServesReadsAsServicePrincipal(t *testing.T) {
+	s := newTLogCAServer(t, true)
+	opts, err := s.transparencyLogNodeOptions()
+	require.NoError(t, err)
+	startTLogNode(t, s, opts)
+	require.NoError(t, s.initializeCA())
+	svc := &xkms.XKMSService{}
+	s.wireTransparencyLog(svc)
+	ctx := context.Background()
+
+	_, err = s.ca.IssueCertificate(ctx, &ca.CertificateRequest{Subject: ca.Subject{CommonName: "tlog-before"}, Valid: 30, TenantID: "tenant-a"})
+	require.NoError(t, err)
+	before, err := svc.GetTransparencyLogHead(ctx, &transport.GetTransparencyLogHeadRequest{})
+	require.NoError(t, err)
+	require.Equal(t, s.transparencyLogOrigin(), before.Origin)
+
+	issued, err := s.ca.IssueCertificate(ctx, &ca.CertificateRequest{Subject: ca.Subject{CommonName: "tlog-served"}, Valid: 30, TenantID: "tenant-a"})
+	require.NoError(t, err)
+	head, err := svc.GetTransparencyLogHead(ctx, &transport.GetTransparencyLogHeadRequest{})
+	require.NoError(t, err)
+	require.Equal(t, before.Size+1, head.Size)
+
+	index := head.Size - 1
+	entry, err := svc.GetTransparencyLogEntry(ctx, &transport.GetTransparencyLogEntryRequest{Index: index})
+	require.NoError(t, err)
+	got, body, err := s.tlogService.Entry(ctx, index)
+	require.NoError(t, err)
+	require.Equal(t, body, entry.Entry)
+	logged, ok := got.(tlog.CertIssued)
+	require.True(t, ok, "got %T", got)
+	require.Equal(t, sha256.Sum256(issued.Certificate.Raw), logged.CertSHA256)
+
+	inclusion, err := svc.GetTransparencyLogInclusionProof(ctx, &transport.GetTransparencyLogInclusionProofRequest{Index: index, TreeSize: head.Size})
+	require.NoError(t, err)
+	leaf := rfc6962.DefaultHasher.HashLeaf(entry.Entry)
+	require.NoError(t, proof.VerifyInclusion(rfc6962.DefaultHasher, index, head.Size, leaf, inclusion.Hashes, head.RootHash))
+
+	consistency, err := svc.GetTransparencyLogConsistencyProof(ctx, &transport.GetTransparencyLogConsistencyProofRequest{FirstSize: before.Size, SecondSize: head.Size})
+	require.NoError(t, err)
+	require.NoError(t, proof.VerifyConsistency(rfc6962.DefaultHasher, before.Size, head.Size, consistency.Hashes, before.RootHash, head.RootHash))
+}
+
+// TestServiceTransparencyLog_ReadWithoutServiceContext proves a read whose
+// call cannot carry the node's service principal is refused.
+func TestServiceTransparencyLog_ReadWithoutServiceContext(t *testing.T) {
+	s := newTLogCAServer(t, true)
+	opts, err := s.transparencyLogNodeOptions()
+	require.NoError(t, err)
+	startTLogNode(t, s, opts)
+	require.NoError(t, s.initializeCA())
+	l := &serviceTransparencyLog{log: s.tlogService.log, callContext: newTLogNode(t, nil).ServiceContext}
+	ctx := context.Background()
+
+	_, err = l.SignedTreeHead(ctx)
+	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
+	_, _, err = l.Entry(ctx, 0)
+	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
+	_, err = l.InclusionProof(ctx, 0, 1)
+	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
+	_, err = l.ConsistencyProof(ctx, 1, 1)
+	require.ErrorIs(t, err, qrdbnode.ErrNoServicePrincipal)
 }
 
 // The log's default follows the build: this file builds with qrdb_vlog, so
