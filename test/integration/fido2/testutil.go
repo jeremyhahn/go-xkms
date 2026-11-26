@@ -240,6 +240,8 @@ func (tc *TestConfig) RequireDevice(t *testing.T) {
 		t.Log("No hardware FIDO2 device detected; falling back to virtual FIDO2 device")
 		tc.useVirtual = true
 		tc.PIN = "" // Virtual devices don't support client-side PIN protocol
+		// The exec'd xkmsctl selects its virtual-device seam from this variable.
+		t.Setenv("FIDO2_USE_VIRTUAL", "true")
 	}
 	if tc.useVirtual {
 		// The CLI-exec tests run xkmsctl as a child process: it inherits

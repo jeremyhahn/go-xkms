@@ -70,6 +70,8 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 	// way pkg/webauthn/client's openRegistrationService does.
 	allowPublicRegistration := true
 	stores := webauthntest.NewStores(t)
+	// The ceremony enrolls a new account through the public sign-up path.
+	allowPublicRegistration := true
 	webauthnSvc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
 			RPID:                    rpID,
