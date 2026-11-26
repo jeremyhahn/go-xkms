@@ -20,7 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,72 +30,152 @@ import (
 
 // MCPClient wraps TCP connection for MCP JSON-RPC testing
 type MCPClient struct {
-	addr string
-	conn net.Conn
+	url     string
+	http    *http.Client
+	session string
+	nextID  int
 }
 
-// NewMCPClient creates a new MCP client
+// NewMCPClient opens an MCP session on the streamable HTTP endpoint at addr over TLS with the suite's client certificate.
 func NewMCPClient(addr string) (*MCPClient, error) {
-	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	c := &MCPClient{
+		url:  "https://" + addr + "/mcp",
+		http: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: clientTLSConfig()}},
+	}
+	resp, err := c.post(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      c.id(),
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2025-06-18",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo":      map[string]interface{}{"name": "xkms-integration-tests", "version": "1"},
+		},
+	})
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to connect", Err: err}
 	}
-
-	return &MCPClient{
-		addr: addr,
-		conn: conn,
-	}, nil
+	if errObj, ok := resp["error"]; ok {
+		return nil, &errs.Message{Msg: fmt.Sprintf("initialize: JSON-RPC error: %v", errObj)}
+	}
+	return c, nil
 }
 
-// Close closes the MCP connection
+// Close ends the MCP session.
 func (c *MCPClient) Close() error {
-	if c.conn != nil {
-		return c.conn.Close()
+	if c.session == "" {
+		return nil
 	}
-	return nil
+	req, err := http.NewRequest(http.MethodDelete, c.url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Mcp-Session-Id", c.session)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	return resp.Body.Close()
 }
 
-// Call sends a JSON-RPC request and returns the response
-func (c *MCPClient) Call(method string, params interface{}) (map[string]interface{}, error) {
-	request := map[string]interface{}{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  params,
-		"id":      1,
-	}
+func (c *MCPClient) id() int {
+	c.nextID++
+	return c.nextID
+}
 
-	requestBytes, err := json.Marshal(request)
+// postRaw sends body on the session and returns the HTTP status and the JSON-RPC payload.
+func (c *MCPClient) postRaw(body []byte) (int, []byte, error) {
+	req, err := http.NewRequest(http.MethodPost, c.url, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	if c.session != "" {
+		req.Header.Set("Mcp-Session-Id", c.session)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	if s := resp.Header.Get("Mcp-Session-Id"); s != "" {
+		c.session = s
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "data:") {
+				data = []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			}
+		}
+	}
+	return resp.StatusCode, data, nil
+}
+
+func (c *MCPClient) post(request map[string]interface{}) (map[string]interface{}, error) {
+	body, err := json.Marshal(request)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
 	}
-
-	// Send request with newline delimiter
-	_, err = c.conn.Write(append(requestBytes, '\n'))
+	code, data, err := c.postRaw(body)
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to send request", Err: err}
 	}
-
-	// Read response (use large buffer for responses with PEM data)
-	buf := make([]byte, 256*1024)
-	c.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	n, err := c.conn.Read(buf)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to read response", Err: err}
-	}
-
-	// Parse response
 	var response map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(buf[:n]))
-	if err := decoder.Decode(&response); err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to decode response", Err: err}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, &errs.Message{Msg: fmt.Sprintf("failed to decode response (HTTP %d): %s", code, data)}
 	}
+	return response, nil
+}
 
-	// Check for error in response
+// Call invokes the xkms tool named by method ("health" or "xkms.<op>") and returns {"result": <tool result>}.
+func (c *MCPClient) Call(method string, params interface{}) (map[string]interface{}, error) {
+	if params == nil {
+		params = map[string]interface{}{}
+	}
+	if m, ok := params.(map[string]interface{}); ok && method == "xkms.generateKey" {
+		if _, has := m["algorithm"]; !has && m["key_type"] != nil && m["key_type"] != "symmetric" {
+			m["algorithm"] = m["key_type"]
+		}
+	}
+	paramsJSON, err := json.Marshal(params)
+	if err != nil {
+		return nil, &errs.Wrapped{Msg: "failed to marshal params", Err: err}
+	}
+	response, err := c.post(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      c.id(),
+		"method":  "tools/call",
+		"params": map[string]interface{}{
+			"name":      "xkms_" + strings.TrimPrefix(method, "xkms."),
+			"arguments": map[string]interface{}{"params_json": string(paramsJSON)},
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
 	if errObj, ok := response["error"]; ok {
 		return nil, &errs.Message{Msg: fmt.Sprintf("JSON-RPC error: %v", errObj)}
 	}
-
-	return response, nil
+	result, _ := response["result"].(map[string]interface{})
+	var text string
+	if content, ok := result["content"].([]interface{}); ok && len(content) > 0 {
+		if first, ok := content[0].(map[string]interface{}); ok {
+			text, _ = first["text"].(string)
+		}
+	}
+	if isErr, _ := result["isError"].(bool); isErr {
+		return nil, &errs.Message{Msg: fmt.Sprintf("JSON-RPC error: %s", text)}
+	}
+	var decoded interface{}
+	if err := json.Unmarshal([]byte(text), &decoded); err != nil {
+		decoded = text
+	}
+	return map[string]interface{}{"jsonrpc": "2.0", "result": decoded}, nil
 }
 
 // TestMCPHealth tests the MCP health check (placeholder)
@@ -356,7 +437,7 @@ func TestMCPSignVerify(t *testing.T) {
 
 // TestMCPBatchRequests tests batch JSON-RPC requests (placeholder)
 func TestMCPBatchRequests(t *testing.T) {
-	// MCP protocol is implemented using Model Context Protocol SDK
+	// MCP 2025-06-18 removed JSON-RPC batching: a batch body is answered with a JSON-RPC error.
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
@@ -367,51 +448,32 @@ func TestMCPBatchRequests(t *testing.T) {
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
-	// Send batch request
 	batchRequest := []map[string]interface{}{
-		{
-			"jsonrpc": "2.0",
-			"method":  "health",
-			"id":      1,
-		},
-		{
-			"jsonrpc": "2.0",
-			"method":  "xkms.listBackends",
-			"id":      2,
-		},
+		{"jsonrpc": "2.0", "method": "tools/call", "id": 1, "params": map[string]interface{}{"name": "xkms_health", "arguments": map[string]interface{}{"params_json": "{}"}}},
+		{"jsonrpc": "2.0", "method": "tools/call", "id": 2, "params": map[string]interface{}{"name": "xkms_listBackends", "arguments": map[string]interface{}{"params_json": "{}"}}},
 	}
 
 	requestBytes, err := json.Marshal(batchRequest)
 	assertNoError(t, err, "Failed to marshal batch request")
 
-	_, err = client.conn.Write(append(requestBytes, '\n'))
+	code, data, err := client.postRaw(requestBytes)
 	assertNoError(t, err, "Failed to send batch request")
-
-	// Read response
-	buf := make([]byte, 8192)
-	client.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	n, err := client.conn.Read(buf)
-	assertNoError(t, err, "Failed to read batch response")
-
-	// Parse batch response
-	var batchResponse []map[string]interface{}
-	decoder := json.NewDecoder(bytes.NewReader(buf[:n]))
-	err = decoder.Decode(&batchResponse)
-	assertNoError(t, err, "Failed to decode batch response")
-
-	if len(batchResponse) != 2 {
-		t.Fatalf("Expected 2 responses, got %d", len(batchResponse))
+	if code != http.StatusBadRequest {
+		t.Fatalf("Expected HTTP 400 for a batch body, got %d: %s", code, data)
 	}
 
-	t.Logf("Batch request completed successfully with %d responses", len(batchResponse))
+	var response map[string]interface{}
+	assertNoError(t, json.NewDecoder(bytes.NewReader(data)).Decode(&response), "Failed to decode batch response")
+	if _, ok := response["error"]; !ok {
+		t.Fatalf("Expected a JSON-RPC error for a batch body, got %s", data)
+	}
+
+	t.Logf("Batch body refused with JSON-RPC error: %v", response["error"])
 }
 
 // TestMCPStreamingNotifications tests MCP streaming notifications (placeholder)
 func TestMCPStreamingNotifications(t *testing.T) {
-	// MCP streaming notifications are inherently racy in integration tests because
-	// notifications are sent asynchronously in goroutines and may arrive before,
-	// during, or after the synchronous response. This test verifies the subscribe
-	// API works but skips notification verification due to timing constraints.
+	// Notifications arrive asynchronously on the session's GET stream, so their delivery is checked best-effort.
 
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
@@ -422,13 +484,22 @@ func TestMCPStreamingNotifications(t *testing.T) {
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
-	// Subscribe to key events - verify subscribe API works
-	_, err = client.Call("xkms.subscribe", map[string]interface{}{
-		"events": []string{"key.created", "key.deleted"},
-	})
-	assertNoError(t, err, "Failed to subscribe to events")
+	req, err := http.NewRequest(http.MethodGet, client.url, nil)
+	assertNoError(t, err, "Failed to build stream request")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Mcp-Session-Id", client.session)
+	streamClient := &http.Client{Transport: client.http.Transport}
+	stream, err := streamClient.Do(req)
+	assertNoError(t, err, "Failed to open notification stream")
+	defer stream.Body.Close()
+	if stream.StatusCode != http.StatusOK {
+		t.Fatalf("Expected HTTP 200 for the notification stream, got %d", stream.StatusCode)
+	}
+	if ct := stream.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("Expected text/event-stream, got %q", ct)
+	}
 
-	// Create a key (should trigger notification)
+	// Create a key (may trigger a notification)
 	keyID := generateUniqueID("mcp-notify-key")
 	_, err = client.Call("xkms.generateKey", map[string]interface{}{
 		"key_id":   keyID,
@@ -444,33 +515,18 @@ func TestMCPStreamingNotifications(t *testing.T) {
 		})
 	}()
 
-	// Try to read notification with a short timeout.
-	// This is best-effort since notifications are asynchronous and may have
-	// already been consumed or not yet sent.
-	buf := make([]byte, 8192)
-	client.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
-	n, err := client.conn.Read(buf)
-	if err != nil {
-		// Timeout or other read error is acceptable for async notifications
-		t.Logf("Notification not received (expected for async events): %v", err)
-		t.Log("Subscribe API verified successfully; notification delivery is asynchronous")
-		return
+	lines := make(chan string, 1)
+	go func() {
+		buf := make([]byte, 8192)
+		n, _ := stream.Body.Read(buf)
+		lines <- string(buf[:n])
+	}()
+	select {
+	case event := <-lines:
+		t.Logf("Stream event: %q", event)
+	case <-time.After(500 * time.Millisecond):
+		t.Log("Notification not received (expected for async events); stream verified")
 	}
-
-	var notification map[string]interface{}
-	err = json.NewDecoder(io.Reader(bytes.NewReader(buf[:n]))).Decode(&notification)
-	if err != nil {
-		t.Logf("Could not decode notification: %v", err)
-		return
-	}
-
-	method, ok := notification["method"].(string)
-	if !ok {
-		t.Log("Notification received but missing method field")
-		return
-	}
-
-	t.Logf("Received notification: %s", method)
 }
 
 // TestMCPErrorHandling tests error handling in MCP (placeholder)

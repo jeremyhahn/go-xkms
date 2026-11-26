@@ -20,7 +20,7 @@
 set -eu
 
 CERT_DIR="${CERT_DIR:-/etc/xkms/certs}"
-CONFIG_FILE="/etc/xkms/xkmsd.yaml"
+CONFIG_FILE="${CONFIG_FILE:-/etc/xkms/xkmsd.yaml}"
 DATA_DIR="${TEST_DATA_DIR:-/data}"
 DAYS_VALID=365
 HOSTNAME_SAN="bootstrap.test"
@@ -191,9 +191,39 @@ tls:
   cert_file: ${CERT_DIR}/fullchain.crt
   key_file: ${CERT_DIR}/server.key
   ca_file: ${CERT_DIR}/ca.crt
+  # The admin API authenticates the first-boot administrator's mTLS pair;
+  # clients without a certificate (health check, bootstrap discovery) must still complete the handshake.
+  client_auth: verify
 
+# cmd/xkmsd refuses to start on any config.ComplianceGaps finding, so the
+# test config names an authenticator and a CA the way the web and
+# webauthn-browser integration configs do.
 auth:
-  enabled: false
+  enabled: true
+  type: "composite"
+
+ca:
+  identity:
+    - subject:
+        cn: "go-xkms Bootstrap Test Root CA"
+        organization: "go-xkms Bootstrap Test"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: ${DATA_DIR}/ca
 
 ratelimit:
   enabled: false
@@ -211,6 +241,9 @@ storage:
   backend: file
   path: ${DATA_DIR}
 
+datastore:
+  path: ${DATA_DIR}/datastore
+
 rng:
   mode: software
 
@@ -224,6 +257,11 @@ backends:
 barrier:
   enabled: true
   root_key_path: ${DATA_DIR}/barrier
+  # "none": the qrdb node's own barrier auto-unseals unattended at startup,
+  # as in test/integration/acmeadmin. The default "passphrase" boots sealed
+  # behind a sealed-window listener that refuses server.host=0.0.0.0 and
+  # answers /health 503 until an unseal ceremony, which this suite lacks.
+  strategy: "none"
 
 bootstrap:
   noise:
