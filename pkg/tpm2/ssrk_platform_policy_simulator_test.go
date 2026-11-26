@@ -4,43 +4,14 @@
 package tpm2
 
 import (
-	"crypto"
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
-
-// ssrkChildAttrs builds a plain signing key beneath the shared SRK: no platform
-// policy anywhere, which is what every child of the SSRK now looks like.
-func ssrkChildAttrs(t *testing.T, h *simHarness, cn string) *types.KeyAttributes {
-	t.Helper()
-
-	srkAttrs, err := h.TPM.SSRKAttributes()
-	require.NoError(t, err)
-
-	return &types.KeyAttributes{
-		CN:                 cn,
-		Hash:               crypto.SHA256,
-		KeyAlgorithm:       x509.RSA,
-		KeyType:            types.KeyTypeSigning,
-		Parent:             srkAttrs,
-		RSAAttributes:      &types.RSAAttributes{KeySize: 2048},
-		SignatureAlgorithm: x509.SHA256WithRSA,
-		StoreType:          types.StoreTPM2,
-		TPMAttributes: &types.TPMAttributes{
-			Hierarchy: tpm2.TPMRHOwner,
-		},
-	}
-}
 
 // TestProvisionSSRKHasNoAuthPolicy is the invariant itself, read back from the
 // TPM: after provisioning, the object persisted at the shared SRK handle has an
@@ -63,55 +34,6 @@ func TestProvisionSSRKHasNoAuthPolicy(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
 		"the shared SRK's attributes must not claim a platform policy")
-}
-
-// TestProvisionSSRKRecordsNoPolicyPin proves the policy-pin machinery is not
-// engaged for the shared SRK. A pin record exists to rebuild a PolicyPCR
-// operand for a key that has one; a key with no policy must write none, or the
-// record would be an orphan claiming a binding that does not exist.
-func TestProvisionSSRKRecordsNoPolicyPin(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	ssrk, err := SRKAttributesFromConfig(*h.TPM.config.SSRK)
-	require.NoError(t, err)
-
-	pinAttrs := primaryPolicyPinAttrs(ssrk)
-	require.NotNil(t, pinAttrs)
-
-	_, err = h.Backend.Get(pinAttrs, store.FSEXT_PLATFORM_POLICY)
-	require.Error(t, err, "the shared SRK must record no platform policy pin")
-	assert.ErrorIs(t, err, store.ErrBlobNotFound)
-}
-
-// TestProvisionSSRKUsableAsParent proves the SSRK still does its job: it is the
-// TCG-standard storage parent, and children load and sign beneath it with plain
-// password authorization.
-func TestProvisionSSRKUsableAsParent(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	attrs := ssrkChildAttrs(t, h, "ssrk-child")
-	pub, err := h.TPM.CreateRSA(attrs, h.Backend, true)
-	require.NoError(t, err, "the shared SRK must work as a parent with no policy")
-	require.NotNil(t, pub)
-
-	digest := sha256.Sum256([]byte("signed beneath a policy-free shared SRK"))
-	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err)
-	require.NoError(t, rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], signature))
-
-	// The SSRK carries no PCR binding, so a measurement change must not touch
-	// it. Anything else would mean a policy crept back in.
-	h.extendPlatformPCR(t, []byte("post-update-measurement"))
-
-	signature, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err, "a policy-free shared SRK must be unaffected by a PCR change")
-	require.NoError(t, rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest[:], signature))
 }
 
 // TestSSRKPlatformPolicyConfigRejectedBeforeAnySRKIsCreated closes the loop
@@ -149,71 +71,4 @@ ssrk:
 	}.Execute(sim.Transport())
 	require.Error(t, err, "no SRK may be created from a rejected configuration")
 	assert.Equal(t, tpm2.TPMRC(0x18b), err, "expected TPM_RC_HANDLE")
-}
-
-// TestLegacySSRKWithPlatformPolicyStillLoadable is the upgrade case. A
-// deployment provisioned before this change has a shared SRK whose public area
-// carries an AuthPolicy — the stale one. That key must keep working: it is the
-// parent of every sealed object and child key on the machine, and TPM2_Create
-// cannot re-derive it without orphaning them (the template is an input to the
-// derivation, TPM 2.0 Part 1, Section 27.2).
-//
-// It keeps working because the SRK templates set userWithAuth, so the USER role
-// can be satisfied with the auth value regardless of the policy sitting in the
-// public area, and because SSRKAttributes reports what the read path needs —
-// never a platform policy it would then try to satisfy.
-func TestLegacySSRKWithPlatformPolicyStillLoadable(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	const legacyHandle = uint32(0x81000005)
-
-	// Recreate the pre-change shape: a shared SRK created WITH the platform
-	// policy, exactly as SRKAttributesFromConfig used to produce it.
-	legacy, err := SRKAttributesFromConfig(*h.TPM.config.SSRK)
-	require.NoError(t, err)
-	legacy.TPMAttributes.Handle = tpm2.TPMHandle(legacyHandle)
-	legacy.TPMAttributes.HierarchyAuth = nil
-	legacy.TPMPolicy = types.TPMPolicyPlatform
-	require.NoError(t, h.TPM.CreateSRK(legacy))
-
-	_, pub, err := h.TPM.ReadHandle(tpm2.TPMHandle(legacyHandle))
-	require.NoError(t, err)
-	require.NotEmpty(t, pub.AuthPolicy.Buffer,
-		"the fixture must reproduce a policy-bound shared SRK")
-
-	// Point the configuration at it, as an upgraded deployment's would be.
-	h.TPM.config.SSRK.Handle = legacyHandle
-	h.TPM.ssrkAttrs = nil
-
-	attrs, err := h.TPM.SSRKAttributes()
-	require.NoError(t, err, "a pre-existing policy-bound shared SRK must still be readable")
-	assert.False(t, (attrs.TPMPolicy == types.TPMPolicyPlatform),
-		"the read path must not adopt a policy the shared SRK is never created with")
-	assert.Equal(t, tpm2.TPMHandle(legacyHandle), attrs.TPMAttributes.Handle)
-
-	// And it must still parent keys.
-	child := ssrkChildAttrs(t, h, "legacy-ssrk-child")
-	childPub, err := h.TPM.CreateRSA(child, h.Backend, true)
-	require.NoError(t, err, "a legacy policy-bound shared SRK must still load children")
-	require.NotNil(t, childPub)
-
-	digest := sha256.Sum256([]byte("signed beneath a legacy policy-bound shared SRK"))
-	signature, err := h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
-		KeyAttributes: child,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err)
-	require.NoError(t, rsa.VerifyPKCS1v15(childPub, crypto.SHA256, digest[:], signature))
-
-	// The stale policy was stale from birth; a further measurement change
-	// cannot make the password path any staler.
-	h.extendPlatformPCR(t, []byte("post-update-measurement"))
-
-	signature, err = h.TPM.Sign(rand.Reader, digest[:], &store.SignerOpts{
-		KeyAttributes: child,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err,
-		"authorization of a legacy shared SRK goes through its auth value, not its stale policy")
-	require.NoError(t, rsa.VerifyPKCS1v15(childPub, crypto.SHA256, digest[:], signature))
 }

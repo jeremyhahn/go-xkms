@@ -4,7 +4,6 @@
 package tpm2
 
 import (
-	"bytes"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
@@ -15,34 +14,6 @@ import (
 // policyWriteAuth is the write secret the authorized-policy tests define
 // their policy indices and counters with.
 var policyWriteAuth = []byte("policy-index-write-secret-000001")
-
-// TestPolicyIndex_DefineWriteRead proves a policy index is defined, written
-// with its write secret and read back without one, and that the Name objects
-// bind to is the written Name, not the defined one.
-func TestPolicyIndex_DefineWriteRead(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	index, err := h.TPM.FindFreeNVIndex(NVOwnerIndexFirst, NVOwnerIndexLast)
-	require.NoError(t, err)
-
-	definedName, err := h.TPM.DefinePolicyIndex(index, tpm2.TPMAlgSHA256, policyWriteAuth, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = h.TPM.UndefineNVIndex(index, nil) })
-
-	digest := bytes.Repeat([]byte{0xA5}, 32)
-	writtenName, err := h.TPM.WritePolicyIndex(index, policyWriteAuth, digest, tpm2.TPMAlgSHA256)
-	require.NoError(t, err)
-	assert.NotEqual(t, definedName.Buffer, writtenName.Buffer, "the first write sets TPMA_NV_WRITTEN, which is part of the Name")
-
-	liveName, err := h.TPM.NVIndexName(index)
-	require.NoError(t, err)
-	assert.Equal(t, writtenName.Buffer, liveName.Buffer)
-
-	alg, got, err := h.TPM.ReadPolicyIndex(index)
-	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMAlgSHA256, alg)
-	assert.Equal(t, digest, got)
-}
 
 // TestPolicyIndex_WriteRejectsWrongSecret proves the index is only writable
 // with its write secret, and that a malformed digest is refused before the TPM

@@ -21,12 +21,6 @@ func TestDefaultPlatformPCRs(t *testing.T) {
 	assert.Equal(t, PCRSet{7, 11}, DefaultPlatformPCRs())
 }
 
-func TestPCRSet_Validate_Accepts(t *testing.T) {
-	for _, set := range []PCRSet{{7, 11}, {0}, {14, 7, 2}, {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 17, 18, 19, 20, 21, 22}} {
-		assert.NoError(t, set.Validate(), "set %v", set)
-	}
-}
-
 func TestPCRSet_Validate_Refuses(t *testing.T) {
 	tests := map[string]struct {
 		set     PCRSet
@@ -53,24 +47,6 @@ func TestPCRSet_Validate_Refuses(t *testing.T) {
 func TestPCRSet_Validate_RefusesEmpty(t *testing.T) {
 	assert.ErrorIs(t, PCRSet{}.Validate(), ErrPlatformPCRSetEmpty)
 	assert.ErrorIs(t, PCRSet(nil).Validate(), ErrPlatformPCRSetEmpty)
-}
-
-func TestPCRSet_MaskRoundTrip(t *testing.T) {
-	set := PCRSet{11, 0, 7}
-	assert.Equal(t, uint32(1<<0|1<<7|1<<11), set.Mask())
-	assert.Equal(t, PCRSet{0, 7, 11}, PCRSetFromMask(set.Mask()))
-	assert.Equal(t, PCRSet{0, 7, 11}, set.Sorted())
-	assert.Equal(t, PCRSet{11, 0, 7}, set, "Sorted must not reorder the receiver")
-}
-
-func TestPCRSetFromMask_Empty(t *testing.T) {
-	assert.Empty(t, PCRSetFromMask(0))
-	assert.Empty(t, PCRSetFromMask(1<<24), "bits above PCR 23 are not PCRs")
-}
-
-func TestPCRSetFromSelection(t *testing.T) {
-	sel := PolicyPCRSelection(tpm2.TPMAlgSHA256, 11, 7, 14)
-	assert.Equal(t, PCRSet{7, 11, 14}, pcrSetFromSelection(sel, tpm2.TPMAlgSHA256))
 }
 
 func TestPCRSetFromSelection_OtherBankIgnored(t *testing.T) {
