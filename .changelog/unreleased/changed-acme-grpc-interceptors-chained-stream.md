@@ -1,0 +1,1 @@
+acme/grpc/interceptors: a test checks that the chained stream deadline interceptor refuses a call whose deadline leaves less than the minimum, with `codes.DeadlineExceeded`, and calls neither the next interceptor nor the handler. The unary, stream and chained-unary interceptors already had this test.

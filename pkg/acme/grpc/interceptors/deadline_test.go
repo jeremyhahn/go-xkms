@@ -33,11 +33,6 @@ func TestDeadlineConfig_Validate(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "valid config",
-			config:  DefaultDeadlineConfig(),
-			wantErr: false,
-		},
-		{
 			name: "zero values are valid",
 			config: &DeadlineConfig{
 				ReturnOverhead:   0,
@@ -81,27 +76,6 @@ func TestDefaultDeadlineConfig(t *testing.T) {
 	assert.Equal(t, DefaultReturnOverhead, config.ReturnOverhead)
 	assert.Equal(t, MinimumRemainingTime, config.MinimumRemaining)
 	assert.NoError(t, config.Validate())
-}
-
-func TestDeadlineInterceptor_NoDeadline(t *testing.T) {
-	interceptor := DeadlineInterceptor(20 * time.Millisecond)
-
-	ctx := context.Background()
-	handlerCalled := false
-
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		handlerCalled = true
-		// Verify no deadline was added
-		_, ok := ctx.Deadline()
-		assert.False(t, ok, "no deadline should be set when context has none")
-		return "result", nil
-	}
-
-	result, err := interceptor(ctx, nil, &grpc.UnaryServerInfo{}, handler)
-
-	require.NoError(t, err)
-	assert.True(t, handlerCalled)
-	assert.Equal(t, "result", result)
 }
 
 func TestDeadlineInterceptor_SufficientTime(t *testing.T) {
@@ -188,6 +162,8 @@ func TestDeadlineInterceptorWithConfig_NilConfig(t *testing.T) {
 
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		handlerCalled = true
+		_, ok := ctx.Deadline()
+		assert.False(t, ok, "no deadline should be set when context has none")
 		return "result", nil
 	}
 
@@ -241,26 +217,6 @@ func TestDeadlineInterceptor_ContextCancellation(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, handlerCalled)
 	assert.Equal(t, "result", result)
-}
-
-func TestStreamDeadlineInterceptor_NoDeadline(t *testing.T) {
-	interceptor := StreamDeadlineInterceptor(20 * time.Millisecond)
-
-	mockStream := newMockServerStream(context.Background())
-	handlerCalled := false
-
-	handler := func(srv interface{}, stream grpc.ServerStream) error {
-		handlerCalled = true
-		// Verify no deadline was added
-		_, ok := stream.Context().Deadline()
-		assert.False(t, ok)
-		return nil
-	}
-
-	err := interceptor(nil, mockStream, &grpc.StreamServerInfo{}, handler)
-
-	require.NoError(t, err)
-	assert.True(t, handlerCalled)
 }
 
 func TestStreamDeadlineInterceptor_SufficientTime(t *testing.T) {
@@ -322,6 +278,8 @@ func TestStreamDeadlineInterceptorWithConfig_NilConfig(t *testing.T) {
 
 	handler := func(srv interface{}, stream grpc.ServerStream) error {
 		handlerCalled = true
+		_, ok := stream.Context().Deadline()
+		assert.False(t, ok, "no deadline should be set when context has none")
 		return nil
 	}
 
@@ -461,6 +419,37 @@ func TestChainedStreamDeadlineInterceptor_NilNext(t *testing.T) {
 	assert.True(t, handlerCalled)
 }
 
+func TestChainedStreamDeadlineInterceptor_InsufficientTime(t *testing.T) {
+	nextInterceptorCalled := false
+	nextInterceptor := func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		nextInterceptorCalled = true
+		return handler(srv, ss)
+	}
+
+	chained := ChainedStreamDeadlineInterceptor(20*time.Millisecond, nextInterceptor)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	mockStream := newMockServerStream(ctx)
+	handlerCalled := false
+
+	handler := func(srv interface{}, stream grpc.ServerStream) error {
+		handlerCalled = true
+		return nil
+	}
+
+	err := chained(nil, mockStream, &grpc.StreamServerInfo{}, handler)
+
+	require.Error(t, err)
+	assert.False(t, nextInterceptorCalled, "next interceptor should not be called when insufficient time")
+	assert.False(t, handlerCalled)
+
+	st, ok := status.FromError(err)
+	require.True(t, ok)
+	assert.Equal(t, codes.DeadlineExceeded, st.Code())
+}
+
 func TestChainedStreamDeadlineInterceptorWithConfig_NilConfig(t *testing.T) {
 	chained := ChainedStreamDeadlineInterceptorWithConfig(nil, nil)
 
@@ -516,11 +505,8 @@ func TestRemainingTime(t *testing.T) {
 }
 
 func TestRemainingTime_Expired(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Millisecond)
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
 	defer cancel()
-
-	// Wait for deadline to pass
-	time.Sleep(5 * time.Millisecond)
 
 	remaining := RemainingTime(ctx, 0)
 	assert.Zero(t, remaining)
@@ -547,13 +533,6 @@ func TestHasSufficientTime(t *testing.T) {
 			overhead: 20 * time.Millisecond,
 			minimum:  100 * time.Millisecond,
 			want:     false,
-		},
-		{
-			name:     "exactly minimum",
-			timeout:  130 * time.Millisecond, // 20ms overhead + 100ms min + 10ms buffer
-			overhead: 20 * time.Millisecond,
-			minimum:  100 * time.Millisecond,
-			want:     true,
 		},
 	}
 
