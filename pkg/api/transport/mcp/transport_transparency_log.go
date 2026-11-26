@@ -64,3 +64,16 @@ func (t *Transport) GetTransparencyLogConsistencyProof(ctx context.Context, req 
 	}
 	return &result, nil
 }
+
+// AppendTransparencyLogExternal appends an external entry under the caller's
+// SPIFFE ID, which the server reads from this client's certificate.
+func (t *Transport) AppendTransparencyLogExternal(ctx context.Context, req *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	if req == nil {
+		return nil, transport.ErrInvalidRequest
+	}
+	var result transport.AppendTransparencyLogExternalResponse
+	if err := t.rpcCall(ctx, "xkms.ca.transparency-log.append", req, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}

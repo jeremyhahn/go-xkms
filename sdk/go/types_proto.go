@@ -210,6 +210,12 @@ type ProtoGetTransparencyLogConsistencyProofRequest = xkmspb.GetTransparencyLogC
 // ProtoGetTransparencyLogConsistencyProofResponse is the gRPC consistency proof response.
 type ProtoGetTransparencyLogConsistencyProofResponse = xkmspb.GetTransparencyLogConsistencyProofResponse
 
+// ProtoAppendTransparencyLogExternalRequest is the gRPC external append request.
+type ProtoAppendTransparencyLogExternalRequest = xkmspb.AppendTransparencyLogExternalRequest
+
+// ProtoAppendTransparencyLogExternalResponse is the gRPC external append response.
+type ProtoAppendTransparencyLogExternalResponse = xkmspb.AppendTransparencyLogExternalResponse
+
 // ==========================================================================
 // PIN Management
 // ==========================================================================

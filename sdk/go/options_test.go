@@ -248,6 +248,10 @@ func (m *mockService) GetTransparencyLogConsistencyProof(ctx context.Context, re
 	return nil, nil
 }
 
+func (m *mockService) AppendTransparencyLogExternal(ctx context.Context, req *AppendTransparencyLogExternalRequest) (*AppendTransparencyLogExternalResponse, error) {
+	return nil, nil
+}
+
 func (m *mockService) GetCACertificate(ctx context.Context, req *GetCACertificateRequest) (*GetCACertificateResponse, error) {
 	return nil, nil
 }

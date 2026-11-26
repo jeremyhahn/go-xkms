@@ -14,6 +14,7 @@
 package rest
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -92,6 +93,19 @@ func (h *TransparencyLogHandlers) ConsistencyProofHandler(w http.ResponseWriter,
 	req := transport.GetTransparencyLogConsistencyProofRequest{FirstSize: firstSize, SecondSize: secondSize}
 	resp, err := h.servicer.GetTransparencyLogConsistencyProof(r.Context(), &req)
 	respondClassified(w, resp, err, http.StatusOK, transparencyLogClassOf)
+}
+
+// AppendExternalHandler appends an external entry under the caller's SPIFFE
+// ID, which the service reads from the connection's verified TLS client
+// certificate. POST /ca/transparency-log/entries.
+func (h *TransparencyLogHandlers) AppendExternalHandler(w http.ResponseWriter, r *http.Request) {
+	var req transport.AppendTransparencyLogExternalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, ErrInvalidRequest, http.StatusBadRequest)
+		return
+	}
+	resp, err := h.servicer.AppendTransparencyLogExternal(peerTLSContext(r), &req)
+	respondClassified(w, resp, err, http.StatusCreated, transparencyLogClassOf)
 }
 
 // parseUint parses s, a required path or query parameter, as a uint64,

@@ -102,6 +102,25 @@ func (s *Service) GetTransparencyLogConsistencyProof(ctx context.Context, req *p
 	return &pb.GetTransparencyLogConsistencyProofResponse{FirstSize: resp.FirstSize, SecondSize: resp.SecondSize, Hashes: resp.Hashes}, nil
 }
 
+// AppendTransparencyLogExternal appends an external entry under the caller's
+// SPIFFE ID. The service reads that ID from the call's verified TLS client
+// certificate, so ctx carries the peer's TLS state.
+func (s *Service) AppendTransparencyLogExternal(ctx context.Context, req *pb.AppendTransparencyLogExternalRequest) (*pb.AppendTransparencyLogExternalResponse, error) {
+	if err := s.authorize(ctx, auth.ResourceVlog, auth.ActionAppend, ""); err != nil {
+		return nil, err
+	}
+	if err := s.requireTransparencyLog(); err != nil {
+		return nil, err
+	}
+	resp, err := s.xkmsService.AppendTransparencyLogExternal(peerTLSContext(ctx), &transport.AppendTransparencyLogExternalRequest{
+		Payload: req.GetPayload(),
+	})
+	if err != nil {
+		return nil, mapTransparencyLogError(err)
+	}
+	return &pb.AppendTransparencyLogExternalResponse{Index: resp.Index}, nil
+}
+
 // requireTransparencyLog reports Unavailable when the xkms service is not
 // wired.
 func (s *Service) requireTransparencyLog() error {
