@@ -6,7 +6,7 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha // held: v0.58.2-alpha needs a go-enclave beyond v0.8.0-alpha, and the go-enclave replace holds v0.8.0-alpha; lift with that replace
 	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: v0.7.1-alpha needs go-enclave v0.10.0-alpha, and the go-enclave replace holds v0.8.0-alpha; lift with that replace
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/mark3labs/mcp-go v1.5.0
