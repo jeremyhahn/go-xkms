@@ -1031,6 +1031,10 @@ func (m *Module) initializeClient() error {
 func (m *Module) buildTransportOptions(address string) []transport.Option {
 	opts := []transport.Option{
 		transport.WithAddress(address),
+		// Validate already refused a TLS-disabled remote target without
+		// the module's own opt-out; carry that decision to the transport's
+		// guard (ruling 152).
+		transport.WithAllowInsecureTransport(m.config.AllowInsecureTransport),
 	}
 
 	if m.config.TLS.Enabled {

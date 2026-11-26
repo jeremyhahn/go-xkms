@@ -103,10 +103,23 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 	// Remove trailing slash
 	baseURL = strings.TrimSuffix(baseURL, "/")
 
-	return &Transport{
+	t := &Transport{
 		config:  cfg,
 		baseURL: baseURL,
-	}, nil
+	}
+	if err := t.requireSecureChannel(); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// requireSecureChannel refuses any base URL that is not https:// unless the
+// configuration opts out (ruling 152): the REST client dials TCP only, and
+// over http:// the bearer token, headers and every PIN, password and
+// registry credential a request carries would cross the network in the
+// clear.
+func (t *Transport) requireSecureChannel() error {
+	return t.config.RequireSecureChannel("rest", !strings.HasPrefix(t.baseURL, "https://"))
 }
 
 // Connect establishes a connection to the xkms server via REST.

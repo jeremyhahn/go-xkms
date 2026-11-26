@@ -134,6 +134,10 @@ type BackendConfig struct {
 	JWTToken string
 	// Headers are additional HTTP headers to send with requests.
 	Headers map[string]string
+	// AllowInsecureTransport lets a gRPC or REST client reach a non-unix
+	// endpoint with TLS disabled. Loopback tests and dev setups only, never
+	// production; see transport.EnvAllowInsecureTransport.
+	AllowInsecureTransport bool
 	// Service is the embedded service implementation (only for ProtocolEmbedded).
 	Service XKMSServicer
 }
@@ -211,6 +215,9 @@ func optsFromConfig(cfg *BackendConfig, address string) ([]transport.Option, err
 	}
 	if len(cfg.Headers) > 0 {
 		opts = append(opts, transport.WithHeaders(cfg.Headers))
+	}
+	if cfg.AllowInsecureTransport {
+		opts = append(opts, transport.WithAllowInsecureTransport(true))
 	}
 
 	return opts, nil

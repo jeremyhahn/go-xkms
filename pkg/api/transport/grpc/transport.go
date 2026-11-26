@@ -69,10 +69,7 @@ func New(opts ...transport.Option) (*Transport, error) {
 	if err := transport.ApplyOptions(cfg, opts...); err != nil {
 		return nil, err
 	}
-
-	return &Transport{
-		config: cfg,
-	}, nil
+	return NewWithConfig(cfg)
 }
 
 // NewWithConfig creates a new gRPC transport with the given configuration.
@@ -81,9 +78,23 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 		cfg = transport.DefaultConfig()
 	}
 
-	return &Transport{
+	t := &Transport{
 		config: cfg,
-	}, nil
+	}
+	if err := t.requireSecureChannel(); err != nil {
+		return nil, err
+	}
+	return t, nil
+}
+
+// requireSecureChannel refuses a TLS-disabled dial target other than a unix
+// socket unless the configuration opts out (ruling 152): gRPC without TLS
+// dials with insecure credentials, so the bearer token and every PIN,
+// password and registry credential a request carries would cross the
+// network in the clear.
+func (t *Transport) requireSecureChannel() error {
+	plaintext := !t.config.TLSEnabled && !transport.IsUnixEndpoint(t.config.Address)
+	return t.config.RequireSecureChannel("grpc", plaintext)
 }
 
 // transportCredentialsOption builds the grpc.DialOption carrying this

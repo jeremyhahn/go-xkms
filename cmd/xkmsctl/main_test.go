@@ -15,8 +15,11 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"os"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -29,4 +32,29 @@ func TestRun_PrintsCommandError(t *testing.T) {
 
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr.String(), "unknown flag: --no-such-flag")
+}
+
+// TestMain opts the package's tests out of the mandatory-TLS guard: they
+// build plaintext clients for the loopback defaults, the one use the
+// opt-out exists for (ruling 152).
+func TestMain(m *testing.M) {
+	if err := os.Setenv(transport.EnvAllowInsecureTransport, "true"); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
+func TestConfig_CreateClientRefusesPlaintextWithoutOptOut(t *testing.T) {
+	t.Setenv(transport.EnvAllowInsecureTransport, "")
+
+	for _, protocol := range []string{"grpc", "rest"} {
+		t.Run(protocol, func(t *testing.T) {
+			cfg := NewConfig()
+			cfg.Protocol = protocol
+
+			if _, err := cfg.CreateClient(); !errors.Is(err, transport.ErrInsecureTransport) {
+				t.Fatalf("CreateClient(%s) error = %v, want ErrInsecureTransport", protocol, err)
+			}
+		})
+	}
 }
