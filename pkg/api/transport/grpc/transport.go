@@ -66,8 +66,11 @@ type Transport struct {
 	// decision, whether the channel it established is plaintext. The
 	// secure-channel guard reads them once set, since the caller may change
 	// TLSEnabled on its Config after Connect without changing the channel.
+	// dialedTarget is the address Connect dialed, for the same reason: the
+	// caller may change Address after Connect without changing the channel.
 	dialed           bool
 	plaintextChannel bool
+	dialedTarget     string
 }
 
 // New creates a new gRPC transport with the given options.
@@ -100,6 +103,9 @@ func NewWithConfig(cfg *transport.Config) (*Transport, error) {
 // password and registry credential a request carries would cross the
 // network in the clear.
 func (t *Transport) requireSecureChannel() error {
+	if t.dialed {
+		return t.requireSecureTarget(t.dialedTarget)
+	}
 	return t.requireSecureTarget(t.config.Address)
 }
 
@@ -190,6 +196,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	t.credsOpt = credsOpt
 	t.dialed = true
 	t.plaintextChannel = plaintext
+	t.dialedTarget = t.config.Address
 
 	opts := []grpc.DialOption{
 		credsOpt,
@@ -198,7 +205,7 @@ func (t *Transport) Connect(ctx context.Context) error {
 	opts = append(opts, t.authDialOptions()...)
 
 	// Connect to the server
-	conn, err := grpc.NewClient(t.config.Address, opts...)
+	conn, err := grpc.NewClient(t.dialedTarget, opts...)
 	if err != nil {
 		return &errs.Detail{Err: ErrConnectionFailed, Detail: fmt.Sprintf("%v", err)}
 	}
