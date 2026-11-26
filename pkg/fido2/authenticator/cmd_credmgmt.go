@@ -430,8 +430,10 @@ func (a *Authenticator) verifyCredMgmtAuth(req *CredentialManagementRequest) err
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	// Check if PIN is set.
-	if !a.isPINSetLocked() {
+	// A token minted by built-in user verification (CTAP 2.1 §6.5.5.7.3)
+	// authorizes credential management on an authenticator with no PIN, so
+	// the missing PIN is the answer only when no usable token exists either.
+	if !a.isPINSetLocked() && !a.pinUvAuthTokenUsableLocked(time.Now()) {
 		return ErrPINNotSet
 	}
 

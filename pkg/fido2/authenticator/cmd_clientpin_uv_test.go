@@ -156,6 +156,52 @@ func TestGetPinUvAuthTokenUsingUv_AuthenticatorWidePermissionNamesNoRP(t *testin
 	}
 }
 
+// TestGetPinUvAuthTokenUsingUv_TokenDrivesCredentialManagementWithoutPIN
+// spends a token minted by built-in user verification on an authenticator
+// that has no PIN: credential management accepts it rather than answering
+// CTAP2_ERR_PIN_NOT_SET before the token is ever checked.
+func TestGetPinUvAuthTokenUsingUv_TokenDrivesCredentialManagementWithoutPIN(t *testing.T) {
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+	auth := newVerifyingAuthenticator(t, backend)
+	auth.config.EnableCredentialManagement = true
+	require.False(t, auth.IsPINSet())
+
+	cred := createCredMgmtTestCredential(t, "example.com", "Example", "user1", "alice", "Alice", true)
+	require.NoError(t, auth.storage.Store(cred))
+
+	reqBytes, key := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "")
+	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	var body map[int][]byte
+	require.NoError(t, cbor.Unmarshal(resp[1:], &body))
+	token, err := decryptData(key, PINProtocol2, body[clientPINResponseKeyPinUvAuthToken])
+	require.NoError(t, err)
+
+	data := buildCredMgmtRequestV2(t, token, CredMgmtDeleteCredential, map[int]interface{}{
+		credMgmtParamCredentialID: map[string]interface{}{"type": "public-key", "id": cred.CredentialID},
+	})
+	resp, err = auth.ProcessCBOR(CmdCredentialManagement, data)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+
+	_, err = auth.storage.Load(cred.CredentialID)
+	require.ErrorIs(t, err, ErrCredentialNotFound)
+}
+
+// TestCredentialManagementWithoutPINOrToken keeps CTAP2_ERR_PIN_NOT_SET for a
+// request no token can authorize on an authenticator with no PIN.
+func TestCredentialManagementWithoutPINOrToken(t *testing.T) {
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+	auth := newVerifyingAuthenticator(t, backend)
+	auth.config.EnableCredentialManagement = true
+
+	data := buildCredMgmtRequestV2(t, make([]byte, PINTokenSize), CredMgmtEnumerateRPsBegin, nil)
+	resp, err := auth.ProcessCBOR(CmdCredentialManagement, data)
+	require.ErrorIs(t, err, ErrPINNotSet)
+	require.Equal(t, byte(StatusPINNotSet), resp[0])
+}
+
 // TestGetPinUvAuthTokenUsingUv_NoRPAsksWithoutOne pins that a request for
 // permissions that are not RP-scoped, which carries no rpId, reaches the
 // verifier with an empty RP ID rather than one the platform did not send.
