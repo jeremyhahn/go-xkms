@@ -170,6 +170,8 @@ type CTAPHIDHandler struct {
 	// to abort blocking operations (e.g., user presence prompts) when the host
 	// sends CTAPHID_CANCEL.
 	cancelCBOR context.CancelFunc
+	// cborCID is the channel of the command cancelCBOR belongs to.
+	cborCID uint32
 
 	mu sync.Mutex
 }
@@ -491,7 +493,13 @@ func (h *CTAPHIDHandler) handleCancel(cid uint32) {
 
 	// Cancel the in-flight CBOR command context. This unblocks any pending
 	// user presence request, causing it to return context.Canceled.
-	if h.cancelCBOR != nil {
+	// A CANCEL on an unknown channel, or on one without the active command,
+	// leaves the active ceremony running.
+	if _, known := h.channels[cid]; !known || cid == CIDBroadcast {
+		debugHIDLog("handleCancel: ignoring CANCEL on unknown channel 0x%08x", cid)
+		return
+	}
+	if h.cancelCBOR != nil && h.cborCID == cid {
 		h.cancelCBOR()
 		h.cancelCBOR = nil
 	}
@@ -537,6 +545,7 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 	// authenticatorSelection is bound to the channel it arrived on.
 	ctx, cancel := context.WithCancel(WithCTAPHIDChannel(context.Background(), cid))
 	h.cancelCBOR = cancel
+	h.cborCID = cid
 
 	// Multi-authenticator coexistence: when this authenticator has no
 	// matching credentials for a GetAssertion request AND the request
@@ -608,7 +617,9 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 		h.mu.Lock()
 
 		cancel()
-		h.cancelCBOR = nil
+		if h.cborCID == cid {
+			h.cancelCBOR = nil
+		}
 
 		// The GetAssertion never reached the authenticator, so it did not
 		// consume a Selection presence grant on this channel. Revoke it on
@@ -679,7 +690,9 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 
 	// Clear the cancel function now that the command has completed.
 	cancel()
-	h.cancelCBOR = nil
+	if h.cborCID == cid {
+		h.cancelCBOR = nil
+	}
 
 	if err != nil {
 		debugHIDLog("processCBORCommandLocked: ProcessCBOR error: %v", err)
