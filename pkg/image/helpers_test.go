@@ -218,7 +218,7 @@ type testIssuer struct {
 	err     error
 }
 
-func (i *testIssuer) SignCSRRaw(_ context.Context, csrPEM []byte, profile string, _ int, tenantID string) (*x509.Certificate, error) {
+func (i *testIssuer) SignCSRUnstored(_ context.Context, csrPEM []byte, profile string, _ int, tenantID string) (*x509.Certificate, error) {
 	if i.err != nil {
 		return nil, i.err
 	}
