@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -148,6 +149,45 @@ func TestVerifyUser_UnansweredExchangeIsUnavailable(t *testing.T) {
 	err := backend.VerifyUser(context.Background(), "example.com")
 	require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// TestVerifyUser_SilentPhoneIsBoundedByTheDeadline pins the verify-user
+// deadline: a phone that never answers, called with a context that has no
+// deadline of its own (the authenticator's command context), still ends the
+// exchange within verifyUserTimeout, as an unavailable verification.
+func TestVerifyUser_SilentPhoneIsBoundedByTheDeadline(t *testing.T) {
+	if !noiseOutsideFIPS(t) {
+		return
+	}
+	saved := verifyUserTimeout
+	verifyUserTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { verifyUserTimeout = saved })
+
+	client, _ := establishedNoiseSessionPair(t)
+	backend := &PhoneKeyBackend{
+		cfg: &PhoneKeyBackendConfig{VerifyUser: func(ctx context.Context, exchange pairingproto.RPCExchange, _ []byte, _ string) error {
+			_, err := exchange(ctx, pairingproto.NewRequest(pairingproto.MethodLocalVerifyUser, nil))
+			return err
+		}},
+		session: client,
+		transport: &scriptedTransport{respond: func(ctx context.Context, _ []byte) ([]byte, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	backend.connected.Store(true)
+
+	done := make(chan error, 1)
+	go func() { done <- backend.VerifyUser(context.Background(), "example.com") }()
+
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, keybackend.ErrUserVerificationUnavailable)
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(5 * time.Second):
+		t.Fatal("VerifyUser waited past its deadline on a phone that never answers")
+	}
 }
 
 // TestVerifyUser_UnreadableStatusListIsUnavailable proves an answer that could
