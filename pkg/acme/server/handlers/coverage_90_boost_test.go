@@ -17,6 +17,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,8 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ========================================
@@ -80,6 +83,62 @@ func (m *MockStorageFactoryWithAccountDAO) AccountDAO() (qrdbsdk.GenericDAO[*ent
 	return m.Factory.AccountDAO()
 }
 
+func TestAccountHandler_AccountDAOCreationFailure(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	// Replace factory with failing one after account creation
+	mockFactory := &MockStorageFactoryWithAccountDAO{
+		Factory:       service.storageFactory,
+		failAccountDA: true,
+	}
+	service.storageFactory = mockFactory
+
+	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
+	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.AccountHandler(resp, req)
+
+	// parseKID calls AccountDAO first, so when it fails, we get MalformedError not ServerInternal
+	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
+}
+
+func TestAccountHandler_SaveFailure(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	// Create mock DAO that fails on save
+	mockAccountDAO := &MockAccountDAOFailingSave{
+		account: account,
+		saveErr: caerrors.StorageFailureError("mock save error"),
+	}
+	mockFactory := &MockStorageFactoryWithAccountDAO{
+		Factory:    service.storageFactory,
+		accountDAO: mockAccountDAO,
+	}
+	service.storageFactory = mockFactory
+
+	// Send status update to trigger save
+	payload := AccountRequest{
+		Status: common.StatusDeactivated,
+	}
+
+	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.AccountHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+}
+
 func TestAccountHandler_ContactUpdateSaveFailure(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
@@ -103,6 +162,27 @@ func TestAccountHandler_ContactUpdateSaveFailure(t *testing.T) {
 
 	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
 	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.AccountHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+}
+
+func TestAccountHandler_NonceGenerationFailure(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	// Set failing nonce generator
+	service.SetNonceGenerator(func() (string, error) {
+		return "", caerrors.InternalServerError("mock nonce generation failure")
+	})
+
+	url := fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID)
+	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
 
 	resp := httptest.NewRecorder()
 	service.AccountHandler(resp, req)
@@ -258,6 +338,87 @@ func TestAuthorizationHandler_PostUnauthorizedAccessFromDifferentAccount(t *test
 	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
 }
 
+func TestAuthorizationHandler_GetSuccessfulRetrieval(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	order := createTestOrderSimple(t, service, account.ID)
+	authz := createTestAuthorization(t, service, account, order, entities.ACMEIdentifier{
+		Type:  "dns",
+		Value: "get-success.example.com",
+	}, []string{"http-01"})
+
+	url := fmt.Sprintf("%s/acme/authz/%d", service.baseRESTURI, authz.ID)
+	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
+	req.Method = http.MethodGet
+
+	resp := httptest.NewRecorder()
+	service.AuthorizationHandler(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.NotEmpty(t, resp.Header().Get("Replay-Nonce"))
+}
+
+func TestAuthorizationHandler_PostWithWildcardIdentifier(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	order := createTestOrderSimple(t, service, account.ID)
+
+	ctx := context.Background()
+	authzDAO, err := service.storageFactory.AuthorizationDAO(account.ID)
+	require.NoError(t, err)
+
+	// Generate authorization ID
+	authzID, err := GenerateID()
+	require.NoError(t, err)
+
+	// Create wildcard authorization
+	authz := &entities.ACMEAuthorization{
+		ID: authzID,
+		Identifier: entities.ACMEIdentifier{
+			Type:  "dns",
+			Value: "*.wildcard.example.com",
+		},
+		Status:    common.StatusPending,
+		Wildcard:  true,
+		AccountID: account.ID,
+		OrderID:   order.ID,
+		Challenges: []entities.ACMEChallenge{
+			{
+				ID:        authzID + 1,
+				Type:      "dns-01",
+				Status:    common.StatusPending,
+				Token:     "test-token",
+				AccountID: account.ID,
+			},
+		},
+	}
+	err = authzDAO.Save(ctx, authz)
+	require.NoError(t, err)
+
+	url := fmt.Sprintf("%s/acme/authz/%d", service.baseRESTURI, authz.ID)
+	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.AuthorizationHandler(resp, req)
+
+	require.Equal(t, http.StatusOK, resp.Code)
+
+	var authzResp struct {
+		Wildcard bool `json:"wildcard"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&authzResp)
+	require.NoError(t, err)
+	assert.True(t, authzResp.Wildcard)
+}
+
 // ========================================
 // CertificateHandler Coverage Tests
 // ========================================
@@ -294,6 +455,48 @@ func TestCertificateHandler_DAOCreationError(t *testing.T) {
 
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }
+
+// ========================================
+// NewEventLogValidationHook Coverage Tests
+// ========================================
+
+// ========================================
+// isEnrollXChallenge Tests
+// ========================================
+
+// ========================================
+// OrderFinalizeHandler Additional Error Tests
+// ========================================
+
+// ========================================
+// writeChallengeResponse Nonce Tests
+// ========================================
+
+func TestWriteChallengeResponse_NonceGenerationError(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	// Set failing nonce generator
+	service.SetNonceGenerator(func() (string, error) {
+		return "", caerrors.InternalServerError("nonce generation failed")
+	})
+
+	challenge := &entities.ACMEChallenge{
+		ID:     123,
+		Type:   "http-01",
+		Status: common.StatusValid,
+		Token:  "test-token",
+	}
+
+	resp := httptest.NewRecorder()
+	service.writeChallengeResponse(resp, challenge)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+}
+
+// ========================================
+// Helper Functions Coverage
+// ========================================
 
 // ========================================
 // PCRMismatchError Message Coverage

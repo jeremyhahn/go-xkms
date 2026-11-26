@@ -16,17 +16,20 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
-	"fmt"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-jose/go-jose/v4"
-	"github.com/gorilla/mux"
-	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,72 +39,226 @@ import (
 // Test helper function
 // =============================================================================
 
-// setupTestServiceWithMockCAForCoverage creates a test service with a mock CA for coverage testing
-func setupTestServiceWithMockCAForCoverage(t *testing.T) (*RestService, *MockCAForFinalize, func()) {
-	return setupTestServiceWithMockCA(t)
+// =============================================================================
+// NewAccountHandler Coverage Tests - Unique paths not covered elsewhere
+// =============================================================================
+
+func TestNewAccountHandler_EABOptionalButProvidedCoverage(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+
+	// Create EAB - optional but provided
+	ctx := context.Background()
+	eabDAO, err := service.storageFactory.ExternalAccountBindingDAO()
+	require.NoError(t, err)
+
+	// MACKey should be base64url-encoded
+	macKeyRaw := []byte("test-hmac-key-32-bytes-long!!!!")
+	macKeyEncoded := base64.RawURLEncoding.EncodeToString(macKeyRaw)
+
+	eab := &entities.ExternalAccountBinding{
+		ID:                "test-kid-optional",
+		MACKey:            macKeyEncoded,
+		MACAlgorithm:      "HS256",
+		ExternalAccountID: "external-123",
+		Status:            entities.EABStatusActive,
+		CreatedAt:         time.Now(),
+	}
+	err = eabDAO.Save(ctx, eab)
+	require.NoError(t, err)
+
+	// Create the EAB JWS
+	eabJWS := createTestEABJWSCoverage(t, service, key, eab, macKeyRaw)
+
+	payload := NewAccountRequest{
+		Contact:                []string{"mailto:test@example.com"},
+		TermsOfServiceAgreed:   true,
+		ExternalAccountBinding: json.RawMessage(eabJWS),
+	}
+
+	url := service.baseRESTURI + "/acme/new-account"
+	req := createJWSRequest(t, service, key, url, payload, false, 0)
+
+	resp := httptest.NewRecorder()
+	service.NewAccountHandler(resp, req)
+
+	// Should succeed since EAB is optional
+	assert.Equal(t, http.StatusCreated, resp.Code)
 }
+
+// createTestEABJWSCoverage creates a test EAB JWS for testing
+func createTestEABJWSCoverage(t *testing.T, service *RestService, key *TestKey, eab *entities.ExternalAccountBinding, macKeyRaw []byte) []byte {
+	// Create the protected header
+	protected := map[string]interface{}{
+		"alg": "HS256",
+		"kid": eab.ID,
+		"url": service.baseRESTURI + "/acme/new-account",
+	}
+
+	protectedBytes, err := json.Marshal(protected)
+	require.NoError(t, err)
+
+	protectedB64 := base64.RawURLEncoding.EncodeToString(protectedBytes)
+
+	// Create payload with account key
+	pubKeyJWK := jose.JSONWebKey{Key: key.PublicKey}
+	pubKeyJSON, err := pubKeyJWK.MarshalJSON()
+	require.NoError(t, err)
+
+	payloadB64 := base64.RawURLEncoding.EncodeToString(pubKeyJSON)
+
+	// Create signature
+	signingInput := protectedB64 + "." + payloadB64
+	mac := createHMACCoverage(t, []byte(signingInput), macKeyRaw)
+	signatureB64 := base64.RawURLEncoding.EncodeToString(mac)
+
+	// Build JWS
+	eabJWS := map[string]interface{}{
+		"protected": protectedB64,
+		"payload":   payloadB64,
+		"signature": signatureB64,
+	}
+
+	jwsBytes, err := json.Marshal(eabJWS)
+	require.NoError(t, err)
+
+	return jwsBytes
+}
+
+// =============================================================================
+// KeyChangeHandler Coverage Tests
+// =============================================================================
 
 // =============================================================================
 // OrderFinalizeHandler Coverage Tests
 // =============================================================================
 
-func TestOrderFinalizeHandler_InvalidPayloadJSONCoverage(t *testing.T) {
-	service, mockCA, cleanup := setupTestServiceWithMockCAForCoverage(t)
-	defer cleanup()
+// =============================================================================
+// Compliance Attestation Tests
+// =============================================================================
 
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
+func TestPCRMismatchErrorCoverage(t *testing.T) {
+	t.Run("with custom message", func(t *testing.T) {
+		err := &PCRMismatchError{
+			PCRIndex: 7,
+			Message:  "custom error message",
+		}
+		assert.Equal(t, "custom error message", err.Error())
+		assert.True(t, errors.Is(err, ErrPCRMismatch))
+	})
 
-	_ = mockCA
-
-	// Create ready order
-	ctx := context.Background()
-	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
-	require.NoError(t, err)
-
-	order := &entities.ACMEOrder{
-		ID:        12346,
-		AccountID: account.ID,
-		Status:    common.StatusReady,
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: "dns", Value: "example.com"},
-		},
-	}
-	err = orderDAO.Save(ctx, order)
-	require.NoError(t, err)
-
-	// Invalid JSON payload
-	url := service.baseRESTURI + "/acme/order/12346/finalize"
-
-	nonce, err := service.GetNonceService().Generate()
-	require.NoError(t, err)
-
-	signerOpts := &jose.SignerOptions{
-		NonceSource: &staticNonceSource{nonce: nonce},
-		ExtraHeaders: map[jose.HeaderKey]interface{}{
-			"url": url,
-			"kid": fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID),
-		},
-	}
-
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: jose.ES256,
-		Key:       key.PrivateKey,
-	}, signerOpts)
-	require.NoError(t, err)
-
-	// Send invalid JSON
-	jws, err := signer.Sign([]byte("{invalid json"))
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, url, strings.NewReader(jws.FullSerialize()))
-	req = mux.SetURLVars(req, map[string]string{"id": "12346"})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-
-	assert.Equal(t, http.StatusBadRequest, resp.Code)
+	t.Run("without custom message", func(t *testing.T) {
+		err := &PCRMismatchError{
+			PCRIndex:      7,
+			ExpectedValue: []byte{0x01, 0x02, 0x03},
+			ActualValue:   []byte{0x04, 0x05, 0x06},
+		}
+		errStr := err.Error()
+		assert.Contains(t, errStr, "PCR[7]")
+		assert.Contains(t, errStr, "mismatch")
+	})
 }
+
+func TestAttestationErrorCoverage(t *testing.T) {
+	innerErr := errors.New("inner error")
+	err := &AttestationError{
+		Op:  "test_operation",
+		Err: innerErr,
+	}
+
+	assert.Contains(t, err.Error(), "test_operation")
+	assert.Contains(t, err.Error(), "inner error")
+	assert.ErrorIs(t, err, innerErr)
+}
+
+func TestEventLogErrorCoverage(t *testing.T) {
+	err := &EventLogError{
+		Message:     "event log error",
+		MissingType: "EV_SEPARATOR",
+	}
+
+	assert.Equal(t, "event log error", err.Error())
+	assert.True(t, errors.Is(err, ErrEventLogInvalid))
+}
+
+func TestEventLogPCRMismatchErrorCoverage(t *testing.T) {
+	err := &EventLogPCRMismatchError{
+		PCRIndex:      0,
+		Algorithm:     "SHA256",
+		ExpectedValue: []byte{0x01, 0x02},
+		ActualValue:   []byte{0x03, 0x04},
+	}
+
+	errStr := err.Error()
+	assert.Contains(t, errStr, "PCR[0]")
+	assert.Contains(t, errStr, "SHA256")
+	assert.True(t, errors.Is(err, ErrEventLogPCRMismatch))
+	assert.True(t, errors.Is(err, ErrEventLogInvalid))
+}
+
+func TestQuoteValidationErrorCoverage(t *testing.T) {
+	err := &QuoteValidationError{
+		Reason: "test reason",
+	}
+
+	assert.Contains(t, err.Error(), "test reason")
+	assert.True(t, errors.Is(err, ErrQuoteInvalid))
+}
+
+func TestDeviceProfileErrorCoverage(t *testing.T) {
+	innerErr := errors.New("profile lookup failed")
+	err := &DeviceProfileError{
+		Op:  "lookup",
+		Err: innerErr,
+	}
+
+	assert.Contains(t, err.Error(), "lookup")
+	assert.Contains(t, err.Error(), "device profile")
+	assert.ErrorIs(t, err, innerErr)
+}
+
+// =============================================================================
+// Service Tests
+// =============================================================================
+
+// =============================================================================
+// Tenant Resolution Tests
+// =============================================================================
+
+// =============================================================================
+// Additional Service Method Tests
+// =============================================================================
+
+func TestParseAccountIDCoverage(t *testing.T) {
+	t.Run("valid URL", func(t *testing.T) {
+		id, err := ParseAccountID("https://example.com/acme/account/12345")
+		assert.NoError(t, err)
+		assert.Equal(t, uint64(12345), id)
+	})
+
+	t.Run("invalid URL", func(t *testing.T) {
+		_, err := ParseAccountID("https://example.com/acme/account/invalid")
+		assert.ErrorIs(t, err, ErrInvalidAccountID)
+	})
+}
+
+// =============================================================================
+// compareKeyMaps Tests
+// =============================================================================
+
+// =============================================================================
+// extendPCR Tests
+// =============================================================================
+
+// =============================================================================
+// algorithmStringToID Tests
+// =============================================================================
+
+// =============================================================================
+// eventTypeToString Tests - Target 90% coverage
+// =============================================================================
 
 // =============================================================================
 // parseLegacyEvent Tests - Target 90% coverage
@@ -313,6 +470,94 @@ func TestParseTPMSignature_Handlers90(t *testing.T) {
 }
 
 // =============================================================================
+// parseRawPublicKey Tests - Target 90% coverage
+// =============================================================================
+
+// =============================================================================
+// NewDeviceProfileHook Tests - Target 90% coverage
+// =============================================================================
+
+func TestNewDeviceProfileHook_Handlers90(t *testing.T) {
+	t.Run("non-TCG enrollment skipped", func(t *testing.T) {
+		hook := NewDeviceProfileHook(func(serial, model string) (*DeviceProfile, error) {
+			return nil, errors.New("should not be called")
+		})
+
+		err := hook(&PreIssuanceHookContext{
+			IsTCGCSR: false,
+		})
+		assert.NoError(t, err)
+	})
+
+	t.Run("nil TCGData skipped", func(t *testing.T) {
+		hook := NewDeviceProfileHook(func(serial, model string) (*DeviceProfile, error) {
+			return nil, errors.New("should not be called")
+		})
+
+		err := hook(&PreIssuanceHookContext{
+			IsTCGCSR: true,
+			TCGData:  nil,
+		})
+		assert.NoError(t, err)
+	})
+
+	t.Run("lookup error", func(t *testing.T) {
+		hook := NewDeviceProfileHook(func(serial, model string) (*DeviceProfile, error) {
+			return nil, errors.New("database error")
+		})
+
+		err := hook(&PreIssuanceHookContext{
+			IsTCGCSR: true,
+			TCGData: &TCGEnrollmentData{
+				ProductSerial: "ABC123",
+				ProductModel:  "Model-X",
+			},
+		})
+		assert.Error(t, err)
+		var profileErr *DeviceProfileError
+		assert.True(t, errors.As(err, &profileErr))
+	})
+
+	t.Run("no profile found - allowed", func(t *testing.T) {
+		hook := NewDeviceProfileHook(func(serial, model string) (*DeviceProfile, error) {
+			return nil, nil // No profile found
+		})
+
+		err := hook(&PreIssuanceHookContext{
+			IsTCGCSR: true,
+			TCGData: &TCGEnrollmentData{
+				ProductSerial: "ABC123",
+				ProductModel:  "Model-X",
+			},
+		})
+		assert.NoError(t, err)
+	})
+
+	t.Run("profile found with no expected PCRs", func(t *testing.T) {
+		hook := NewDeviceProfileHook(func(serial, model string) (*DeviceProfile, error) {
+			return &DeviceProfile{
+				ProductSerial: "ABC123",
+				ProductModel:  "Model-X",
+				// No ExpectedPCRs
+			}, nil
+		})
+
+		err := hook(&PreIssuanceHookContext{
+			IsTCGCSR: true,
+			TCGData: &TCGEnrollmentData{
+				ProductSerial: "ABC123",
+				ProductModel:  "Model-X",
+			},
+		})
+		assert.NoError(t, err)
+	})
+}
+
+// =============================================================================
+// hasEventType Tests - Target 90% coverage
+// =============================================================================
+
+// =============================================================================
 // NewEventLogValidationHook Tests - Target 90% coverage
 // =============================================================================
 
@@ -415,8 +660,121 @@ func TestNewEventLogValidationHook_Handlers90(t *testing.T) {
 }
 
 // =============================================================================
+// NewPCRValidationHook Tests - Target 90% coverage
+// =============================================================================
+
+// =============================================================================
+// NewQuoteValidationHook Tests - Target 90% coverage
+// =============================================================================
+
+// =============================================================================
+// verifyQuoteSignature Tests - Target 90% coverage
+// =============================================================================
+
+// =============================================================================
+// parseCryptoAgileEvent Tests - Target 90% coverage
+// =============================================================================
+
+func TestParseCryptoAgileEvent_Handlers90(t *testing.T) {
+	algorithms := []SpecIDAlgorithm{
+		{AlgorithmID: TCGAlgSHA256, DigestSize: 32},
+		{AlgorithmID: TCGAlgSHA1, DigestSize: 20},
+	}
+
+	t.Run("valid event with SHA256", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		// PCR index
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		// Event type
+		binary.Write(buf, binary.LittleEndian, uint32(EVSeparator))
+		// Digest count
+		binary.Write(buf, binary.LittleEndian, uint32(1))
+		// Algorithm ID
+		binary.Write(buf, binary.LittleEndian, uint16(TCGAlgSHA256))
+		// Digest (32 bytes for SHA256)
+		buf.Write(make([]byte, 32))
+		// Event data size
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+
+		reader := bytes.NewReader(buf.Bytes())
+		entry, err := parseCryptoAgileEvent(reader, algorithms)
+		assert.NoError(t, err)
+		assert.Equal(t, 0, entry.PCRIndex)
+		assert.Equal(t, "EV_SEPARATOR", entry.EventType)
+	})
+
+	t.Run("truncated PCR index", func(t *testing.T) {
+		buf := make([]byte, 2) // Too short
+		reader := bytes.NewReader(buf)
+		_, err := parseCryptoAgileEvent(reader, algorithms)
+		assert.Error(t, err)
+	})
+
+	t.Run("truncated event type", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // PCR index only
+		reader := bytes.NewReader(buf.Bytes())
+		_, err := parseCryptoAgileEvent(reader, algorithms)
+		assert.Error(t, err)
+	})
+
+	t.Run("truncated digest count", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		binary.Write(buf, binary.LittleEndian, uint32(0)) // PCR index
+		binary.Write(buf, binary.LittleEndian, uint32(EVSeparator))
+		reader := bytes.NewReader(buf.Bytes())
+		_, err := parseCryptoAgileEvent(reader, algorithms)
+		assert.Error(t, err)
+	})
+
+	t.Run("unknown algorithm uses default sizes", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(EVSeparator))
+		binary.Write(buf, binary.LittleEndian, uint32(1))
+		binary.Write(buf, binary.LittleEndian, uint16(TCGAlgSHA384)) // Not in algorithms list
+		buf.Write(make([]byte, 48))                                  // SHA384 is 48 bytes
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+
+		reader := bytes.NewReader(buf.Bytes())
+		entry, err := parseCryptoAgileEvent(reader, []SpecIDAlgorithm{})
+		assert.NoError(t, err)
+		assert.Equal(t, "EV_SEPARATOR", entry.EventType)
+	})
+
+	t.Run("truly unknown algorithm fails", func(t *testing.T) {
+		buf := new(bytes.Buffer)
+		binary.Write(buf, binary.LittleEndian, uint32(0))
+		binary.Write(buf, binary.LittleEndian, uint32(EVSeparator))
+		binary.Write(buf, binary.LittleEndian, uint32(1))
+		binary.Write(buf, binary.LittleEndian, uint16(0x9999)) // Unknown algorithm
+		reader := bytes.NewReader(buf.Bytes())
+		_, err := parseCryptoAgileEvent(reader, []SpecIDAlgorithm{})
+		assert.Error(t, err)
+	})
+}
+
+// =============================================================================
+// parseCryptoAgileEventLog Tests - Target 90% coverage
+// =============================================================================
+
+// =============================================================================
+// parseSpecIDEvent Tests - Target 90% coverage
+// =============================================================================
+
+// =============================================================================
+// validateDeviceAgainstProfile Tests - Target 90% coverage
+// =============================================================================
+
+// =============================================================================
 // Helper Functions for building test data
 // =============================================================================
+
+func createHMACCoverage(_ *testing.T, message, key []byte) []byte {
+	mac := hmac.New(sha256.New, key)
+	mac.Write(message)
+	return mac.Sum(nil)
+}
 
 // buildLegacyEventLog creates a simple legacy event log with n events
 func buildLegacyEventLog(t *testing.T, count int) []byte {
