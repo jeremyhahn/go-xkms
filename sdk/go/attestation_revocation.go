@@ -58,9 +58,18 @@ var (
 	// not conform to the status list schema.
 	ErrAndroidStatusListMalformed = android.ErrStatusListMalformed
 
+	// ErrAndroidInvalidStatusListURL is returned by NewAndroidHTTPStatusList
+	// for a URL that is not absolute http or https.
+	ErrAndroidInvalidStatusListURL = android.ErrInvalidStatusListURL
+
 	// ErrNoAndroidRevocationSource is returned by VerifyAndroidDeviceKey
 	// when AndroidDeviceTrust.Revocation is nil.
 	ErrNoAndroidRevocationSource = attestation.ErrNoRevocationSource
+
+	// WithAttestationRevocation sets the status list an AttestationVerifier
+	// checks in VerifyAndroidAttestation. Without one that method refuses
+	// with ErrNoAndroidRevocationSource.
+	WithAttestationRevocation = attestation.WithRevocation
 )
 
 // NewAndroidHTTPStatusList returns a status list source fetching over
