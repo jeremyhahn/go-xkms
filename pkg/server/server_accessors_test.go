@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -138,10 +139,10 @@ func TestWithExtraModules(t *testing.T) {
 	require.Equal(t, "mod2", s.extraModules[1].Name())
 }
 
-// fakeServiceModule is a minimal qrdbsdk.ServiceModule for exercising
+// fakeServiceModule is a minimal qrdbserver.ServiceModule for exercising
 // WithExtraModules without depending on any real module implementation.
 type fakeServiceModule struct {
-	qrdbsdk.BaseModule
+	qrdbserver.BaseModule
 	name string
 }
 

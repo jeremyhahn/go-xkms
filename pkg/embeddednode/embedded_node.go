@@ -51,6 +51,7 @@ import (
 	"strings"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -200,10 +201,10 @@ func resolveOperatorNodeSeal(cfg *config.Config, logger *slog.Logger) (ResolvedN
 // (tenantDefaultEntitlements), so the node builds the barrier registry and
 // tenant service itself. A seal with a pre-built strategy also injects it via
 // qrdbnode.WithSealStrategy, and a strategy registry holding it via
-// qrdbsdk.WithStrategyRegistry so every tenant barrier can seal with the same
+// qrdbserver.WithStrategyRegistry so every tenant barrier can seal with the same
 // hardware. The strategies go-qrdb builds from DaemonConfig.Seal (none,
 // passphrase, shamir) inject no strategy; a disabled seal injects nothing.
-func NodeSealOptions(res ResolvedNodeSeal) ([]qrdbnode.NodeOption, []qrdbsdk.ServerOption, error) {
+func NodeSealOptions(res ResolvedNodeSeal) ([]qrdbnode.NodeOption, []qrdbserver.ServerOption, error) {
 	if !res.Enabled {
 		return nil, nil, nil
 	}
@@ -219,7 +220,7 @@ func NodeSealOptions(res ResolvedNodeSeal) ([]qrdbnode.NodeOption, []qrdbsdk.Ser
 		return nil, nil, &NodeSealError{Reason: "registering the " + string(res.Strategy.ID()) + " strategy", Err: err}
 	}
 	return append(nodeOpts, qrdbnode.WithSealStrategy(res.Strategy)),
-		[]qrdbsdk.ServerOption{qrdbsdk.WithStrategyRegistry(registry)},
+		[]qrdbserver.ServerOption{qrdbserver.WithStrategyRegistry(registry)},
 		nil
 }
 
@@ -452,7 +453,7 @@ type EmbeddedNodeOptions struct {
 	// this function derives from the resolved seal posture (TLS, additional
 	// ServiceModules, cluster tuning -- concerns specific to the caller, not
 	// to the node's on-disk identity).
-	ExtraServerOptions []qrdbsdk.ServerOption
+	ExtraServerOptions []qrdbserver.ServerOption
 	ExtraNodeOptions   []qrdbnode.NodeOption
 
 	// Cluster describes the topology. The zero value builds a standalone
@@ -512,11 +513,11 @@ func openEmbeddedNodeWithSeal(ctx context.Context, opts EmbeddedNodeOptions, sea
 	}
 
 	nodeOpts := append([]qrdbnode.NodeOption{qrdbnode.WithLogger(opts.Logger)}, opts.ExtraNodeOptions...)
-	serverOpts := append([]qrdbsdk.ServerOption{
-		qrdbsdk.WithAuditLogger(auditSink),
+	serverOpts := append([]qrdbserver.ServerOption{
+		qrdbserver.WithAuditLogger(auditSink),
 	}, opts.ExtraServerOptions...)
 	if opts.FactorRegistry != nil {
-		serverOpts = append(serverOpts, qrdbsdk.WithFactorRegistry(opts.FactorRegistry))
+		serverOpts = append(serverOpts, qrdbserver.WithFactorRegistry(opts.FactorRegistry))
 	}
 
 	sealNodeOpts, sealServerOpts, err := NodeSealOptions(sealRes)

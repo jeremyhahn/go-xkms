@@ -38,7 +38,7 @@ type SealingStrategy = qrdbsdk.SealingStrategy
 type SymmetricEncrypter = qrdbsdk.SymmetricEncrypter
 
 // Credentials holds authentication material for seal/unseal operations. The
-// secret lives in protected memory (*enclave.SealedEnclave), not a []byte.
+// secret lives in protected memory (enclave.Sealed), not a []byte.
 // Build one with CredentialsFor (borrowed material: request fields, config
 // values) or NewCredentials (owned material: consumes and wipes the source
 // slice). The zero value means "no credentials supplied".
