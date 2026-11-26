@@ -110,6 +110,12 @@ lives in `pkg/attestation/purpose.go` as methods on the one `Verifier`:
 - `WithTrustStore(store, embeddedLoader)` (`purpose.go:83`) is a
   `NewVerifier` option (`verifier.go:67`). It backs the purpose-pooled checks
   with a `truststore.TrustStore` plus an optional loader of compiled-in roots.
+- `WithRevocation(source)` (`purpose.go:96`) sets the Android attestation
+  certificate revocation status list (ruling 180). `VerifyAndroidAttestation`
+  refuses a verifier without one (`ErrNoRevocationSource`, `purpose.go:166`)
+  and checks every certificate of the presented and the verified chain, the
+  pool anchor included (`purpose.go:204`); a listed certificate fails with
+  `ErrChainVerificationFailed` wrapping `android.ErrCertificateRevoked`.
 - `BuildTrustPool(purpose)` (`purpose.go:314`) merges the store's anchors for
   the purpose with the embedded roots.
   - It refuses a non-anchor purpose (`ErrUnsupportedPurpose`,
@@ -126,7 +132,8 @@ lives in `pkg/attestation/purpose.go` as methods on the one `Verifier`:
 
 xkey reaches these only through the SDK aliases in
 `sdk/go/attestation_verifier.go`: `NewAttestationVerifier`,
-`WithAttestationTrustStore`, `AttestationVerificationResult` and the
+`WithAttestationTrustStore`, `WithAttestationRevocation`
+(`sdk/go/attestation_revocation.go`), `AttestationVerificationResult` and the
 `AttestationTrustLevel*` constants. The callers are:
 
 - `xkey/pkg/attestation/device.go:260` (`LoadTrust`, the pairing attestation
@@ -139,14 +146,23 @@ xkey reaches these only through the SDK aliases in
 
 `VerifyAndroidDeviceKey` (`android_device.go:67`) verifies a DER chain as a
 hardware-held device key against an `AndroidDeviceTrust`, which holds the
-roots and an `android.ApplicationMatcher`. It also moved out of xkey in
-go-xkms#1548. In order it calls:
+roots, an `android.ApplicationMatcher` and the `Revocation` status list
+source. It also moved out of xkey in go-xkms#1548. A trust without a
+`Revocation` source is refused with `ErrNoRevocationSource`
+(`android_device.go:81`, ruling 180). In order it calls:
 
 - `ParseDERChain` (`android_device.go:104`);
 - `android.VerifyKeyAttestation` with `android.DeviceVerifyOptions`
   (`android/device.go:84`): the chain anchors in the roots, the key is at
   least TEE-held, and boot is not reported unverified. No nonce is checked,
-  because the leaf carries the key's genesis challenge (#129);
+  because the leaf carries the key's genesis challenge (#129). With
+  `Revocation` set it checks every certificate of the presented and the
+  verified chain against the status list (`android/extension.go:748`,
+  `CheckRevocation` at `android/revocation.go:295`;
+  `docs/references/android-key-attestation.md` §Certificate revocation status
+  list): `REVOKED` and `SUSPENDED` fail with `android.ErrCertificateRevoked`,
+  and a list that cannot be read or fetched fresh (RFC 9111 §4.2) fails closed
+  with `android.ErrStatusListUnavailable`;
 - `VerifiedTrustAnchor` (`android_device.go:122`): the anchor is read off the
   verified path, so a certificate the peer appended can never be named as it;
 - `android.RequireAttestedBootState` (`android/device.go:95`): a
