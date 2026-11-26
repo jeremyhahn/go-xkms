@@ -431,6 +431,11 @@ var (
 	// ErrTenantNameRequired is returned when a tenant name is empty.
 	ErrTenantNameRequired = errors.New("keystore: tenant name is required")
 
+	// ErrInvalidTenantID is returned when tenant creation refuses an ID that
+	// is not a SPIFFE trust-domain name or is the cluster trust domain. The
+	// error also unwraps to the pkg/spiffe sentinel that names the reason.
+	ErrInvalidTenantID = errors.New("keystore: invalid tenant ID")
+
 	// ErrTenantServiceNotConfigured is returned when a tenant operation is
 	// attempted but the composed go-qrdb TenantService (SetTenantService) has
 	// not been wired. There is no fallback: every tenant operation requires
