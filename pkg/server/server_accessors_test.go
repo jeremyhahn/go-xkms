@@ -22,7 +22,6 @@ import (
 
 	"google.golang.org/grpc/metadata"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	"github.com/stretchr/testify/require"
 
