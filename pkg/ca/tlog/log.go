@@ -142,6 +142,11 @@ func (l *Log) AppendRevoked(ctx context.Context, e Revoked) (uint64, error) {
 	return l.append(ctx, e)
 }
 
+// AppendExternal appends an external entry and returns its index.
+func (l *Log) AppendExternal(ctx context.Context, e External) (uint64, error) {
+	return l.append(ctx, e)
+}
+
 func (l *Log) append(ctx context.Context, e Entry) (uint64, error) {
 	body, err := Marshal(e)
 	if err != nil {

@@ -14,13 +14,16 @@
 package tlog
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"math/big"
+	"net/url"
 	"strconv"
 	"unicode/utf8"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 )
 
 // EncodingVersion is the version byte of the entry encoding this package
@@ -33,18 +36,20 @@ const maxFieldLen = 0xffff
 // Kind is the kind of a log entry, the second byte of its encoding.
 type Kind byte
 
-// The entry kinds go-xkms appends itself. Kind 4 is reserved for the
-// "external" entries the layers above append under the caller's SPIFFE ID.
+// The entry kinds. go-xkms appends the first three itself; the layers above
+// append KindExternal entries under the caller's SPIFFE ID.
 const (
 	KindCertIssued  Kind = 1
 	KindImageSigned Kind = 2
 	KindRevoked     Kind = 3
+	KindExternal    Kind = 4
 )
 
 var kindNames = map[Kind]string{
 	KindCertIssued:  "cert-issued",
 	KindImageSigned: "image-signed",
 	KindRevoked:     "revoked",
+	KindExternal:    "external",
 }
 
 // String returns the kind's name, as docs/SPEC.md names it.
@@ -167,6 +172,31 @@ func (e Revoked) fields() ([][]byte, error) {
 	return [][]byte{serial, {e.Reason}}, nil
 }
 
+// External records a payload a layer above go-xkms appended, under the
+// SPIFFE ID of the caller that appended it.
+type External struct {
+	// SPIFFEID is the appending caller's SPIFFE ID, in the canonical form
+	// spiffe.ID.String writes.
+	SPIFFEID string
+
+	// Payload is the caller's opaque payload, 1 to 65535 bytes.
+	Payload []byte
+}
+
+// Kind returns KindExternal.
+func (External) Kind() Kind { return KindExternal }
+
+func (e External) fields() ([][]byte, error) {
+	id, err := encodeSPIFFEID(e.SPIFFEID)
+	if err != nil {
+		return nil, err
+	}
+	if len(e.Payload) == 0 {
+		return nil, &errs.Detail{Err: ErrInvalidEntry, Detail: "external: empty payload"}
+	}
+	return [][]byte{id, e.Payload}, nil
+}
+
 // Marshal returns e's version-1 encoding.
 func Marshal(e Entry) ([]byte, error) {
 	if e == nil {
@@ -198,6 +228,7 @@ var decoders = map[Kind]struct {
 	KindCertIssued:  {4, decodeCertIssued},
 	KindImageSigned: {3, decodeImageSigned},
 	KindRevoked:     {2, decodeRevoked},
+	KindExternal:    {2, decodeExternal},
 }
 
 // Unmarshal decodes a version-1 entry, refusing any bytes Marshal would not
@@ -273,6 +304,12 @@ func decodeRevoked(fields [][]byte) (Entry, error) {
 	return Revoked{Serial: serial, Reason: fields[1][0]}, nil
 }
 
+// decodeExternal copies the payload so the entry does not alias the bytes
+// it was decoded from.
+func decodeExternal(fields [][]byte) (Entry, error) {
+	return External{SPIFFEID: string(fields[0]), Payload: bytes.Clone(fields[1])}, nil
+}
+
 // encodeSerial returns a positive serial's minimal big-endian magnitude
 // (RFC 5280 §4.1.2.2 requires a positive serial).
 func encodeSerial(serial *big.Int) ([]byte, error) {
@@ -300,6 +337,28 @@ func encodeString(name, s string) ([]byte, error) {
 		return nil, &errs.Detail{Err: ErrInvalidEntry, Detail: name + " is not UTF-8"}
 	}
 	return []byte(s), nil
+}
+
+// encodeSPIFFEID refuses a string that is not a SPIFFE ID spiffe.ParseID
+// accepts, or not in the canonical form spiffe.ID.String writes, so each
+// caller has exactly one encoding.
+func encodeSPIFFEID(s string) ([]byte, error) {
+	b, err := encodeString("external: spiffe id", s)
+	if err != nil {
+		return nil, err
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrInvalidEntry, Detail: "external: spiffe id", Cause: err}
+	}
+	id, ok, err := spiffe.ParseID(u)
+	if err != nil {
+		return nil, &errs.Joined{Lead: ErrInvalidEntry, Detail: "external: spiffe id", Cause: err}
+	}
+	if !ok || id.String() != s {
+		return nil, &errs.Detail{Err: ErrInvalidEntry, Detail: "external: " + strconv.Quote(s) + " is not a canonical SPIFFE ID"}
+	}
+	return b, nil
 }
 
 // checkReason refuses a code RFC 5280 §5.3.1 does not assign: above
