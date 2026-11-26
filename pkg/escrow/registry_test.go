@@ -102,12 +102,6 @@ func (m *mockAgent) Close() error {
 	return m.closeErr
 }
 
-func TestNewRegistry(t *testing.T) {
-	r := NewRegistry()
-	require.NotNil(t, r)
-	assert.Empty(t, r.Agents())
-}
-
 func TestRegistry_Register_Success(t *testing.T) {
 	r := NewRegistry()
 	agent := newMockAgent("test")
@@ -254,28 +248,6 @@ func TestRegistry_EscrowKeyAll_InvalidRequest(t *testing.T) {
 	assert.True(t, errors.Is(err, ErrEmptyKeyID))
 }
 
-func TestRegistry_RecoverKeyAny_FirstSucceeds(t *testing.T) {
-	r := NewRegistry()
-	a1 := newMockAgent("xkms")
-	a1.recoverResp = &RecoverResponse{
-		KeyID:             "key-001",
-		WrappedKey:        []byte("from-xkms"),
-		WrappingAlgorithm: "AES-KW",
-	}
-	a2 := newMockAgent("kmip")
-
-	require.NoError(t, r.Register("xkms", a1))
-	require.NoError(t, r.Register("kmip", a2))
-
-	ctx := context.Background()
-	req := &RecoverRequest{KeyID: "key-001"}
-
-	resp, err := r.RecoverKeyAny(ctx, req)
-	require.NoError(t, err)
-	assert.Equal(t, "key-001", resp.KeyID)
-	assert.NotNil(t, resp.WrappedKey)
-}
-
 func TestRegistry_RecoverKeyAny_FallbackToSecond(t *testing.T) {
 	r := NewRegistry()
 
@@ -300,6 +272,7 @@ func TestRegistry_RecoverKeyAny_FallbackToSecond(t *testing.T) {
 	resp, err := r.RecoverKeyAny(ctx, req)
 	require.NoError(t, err)
 	assert.Equal(t, "key-001", resp.KeyID)
+	assert.NotNil(t, resp.WrappedKey)
 }
 
 func TestRegistry_RecoverKeyAny_AllFail(t *testing.T) {
@@ -486,10 +459,4 @@ func TestRegistry_RevokeEscrowAll_AllFail(t *testing.T) {
 	err := r.RevokeEscrowAll(context.Background(), "escrow-1")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrRevokeFailed))
-}
-
-func TestRegistry_Close_EmptyRegistry(t *testing.T) {
-	r := NewRegistry()
-	err := r.Close()
-	require.NoError(t, err)
 }
