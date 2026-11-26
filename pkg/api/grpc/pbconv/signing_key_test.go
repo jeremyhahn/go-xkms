@@ -115,6 +115,12 @@ func (s *signingKeyRecordingServer) SignCoRIM(_ context.Context, r *pb.SignCoRIM
 	return &pb.SignedCoRIM{Key: key, Corim: append([]byte{0xd2}, r.GetCorim()...)}, nil
 }
 
+func (s *signingKeyRecordingServer) SignImage(_ context.Context, r *pb.SignImageRequest) (*pb.SignedImage, error) {
+	s.repositories = append(s.repositories, r.GetReference())
+	key := &pb.SigningKeyResolution{Repository: "acme/img", KeyId: "release", Default: true}
+	return &pb.SignedImage{Key: key, Digest: "sha256:abc", AttestationTag: r.GetRegistry().GetUsername()}, nil
+}
+
 // TestSigningKeyClient_OverTheWire proves the client sends each request's
 // repository and returns the server's answer, and the server's status error
 // unchanged.
@@ -145,7 +151,16 @@ func TestSigningKeyClient_OverTheWire(t *testing.T) {
 	assert.Equal(t, []byte{0xd2, 0x01}, signed.CoRIM)
 	assert.Equal(t, "release", signed.Key.KeyID)
 
-	assert.Equal(t, []string{"acme/app", "acme/web", "acme/app", "acme/cli", "acme/sdk"}, srv.repositories)
+	image, err := c.SignImage(ctx, &transport.SignImageRequest{
+		Reference: "registry.example.com/acme/img:v1",
+		Registry:  &transport.ImageRegistryCredentials{Username: "ci", Password: []byte("pw")},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "sha256:abc", image.Digest)
+	assert.Equal(t, "ci", image.AttestationTag, "the registry credentials reached the server")
+	assert.Equal(t, "release", image.Key.KeyID)
+
+	assert.Equal(t, []string{"acme/app", "acme/web", "acme/app", "acme/cli", "acme/sdk", "registry.example.com/acme/img:v1"}, srv.repositories)
 }
 
 // TestSigningKeyClient_NilRequests proves a nil request is refused before
@@ -161,6 +176,8 @@ func TestSigningKeyClient_NilRequests(t *testing.T) {
 	_, err = c.ResolveSigningKey(ctx, nil)
 	assert.ErrorIs(t, err, ErrNilRequest)
 	_, err = c.SignCoRIM(ctx, nil)
+	assert.ErrorIs(t, err, ErrNilRequest)
+	_, err = c.SignImage(ctx, nil)
 	assert.ErrorIs(t, err, ErrNilRequest)
 }
 
@@ -180,6 +197,49 @@ func TestSigningKeyClient_WireErrors(t *testing.T) {
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
 	_, err = c.SignCoRIM(ctx, &transport.SignCoRIMRequest{})
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	_, err = c.SignImage(ctx, &transport.SignImageRequest{})
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+}
+
+// TestSignImageConversions_RoundTrip proves a SignImage request, with its
+// registry credentials, and a signed image survive the wire unchanged.
+func TestSignImageConversions_RoundTrip(t *testing.T) {
+	req := &transport.SignImageRequest{
+		Reference:     "registry.example.com/acme/app:v1",
+		PredicateType: "https://slsa.dev/provenance/v1",
+		Predicate:     []byte(`{"buildType":"x"}`),
+		Registry:      &transport.ImageRegistryCredentials{Username: "ci", Password: []byte("registry-password")},
+	}
+	assert.Equal(t, req, SignImageRequestFromProto(SignImageRequestToProto(req)))
+
+	signed := &transport.SignedImage{
+		Key:    transport.SigningKeyResolution{Repository: "acme/app", KeyID: "release", Default: true},
+		Digest: "sha256:abc", Envelope: []byte(`{"payload":""}`), Certificate: []byte("PEM"),
+		Referrer: "sha256:def", ReferrerIndexed: true, AttestationTag: "sha256-abc.att",
+	}
+	assert.Equal(t, signed, SignedImageFromProto(SignedImageToProto(signed)))
+}
+
+// TestSignImageConversions_AbsentFields proves a request without
+// credentials carries none, an absent message reads as an empty request,
+// and a signed image without a key reads as one with an empty resolution.
+func TestSignImageConversions_AbsentFields(t *testing.T) {
+	assert.Nil(t, SignImageRequestToProto(&transport.SignImageRequest{Reference: "r"}).GetRegistry())
+	assert.Equal(t, &transport.SignImageRequest{}, SignImageRequestFromProto(nil))
+
+	assert.Nil(t, SignedImageToProto(nil))
+	assert.Nil(t, SignedImageFromProto(nil))
+	assert.Equal(t, &transport.SignedImage{Digest: "sha256:abc"}, SignedImageFromProto(&pb.SignedImage{Digest: "sha256:abc"}))
+}
+
+// TestSignImageRequestFromProto_SharesThePassword proves the service's wipe
+// of the decoded password also zeroes the protobuf message's copy, so no
+// plaintext outlives the call.
+func TestSignImageRequestFromProto_SharesThePassword(t *testing.T) {
+	msg := &pb.SignImageRequest{Registry: &pb.ImageRegistryCredentials{Username: "ci", Password: []byte("registry-password")}}
+	req := SignImageRequestFromProto(msg)
+	req.Registry.Password.Wipe()
+	assert.Equal(t, make([]byte, len("registry-password")), msg.GetRegistry().GetPassword())
 }
 
 // TestSigningKeyRequests_FromProto proves the server side reads every field
