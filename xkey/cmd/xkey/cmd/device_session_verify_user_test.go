@@ -46,7 +46,7 @@ func verifyUserThroughBackend(t *testing.T, trusted *attesttest.CA, dak *attestt
 		AttestationProtocolVersion: pairingproto.AttestProtocolV2,
 	}
 	loadTrust := func() (*xkms.AndroidDeviceTrust, error) {
-		return &xkms.AndroidDeviceTrust{Roots: trusted.Pool(), Applications: attesttest.Applications()}, nil
+		return &xkms.AndroidDeviceTrust{Roots: trusted.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}, nil
 	}
 
 	localKey, err := bootstrap.GenerateNoiseStaticKey()

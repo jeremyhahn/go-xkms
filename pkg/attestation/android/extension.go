@@ -291,6 +291,15 @@ type VerifyOptions struct {
 	// to reason about a chain at a fixed instant — auditing evidence captured
 	// earlier, or testing against a chain whose validity window has passed.
 	CurrentTime time.Time
+
+	// Revocation, when set, checks every certificate of the presented and
+	// the verified chain against the attestation certificate revocation
+	// status list (docs/references/android-key-attestation.md §Certificate
+	// revocation status list). A listed certificate fails with a
+	// *RevokedCertificateError; a list the source cannot supply fails with
+	// ErrStatusListUnavailable. Nil skips the check, which only callers
+	// that do not decide trust (parsing, tests) should do.
+	Revocation StatusListSource
 }
 
 // keyDescriptionASN1 is the raw ASN.1 structure for parsing the top-level
@@ -723,9 +732,21 @@ func VerifyKeyAttestation(chain []*x509.Certificate, opts *VerifyOptions) (*KeyD
 	}
 
 	// Verify the certificate chain against trusted roots if provided
+	var verified [][]*x509.Certificate
 	if opts.TrustedRoots != nil {
-		if err := verifyCertificateChain(chain, opts.TrustedRoots, opts.CurrentTime); err != nil {
+		var err error
+		verified, err = verifyCertificateChain(chain, opts.TrustedRoots, opts.CurrentTime)
+		if err != nil {
 			return nil, &errs.Detail{Err: ErrChainVerificationFailed, Detail: fmt.Sprintf("%v", err)}
+		}
+	}
+
+	// Check each certificate's revocation status: the presented chain and
+	// every chain it verified to, so the trust anchor is checked as well
+	// (§Retrieve and verify a hardware-backed key pair, step 4).
+	if opts.Revocation != nil {
+		if err := CheckRevocation(opts.Revocation, append(verified, chain)...); err != nil {
+			return nil, err
 		}
 	}
 
@@ -764,9 +785,9 @@ func VerifyKeyAttestation(chain []*x509.Certificate, opts *VerifyOptions) (*KeyD
 // verifyCertificateChain verifies the certificate chain against the provided
 // trusted root certificate pool, as of now. A zero now is passed through to
 // crypto/x509, which substitutes the current time.
-func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) error {
+func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now time.Time) ([][]*x509.Certificate, error) {
 	if len(chain) == 0 {
-		return ErrChainTooShort
+		return nil, ErrChainTooShort
 	}
 
 	leaf := chain[0]
@@ -784,11 +805,7 @@ func verifyCertificateChain(chain []*x509.Certificate, roots *x509.CertPool, now
 		CurrentTime:   now,
 	}
 
-	if _, err := leaf.Verify(verifyOpts); err != nil {
-		return err
-	}
-
-	return nil
+	return leaf.Verify(verifyOpts)
 }
 
 // AttestationExtensionOptions carries the teeEnforced AuthorizationList

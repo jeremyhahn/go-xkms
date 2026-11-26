@@ -1429,7 +1429,7 @@ func TestVerifyCertificateChain_SuccessWithIntermediates(t *testing.T) {
 // returns ErrChainTooShort when given an empty chain.
 func TestVerifyCertificateChain_EmptyChain(t *testing.T) {
 	roots := x509.NewCertPool()
-	err := verifyCertificateChain([]*x509.Certificate{}, roots, time.Time{})
+	_, err := verifyCertificateChain([]*x509.Certificate{}, roots, time.Time{})
 	if !errors.Is(err, ErrChainTooShort) {
 		t.Errorf("expected ErrChainTooShort, got: %v", err)
 	}
@@ -1443,9 +1443,12 @@ func TestVerifyCertificateChain_SelfSignedValidChain(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err := verifyCertificateChain([]*x509.Certificate{caCert}, roots, time.Time{})
+	verified, err := verifyCertificateChain([]*x509.Certificate{caCert}, roots, time.Time{})
 	if err != nil {
-		t.Errorf("verifyCertificateChain() unexpected error: %v", err)
+		t.Fatalf("verifyCertificateChain() unexpected error: %v", err)
+	}
+	if len(verified) != 1 || verified[0][0] != caCert {
+		t.Errorf("verifyCertificateChain() verified chains = %v, want the self-signed root", verified)
 	}
 }
 

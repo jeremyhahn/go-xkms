@@ -131,6 +131,12 @@ func Applications() pairing.ApplicationPolicy {
 	}}}
 }
 
+// NoRevocations returns an empty attestation status list, which lists no
+// certificate of the test chains.
+func NoRevocations() *xkms.AndroidStatusList {
+	return &xkms.AndroidStatusList{}
+}
+
 // DeviceKeyClaims is the claims a contract-faithful device's attestation
 // carries: the TEE-enforced key was GENERATED inside secure hardware and is
 // authorized to SIGN (go-xkms#132), and the softwareEnforced
