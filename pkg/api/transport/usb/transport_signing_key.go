@@ -52,3 +52,8 @@ func (t *Transport) ResolveSigningKey(_ context.Context, _ *transport.ResolveSig
 func (t *Transport) SignCoRIM(_ context.Context, _ *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
 	return nil, ErrNotSupported
 }
+
+// SignImage is not available over USB.
+func (t *Transport) SignImage(_ context.Context, _ *transport.SignImageRequest) (*transport.SignedImage, error) {
+	return nil, ErrNotSupported
+}

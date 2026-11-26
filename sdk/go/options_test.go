@@ -1557,3 +1557,7 @@ func (*mockService) ResolveSigningKey(context.Context, *ResolveAttestationSignin
 func (*mockService) SignCoRIM(context.Context, *SignAttestationCoRIMRequest) (*SignedAttestationCoRIM, error) {
 	return nil, nil
 }
+
+func (*mockService) SignImage(context.Context, *SignAttestationImageRequest) (*SignedAttestationImage, error) {
+	return nil, nil
+}

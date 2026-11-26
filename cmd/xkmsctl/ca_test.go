@@ -1840,3 +1840,7 @@ func (*mockCAClient) ResolveSigningKey(context.Context, *transport.ResolveSignin
 func (*mockCAClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
 	return nil, nil
 }
+
+func (*mockCAClient) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
+	return nil, nil
+}

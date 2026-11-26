@@ -26,6 +26,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
+	"github.com/jeremyhahn/go-xkms/pkg/image"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyprovider/symmetric"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
@@ -327,8 +328,9 @@ func PeerAttestationClassOf(err error) (Class, bool) {
 // has nothing to answer with; a binding change by a caller without
 // attestation_signing_keys:bind is refused below the gate too. The
 // appraisal's typed errors (RepositoryError, SigningKeyError) wrap these
-// sentinels, so this one table classifies them, and xkms.CoRIMSignError
-// wraps the refvalue sentinels SignCoRIM fails with.
+// sentinels, so this one table classifies them; xkms.CoRIMSignError wraps
+// the refvalue sentinels SignCoRIM fails with, and xkms.ImageSignError the
+// pkg/image sentinels SignImage fails with.
 var SigningKeySentinelClasses = []SentinelClass{
 	{xkms.ErrNotConfigured, ClassUnavailable},
 	{xkms.ErrSigningKeyForbidden, ClassPermissionDenied},
@@ -345,6 +347,21 @@ var SigningKeySentinelClasses = []SentinelClass{
 	{refvalue.ErrMeta, ClassInvalidArgument},
 	{refvalue.ErrSignerKey, ClassFailedPrecondition},
 	{xkms.ErrKeyNotFound, ClassFailedPrecondition},
+	// SignImage, through xkms.ImageSignError: the reference, predicate or
+	// registry credentials the caller sent are invalid; the image is absent
+	// from the registry; the registry is down. The system tenant has no
+	// release key, and a registry that refuses the caller's credentials or
+	// a key type DSSE cannot carry is fixed by the tenant.
+	{xkms.ErrSystemTenantImageSigning, ClassFailedPrecondition},
+	{image.ErrInvalidReference, ClassInvalidArgument},
+	{image.ErrInvalidDigest, ClassInvalidArgument},
+	{image.ErrInvalidStatement, ClassInvalidArgument},
+	{image.ErrRegistryCredentials, ClassInvalidArgument},
+	{image.ErrManifestNotFound, ClassNotFound},
+	{image.ErrRegistryUnavailable, ClassUnavailable},
+	{image.ErrRegistryRequest, ClassFailedPrecondition},
+	{image.ErrRegistryAuth, ClassFailedPrecondition},
+	{image.ErrUnsupportedKey, ClassFailedPrecondition},
 }
 
 // SigningKeyClassOf classifies an error of the repository signing-key verbs.

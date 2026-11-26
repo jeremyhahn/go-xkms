@@ -3314,3 +3314,7 @@ func (*mockCertClient) ResolveSigningKey(context.Context, *transport.ResolveSign
 func (*mockCertClient) SignCoRIM(context.Context, *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
 	return nil, nil
 }
+
+func (*mockCertClient) SignImage(context.Context, *transport.SignImageRequest) (*transport.SignedImage, error) {
+	return nil, nil
+}

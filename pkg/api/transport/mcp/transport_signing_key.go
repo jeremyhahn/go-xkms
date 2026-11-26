@@ -90,3 +90,15 @@ func (t *Transport) SignCoRIM(ctx context.Context, req *transport.SignCoRIMReque
 	}
 	return &resp, nil
 }
+
+// SignImage signs an image with the key that signs its repository.
+func (t *Transport) SignImage(ctx context.Context, req *transport.SignImageRequest) (*transport.SignedImage, error) {
+	if !t.IsConnected() {
+		return nil, ErrNotConnected
+	}
+	var resp transport.SignedImage
+	if err := t.rpcCall(ctx, "attestation.signing_key.sign_image", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
