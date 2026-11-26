@@ -292,11 +292,11 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 	}
 }
 
-// TestCIRunnerSelectionShortListGoesHosted pins template v1.54 (handbook
-// 1ad68ab8, #104, ruling 1137), which drops v1.50's lower bound: a listing
-// short of its total_count is a count it cannot read, so the run takes the
-// hosted default with a ::warning, whatever the jobs it did list would pick.
-func TestCIRunnerSelectionShortListGoesHosted(t *testing.T) {
+// TestCIRunnerSelectionShortListIsALowerBound pins template v1.59 (handbook
+// b18e6499, #113): a listing short of its total_count is a lower bound,
+// named in a ::notice, and the choice still uses it; only a failed call goes
+// hosted with a ::warning (v1.54 sent every short listing hosted).
+func TestCIRunnerSelectionShortListIsALowerBound(t *testing.T) {
 	wf := readDigestWorkflow(t)
 	var script string
 	for _, s := range wf.Jobs[preflightJob].Steps {
@@ -312,19 +312,19 @@ func TestCIRunnerSelectionShortListGoesHosted(t *testing.T) {
 			t.Skipf("%s not installed: the selector script needs it", tool)
 		}
 	}
-	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 	for _, tc := range []struct {
 		name   string
 		listed int
 		want   string
-		note   string
+		why    string
 	}{
 		// 12 of 20 listed: the listed jobs alone fill the hosted pool
-		// (CI_HOSTED_SHARE 12), which would pick self-hosted, yet the short
-		// listing sends the run hosted.
-		{"short list that would pick self-hosted", 12, hosted, "::warning::runner selection: the Actions API gave no complete job list"},
-		// 5 of 20 listed: hosted, with the same warning.
-		{"short list that would pick hosted", 5, hosted, "::warning::runner selection: the Actions API gave no complete job list"},
+		// (CI_HOSTED_SHARE 12), so the run goes self-hosted.
+		{"short list that fills the hosted pool", 12, overflow, "::notice::runner selection: the hosted pool is full (12 of 12)"},
+		// 5 of 20 listed: hosted use 5/12 against no self-hosted use, so
+		// the run goes self-hosted on the balanced rule.
+		{"short list below every limit", 5, overflow, "::notice::runner selection: use hosted 5/12, bigdisk 0/10, bigdisk-docker 0/10"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, calls, log := runRunnerSelectListing(t, script, "false", tc.listed, 20)
@@ -337,8 +337,14 @@ func TestCIRunnerSelectionShortListGoesHosted(t *testing.T) {
 			if strings.Contains(calls, "&page=3") {
 				t.Errorf("%d of 20 jobs listed: the selector read past the empty page:\n%s", tc.listed, calls)
 			}
-			if !strings.Contains(log, tc.note) {
-				t.Errorf("%d of 20 jobs listed: log lacks %q:\n%s", tc.listed, tc.note, log)
+			short := fmt.Sprintf("::notice::runner selection: the listing returned fewer entries than its total (runs/7/jobs?filter=latest: %d of 20 entries); the counts are a lower bound", tc.listed)
+			for _, note := range []string{short, tc.why} {
+				if !strings.Contains(log, note) {
+					t.Errorf("%d of 20 jobs listed: log lacks %q:\n%s", tc.listed, note, log)
+				}
+			}
+			if strings.Contains(log, "::warning::") {
+				t.Errorf("%d of 20 jobs listed: a short listing printed a ::warning:\n%s", tc.listed, log)
 			}
 		})
 	}
