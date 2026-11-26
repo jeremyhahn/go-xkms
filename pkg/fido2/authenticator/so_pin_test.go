@@ -16,6 +16,7 @@ package authenticator
 import (
 	"bytes"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"testing"
@@ -248,6 +249,10 @@ func TestSOPINManager_ConcurrentDeriveKeyHeapBudget(t *testing.T) {
 	mgr := NewSOPINManager()
 	_, err := mgr.Initialize(testValidPIN)
 	require.NoError(t, err)
+
+	// Collect each finished derivation's buffer promptly, so the peak
+	// counts the buffers held at once, not the garbage pacing leaves.
+	defer debug.SetGCPercent(debug.SetGCPercent(10))
 
 	var stats runtime.MemStats
 	runtime.GC()
