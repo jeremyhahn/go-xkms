@@ -170,7 +170,11 @@ func (s *qrdbUserStore) GetByUsername(ctx context.Context, username string) (Use
 	if username == "" {
 		return nil, ErrUserNotFound
 	}
-	u, err := s.users.GetUserByUsername(ctx, s.tenantID, username)
+	callCtx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.GetUserByUsername(callCtx, s.tenantID, username)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
