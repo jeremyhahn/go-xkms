@@ -405,6 +405,21 @@ func TestScopedStore_ListFolders_Empty(t *testing.T) {
 	assert.Empty(t, folders)
 }
 
+func TestScopedStore_CreateAndRemoveFolder(t *testing.T) {
+	s := newTestScopedStore(t)
+	defer func() { _ = s.Close() }()
+
+	require.NoError(t, s.CreateFolder("projects"))
+	folders, err := s.ListFolders()
+	require.NoError(t, err)
+	assert.Contains(t, folders, "projects")
+
+	require.NoError(t, s.RemoveFolder("projects"))
+	folders, err = s.ListFolders()
+	require.NoError(t, err)
+	assert.NotContains(t, folders, "projects")
+}
+
 // --- MoveToFolder ---
 
 func TestScopedStore_MoveToFolder_Personal(t *testing.T) {
