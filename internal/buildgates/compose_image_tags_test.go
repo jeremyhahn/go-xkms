@@ -130,10 +130,19 @@ func integrationTestPrereqs(t *testing.T) []string {
 
 func TestIntegrationTestRunsBootstrapFirst(t *testing.T) {
 	prereqs := integrationTestPrereqs(t)
+	// integration-images (#2266) may sit between clean-test-containers and
+	// the suites; integration-test-bootstrap must still be the first suite.
+	firstSuite := ""
+	for _, p := range prereqs {
+		if strings.HasPrefix(p, "integration-test-") {
+			firstSuite = p
+			break
+		}
+	}
 	if len(prereqs) < 2 || prereqs[0] != "clean-test-containers" ||
-		prereqs[1] != "integration-test-bootstrap" {
-		t.Errorf("integration-test must run clean-test-containers then "+
-			"integration-test-bootstrap first, so a bootstrap image build failure "+
+		firstSuite != "integration-test-bootstrap" {
+		t.Errorf("integration-test must run clean-test-containers first and "+
+			"integration-test-bootstrap as its first suite, so a bootstrap image build failure "+
 			"costs minutes, not hours; prerequisites are %q", prereqs)
 	}
 }
