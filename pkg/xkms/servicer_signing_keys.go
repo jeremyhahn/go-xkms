@@ -120,6 +120,11 @@ func (e *ImageSignError) Unwrap() error {
 
 // ReleaseKeyProvisionError reports that a tenant's release key could not be
 // generated on its first use. Err is the backend's failure.
+// ErrReleaseKeyBackendUnsupported reports that the default backend cannot
+// hold a release key for one tenant, so none is generated on first use. A
+// tenant on such a backend binds a key it already holds.
+var ErrReleaseKeyBackendUnsupported = errors.New("attestation: the backend cannot hold a tenant's release signing key")
+
 type ReleaseKeyProvisionError struct {
 	// TenantID is the tenant whose release key was to be generated.
 	TenantID string
@@ -302,7 +307,14 @@ func (s *XKMSService) releaseKeySigner(ctx context.Context, tenant string, key *
 // to generate over one with ErrKeyAlreadyExists, so of two concurrent first
 // uses one generates the key and the other signs with it.
 func (s *XKMSService) provisionReleaseKey(ctx context.Context, tenant, backendName string) error {
-	_, err := s.GenerateKey(ctx, &transport.GenerateKeyRequest{
+	b, err := s.resolveBackend(backendName)
+	if err != nil {
+		return &ReleaseKeyProvisionError{TenantID: tenant, Err: err}
+	}
+	if !keepsTenantScope(b) {
+		return &ReleaseKeyProvisionError{TenantID: tenant, Err: ErrReleaseKeyBackendUnsupported}
+	}
+	_, err = s.GenerateKey(ctx, &transport.GenerateKeyRequest{
 		KeyID:     appraisal.ReleaseSigningKeyID,
 		Backend:   backendName,
 		KeyType:   "signing",
