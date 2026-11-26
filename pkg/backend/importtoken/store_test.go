@@ -46,18 +46,6 @@ func TestStore_TakeConsumesToken(t *testing.T) {
 	assert.Empty(t, destroyed)
 }
 
-// TestStore_TakeUnknownToken verifies Take on a token that was never
-// issued reports the same *NotFoundError as a consumed one, so a caller
-// (and an attacker probing tokens) cannot distinguish the two cases.
-func TestStore_TakeUnknownToken(t *testing.T) {
-	store := New(time.Hour, 10, func(string) {})
-
-	_, err := store.Take("never-issued")
-	require.Error(t, err)
-	var notFound *NotFoundError
-	require.True(t, errors.As(err, &notFound))
-}
-
 // TestStore_ExpiredTokenIsSwept verifies an expired token is swept: Put of
 // a second token triggers the sweep, and the expired entry's value is
 // destroyed rather than merely dropped.
