@@ -583,6 +583,18 @@ func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (er
 		return ErrBarrierNotInitialized
 	}
 
+	// A hardware-backed strategy (TPM2, PKCS#11, cloud KMS) has no password
+	// to change: the call is a no-op as documented. go-qrdb v0.58.2's
+	// StorageBarrier.ChangePassword has no hardware path and refuses the
+	// empty credentials, so it is not called here.
+	if s.barrier.Status().HardwareBacked {
+		if auditErr := s.logBarrierEvent(audit.OpBarrierPasswordChanged, true, nil, nil); auditErr != nil {
+			return auditErr
+		}
+		s.log.Info("barrier password change skipped: hardware-backed strategy")
+		return nil
+	}
+
 	ctx := s.context()
 	// CredentialsFor: ChangePassword is a no-op for hardware-backed
 	// strategies, which are called with an empty newPassword by design (see
