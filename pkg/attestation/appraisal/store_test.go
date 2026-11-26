@@ -127,7 +127,7 @@ func TestValidateName(t *testing.T) {
 			t.Errorf("ValidateName(%q) = %v", name, err)
 		}
 	}
-	for _, name := range []string{"", "a/b", "/", strings.Repeat("n", maxNameLen+1)} {
+	for _, name := range []string{"", "a/b", "/", ".", "..", strings.Repeat("n", maxNameLen+1)} {
 		err := ValidateName(name)
 		var invalid *NameError
 		if !errors.As(err, &invalid) || invalid.Name != name || !errors.Is(err, ErrInvalidName) {
