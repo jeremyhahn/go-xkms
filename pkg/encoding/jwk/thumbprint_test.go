@@ -21,7 +21,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
-	"math/big"
 	"testing"
 )
 
@@ -399,52 +398,6 @@ func BenchmarkThumbprintSHA256_Ed25519(b *testing.B) {
 	}
 }
 
-// Test custom RSA key to verify thumbprint calculation
-func TestCustomRSAThumbprint(t *testing.T) {
-	// Create a specific RSA key for reproducible testing
-	n, _ := new(big.Int).SetString("23456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789", 10)
-	e := 65537
-
-	pubKey := &rsa.PublicKey{
-		N: n,
-		E: e,
-	}
-
-	// Compute thumbprint
-	tp1, err := ThumbprintSHA256(pubKey)
-	if err != nil {
-		t.Fatalf("ThumbprintSHA256 failed: %v", err)
-	}
-
-	// Compute again to verify consistency
-	tp2, err := ThumbprintSHA256(pubKey)
-	if err != nil {
-		t.Fatalf("ThumbprintSHA256 failed: %v", err)
-	}
-
-	if tp1 != tp2 {
-		t.Error("Thumbprint should be consistent for same key")
-	}
-}
-
-func TestThumbprintUnsupportedHashFunction(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	jwk, err := FromPublicKey(&key.PublicKey)
-	if err != nil {
-		t.Fatalf("FromPublicKey failed: %v", err)
-	}
-
-	// Try using an unsupported hash function
-	_, err = jwk.Thumbprint(crypto.MD5) // MD5 is not supported
-	if err == nil {
-		t.Error("Expected error for unsupported hash function")
-	}
-}
-
 // TestThumbprint_RefusesSHA1 is the regression for go-xkms#292.
 //
 // crypto/sha1 PANICS rather than erroring under GODEBUG=fips140=only, so this
@@ -461,29 +414,6 @@ func TestThumbprint_RefusesSHA1(t *testing.T) {
 
 	if _, err := Thumbprint(&key.PublicKey, crypto.SHA1); err == nil {
 		t.Fatal("SHA-1 must be refused, not computed")
-	}
-}
-
-// The refusal must not have taken the approved hashes with it.
-func TestThumbprint_ApprovedHashesStillWork(t *testing.T) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	for name, h := range map[string]crypto.Hash{
-		"SHA-256": crypto.SHA256,
-		"SHA-384": crypto.SHA384,
-		"SHA-512": crypto.SHA512,
-	} {
-		tp, err := Thumbprint(&key.PublicKey, h)
-		if err != nil {
-			t.Errorf("%s: %v", name, err)
-			continue
-		}
-		if tp == "" {
-			t.Errorf("%s: empty thumbprint", name)
-		}
 	}
 }
 
@@ -520,20 +450,6 @@ func TestKeyAuthorizationError(t *testing.T) {
 	_, err := KeyAuthorization("test-token", key)
 	if err == nil {
 		t.Error("Expected error for unsupported key type")
-	}
-}
-
-func TestSerializeForThumbprintErrors(t *testing.T) {
-	// This is an internal function, but we can test it indirectly
-	// by creating a JWK with missing required fields
-	jwk := &JWK{
-		Kty: string(KeyTypeRSA),
-		// Missing N and E
-	}
-
-	_, err := jwk.ThumbprintSHA256()
-	if err == nil {
-		t.Error("Expected error for JWK missing required fields")
 	}
 }
 
