@@ -74,6 +74,27 @@ describe('SigningKeyClient (wire contract)', () => {
     expect(list.bindings[0]?.repository).toBe('acme/app');
   });
 
+  it('signs a CoRIM with a POST of the request', async () => {
+    const key = { repository: 'acme/app', key_id: 'release', default: true };
+    const fake = newFakeFetch({ body: { key, corim: '0g==' } });
+    const req = { repository: 'acme/app', corim: '2QH1oA==', signer_name: 'Acme' };
+    const signed = await make(fake).signingKeys.signCoRIM(req);
+    expect(fake.calls[0]?.method).toBe('POST');
+    expect(fake.calls[0]?.url).toBe(`${COLLECTION}/sign-corim`);
+    expect(fake.calls[0]?.body).toEqual(req);
+    expect(signed.key.key_id).toBe('release');
+    expect(signed.corim).toBe('0g==');
+  });
+
+  it('rejects a refused CoRIM signing with the server\'s status', async () => {
+    const fake = newFakeFetch({ status: 400, body: { error: 'malformed corim' } });
+    const err = await make(fake)
+      .signingKeys.signCoRIM({ repository: 'acme/app', corim: '/w==', signer_name: 'Acme' })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(XkmsApiError);
+    expect((err as XkmsApiError).status).toBe(400);
+  });
+
   it('rejects with the server\'s status and message', async () => {
     const fake = newFakeFetch({ status: 404, body: { error: 'record not found' } });
     const c = make(fake);

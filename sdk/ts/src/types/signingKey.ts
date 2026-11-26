@@ -17,7 +17,7 @@
  * its tenant's release key. Mirrors pkg/attestation/appraisal/signing_keys.go.
  */
 
-import type { RFC3339 } from './common.js';
+import type { Base64, RFC3339 } from './common.js';
 
 /** Mirrors transport.SigningKeyBinding: the key that signs a repository. */
 export interface SigningKeyBinding {
@@ -48,4 +48,27 @@ export interface SigningKeyResolution {
   backend?: string;
   /** True when no binding names the repository: the key is the tenant's release key. */
   default: boolean;
+}
+
+/**
+ * Mirrors transport.SignCoRIMRequest: a repository's CoRIM to sign with the
+ * key the repository resolves to, draft-ietf-rats-corim-11 §4.2.
+ */
+export interface SignCoRIMRequest {
+  repository: string;
+  /** The CBOR unsigned-corim-map, tagged #6.501 or not. */
+  corim: Base64;
+  /** corim-meta signer-name, §4.2.3.1. */
+  signer_name: string;
+  /** corim-meta signer-uri, §4.2.3.1. */
+  signer_uri?: string;
+  /** corim-meta signature-validity, §7.3; not_before needs not_after. */
+  not_before?: RFC3339;
+  not_after?: RFC3339;
+}
+
+/** Mirrors transport.SignedCoRIM: the COSE_Sign1 signed-corim and its key. */
+export interface SignedCoRIM {
+  key: SigningKeyResolution;
+  corim: Base64;
 }
