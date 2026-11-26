@@ -482,6 +482,13 @@ func Routes() []RouteSpec {
 	permIf("DELETE", "/attestation/reference-values/{name}", auth.ResourceAttestationReferenceValues, auth.ActionDelete, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.DeleteReferenceValuesHandler })
 	permIf("POST", "/attestation/appraise", auth.ResourceAttestationVerifier, auth.ActionVerify, hasAppraisal, func(s *Server) http.HandlerFunc { return s.attestationAppraisalHandlers.AppraiseQuoteHandler })
 
+	// CA transparency log reads (docs/transparency-log).
+	hasTransparencyLog := func(s *Server) bool { return s.transparencyLogHandlers != nil }
+	permIf("GET", "/ca/transparency-log/head", auth.ResourceVlog, auth.ActionHead, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.HeadHandler })
+	permIf("GET", "/ca/transparency-log/entries/{index}", auth.ResourceVlog, auth.ActionGet, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.EntryHandler })
+	permIf("GET", "/ca/transparency-log/proofs/inclusion", auth.ResourceVlog, auth.ActionProof, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.InclusionProofHandler })
+	permIf("GET", "/ca/transparency-log/proofs/consistency", auth.ResourceVlog, auth.ActionProof, hasTransparencyLog, func(s *Server) http.HandlerFunc { return s.transparencyLogHandlers.ConsistencyProofHandler })
+
 	// --- Repository signing keys (go-xkms#1697). attestation_signing_keys:*
 	// is an xkms-owned permission family whose tenancy scope
 	// pkg/apimodule/module_scopes.go declares; the service binds each call to
