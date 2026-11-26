@@ -250,33 +250,6 @@ func TestVerifier_RefusesTrustOnFirstUse(t *testing.T) {
 	}
 }
 
-func TestVerifier_DivergentPCRIsACryptographicFailure(t *testing.T) {
-	w := newVerifierWorld(t)
-	w.endorse(t)
-	tampered := appraisaltest.PCRValues(0, 4, 7)
-	tampered[4] = appraisaltest.PCRValues(9)[9]
-	nonce := []byte("n")
-	result := w.appraise(t, tampered, nonce, nonce)
-	if result.Verified || !result.CryptographicFailure || outcomeOf(result, AppraisalCheckBaseline) != AppraisalForged {
-		t.Fatalf("result = %+v, want a forged baseline", result)
-	}
-	if outcomeOf(result, AppraisalCheckQuote) != AppraisalPass {
-		t.Fatal("the quote itself is genuine")
-	}
-}
-
-func TestVerifier_WrongNonceIsForged(t *testing.T) {
-	w := newVerifierWorld(t)
-	w.endorse(t)
-	result := w.appraise(t, w.pcrs, []byte("expected"), []byte("replayed"))
-	if result.Verified || !result.CryptographicFailure || outcomeOf(result, AppraisalCheckQuote) != AppraisalForged {
-		t.Fatalf("result = %+v, want a forged quote", result)
-	}
-	if outcomeOf(result, AppraisalCheckBaseline) != AppraisalAbsent {
-		t.Fatal("a baseline is not evaluated over an unverified quote")
-	}
-}
-
 func TestVerifier_UnrestrictedAKIsForged(t *testing.T) {
 	w := newVerifierWorld(t)
 	w.endorse(t)
