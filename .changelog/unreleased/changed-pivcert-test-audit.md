@@ -1,0 +1,1 @@
+pivcert: the package's tests test each behaviour once (#1794). Removed the tests that only restated constants or sentinel messages, the `String` tests that the storage-error message test already pins, and the no-extension parse and root-signed verify tests that the verify-path tests cover. Coverage is unchanged at 97.5%.
