@@ -32,6 +32,7 @@ export {
 export {
   XkmsApiError,
   XkmsNetworkError,
+  XkmsInsecureTransportError,
   parseErrorEnvelope,
   type ErrorEnvelope,
 } from './errors.js';

@@ -69,9 +69,15 @@ export class SigningKeyClient {
   /**
    * POST /api/v1/attestation/signing-keys/sign-image — signs an image with
    * the key its repository resolves to and pushes the attestation to the
-   * image's registry with the request's credentials.
+   * image's registry with the request's credentials. A request carrying
+   * registry credentials goes only to an https:// base URL, without
+   * following redirects, unless allowInsecureTransport is set (ruling 152):
+   * otherwise it throws XkmsInsecureTransportError before anything is sent.
    */
   signImage(req: SignImageRequest): Promise<SignedImage> {
-    return this.http.request('POST', `${BASE}/sign-image`, { body: req });
+    return this.http.request('POST', `${BASE}/sign-image`, {
+      body: req,
+      secureChannel: req.registry !== undefined,
+    });
   }
 }

@@ -19,6 +19,7 @@ export interface RecordedCall {
   headers: Record<string, string>;
   body: unknown;
   credentials: string | undefined;
+  redirect: RequestRedirect | undefined;
 }
 
 export interface FakeResponseSpec {
@@ -27,6 +28,12 @@ export interface FakeResponseSpec {
   /** Raw text body (overrides `body`). */
   text?: string;
   headers?: Record<string, string>;
+  /**
+   * The server redirects to this URL. As WHATWG fetch does, a request with
+   * redirect 'error' rejects with a TypeError; any other mode follows it and
+   * records the hop as a second call that gets this spec's response.
+   */
+  redirectTo?: string;
 }
 
 export interface FakeFetch {
@@ -47,16 +54,26 @@ export function newFakeFetch(initial?: FakeResponseSpec): FakeFetch {
     for (const [k, v] of Object.entries((init?.headers ?? {}) as Record<string, string>)) {
       headers[k] = v;
     }
-    calls.push({
-      url: String(input),
-      method: init?.method ?? 'GET',
-      headers,
-      body: typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body,
-      credentials: init?.credentials,
-    });
+    const record = (url: string): void => {
+      calls.push({
+        url,
+        method: init?.method ?? 'GET',
+        headers,
+        body: typeof init?.body === 'string' ? JSON.parse(init.body) : init?.body,
+        credentials: init?.credentials,
+        redirect: init?.redirect,
+      });
+    };
+    record(String(input));
 
     const spec = queue.shift() ?? last;
     last = spec;
+    if (spec.redirectTo !== undefined) {
+      if (init?.redirect === 'error') {
+        throw new TypeError('fetch failed: redirect mode is set to error');
+      }
+      record(spec.redirectTo);
+    }
     const status = spec.status ?? 200;
     const text =
       spec.text !== undefined
