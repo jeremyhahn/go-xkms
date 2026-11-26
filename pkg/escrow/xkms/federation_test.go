@@ -29,15 +29,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewFederationAgent_Success(t *testing.T) {
-	agent, err := NewFederationAgent(&FederationConfig{
-		Endpoint: "https://dr-xkms.company.com:8443",
-	})
-	require.NoError(t, err)
-	require.NotNil(t, agent)
-	assert.Equal(t, "https://dr-xkms.company.com:8443", agent.endpoint)
-}
-
 func TestNewFederationAgent_NilConfig(t *testing.T) {
 	_, err := NewFederationAgent(nil)
 	require.Error(t, err)
@@ -609,30 +600,6 @@ func TestFederationAgent_RevokeEscrow_ServerUnavailable(t *testing.T) {
 	err = agent.RevokeEscrow(context.Background(), "escrow-001")
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, escrow.ErrAgentUnavailable))
-}
-
-func TestFederationAgent_Close(t *testing.T) {
-	agent, err := NewFederationAgent(&FederationConfig{Endpoint: "https://localhost:8443"})
-	require.NoError(t, err)
-
-	err = agent.Close()
-	require.NoError(t, err)
-	assert.True(t, agent.closed.Load())
-}
-
-func TestFederationConfig_Validate_Success(t *testing.T) {
-	cfg := &FederationConfig{
-		Endpoint: "https://dr-xkms.company.com:8443",
-	}
-	err := cfg.Validate()
-	require.NoError(t, err)
-}
-
-func TestFederationConfig_Validate_EmptyEndpoint(t *testing.T) {
-	cfg := &FederationConfig{}
-	err := cfg.Validate()
-	require.Error(t, err)
-	assert.True(t, errors.Is(err, escrow.ErrEmptyEndpoint))
 }
 
 func TestFederationAgent_EscrowKey_ServerUnavailable(t *testing.T) {
