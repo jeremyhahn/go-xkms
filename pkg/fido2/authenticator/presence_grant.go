@@ -59,15 +59,21 @@ func (a *Authenticator) grantNow() time.Time {
 
 // grantPresence records an approved selection for the channel of ctx. A
 // command without a CTAPHID channel leaves no grant.
-func (a *Authenticator) grantPresence(ctx context.Context) {
+func (a *Authenticator) grantPresence(ctx context.Context) bool {
 	cid, ok := ctaphidChannelFrom(ctx)
 	a.grantMu.Lock()
 	defer a.grantMu.Unlock()
+	// Checked under grantMu so a CANCEL's revoke cannot run before this grant.
+	if ctx.Err() != nil {
+		a.presenceGrant = nil
+		return false
+	}
 	if !ok {
 		a.presenceGrant = nil
-		return
+		return true
 	}
 	a.presenceGrant = &selectionGrant{channel: cid, expires: a.grantNow().Add(SelectionPresenceWindow)}
+	return true
 }
 
 func (a *Authenticator) clearPresenceGrant() {
@@ -158,7 +164,9 @@ func (a *Authenticator) waitForSelectionPresence(ctx context.Context, rpID, rpNa
 	err := a.askUserPresence(waitCtx, rpID, rpName, userName, operation)
 	switch {
 	case err == nil:
-		a.grantPresence(ctx)
+		if !a.grantPresence(ctx) {
+			return context.Canceled
+		}
 		return nil
 	case ctx.Err() != nil:
 		// The host cancelled the command (CTAPHID_CANCEL).
