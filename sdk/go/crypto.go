@@ -32,8 +32,9 @@ import (
 // These allow SDK consumers to split and reconstruct secrets without importing
 // the internal shamir package directly.
 type (
-	// ShamirShare represents a single share in a Shamir secret sharing scheme.
-	ShamirShare = qrdbsdk.ShamirShare
+	// ShamirProtectedShare is a single share in a Shamir secret sharing
+	// scheme, its share bytes held in a go-enclave handle.
+	ShamirProtectedShare = qrdbsdk.ShamirProtectedShare
 )
 
 // Shamir secret sharing functions.
