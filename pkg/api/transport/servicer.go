@@ -126,7 +126,6 @@ type KeyServicer interface {
 	// X||Y and as a COSE_Key.
 	ExportOTAImagePublicKey(ctx context.Context, req *OTAImageKeyRequest) (*OTAImagePublicKeyResponse, error)
 	SignOTAImage(ctx context.Context, req *OTAImageSignRequest) (*SignResponse, error)
-	ExportOTAImageKey(ctx context.Context, req *OTAImageKeyRequest) (*ExportOTAImageKeyResponse, error)
 	GetImportParameters(ctx context.Context, req *GetImportParametersRequest) (*GetImportParametersResponse, error)
 	CopyKey(ctx context.Context, req *CopyKeyRequest) (*CopyKeyResponse, error)
 	ExportKeyMaterial(ctx context.Context, req *ExportKeyMaterialRequest) (*ExportKeyMaterialResponse, error)

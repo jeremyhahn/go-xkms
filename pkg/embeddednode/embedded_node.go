@@ -44,7 +44,9 @@ package embeddednode
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -318,13 +320,15 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	qcfg := &qrdbsdk.DaemonConfig{}
 
 	qcfg.Auth.Enabled = qrdbsdk.BoolPtr(cfg.Auth.Enabled)
-	// The deployment's trust domain is qrdb's cluster trust domain: it is
-	// stamped into the Raft node certificates' SPIFFE SAN and pinned by the
-	// cluster key exchange, and qrdb's mTLS authenticator refuses a tenant
-	// named like it.
+	// The CA stamps every client certificate's tenant into a SPIFFE SAN under
+	// this trust domain, so qrdb's mTLS authenticator pins the same one and
+	// rejects a SAN under a foreign trust domain.
 	qcfg.Auth.ClusterTrustDomain = TrustDomain(cfg)
 
-	qcfg.Raft.DataDir = cfg.Datastore.Path
+	// qrdb refuses a relative volume pool path, so a relative datastore path
+	// (resolved against the working directory) reaches qrdb absolute.
+	dataDir := absDatastorePath(cfg.Datastore.Path)
+	qcfg.Raft.DataDir = dataDir
 
 	// Engine selects the local qrdb database backend directly from the
 	// global datastore configuration -- never hardcoded. An empty Engine (a
@@ -352,10 +356,10 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 		if cfg.Barrier.RootKeyPath != "" {
 			qcfg.Seal.RootKeyPath = cfg.Barrier.RootKeyPath
 		}
-		if cfg.Datastore.Path != "" && len(qcfg.Storage.VolumePools) == 0 {
+		if dataDir != "" && len(qcfg.Storage.VolumePools) == 0 {
 			qcfg.Storage.VolumePools = []qrdbsdk.DaemonVolumePoolConfig{{
 				Name: "default",
-				Path: filepath.Join(cfg.Datastore.Path, "tenant-volumes"),
+				Path: filepath.Join(dataDir, "tenant-volumes"),
 			}}
 		}
 	} else {
@@ -363,6 +367,39 @@ func EmbeddedNodeStorageConfig(cfg *config.Config, sealRes ResolvedNodeSeal) *qr
 	}
 
 	return qcfg
+}
+
+// absDatastorePath resolves a relative datastore path against the working
+// directory. An empty path stays empty (the in-memory engine). When the
+// working directory cannot be read, it logs the error and keeps the
+// configured path, so qrdb reports the relative path it refuses.
+func absDatastorePath(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		slog.Error("embedded node: cannot resolve datastore path to an absolute path",
+			"path", path, "error", err)
+		return path
+	}
+	return abs
+}
+
+// ProvisionVolumePools creates every volume pool directory qcfg names,
+// owner-only (0700). qrdb's volume Open stats the pool path and refuses a
+// missing directory, which would leave the pool unserved on a clean start
+// (a fresh datastore path). Call it before the node is constructed.
+func ProvisionVolumePools(qcfg *qrdbsdk.DaemonConfig) error {
+	for _, pool := range qcfg.Storage.VolumePools {
+		if pool.Path == "" {
+			continue
+		}
+		if err := os.MkdirAll(pool.Path, 0o700); err != nil {
+			return fmt.Errorf("embedded node: creating volume pool %q directory %q: %w", pool.Name, pool.Path, err)
+		}
+	}
+	return nil
 }
 
 // NewEmbeddedAuditSink builds the compliance-grade audit sink an embedded
@@ -457,6 +494,9 @@ func OpenEmbeddedNode(ctx context.Context, opts EmbeddedNodeOptions) (*qrdbnode.
 // The caller owns sealRes and releases it whether or not this succeeds.
 func openEmbeddedNodeWithSeal(ctx context.Context, opts EmbeddedNodeOptions, sealRes ResolvedNodeSeal) (*qrdbnode.Node, error) {
 	qcfg := EmbeddedNodeStorageConfig(opts.Config, sealRes)
+	if err := ProvisionVolumePools(qcfg); err != nil {
+		return nil, err
+	}
 
 	auditSink := opts.AuditSink
 	if auditSink == nil {

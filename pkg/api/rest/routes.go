@@ -197,8 +197,6 @@ func Routes() []RouteSpec {
 	perm("POST", "/ota-image-keys/{board}/rotate", auth.ResourceKeys, auth.ActionRotate, func(s *Server) http.HandlerFunc { return s.handlers.RotateOTAImageKeyHandler })
 	perm("GET", "/ota-image-keys/{board}/public-key", auth.ResourceKeys, auth.ActionGet, func(s *Server) http.HandlerFunc { return s.handlers.ExportOTAImagePublicKeyHandler })
 	permBulk("POST", "/ota-image-keys/{board}/sign", auth.ResourceKeys, auth.ActionSign, func(s *Server) http.HandlerFunc { return s.handlers.SignOTAImageHandler })
-	// Exporting a board key reads its public half, so the get permission applies.
-	perm("POST", "/ota-image-keys/{board}/export", auth.ResourceKeys, auth.ActionGet, func(s *Server) http.HandlerFunc { return s.handlers.ExportOTAImageKeyHandler })
 	// Key versions: listing reads like listing keys; enabling and disabling
 	// versions is rotation lifecycle management; retiring destroys a
 	// version's key material, as deleting a key does.

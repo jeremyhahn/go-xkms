@@ -184,9 +184,6 @@ func (m *mockCAClient) ExportOTAImagePublicKey(_ context.Context, _ *transport.O
 func (m *mockCAClient) SignOTAImage(_ context.Context, _ *transport.OTAImageSignRequest) (*transport.SignResponse, error) {
 	return nil, nil
 }
-func (m *mockCAClient) ExportOTAImageKey(_ context.Context, _ *transport.OTAImageKeyRequest) (*transport.ExportOTAImageKeyResponse, error) {
-	return nil, nil
-}
 func (m *mockCAClient) GetImportParameters(_ context.Context, _ *transport.GetImportParametersRequest) (*transport.GetImportParametersResponse, error) {
 	return nil, nil
 }
