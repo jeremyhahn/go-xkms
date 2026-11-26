@@ -1,0 +1,1 @@
+storage/file: the package's tests test each behaviour once (#1794): the single-key validator tests fold into the public-API refusal test, which now asserts each refusal's message for the empty, NUL-byte, absolute and traversal keys, and the tests that repeated Put/Get, the absent-key contract, Exists, List and Scan paths are removed.
