@@ -129,6 +129,8 @@ func (tpm *TPM2) applySealedPCRSelection(keyAttrs *types.KeyAttributes, sealed *
 //
 // Returns SealedData containing the TPM public/private areas, or error.
 func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions) (*types.SealedData, error) {
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
 	if opts == nil {
 		opts = &types.SealOptions{}
 	}
@@ -316,6 +318,8 @@ func (tpm *TPM2) applySealAuthPolicy(keyAttrs *types.KeyAttributes, authPolicy [
 // TPM_RC_AUTH_FAIL / TPM_RC_BAD_AUTH for a wrong UserAuth, TPM_RC_LOCKOUT.
 // Those are session- or command-scoped and say nothing about the data.
 func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *types.UnsealOptions) ([]byte, error) {
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
 	if sealed == nil {
 		return nil, ErrNilSealedData
 	}
