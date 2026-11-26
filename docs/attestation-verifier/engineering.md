@@ -203,19 +203,26 @@ surface never exposes one that does that silently.
 
 | Symbol | Kind | Where |
 |---|---|---|
-| `ReleaseSigningKeyID` | const `"release-signing"` | `signing_keys.go:31` |
-| `SigningKeyBinding`, `SigningKeyResolution` | types | `signing_keys.go:44`, `:89` |
-| `ValidateRepository` | func | `signing_keys.go:101` |
-| `Appraiser.SetSigningKeyBinding` / `GetSigningKeyBinding` / `ListSigningKeyBindings` / `DeleteSigningKeyBinding` / `ResolveSigningKey` | methods | `signing_keys.go:125`–`:178` |
-| `SigningKeySource`, `WithSigningKeySource` | interface, option | `signing_keys.go:195`, `:202` |
-| `Appraiser.RepositorySigningKey`, `Appraiser.TenantSigningKeys` | methods | `signing_keys.go:208`, `:226` |
-| `XKMSService.SigningPublicKey` | method (a `SigningKeySource`) | `pkg/xkms/servicer_signing_keys.go:136` |
+| `ReleaseSigningKeyID` | const `"release-signing"` | `signing_keys.go:30` |
+| `SigningKeyBinding`, `SigningKeyResolution` | types | `signing_keys.go:43`, `:88` |
+| `SignCoRIMRequest`, `SignedCoRIM` | types | `signing_keys.go:101`, `:120` |
+| `ValidateRepository` | func | `signing_keys.go:129` |
+| `Appraiser.SetSigningKeyBinding` / `GetSigningKeyBinding` / `ListSigningKeyBindings` / `DeleteSigningKeyBinding` / `ResolveSigningKey` | methods | `signing_keys.go:153`–`:206` |
+| `SigningKeySource`, `WithSigningKeySource` | interface, option | `signing_keys.go:223`, `:230` |
+| `Appraiser.RepositorySigningKey`, `Appraiser.TenantSigningKeys` | methods | `signing_keys.go:236`, `:254` |
+| `XKMSService.SigningPublicKey` | method (a `SigningKeySource`) | `pkg/xkms/servicer_signing_keys.go:158` |
+| `XKMSService.SignCoRIM` | method | `pkg/xkms/servicer_signing_keys.go:219` |
+| `refvalue.Sign`, `refvalue.Meta` | func, type | `pkg/attestation/refvalue/sign.go:69`, `:40` |
+| `refvalue.ErrSignerKey` / `ErrMeta` / `ErrSign` | errors | `pkg/attestation/refvalue/errors.go:66`, `:70`, `:74` |
 | `image.SigningKeyResolver`, `VerifierConfig.SigningKeys` | interface, field | `pkg/image/verifier.go:68`, `:62` |
 
 `sdk/go` re-exports these under an `Attestation` prefix
-(`sdk/go/attestation_appraisal.go:46`–`:130`, `:182`–`:204`), plus
-`ImageSigningKeyResolver` and `ErrImageSigningKeyMismatch`
-(`sdk/go/image.go:101`, `:181`).
+(`sdk/go/attestation_appraisal.go:47`–`:134`, `:186`–`:208`), among them
+`SignAttestationCoRIMRequest` and `SignedAttestationCoRIM` (`:122`, `:124`),
+plus `ImageSigningKeyResolver` and `ErrImageSigningKeyMismatch`
+(`sdk/go/image.go:101`, `:181`). `sdk/go/evidence` re-exports the CoRIM
+signer as `SignCoRIM`, `CoRIMMeta` and `ErrCoRIMSignerKey` / `ErrCoRIMMeta` /
+`ErrCoRIMSign` (`sdk/go/evidence/refvalue.go:58`, `:62`, `:76`–`:78`).
 
 Invariants:
 
