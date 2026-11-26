@@ -28,6 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/encoding"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 	"github.com/jeremyhahn/go-xkms/pkg/image"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -228,9 +229,9 @@ func (s *XKMSService) SigningPublicKey(ctx context.Context, tenant string, key *
 	return signer.Public(), nil
 }
 
-// repositorySigner returns the tenant-scoped backend signer of a resolved
-// repository signing key.
-func (s *XKMSService) repositorySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
+// repositoryKey resolves the tenant's key a repository signing key
+// resolution names, without admitting it for any operation.
+func (s *XKMSService) repositoryKey(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (*versionedKey, error) {
 	if key == nil {
 		return nil, appraisal.ErrNilRequest
 	}
@@ -242,17 +243,29 @@ func (s *XKMSService) repositorySigner(ctx context.Context, tenant string, key *
 	// tenant's backend is unscoped, so the lookup is restricted to the
 	// requested tenant: a key of another tenant is never trusted.
 	owner := recordTenant(tenant)
-	k, err := s.resolveKeyOf(ctx, b, backendName, key.KeyID, &owner)
+	return s.resolveKeyOf(ctx, b, backendName, key.KeyID, &owner)
+}
+
+// repositorySigner returns the tenant-scoped backend signer of a resolved
+// repository signing key. It admits nothing: the public-key lookup reads the
+// key through it, and releaseKeySigner admits the key before signing.
+func (s *XKMSService) repositorySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
+	k, err := s.repositoryKey(ctx, tenant, key)
 	if err != nil {
 		return nil, err
 	}
+	return s.keySigner(ctx, k, key.KeyID)
+}
+
+// keySigner returns the backend signer of k's current version.
+func (s *XKMSService) keySigner(ctx context.Context, k *versionedKey, keyID string) (crypto.Signer, error) {
 	cur, err := k.current()
 	if err != nil {
 		return nil, err
 	}
 	signer, err := k.backend.Signer(ctx, cur.attrs)
 	if err != nil {
-		return nil, &ErrKeyOperation{Operation: "read repository signing key", KeyID: key.KeyID, Err: err}
+		return nil, &ErrKeyOperation{Operation: "read repository signing key", KeyID: keyID, Err: err}
 	}
 	return signer, nil
 }
@@ -264,15 +277,24 @@ func (s *XKMSService) repositorySigner(ctx context.Context, tenant string, key *
 // resolved backend. Only the default resolution provisions; a binding to a
 // key the tenant does not hold still fails with ErrKeyNotFound. The system
 // tenant is never provisioned: it never signs images (owner ruling 165).
+// The key, existing or just provisioned, is admitted for signing as Sign
+// admits it: a revoked or disabled key, or a caller its policy refuses,
+// never signs.
 func (s *XKMSService) releaseKeySigner(ctx context.Context, tenant string, key *appraisal.SigningKeyResolution) (crypto.Signer, error) {
-	signer, err := s.repositorySigner(ctx, tenant, key)
-	if !errors.Is(err, ErrKeyNotFound) || !key.Default || qrdbsdk.IsSystemTenant(tenant) {
-		return signer, err
+	k, err := s.repositoryKey(ctx, tenant, key)
+	if errors.Is(err, ErrKeyNotFound) && key.Default && !qrdbsdk.IsSystemTenant(tenant) {
+		if err := s.provisionReleaseKey(ctx, tenant, key.Backend); err != nil {
+			return nil, err
+		}
+		k, err = s.repositoryKey(ctx, tenant, key)
 	}
-	if err := s.provisionReleaseKey(ctx, tenant, key.Backend); err != nil {
+	if err != nil {
 		return nil, err
 	}
-	return s.repositorySigner(ctx, tenant, key)
+	if err := s.admitKey(ctx, k, keypolicy.OpSign); err != nil {
+		return nil, err
+	}
+	return s.keySigner(ctx, k, key.KeyID)
 }
 
 // provisionReleaseKey generates tenant's release key in backendName, the
