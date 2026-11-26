@@ -446,6 +446,40 @@ func TestSelection_GrantRevokedWhenDeferredAssertionTimesOut(t *testing.T) {
 	selGrantSurvivesDeferral(t, func(*selHIDDevice) {})
 }
 
+// selCancelOnApprove approves presence after the host has cancelled the command.
+type selCancelOnApprove struct {
+	selUPHandler
+	cancel context.CancelFunc
+}
+
+func (h *selCancelOnApprove) RequestUserPresence(context.Context, *UserPresenceRequest) (*UserPresenceResult, error) {
+	h.calls.Add(1)
+	h.cancel()
+	return &UserPresenceResult{Approved: true}, nil
+}
+
+func TestSelection_ApprovalRacingCancelLeavesNoGrant(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(WithCTAPHIDChannel(context.Background(), 0x01000001))
+	defer cancel()
+	h := &selCancelOnApprove{cancel: cancel}
+	config := DefaultConfig()
+	config.Storage = NewMemoryStorage()
+	config.UserPresenceHandler = h
+	auth, err := NewAuthenticator(config)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = auth.Close() })
+
+	resp, _ := auth.ProcessCBORWithContext(ctx, CmdSelection, nil)
+	require.NotEmpty(t, resp)
+	require.Equal(t, byte(StatusKeepaliveCancel), resp[0], "a cancelled Selection must report the cancel")
+
+	auth.grantMu.Lock()
+	grant := auth.presenceGrant
+	auth.grantMu.Unlock()
+	require.Nil(t, grant, "a cancelled Selection must leave no presence grant")
+}
+
 // --- CTAPHID transport helpers -------------------------------------------
 
 // selProbe collects the HID packets an authenticator sends.
