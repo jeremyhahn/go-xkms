@@ -38,6 +38,7 @@ const testPackage = "com.automatethethings.xkey"
 func newTestPolicy() *EnrollmentPolicy {
 	p := NewEnrollmentPolicy()
 	p.TrustedRoots = x509.NewCertPool()
+	p.Revocation = &android.StatusList{}
 	p.AllowedApplications = []AllowedApplication{{
 		PackageName:    testPackage,
 		SigningDigests: []string{"aa" + hexRepeat(31)},
@@ -173,6 +174,7 @@ func TestEnrollmentPolicy_RefusesAnUnknownFormat(t *testing.T) {
 func TestEnrollmentPolicy_RefusesAnEmptyAllowList(t *testing.T) {
 	p := NewEnrollmentPolicy()
 	p.TrustedRoots = x509.NewCertPool()
+	p.Revocation = &android.StatusList{}
 
 	_, err := p.Evaluate(&pairingproto.LocalGetDeviceEnrollmentRequestResult{
 		AttestationChain: []string{"ignored"},

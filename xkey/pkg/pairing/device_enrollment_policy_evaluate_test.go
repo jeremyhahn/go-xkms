@@ -75,6 +75,7 @@ func newEnrollmentEvidence(
 func (e *enrollmentEvidence) policy() *pairing.EnrollmentPolicy {
 	p := pairing.NewEnrollmentPolicy()
 	p.TrustedRoots = e.ca.Pool()
+	p.Revocation = attesttest.NoRevocations()
 	p.ApplicationPolicy = attesttest.Applications()
 	return p
 }
