@@ -21,6 +21,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/x509"
 	"errors"
@@ -176,6 +177,45 @@ func TestSigner_NamedHash_RSA_StillSigns(t *testing.T) {
 	digest := sha256.Sum256([]byte("payload"))
 	if _, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256); err != nil {
 		t.Fatalf("Sign with crypto.SHA256: %v", err)
+	}
+}
+
+// TestSigner_PSSOptions_RSA_ProducesPSSSignature pins that the signer keeps the
+// caller's rsa.PSSOptions: a crypto.Signer caller that asks for RSA-PSS (a COSE
+// PS256 signer, for one) declares PSS in what it emits, so a PKCS#1 v1.5
+// signature returned under those options never verifies.
+func TestSigner_PSSOptions_RSA_ProducesPSSSignature(t *testing.T) {
+	backend := simSigningBackend(t)
+	ctx := context.Background()
+
+	attrs := &types.KeyAttributes{
+		CN:            "pss-options-rsa",
+		KeyAlgorithm:  x509.RSA,
+		KeyType:       types.KeyTypeSigning,
+		StoreType:     types.StoreTPM2,
+		RSAAttributes: &types.RSAAttributes{KeySize: 2048},
+	}
+	if _, err := backend.GenerateKey(ctx, attrs); err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	signer, err := backend.Signer(ctx, attrs)
+	if err != nil {
+		t.Fatalf("Signer: %v", err)
+	}
+	pub, ok := signer.Public().(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("Public: got %T, want *rsa.PublicKey", signer.Public())
+	}
+
+	pssOpts := &rsa.PSSOptions{SaltLength: rsa.PSSSaltLengthEqualsHash, Hash: crypto.SHA256}
+	digest := sha256.Sum256([]byte("payload"))
+	signature, err := signer.Sign(rand.Reader, digest[:], pssOpts)
+	if err != nil {
+		t.Fatalf("Sign with rsa.PSSOptions: %v", err)
+	}
+	if err := rsa.VerifyPSS(pub, crypto.SHA256, digest[:], signature, pssOpts); err != nil {
+		t.Fatalf("VerifyPSS rejected the signature made under rsa.PSSOptions: %v", err)
 	}
 }
 
