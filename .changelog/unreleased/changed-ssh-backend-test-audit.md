@@ -1,0 +1,1 @@
+Tests: `pkg/ssh/backend` keeps one test per behaviour (#1794). `TestProvider_SSHSignVerifyAllAlgorithms` now also signs rsa-sha2-256/512 through the re-resolved `Signer`, and five tests that repeated its path or another kept test's are removed; coverage stays at 100%.
