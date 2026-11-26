@@ -24,7 +24,6 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
-	"errors"
 	"fmt"
 	"io"
 
@@ -341,14 +340,7 @@ func (ca *CA) importIssuingCAs(ctx context.Context, child *x509.Certificate, sin
 			return &errs.Detail{Err: ErrAIAIssuerSignatureInvalid, Detail: fmt.Sprintf("%s returned %q: %v", issuerURL, issuerCert.Subject.CommonName, err)}
 		}
 
-		// Only a confirmed absence authorizes the insert: the store replaces
-		// any certificate under the same common name, so a read failure taken
-		// for absence could overwrite an existing certificate.
-		existing, err := sink.lookup(issuerCert.Subject.CommonName)
-		if err != nil && !errors.Is(err, certstore.ErrCertNotFound) {
-			return &errs.Wrapped{Msg: fmt.Sprintf("ca: look up issuer %q", issuerCert.Subject.CommonName), Err: err}
-		}
-		if existing == nil {
+		if existing, err := sink.lookup(issuerCert.Subject.CommonName); err != nil || existing == nil {
 			if err := sink.store(ctx, issuerCert); err != nil {
 				return err
 			}
