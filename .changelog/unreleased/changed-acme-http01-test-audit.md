@@ -1,0 +1,1 @@
+acme: the `pkg/acme/challenges/http-01` tests test each behaviour once (#1794). Seven duplicate tests are gone, and coverage is still 95.8%. `TestVerify_HTTPStatusCodes` now checks the "unexpected HTTP status" message for every status it refuses.

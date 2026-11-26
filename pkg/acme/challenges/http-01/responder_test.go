@@ -70,6 +70,9 @@ func getChallenge(t *testing.T, r *Responder, token string) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
+// TestNewResponder_Success also pins readiness on return: the validation GET
+// runs on the next statement after NewResponder, with no delay, so it fails
+// if the bind is ever made lazy again.
 func TestNewResponder_Success(t *testing.T) {
 	const keyAuth = "token-success.thumbprint"
 
@@ -88,25 +91,6 @@ func TestNewResponder_Success(t *testing.T) {
 	}
 	if body != keyAuth {
 		t.Errorf("body = %q, want %q", body, keyAuth)
-	}
-}
-
-// TestNewResponder_ReadyOnReturn is the regression test for the readiness race
-// the package-global Setup had: it deliberately performs the ACME server's
-// validation GET on the very next statement after NewResponder returns, with
-// no delay of any kind. It fails if the bind is ever made lazy again.
-func TestNewResponder_ReadyOnReturn(t *testing.T) {
-	const keyAuth = "token-ready.thumbprint"
-
-	responder, err := NewResponder(ResponderConfig{Addr: "127.0.0.1:0", KeyAuth: keyAuth})
-	if err != nil {
-		t.Fatalf("NewResponder: %v", err)
-	}
-	defer func() { _ = responder.Close() }()
-
-	status, body := getChallenge(t, responder, "token-ready")
-	if status != http.StatusOK || body != keyAuth {
-		t.Errorf("responder not serving immediately after NewResponder: status=%d body=%q", status, body)
 	}
 }
 
@@ -255,18 +239,6 @@ func TestNewResponder_ConfigOverridesApplied(t *testing.T) {
 	}
 	if responder.shutdownTimeout != 4*time.Second {
 		t.Errorf("shutdownTimeout = %v, want %v", responder.shutdownTimeout, 4*time.Second)
-	}
-}
-
-// TestResponder_VerifyRoundTrip drives the package's own server half against
-// its client half, which is the contract the SDK consumer depends on.
-func TestResponder_VerifyRoundTrip(t *testing.T) {
-	const keyAuth = "token-roundtrip.thumbprint"
-
-	responder := newTestResponder(t, keyAuth)
-
-	if err := Verify(loopbackClient(), "127.0.0.1", responderPort(t, responder), "token-roundtrip", keyAuth); err != nil {
-		t.Fatalf("Verify against the responder: %v", err)
 	}
 }
 
