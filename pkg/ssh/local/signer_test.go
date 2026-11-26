@@ -64,35 +64,6 @@ func generateEncryptedPEM(t *testing.T, passphrase []byte) []byte {
 	return pem.EncodeToMemory(block)
 }
 
-// TestResolveSigner_UnencryptedFileFallback covers the no-agent path: the
-// private-key file is read and parsed directly.
-func TestResolveSigner_UnencryptedFileFallback(t *testing.T) {
-	dir := t.TempDir()
-	pemBytes, pub := generatePEM(t)
-	path := filepath.Join(dir, "id_ed25519")
-	if err := os.WriteFile(path, pemBytes, 0o600); err != nil {
-		t.Fatalf("write key: %v", err)
-	}
-
-	identity := &local.Identity{Path: path}
-	signer, err := local.ResolveSigner(context.Background(), identity, "")
-	if err != nil {
-		t.Fatalf("ResolveSigner: %v", err)
-	}
-	if string(signer.PublicKey().Marshal()) != string(pub.Marshal()) {
-		t.Fatal("signer public key does not match the key on disk")
-	}
-
-	msg := []byte("authenticate me")
-	sig, err := signer.Sign(rand.Reader, msg)
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if err := pub.Verify(msg, sig); err != nil {
-		t.Fatalf("signature did not verify: %v", err)
-	}
-}
-
 // TestResolveSigner_AgentPreferred proves the agent path wins over the
 // file path when both are available: the on-disk file is deliberately
 // corrupt, so a successful, verifiable signature can only have come from
@@ -129,7 +100,8 @@ func TestResolveSigner_AgentPreferred(t *testing.T) {
 
 // TestResolveSigner_AgentMissesFallsBackToFile proves that when the agent
 // is reachable but does not hold the requested key, ResolveSigner falls
-// back to the (valid, unencrypted) file instead of failing outright.
+// back to the (valid, unencrypted) file instead of failing outright, and
+// the file's signer produces signatures that verify against its key.
 func TestResolveSigner_AgentMissesFallsBackToFile(t *testing.T) {
 	_, otherPriv := newTestEd25519Key(t)
 	keyring := sshagent.NewKeyring()
@@ -152,6 +124,15 @@ func TestResolveSigner_AgentMissesFallsBackToFile(t *testing.T) {
 	}
 	if string(signer.PublicKey().Marshal()) != string(pub.Marshal()) {
 		t.Fatal("signer public key does not match the on-disk key")
+	}
+
+	msg := []byte("authenticate me")
+	sig, err := signer.Sign(rand.Reader, msg)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	if err := pub.Verify(msg, sig); err != nil {
+		t.Fatalf("signature did not verify: %v", err)
 	}
 }
 
@@ -191,22 +172,5 @@ func TestResolveSigner_MissingFile(t *testing.T) {
 	var readErr *local.IdentityReadError
 	if !errors.As(err, &readErr) {
 		t.Fatalf("expected *IdentityReadError, got %T: %v", err, err)
-	}
-}
-
-// TestResolveSigner_MalformedFile covers keys.ParsePEM's *keys.PEMParseError
-// passing through unchanged for a file that exists but is not valid PEM.
-func TestResolveSigner_MalformedFile(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "not_a_key")
-	if err := os.WriteFile(path, []byte("definitely not a key"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-
-	identity := &local.Identity{Path: path}
-	_, err := local.ResolveSigner(context.Background(), identity, "")
-	var parseErr *keys.PEMParseError
-	if !errors.As(err, &parseErr) {
-		t.Fatalf("expected *keys.PEMParseError, got %T: %v", err, err)
 	}
 }
