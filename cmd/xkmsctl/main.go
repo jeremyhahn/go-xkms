@@ -15,6 +15,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/secure"
@@ -28,7 +29,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	if code := run(os.Args[1:], os.Stderr); code != 0 {
-		exitFunc(code)
+	os.Exit(run(os.Stderr))
+}
+
+// run executes the command tree and prints the error the root command silences.
+func run(stderr io.Writer) int {
+	if err := Execute(); err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
 	}
+	return 0
 }
