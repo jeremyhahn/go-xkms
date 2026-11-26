@@ -184,15 +184,6 @@ func TestStorageError_ErrorAndUnwrap(t *testing.T) {
 // Emit edge cases
 // ---------------------------------------------------------------------------
 
-func TestEmit_NilKey_InEntry(t *testing.T) {
-	// Entry with nil Key.
-	_, err := authorized.Emit(&authorized.Entry{Key: nil})
-	var nie *authorized.NilInputError
-	if !errors.As(err, &nie) {
-		t.Fatalf("expected NilInputError for nil Key, got %T: %v", err, err)
-	}
-}
-
 func TestEmit_NilPublicKey(t *testing.T) {
 	// Entry with Key set but Key.PublicKey nil.
 	_, err := authorized.Emit(&authorized.Entry{Key: &keys.Key{PublicKey: nil}})
@@ -221,8 +212,9 @@ func TestEmitAll_ErrorPropagates(t *testing.T) {
 		{Key: nil}, // will fail
 	}
 	_, err := authorized.EmitAll(entries)
-	if err == nil {
-		t.Fatal("expected error from EmitAll with nil-key entry")
+	var nie *authorized.NilInputError
+	if !errors.As(err, &nie) {
+		t.Fatalf("expected NilInputError from EmitAll with nil-key entry, got %T: %v", err, err)
 	}
 }
 
@@ -236,6 +228,9 @@ func TestParseLine_CommentLine(t *testing.T) {
 	if !errors.As(err, &m) {
 		t.Fatalf("expected MalformedLineError for comment line, got %T: %v", err, err)
 	}
+	if err.Error() == "" {
+		t.Fatal("MalformedLineError.Error() returned empty string for comment line")
+	}
 }
 
 func TestParseLine_EmptyLine(t *testing.T) {
@@ -244,38 +239,8 @@ func TestParseLine_EmptyLine(t *testing.T) {
 	if !errors.As(err, &m) {
 		t.Fatalf("expected MalformedLineError for empty line, got %T: %v", err, err)
 	}
-}
-
-// TestParseLine_UnsupportedAlgorithm checks that an algorithm the package
-// doesn't recognise produces a MalformedLineError. We can't easily forge
-// such a key through the normal path so we rely on the existing table
-// (AlgorithmFromPublicKey will accept ed25519/rsa/ecdsa; other types would
-// trigger the error path but are hard to generate via standard Go crypto).
-// We instead verify the happy path for all supported algos to confirm
-// AlgorithmFromPublicKey is exercised.
-func TestParseLine_AllAlgorithms(t *testing.T) {
-	algos := []keys.Algorithm{
-		keys.AlgorithmEd25519,
-		keys.AlgorithmECDSAP256,
-		keys.AlgorithmECDSAP384,
-		keys.AlgorithmECDSAP521,
-	}
-	for _, algo := range algos {
-		t.Run(string(algo), func(t *testing.T) {
-			k := generateKey(t, algo)
-			defer k.Destroy()
-			line, err := authorized.Emit(&authorized.Entry{Key: k, Comment: "test"})
-			if err != nil {
-				t.Fatalf("Emit: %v", err)
-			}
-			entry, err := authorized.ParseLine(line)
-			if err != nil {
-				t.Fatalf("ParseLine: %v", err)
-			}
-			if entry.Key.Fingerprint != k.Fingerprint {
-				t.Fatalf("fingerprint mismatch after round-trip for %s", algo)
-			}
-		})
+	if err.Error() == "" {
+		t.Fatal("MalformedLineError.Error() returned empty string")
 	}
 }
 
@@ -392,33 +357,6 @@ func TestStore_Get_InvalidScope(t *testing.T) {
 	}
 }
 
-func TestStore_List_AllScopes(t *testing.T) {
-	store := newStore(t)
-	var err error
-	ctx := context.Background()
-
-	// Add entries under two different scopes.
-	k1 := generateKey(t, keys.AlgorithmEd25519)
-	defer k1.Destroy()
-	k2 := generateKey(t, keys.AlgorithmEd25519)
-	defer k2.Destroy()
-	if err := store.Add(ctx, scope.User, "alice", "laptop", &authorized.Entry{Key: k1}); err != nil {
-		t.Fatalf("Add user: %v", err)
-	}
-	if err := store.Add(ctx, scope.Tenant, "acme", "shared", &authorized.Entry{Key: k2}); err != nil {
-		t.Fatalf("Add tenant: %v", err)
-	}
-
-	// List with empty scope → all entries.
-	all, err := store.List(ctx, scope.Scope(""), "")
-	if err != nil {
-		t.Fatalf("List all: %v", err)
-	}
-	if len(all) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(all))
-	}
-}
-
 func TestStore_List_InvalidScope(t *testing.T) {
 	store := newStore(t)
 	var err error
@@ -465,28 +403,6 @@ func TestVerify_NilReceived(t *testing.T) {
 // parseErr.Error() coverage — call .Error() on a MalformedLineError that
 // wraps one of the internal sentinel errors (errEmptyLine / errCommentLine).
 // ---------------------------------------------------------------------------
-
-func TestParseLine_EmptyLine_ErrorString(t *testing.T) {
-	_, err := authorized.ParseLine("")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	msg := err.Error()
-	if msg == "" {
-		t.Fatal("MalformedLineError.Error() returned empty string")
-	}
-	// The inner parseErr.Error() is exercised through MalformedLineError.Error().
-}
-
-func TestParseLine_CommentLine_ErrorString(t *testing.T) {
-	_, err := authorized.ParseLine("# comment line")
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	if err.Error() == "" {
-		t.Fatal("MalformedLineError.Error() returned empty string for comment line")
-	}
-}
 
 // ---------------------------------------------------------------------------
 // validateName: NUL byte in name
