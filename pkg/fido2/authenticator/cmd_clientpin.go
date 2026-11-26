@@ -888,11 +888,18 @@ func (a *Authenticator) handleGetPinUvAuthTokenUsingUvWithPermissions(req *Clien
 		return nil, err
 	}
 
-	verifyErr := verifier.VerifyUser(a.commandContext(), uvConsentRPID(req))
+	ctx := a.commandContext()
+	verifyErr := verifier.VerifyUser(ctx, uvConsentRPID(req))
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// A verifier may answer after the host cancelled the command (its
+	// revocation list download does not follow ctx): a cancelled command
+	// spends or restores no retry and mints no token, whatever the answer.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if verifyErr != nil {
 		return nil, a.failUserVerificationLocked(verifyErr)
 	}
