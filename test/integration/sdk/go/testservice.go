@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 
 	xkmssvc "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -46,6 +47,10 @@ var ErrNotImplemented = errors.New("not implemented in test service")
 // TestXKMSService is a real implementation of XKMSServicer for integration tests.
 // It uses in-memory storage to avoid external dependencies.
 type TestXKMSService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	mu           sync.RWMutex
 	keys         map[string]*testKey
 	certificates map[string][]byte

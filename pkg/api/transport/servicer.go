@@ -52,6 +52,7 @@ type XKMSServicer interface {
 	PasswordServicer
 	SealStoreServicer
 	TPMPolicyServicer
+	AttestationAppraisalServicer
 	SigningKeyServicer
 	TrustRootServicer
 	OIDCCredentialServicer

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -39,6 +40,9 @@ import (
 type mockTransportClient struct {
 	// Fake serves the TPM policy API, which these tests do not exercise.
 	*tpmpolicyfake.Fake
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise either.
+	appraisaltest.Unserved
 
 	listBackendsResp *transport.ListBackendsResponse
 	listBackendsErr  error

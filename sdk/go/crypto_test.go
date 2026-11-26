@@ -25,6 +25,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -471,7 +472,11 @@ func TestXKMSSigner_Sign_UnknownHash(t *testing.T) {
 
 // noopClient provides a minimal no-op implementation of transport.Client
 // to satisfy the interface for embedding in mockCryptoClient.
-type noopClient struct{}
+type noopClient struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+}
 
 func (n *noopClient) Connect(context.Context) error { return nil }
 func (n *noopClient) Close() error                  { return nil }

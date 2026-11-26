@@ -18,6 +18,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/embedded"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport/grpc"
@@ -766,6 +767,10 @@ func TestOptsFromConfig_SPKIPin(t *testing.T) {
 
 // mockXKMSService is a mock implementation of XKMSServicer for testing
 type mockXKMSService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	healthStatus  string
 	healthVersion string
 	healthErr     error

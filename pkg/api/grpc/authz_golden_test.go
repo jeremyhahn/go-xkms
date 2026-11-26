@@ -175,6 +175,17 @@ var goldenRPCPermissions = map[string]string{
 	"OIDCCredentialDeviceStart":    "oidc_credentials:update",
 	"OIDCCredentialDevicePoll":     "oidc_credentials:update",
 
+	// Attestation Verifier (go-xkms#1608) -- the trust anchors, signed
+	// CoRIM reference values and quote appraisal of pkg/attestation/appraisal.
+	"PutAttestationEndorsement":        "attestation_endorsements:create",
+	"ListAttestationEndorsements":      "attestation_endorsements:list",
+	"DeleteAttestationEndorsement":     "attestation_endorsements:delete",
+	"PutAttestationReferenceValues":    "attestation_reference_values:create",
+	"GetAttestationReferenceValues":    "attestation_reference_values:get",
+	"ListAttestationReferenceValues":   "attestation_reference_values:list",
+	"DeleteAttestationReferenceValues": "attestation_reference_values:delete",
+	"AppraiseAttestationQuote":         "attestation_verifier:verify",
+
 	// Repository signing keys (go-xkms#1697) --
 	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family.
 	// Changing a binding is bind; reading one or resolving a repository's

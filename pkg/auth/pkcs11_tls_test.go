@@ -32,6 +32,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	pkcs11module "github.com/jeremyhahn/go-xkms/pkg/pkcs11/module"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
 
@@ -126,7 +127,11 @@ func TestNewPKCS11TLSConfig_AllFieldsEmpty(t *testing.T) {
 
 // authMockClient implements transport.Client for testing the PKCS#11 module
 // in the auth package. All methods return minimal valid responses.
-type authMockClient struct{}
+type authMockClient struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+}
 
 func (m *authMockClient) Connect(context.Context) error { return nil }
 func (m *authMockClient) Close() error                  { return nil }
