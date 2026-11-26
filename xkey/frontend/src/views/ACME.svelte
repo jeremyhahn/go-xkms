@@ -38,6 +38,7 @@
   let authzType = 'dns';
   let challenge = '';
   let csrPath = '';
+  let httpAddr = '';
   let renewedPem = '';
 
   const deviceChallenges = ['enroll-01', 'endorse-01', 'device-attest-01'];
@@ -134,6 +135,7 @@
       authzType: authzType.trim(),
       challenge: challenge.trim(),
       csrPath: csrPath.trim(),
+      httpAddr: httpAddr.trim(),
     };
     return run(async () => {
       const { result, error: err } = await callBackendWithError<string>(
@@ -242,6 +244,7 @@
     <Input id="acme-authz" label="Authorization type" bind:value={authzType} />
     <Input id="acme-challenge" label="Challenge" bind:value={challenge} placeholder="dns-01" helperText="Required" />
     <Input id="acme-csr" label="CSR path" bind:value={csrPath} helperText="Required" monospace />
+    <Input id="acme-http-addr" label="HTTP-01 listen address" bind:value={httpAddr} helperText="Default :80" monospace />
     <Button disabled={!ready} on:click={renew}>Renew</Button>
     {#if renewedPem}
       <label class="field-label" for="acme-renewed">Renewed certificate</label>

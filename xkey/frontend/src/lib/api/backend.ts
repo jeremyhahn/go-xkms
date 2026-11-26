@@ -877,6 +877,7 @@ export interface ACMERenewRequest {
   authzType: string;
   challenge: string;
   csrPath: string;
+  httpAddr: string;
 }
 
 export interface ACMEEnrollRequest {
