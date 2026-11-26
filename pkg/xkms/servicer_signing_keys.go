@@ -513,12 +513,16 @@ func (s *XKMSService) SignImage(ctx context.Context, req *transport.SignImageReq
 	if err != nil {
 		return nil, signImageErr(err)
 	}
-	result, err := signImage(ctx, registry, &image.SignerConfig{
+	cfg := &image.SignerConfig{
 		Signer:      signer,
 		Certificate: certificate,
 		Chain:       chain,
 		Registry:    registry,
-	}, req)
+	}
+	if transparencyLog, logErr := s.getTransparencyLog(); logErr == nil {
+		cfg.TransparencyLog = transparencyLog
+	}
+	result, err := signImage(ctx, registry, cfg, req)
 	if err != nil {
 		return nil, signImageErr(err)
 	}

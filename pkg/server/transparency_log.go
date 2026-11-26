@@ -199,6 +199,15 @@ func (l *serviceTransparencyLog) AppendCertIssued(ctx context.Context, e tlog.Ce
 	return l.log.AppendCertIssued(ctx, e)
 }
 
+// AppendImageSigned appends an image-signed entry as the service principal.
+func (l *serviceTransparencyLog) AppendImageSigned(ctx context.Context, e tlog.ImageSigned) (uint64, error) {
+	ctx, err := l.callContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return l.log.AppendImageSigned(ctx, e)
+}
+
 // AppendRevoked appends a revoked entry as the service principal.
 func (l *serviceTransparencyLog) AppendRevoked(ctx context.Context, e tlog.Revoked) (uint64, error) {
 	ctx, err := l.callContext(ctx)

@@ -56,6 +56,9 @@ type TransparencyLogExternalAppender interface {
 type TransparencyLog interface {
 	TransparencyLogReader
 	TransparencyLogExternalAppender
+
+	// AppendImageSigned appends an image-signed entry and returns its index.
+	AppendImageSigned(ctx context.Context, e tlog.ImageSigned) (uint64, error)
 }
 
 var _ TransparencyLog = (*tlog.Log)(nil)
