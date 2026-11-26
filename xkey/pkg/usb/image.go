@@ -329,13 +329,7 @@ func admitPassphraseCopy(buf *secure.Buffer) (enclave.ByteAccess, error) {
 		})
 	})
 	if err == nil {
-		// Allocator.NewSized documents its enclave as a Freezer.
-		freezer, ok := pass.(enclave.Freezer)
-		if !ok {
-			err = errors.New("usb: passphrase enclave cannot be frozen")
-		} else {
-			err = freezer.Freeze()
-		}
+		err = freezePassphrase(pass)
 	}
 	if err != nil {
 		if pass != nil {
@@ -344,6 +338,17 @@ func admitPassphraseCopy(buf *secure.Buffer) (enclave.ByteAccess, error) {
 		return nil, err
 	}
 	return pass, nil
+}
+
+// freezePassphrase makes a filled passphrase enclave read-only, so a stray
+// write faults instead of silently corrupting it. Every memory enclave is an
+// enclave.Freezer; a handle that is not one is refused.
+func freezePassphrase(pass enclave.ByteAccess) error {
+	var freezer enclave.Freezer
+	if !enclave.As(pass, &freezer) {
+		return ErrPassphraseNotFreezable
+	}
+	return freezer.Freeze()
 }
 
 // formatAndInitLUKS formats partition as LUKS2 under pass, then unlocks it

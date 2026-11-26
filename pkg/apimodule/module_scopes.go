@@ -160,7 +160,6 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// own tenant and signs only with that tenant's keys, which is
 		// ScopeSelf; xkms owns this name too.
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionSign),
-
 		// attestation_endorsements:*, attestation_reference_values:* and
 		// attestation_verifier:verify are the attestation Verifier
 		// (pkg/attestation/appraisal, go-xkms#1608): a tenant's trust

@@ -28,7 +28,6 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -838,17 +837,14 @@ func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
 
 // verifyUserExchange is SendRequest for the verify-user exchange. A request
 // the phone never answered is marked unavailable: the user was not refused.
-//
-// The context is checked before the transport error is classified: a
-// transport reports a cancelled wait as its own error (BLE's ErrTimeout,
-// USB's ErrConnectionFailed), and a host cancel must stay context.Canceled
-// so the authenticator answers CTAP2_ERR_KEEPALIVE_CANCEL. An expired
-// deadline is still an unavailable verification.
 func (b *PhoneKeyBackend) verifyUserExchange(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
 	resp, err := b.SendRequest(ctx, req)
 	if err != nil {
-		if ctxErr := ctx.Err(); errors.Is(ctxErr, context.Canceled) {
-			return nil, fmt.Errorf("verify user exchange: %w (transport: %w)", ctxErr, err)
+		// A host cancel is kept over the transport error it caused, so the
+		// authenticator answers CTAP2_ERR_KEEPALIVE_CANCEL, not
+		// CTAP1_ERR_OTHER (#1958).
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, errors.Join(context.Canceled, err)
 		}
 		return nil, userVerificationUnavailable(err)
 	}

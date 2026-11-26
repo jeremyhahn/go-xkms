@@ -270,11 +270,10 @@ var rpcMethods = map[string]rpcMethod{
 
 	// OTA image keys: one ES256 signing key per trusted-firmware board id,
 	// under the same permissions as any other key.
-	"xkms.createOTAImageKey": handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleCreateOTAImageKey),
-	"xkms.rotateOTAImageKey": handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateOTAImageKey),
-	"xkms.signOTAImage":      handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSignOTAImage),
-	// Exporting a board key reads its public half, so the get permission applies.
-	"xkms.exportOTAImageKey": handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleExportOTAImageKey),
+	"xkms.createOTAImageKey":       handle(auth.ResourceKeys, auth.ActionCreate, (*Server).handleCreateOTAImageKey),
+	"xkms.rotateOTAImageKey":       handle(auth.ResourceKeys, auth.ActionRotate, (*Server).handleRotateOTAImageKey),
+	"xkms.signOTAImage":            handle(auth.ResourceKeys, auth.ActionSign, (*Server).handleSignOTAImage),
+	"xkms.exportOTAImagePublicKey": handle(auth.ResourceKeys, auth.ActionGet, (*Server).handleExportOTAImagePublicKey),
 
 	// Key versions: listing reads like listing keys; enabling and disabling
 	// versions is rotation lifecycle management; retiring destroys a
@@ -381,6 +380,13 @@ var rpcMethods = map[string]rpcMethod{
 	"xkms.ca.revoke":      handle(auth.ResourceCerts, auth.ActionRevoke, (*Server).handleRevokeCertificate),
 	"xkms.ca.crl":         handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleGenerateCRL),
 	"xkms.ca.is-revoked":  handle(auth.ResourceCerts, auth.ActionRead, (*Server).handleIsRevoked),
+
+	// CA transparency log reads (docs/transparency-log).
+	"xkms.ca.transparency-log.head":              handle(auth.ResourceVlog, auth.ActionHead, (*Server).handleTransparencyLogHead),
+	"xkms.ca.transparency-log.entry":             handle(auth.ResourceVlog, auth.ActionGet, (*Server).handleTransparencyLogEntry),
+	"xkms.ca.transparency-log.inclusion-proof":   handle(auth.ResourceVlog, auth.ActionProof, (*Server).handleTransparencyLogInclusionProof),
+	"xkms.ca.transparency-log.consistency-proof": handle(auth.ResourceVlog, auth.ActionProof, (*Server).handleTransparencyLogConsistencyProof),
+	"xkms.ca.transparency-log.append":            handle(auth.ResourceVlog, auth.ActionAppend, (*Server).handleTransparencyLogAppend),
 
 	// TCG certificate authority -- pkg/api/grpc/service_ca_tcg.go.
 	"xkms.ca.tcg.issue-ek":  handle(auth.ResourceCerts, auth.ActionIssue, (*Server).handleIssueEKCertificate),
@@ -533,12 +539,15 @@ var rpcMethods = map[string]rpcMethod{
 	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family
 	// scoped in pkg/apimodule/module_scopes.go. Mirrors the gRPC SigningKey
 	// RPCs' (qrdb.v1.permission) options one-for-one: changing a binding is
-	// bind, reading one or resolving a repository's key is get.
-	"attestation.signing_key.set":     handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeySet),
-	"attestation.signing_key.get":     handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyGet),
-	"attestation.signing_key.list":    handle(auth.ResourceAttestationSigningKeys, auth.ActionList, (*Server).handleSigningKeyList),
-	"attestation.signing_key.delete":  handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
-	"attestation.signing_key.resolve": handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
+	// bind, reading one or resolving a repository's key is get, and signing
+	// a repository's CoRIM with that key is sign.
+	"attestation.signing_key.set":        handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeySet),
+	"attestation.signing_key.get":        handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyGet),
+	"attestation.signing_key.list":       handle(auth.ResourceAttestationSigningKeys, auth.ActionList, (*Server).handleSigningKeyList),
+	"attestation.signing_key.delete":     handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
+	"attestation.signing_key.resolve":    handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
+	"attestation.signing_key.sign_corim": handle(auth.ResourceAttestationSigningKeys, auth.ActionSign, (*Server).handleSigningKeySignCoRIM),
+	"attestation.signing_key.sign_image": handle(auth.ResourceAttestationSigningKeys, auth.ActionSign, (*Server).handleSigningKeySignImage),
 
 	// Attestation Verifier (go-xkms#1608) -- the xkms-owned
 	// attestation_endorsements, attestation_reference_values and

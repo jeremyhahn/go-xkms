@@ -1140,6 +1140,13 @@ func (tpm *TPM2) PlatformPolicyDigestHash() ([]byte, error) {
 // platform policy and the key's nameAlg for a DevID platform delegation, so
 // the algorithm is the caller's choice and the PCR read is not.
 func (tpm *TPM2) platformPCRDigest(hashAlg tpm2.TPMAlgID) ([]byte, error) {
+	return tpm.platformPCRDigestOver(hashAlg, tpm.config.PlatformPCRs)
+}
+
+// platformPCRDigestOver is platformPCRDigest over pcrs, in the platform
+// bank, instead of the configured platform set: the PolicyPCR digest of an
+// object sealed to the platform policy plus a caller PCR selection.
+func (tpm *TPM2) platformPCRDigestOver(hashAlg tpm2.TPMAlgID, pcrs PCRSet) ([]byte, error) {
 
 	bank, err := ParsePCRBankAlgID(tpm.config.PlatformPCRBank)
 	if err != nil {
@@ -1157,7 +1164,7 @@ func (tpm *TPM2) platformPCRDigest(hashAlg tpm2.TPMAlgID) ([]byte, error) {
 	// pcrSelectionOut, so the rest of the set is read again until every
 	// PCR is hashed.
 	hash := cryptoHashAlg.New()
-	remaining := tpm.config.PlatformPCRs.Sorted()
+	remaining := pcrs.Sorted()
 	for len(remaining) > 0 {
 		pcrReadRsp, err := tpm2.PCRRead{
 			PCRSelectionIn: PolicyPCRSelection(bank, remaining...),

@@ -34,8 +34,8 @@ type (
 	FIDO2KeyBackend      = keybackend.FIDO2KeyBackend
 	FIDO2KeyCapabilities = keybackend.FIDO2KeyCapabilities
 	KeyHandle            = keybackend.KeyHandle
-	TPM2AttestingBackend = keybackend.TPM2AttestingBackend
 	SentinelCauseError   = keybackend.SentinelCauseError
+	TPM2AttestingBackend = keybackend.TPM2AttestingBackend
 	UserVerifier         = keybackend.UserVerifier
 )
 

@@ -133,8 +133,8 @@ func compareInEnclave(
 	// here than on the empty-plaintext path above.
 	var unsealErr error
 
-	// A nil ByteAccess is an enclave that cannot be read: the same failure a
-	// destroyed enclave reports, never a nil-interface panic.
+	// A nil ByteAccess has no memory to borrow: report it as an unreadable
+	// enclave, as a destroyed one is, rather than dereferencing it.
 	if enc == nil {
 		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: enclave.ErrEnclaveDestroyed}
 	}

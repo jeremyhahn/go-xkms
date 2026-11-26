@@ -285,7 +285,6 @@ func (ca *CA) EnrollDeviceRaw(ctx context.Context, commonName, organization stri
 // IssueLAKCertificateRaw issues a Local Attestation Key certificate using
 // primitive types (go-xkms#715). See provider.TCGCA.IssueLAKCertificateRaw.
 // tenantID is the caller's tenant, recorded as the LAK's owner.
-// tenantID is the caller's tenant.
 // Thread-safe: Yes
 func (ca *CA) IssueLAKCertificateRaw(
 	ctx context.Context,
