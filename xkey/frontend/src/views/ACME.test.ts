@@ -123,10 +123,12 @@ describe('ACME view', () => {
     await fireEvent.input(view.getByLabelText('Domain'), { target: { value: 'a.test' } });
     await fireEvent.input(view.getByLabelText('Challenge'), { target: { value: 'dns-01' } });
     await fireEvent.input(view.getByLabelText('CSR path'), { target: { value: '/certs/a.csr' } });
+    await fireEvent.input(view.getByLabelText('HTTP-01 listen address'), { target: { value: ' 127.0.0.1:5002 ' } });
     await fireEvent.click(view.getByRole('button', { name: 'Renew' }));
     await waitFor(() => expect(acme.RenewCertificate).toHaveBeenCalledTimes(1));
     expect(acme.RenewCertificate).toHaveBeenCalledWith(conn, {
       certPath: '/certs/a.pem', domain: 'a.test', authzType: 'dns', challenge: 'dns-01', csrPath: '/certs/a.csr',
+      httpAddr: '127.0.0.1:5002',
     });
     await waitFor(() =>
       expect((view.getByLabelText('Renewed certificate') as HTMLTextAreaElement).value).toContain('BEGIN CERTIFICATE'));
