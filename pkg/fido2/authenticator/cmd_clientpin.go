@@ -984,7 +984,10 @@ func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) (*pinSharedS
 // that could not reach a decision (keybackend.ErrUserVerificationUnavailable:
 // the phone disconnected, the exchange timed out, the revocation list could
 // not be read); it answers CTAP1_ERR_OTHER (§8.2), and the retries are left
-// as they were, so an outage cannot block built-in user verification.
+// as they were, so an outage cannot block built-in user verification. Nor did
+// a user who dismissed the prompt on the verifier
+// (keybackend.ErrUserVerificationCancelled): it answers
+// CTAP2_ERR_OPERATION_DENIED and spends no retry either.
 func (a *Authenticator) failUserVerificationLocked(verifyErr error) error {
 	if errors.Is(verifyErr, context.Canceled) {
 		return verifyErr
@@ -992,6 +995,9 @@ func (a *Authenticator) failUserVerificationLocked(verifyErr error) error {
 	if errors.Is(verifyErr, keybackend.ErrUserVerificationUnavailable) {
 		slog.Warn("[CTAP2] built-in user verification unavailable", "error", verifyErr)
 		return verifyErr
+	}
+	if errors.Is(verifyErr, keybackend.ErrUserVerificationCancelled) {
+		return &SentinelCauseError{Sentinel: ErrOperationDenied, Cause: verifyErr}
 	}
 
 	remaining := a.state.DecrementUVRetries()
