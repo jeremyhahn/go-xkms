@@ -65,9 +65,10 @@ type ImageRegistryCredentials struct {
 }
 ```
 
-`XKMSService.SignImage` is at `:302`. It signs with the key the reference's
+`XKMSService.SignImage` is at `:368`. It signs with the key the reference's
 repository resolves to in the caller's tenant (owner ruling 134), opened
-through the tenant-scoped backend, and certified per call by the service CA
+through the tenant-scoped backend (the tenant's release key is generated
+there on its first use, `releaseKeySigner`, `:267`), and certified per call by the service CA
 in that tenant. The request, `ImageRegistryCredentials` and `SignedImage` are
 at `pkg/api/transport/types_signing_key.go:61`, `:81` and `:87`;
 `SignedImage` carries the resolved key, the digest, the envelope, the PEM
@@ -265,13 +266,15 @@ prefix.
 | `signing.ErrVerificationFailed` (`:44`) | The signature does not verify; the cause is the `SimpleVerifier` error |
 
 `XKMSService.SignImage` returns the image errors above wrapped in
-`ImageSignError` (`pkg/xkms/servicer_signing_keys.go:103`), which names the
-reference and the key and unwraps to the cause. The gRPC, REST and MCP
+`ImageSignError` (`pkg/xkms/servicer_signing_keys.go:101`), which names the
+reference and the key and unwraps to the cause. A release key that cannot be
+generated on its first use is `ReleaseKeyProvisionError` (`:122`), which names
+the tenant and unwraps to the backend's error, so it takes that error's class. The gRPC, REST and MCP
 servers map its errors through `SigningKeySentinelClasses` (`pkg/api/apierrors/tables.go:334`):
 
 | Error | Class |
 |---|---|
-| `ErrSystemTenantImageSigning` (`pkg/xkms/servicer_signing_keys.go:98`): the caller is the system tenant, which has no release key (owner-queue item 153) | FailedPrecondition |
+| `ErrSystemTenantImageSigning` (`pkg/xkms/servicer_signing_keys.go:96`): the caller is the system tenant, which has no release key (owner-queue item 153) | FailedPrecondition |
 | `ErrSigningKeyForbidden` | PermissionDenied |
 | `ErrNotConfigured`: the service has no CA | Unavailable |
 | `ErrInvalidReference`, `ErrInvalidDigest`, `ErrInvalidStatement`, `ErrRegistryCredentials` (also a password without a username) | InvalidArgument |

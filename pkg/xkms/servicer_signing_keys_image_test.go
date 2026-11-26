@@ -300,15 +300,20 @@ func TestSignImage_BoundKeySigns(t *testing.T) {
 
 func TestSignImage_NeverSignsWithAnotherTenantsKey(t *testing.T) {
 	svc := setupDeriveService(t)
-	generateSigningKey(t, svc, "tenant-b", appraisal.ReleaseSigningKeyID)
+	other := generateSigningKey(t, svc, "tenant-b", appraisal.ReleaseSigningKeyID)
 	ctx := withSigningKeys(t, svc, corimSignPermission)
-	svc.SetCA(newCodeSigningCA(t))
+	ca := newCodeSigningCA(t)
+	svc.SetCA(ca)
 	registry := &memoryRegistry{}
 	registry.install(svc)
 
-	_, err := svc.SignImage(ctx, signImageRequest())
-	require.ErrorIs(t, err, ErrKeyNotFound, "tenant-a holds no release key; tenant-b's is never used")
-	assert.Nil(t, registry.auth, "no registry is contacted without a key")
+	resp, err := svc.SignImage(ctx, signImageRequest())
+	require.NoError(t, err, "tenant-a's first image signature provisions its own release key")
+	assert.Equal(t, appraisal.ReleaseSigningKeyID, resp.Key.KeyID)
+	own := releasePublicKey(t, svc, "tenant-a")
+	assert.False(t, other.(*ecdsa.PublicKey).Equal(own), "tenant-b's key is never tenant-a's")
+	verifySignedImage(t, ca, registry, own)
+	assert.True(t, other.(*ecdsa.PublicKey).Equal(releasePublicKey(t, svc, "tenant-b")), "tenant-b's key is untouched")
 }
 
 func TestSignImage_RefusesUnknownRepositoryKey(t *testing.T) {
