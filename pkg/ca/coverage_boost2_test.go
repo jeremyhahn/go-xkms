@@ -70,27 +70,6 @@ func issueCertAndSaveToKeyStore(t *testing.T, ca *CA, cn string) {
 	require.NoError(t, ca.ImportCertificate(context.Background(), issued.Certificate))
 }
 
-// buildRSAPSSCert creates a self-signed certificate whose signature algorithm
-// is SHA256WithRSAPSS, for exercising the PSS verification path.
-func buildRSAPSSCert(t *testing.T) *x509.Certificate {
-	t.Helper()
-	key := generateTestRSAKey(t)
-
-	template := &x509.Certificate{
-		SerialNumber:       big.NewInt(1),
-		Subject:            pkix.Name{CommonName: "pss-test"},
-		NotBefore:          time.Now().Add(-time.Hour),
-		NotAfter:           time.Now().Add(24 * time.Hour),
-		SignatureAlgorithm: x509.SHA256WithRSAPSS,
-		KeyUsage:           x509.KeyUsageDigitalSignature,
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
-	require.NoError(t, err, "crypto/x509 must be able to self-sign with SHA256WithRSAPSS")
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-	return cert
-}
-
 // =============================================================================
 // tls_extensions.go — TLSBundle happy path (43%)
 // =============================================================================

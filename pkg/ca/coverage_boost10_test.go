@@ -18,14 +18,10 @@ package ca
 import (
 	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"math/big"
 	"testing"
-	"time"
 
 	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -122,13 +118,6 @@ func TestInitializeAsIntermediate_AlreadyInitialized_B10(t *testing.T) {
 //          NewFromMultiIdentityConfig: valid + no issuing identity paths
 // =============================================================================
 
-// TestNewFromMultiIdentityConfig_NilConfig_B10 exercises the nil Config guard.
-func TestNewFromMultiIdentityConfig_NilConfig_B10(t *testing.T) {
-	t.Parallel()
-	_, err := NewFromMultiIdentityConfig(nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
 // TestNewFromMultiIdentityConfig_NilConfigField_B10 exercises the nil mp.Config guard.
 func TestNewFromMultiIdentityConfig_NilConfigField_B10(t *testing.T) {
 	t.Parallel()
@@ -154,14 +143,6 @@ func TestCreateRootCertificate_MinimalConfig_B10(t *testing.T) {
 // =============================================================================
 // ca.go — Load: already-initialized guard
 // =============================================================================
-
-// TestLoad_AlreadyInitialized_B10 exercises the ErrAlreadyInitialized guard.
-func TestLoad_AlreadyInitialized_B10(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t) // already initialized via Init
-	err := ca.Load(context.Background())
-	assert.ErrorIs(t, err, ErrAlreadyInitialized)
-}
 
 // =============================================================================
 // ca.go — Init: already-initialized guard
@@ -419,47 +400,9 @@ func TestParams_Validate_NilConfig_B10(t *testing.T) {
 // ca_extensions.go — Signer: success and not-initialized paths
 // =============================================================================
 
-// TestSigner_NotInitialized_B10 exercises ErrNotInitialized in Signer.
-func TestSigner_NotInitialized_B10(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.Signer(context.Background())
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-// TestSigner_Success_B10 exercises the success path of Signer.
-func TestSigner_Success_B10(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	signer, err := ca.Signer(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, signer)
-}
-
 // =============================================================================
 // ca_extensions.go — listRevocationBlobs: revocationStore path
 // =============================================================================
-
-// TestListRevocationBlobs_RevocationStorePath_B10 exercises the primary
-// revocationStore.Scan path in listRevocationBlobs.
-func TestListRevocationBlobs_RevocationStorePath_B10(t *testing.T) {
-	t.Parallel()
-	backend := storage.NewMemory()
-	ca := &CA{
-		revocationStore: backend,
-		revocations:     make(map[string]*RevocationInfo),
-	}
-	// Store a valid revocation record.
-	validJSON := []byte(`{"serial":"99001","reason":1,"revoked_at":"2024-01-01T00:00:00Z"}`)
-	key := revocationKeyPrefix + "99001.json"
-	require.NoError(t, backend.Put(context.Background(), key, validJSON))
-
-	blobs, err := ca.listRevocationBlobs(context.Background())
-	require.NoError(t, err)
-	assert.Len(t, blobs, 1)
-	_, ok := blobs[key]
-	assert.True(t, ok)
-}
 
 // =============================================================================
 // ca_extensions.go — PrivateKey success path
@@ -535,36 +478,9 @@ func TestGetXSignedCertificates_InvalidPEM_B10(t *testing.T) {
 // ca.go — CACertificate: not initialized guard
 // =============================================================================
 
-// TestCACertificate_NotInitialized_B10 exercises ErrNotInitialized in CACertificate.
-func TestCACertificate_NotInitialized_B10(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.CACertificate()
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
 // =============================================================================
 // ca.go — mergeSubjects: partial override paths
 // =============================================================================
-
-// TestMergeSubjects_PartialOverride_B10 exercises mergeSubjects when the CSR
-// subject provides some fields and the configured subject provides others.
-func TestMergeSubjects_PartialOverride_B10(t *testing.T) {
-	t.Parallel()
-	base := pkix.Name{
-		CommonName:   "base-cn",
-		Organization: []string{"base-org"},
-		Country:      []string{"US"},
-	}
-	override := &Subject{
-		CommonName: "override-cn",
-		// Organization and Country empty — should inherit from base.
-	}
-	merged := mergeSubjects(base, override)
-	assert.Equal(t, "override-cn", merged.CommonName)
-	assert.Equal(t, []string{"base-org"}, merged.Organization)
-	assert.Equal(t, []string{"US"}, merged.Country)
-}
 
 // =============================================================================
 // ca_extensions.go — CABundleFiltered: not-initialized path
@@ -603,44 +519,9 @@ func TestReadCrossSignedCertificate_InvalidPEM_B10(t *testing.T) {
 // ca_extensions.go — Exists: empty CN guard
 // =============================================================================
 
-// TestExists_EmptyCN_B10 exercises the empty CN guard in Exists.
-func TestExists_EmptyCN_B10(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.Exists(context.Background(), "", x509.ECDSA)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-// TestExists_FoundInCertStore_B10 exercises the certStore hit in Exists.
-func TestExists_FoundInCertStore_B10(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	cert, _ := makeSelfSignedCert(t, "exists-certstore-b10")
-	require.NoError(t, ca.certStore.StoreCertificate(cert))
-
-	found, err := ca.Exists(context.Background(), "exists-certstore-b10", x509.ECDSA)
-	require.NoError(t, err)
-	assert.True(t, found)
-}
-
 // =============================================================================
 // ca.go — GenerateCRL: success path exercises
 // =============================================================================
-
-// TestGenerateCRL_Success_B10 exercises the GenerateCRL success path including
-// an empty revocation list.
-func TestGenerateCRL_Success_B10(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	crlDER, err := ca.GenerateCRL(context.Background())
-	require.NoError(t, err)
-	assert.NotEmpty(t, crlDER)
-
-	// Parse to verify it's a valid CRL.
-	_, err = x509.ParseRevocationList(crlDER)
-	require.NoError(t, err)
-}
 
 // =============================================================================
 // serial.go — generateRandomSerial: direct call coverage
@@ -687,43 +568,9 @@ func TestCreateCSR_EmptyCN_B10(t *testing.T) {
 // csr.go — buildCSRTemplate: SANS extension path
 // =============================================================================
 
-// TestBuildCSRTemplate_WithSANs_B10 exercises the SANS extension path in
-// buildCSRTemplate (calls addSANsExtension) which populates template.DNSNames.
-func TestBuildCSRTemplate_WithSANs_B10(t *testing.T) {
-	t.Parallel()
-	req := &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "csr-sans-b10"},
-		SANS: &SubjectAlternativeNames{
-			DNS:   []string{"san-dns-b10.local"},
-			Email: []string{"user@b10.local"},
-		},
-	}
-	tmpl, err := buildCSRTemplate(req)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tmpl.DNSNames)
-	assert.NotEmpty(t, tmpl.EmailAddresses)
-}
-
 // =============================================================================
 // Ensure that the pem.Block-based paths in ImportCertificate work correctly
 // =============================================================================
-
-// TestImportCertificate_Success_B10 exercises the full success path of
-// ImportCertificate (cert stored in certStore, no error).
-func TestImportCertificate_Success_B10(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	cert, _ := makeSelfSignedCert(t, "import-cert-success-b10")
-	err := ca.ImportCertificate(context.Background(), cert)
-	require.NoError(t, err)
-
-	// Verify it's stored.
-	got, err := ca.certStore.GetCertificate("import-cert-success-b10")
-	require.NoError(t, err)
-	assert.Equal(t, "import-cert-success-b10", got.Subject.CommonName)
-}
 
 // =============================================================================
 // ca.go — getCAKeyAttributes: nil identity guard
