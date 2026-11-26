@@ -246,6 +246,84 @@ func TestNewHTTPStatusList(t *testing.T) {
 	}
 }
 
+func TestFreshUntil_AgeBeyondLifetimeIsStale(t *testing.T) {
+	received := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	for _, age := range []string{"60", "120"} {
+		t.Run("Age "+age, func(t *testing.T) {
+			header := http.Header{"Cache-Control": {"max-age=60"}, "Age": {age}}
+			got, stale := freshUntil(header, received, received)
+			assert.True(t, stale, "RFC 9111 §4.2: fresh only while freshness_lifetime > current_age")
+			assert.False(t, got.After(received))
+		})
+	}
+}
+
+// staleOnceEndpoint answers its first request as a cache holding a list
+// past its max-age would, and later ones as the origin, recording whether
+// each request asked for revalidation.
+func staleOnceEndpoint(t *testing.T, staleAnswers int32) (*httptest.Server, *atomic.Int32, func() []string) {
+	t.Helper()
+	var requests atomic.Int32
+	var mu sync.Mutex
+	var cacheControl []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := requests.Add(1)
+		mu.Lock()
+		cacheControl = append(cacheControl, r.Header.Get("Cache-Control"))
+		mu.Unlock()
+		w.Header().Set("Cache-Control", "max-age=60")
+		if n <= staleAnswers {
+			w.Header().Set("Age", "120")
+		}
+		if _, err := w.Write([]byte(googleExampleList)); err != nil {
+			return
+		}
+	}))
+	t.Cleanup(server.Close)
+	seen := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), cacheControl...)
+	}
+	return server, &requests, seen
+}
+
+func TestHTTPStatusList_StaleResponseIsRevalidatedOnce(t *testing.T) {
+	server, requests, cacheControl := staleOnceEndpoint(t, 1)
+	clock := newTestClock()
+	source, err := NewHTTPStatusList(HTTPStatusListOptions{URL: server.URL, Client: server.Client(), Now: clock.Now})
+	require.NoError(t, err)
+
+	list, err := source.Current()
+	require.NoError(t, err)
+	assert.Equal(t, 2, list.Len())
+	assert.EqualValues(t, 2, requests.Load())
+	assert.Equal(t, []string{"", "no-cache"}, cacheControl(), "the retry forces revalidation (RFC 9111 §5.2.1.4)")
+
+	clock.add(59 * time.Second)
+	again, err := source.Current()
+	require.NoError(t, err)
+	assert.Same(t, list, again, "the revalidated list is cached for its freshness")
+	assert.EqualValues(t, 2, requests.Load())
+}
+
+func TestHTTPStatusList_StillStaleResponseIsRefused(t *testing.T) {
+	server, requests, cacheControl := staleOnceEndpoint(t, 1<<30)
+	source, err := NewHTTPStatusList(HTTPStatusListOptions{URL: server.URL, Client: server.Client()})
+	require.NoError(t, err)
+
+	list, err := source.Current()
+	require.ErrorIs(t, err, ErrStatusListUnavailable)
+	require.ErrorIs(t, err, ErrStatusListStale)
+	assert.Nil(t, list, "a list stale on arrival is never used")
+	assert.EqualValues(t, 2, requests.Load(), "revalidated once, not more")
+	assert.Equal(t, []string{"", "no-cache"}, cacheControl())
+
+	_, err = source.Current()
+	require.ErrorIs(t, err, ErrStatusListStale, "nothing stale was cached")
+	assert.EqualValues(t, 4, requests.Load())
+}
+
 func TestFreshUntil(t *testing.T) {
 	received := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	requested := received.Add(-2 * time.Second)
@@ -270,7 +348,6 @@ func TestFreshUntil(t *testing.T) {
 		{"Expires 0", map[string]string{"Expires": "0"}, 0},
 		{"Expires in the past", map[string]string{"Expires": date(received.Add(-time.Hour)), "Date": date(received)}, 0},
 		{"no caching headers", nil, 0},
-		{"age beyond lifetime", map[string]string{"Cache-Control": "max-age=60", "Age": "120"}, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -278,7 +355,8 @@ func TestFreshUntil(t *testing.T) {
 			for k, v := range tc.headers {
 				header.Set(k, v)
 			}
-			got := freshUntil(header, requested, received)
+			got, stale := freshUntil(header, requested, received)
+			assert.False(t, stale, "only a response with a lifetime it already outlived is stale")
 			if tc.want <= 0 {
 				assert.False(t, got.After(received), "a response with no remaining freshness is stale on receipt")
 				return
