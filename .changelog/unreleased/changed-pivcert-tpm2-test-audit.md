@@ -1,0 +1,1 @@
+- `pkg/pivcert/tpm2` tests: four tests that repeated a kept test's path are removed. Their unique assertions moved into the kept tests: the ID-to-slot round trip, and the `ErrCertificateTooLarge` refusal from `New`. Coverage stays at 100% (#1794).

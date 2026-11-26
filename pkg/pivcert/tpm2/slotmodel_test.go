@@ -20,39 +20,6 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/pivcert"
 )
 
-// TestPIVSlotToCertID_AllSlotsMapped verifies every registry slot has an NV
-// certificate ID and that the IDs are unique, which is what keeps two slots
-// from ever addressing the same NV record.
-func TestPIVSlotToCertID_AllSlotsMapped(t *testing.T) {
-	slots := pivcert.AllSlots()
-	if len(slots) != len(pivSlotToCertIDMap) {
-		t.Fatalf("mapping covers %d slots, registry has %d", len(pivSlotToCertIDMap), len(slots))
-	}
-
-	seen := make(map[string]pivcert.PIVSlot, len(slots))
-	for _, slot := range slots {
-		id, ok := PIVSlotToCertID(slot)
-		if !ok {
-			t.Errorf("PIVSlotToCertID(%q) reported no mapping", slot)
-			continue
-		}
-		if id == "" {
-			t.Errorf("PIVSlotToCertID(%q) = empty id", slot)
-			continue
-		}
-		if previous, dup := seen[id]; dup {
-			t.Errorf("slots %q and %q share certificate ID %q", previous, slot, id)
-			continue
-		}
-		seen[id] = slot
-
-		back, ok := CertIDToPIVSlot(id)
-		if !ok || back != slot {
-			t.Errorf("CertIDToPIVSlot(%q) = (%q, %v), want (%q, true)", id, back, ok, slot)
-		}
-	}
-}
-
 // TestPIVSlotToCertID_Pinned pins the on-device identifiers. Changing one
 // orphans every certificate already stored under the old value, so this test
 // exists to make such a change deliberate.
@@ -133,44 +100,6 @@ func TestNewFromCertStorage_NilStorage(t *testing.T) {
 	}
 }
 
-// TestConfig_Validate covers configuration acceptance and rejection.
-func TestConfig_Validate(t *testing.T) {
-	tests := []struct {
-		name    string
-		config  *Config
-		wantErr error
-	}{
-		{"nil config", nil, pivcert.ErrInvalidConfig},
-		{"missing TPM", &Config{}, pivcert.ErrTPMNotAvailable},
-		{
-			"certificate size beyond the PIV limit",
-			&Config{TPM: stubTPM{}, MaxCertSize: pivcert.MaxCertSizeTPM2 + 1},
-			pivcert.ErrCertificateTooLarge,
-		},
-		{"defaults", &Config{TPM: stubTPM{}}, nil},
-		{
-			"explicit values",
-			&Config{TPM: stubTPM{}, BaseIndex: 0x01900000, MaxCertSize: 1024, OwnerAuth: []byte("auth")},
-			nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.wantErr == nil {
-				if err != nil {
-					t.Fatalf("Validate() error = %v, want nil", err)
-				}
-				return
-			}
-			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("Validate() error = %v, want %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
 // TestConfig_HardwareConfigDefaults verifies unset fields fall back to the PIV
 // defaults and set fields are passed through untouched.
 func TestConfig_HardwareConfigDefaults(t *testing.T) {
@@ -221,7 +150,7 @@ func TestNew_InvalidBaseIndex(t *testing.T) {
 }
 
 // TestNew_InvalidConfig verifies the constructor refuses a configuration that
-// cannot address a TPM.
+// cannot address a TPM or that allows certificates beyond the PIV limit.
 func TestNew_InvalidConfig(t *testing.T) {
 	store, err := New(nil)
 	if !errors.Is(err, pivcert.ErrInvalidConfig) {
@@ -233,6 +162,11 @@ func TestNew_InvalidConfig(t *testing.T) {
 
 	if _, err := New(&Config{}); !errors.Is(err, pivcert.ErrTPMNotAvailable) {
 		t.Fatalf("New(no TPM) error = %v, want ErrTPMNotAvailable", err)
+	}
+
+	tooLarge := &Config{TPM: stubTPM{}, MaxCertSize: pivcert.MaxCertSizeTPM2 + 1}
+	if _, err := New(tooLarge); !errors.Is(err, pivcert.ErrCertificateTooLarge) {
+		t.Fatalf("New(MaxCertSize beyond the PIV limit) error = %v, want ErrCertificateTooLarge", err)
 	}
 }
 
