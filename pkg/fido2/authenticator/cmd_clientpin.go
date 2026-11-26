@@ -905,6 +905,16 @@ func (a *Authenticator) prepareUvTokenLocked(req *ClientPINRequest) ([]byte, err
 	if req.Permissions == 0 {
 		return nil, ErrInvalidParameter
 	}
+	// The rpId parameter is optional in CTAP 2.1 §6.5.5.7.3, and a token
+	// minted without one binds to the RP of its first makeCredential or
+	// getAssertion (§6.1.2, §6.2.2). This authenticator's
+	// built-in verification asks the user on behalf of the named RP, so an
+	// RP-scoped token without one would be consented to for no RP and then
+	// bound to whichever RP used it first. It answers
+	// CTAP2_ERR_MISSING_PARAMETER (§8.2) before the user is asked instead.
+	if req.Permissions&(PINPermissionMakeCredential|PINPermissionGetAssertion) != 0 && req.RPID == "" {
+		return nil, ErrMissingRPID
+	}
 	if a.state.UVRetries() <= 0 {
 		return nil, ErrUVBlocked
 	}
