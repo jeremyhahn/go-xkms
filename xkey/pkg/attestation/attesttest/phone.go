@@ -14,6 +14,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -122,6 +123,11 @@ type Phone struct {
 	// MutateVerifyUser damages the local.verifyUser answer just before it is
 	// sent, as Mutate does for local.attestDevice.
 	MutateVerifyUser func(*pairingproto.LocalVerifyUserResult)
+
+	// verifyUserRPName is the RP name of the last local.verifyUser request,
+	// the name the phone's prompt would show. The responder runs on its own
+	// goroutine, so it is atomic.
+	verifyUserRPName atomic.Pointer[string]
 
 	// staticKey is the phone's PERSISTENT Noise identity, the one written into
 	// the pairing record. It must be the same key on every leg: production
@@ -402,8 +408,12 @@ func (p *Phone) verifyUser(req *pairingproto.Request, binding []byte) (any, erro
 	if p.UVK == nil {
 		return nil, fmt.Errorf("phone has no user-verification key")
 	}
+	if err := pairingproto.ValidateVerifyUserRPName(params.RPName); err != nil {
+		return nil, err
+	}
+	p.verifyUserRPName.Store(&params.RPName)
 
-	sig, err := p.UVK.SignRaw(pairingproto.AttestPurposeVerifyUser, params.Nonce, binding)
+	sig, err := p.UVK.SignVerifyUserRaw(params.Nonce, binding, params.RPName)
 	if err != nil {
 		return nil, err
 	}
@@ -419,6 +429,15 @@ func (p *Phone) verifyUser(req *pairingproto.Request, binding []byte) (any, erro
 		p.MutateVerifyUser(result)
 	}
 	return result, nil
+}
+
+// VerifyUserRPName returns the RP name of the last local.verifyUser request
+// the phone answered, the name its prompt would show, or "" before the first.
+func (p *Phone) VerifyUserRPName() string {
+	if name := p.verifyUserRPName.Load(); name != nil {
+		return *name
+	}
+	return ""
 }
 
 // decodeParams re-marshals the generic JSON params into the wire struct, the

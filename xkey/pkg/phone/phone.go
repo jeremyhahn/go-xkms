@@ -48,6 +48,11 @@ const (
 	BackendTypePhone xkms.BackendType = xkms.BackendTypePhone
 )
 
+// VerifyUserAuthenticatorName is the RP name VerifyUser sends when the
+// token it gates is not scoped to a relying party: the user is then
+// verifying to the authenticator itself (ruling 180).
+const VerifyUserAuthenticatorName = "xkey"
+
 // BLE configuration constants.
 const (
 	// XKeyServiceUUIDString is the string representation of the xKey BLE service UUID.
@@ -164,7 +169,7 @@ type PhoneKeyBackendConfig struct {
 	// the function judges the answer. It is injected for the same reason as
 	// LiveAttest. Nil refuses every VerifyUser with
 	// ErrUserVerifierUnavailable.
-	VerifyUser pairingproto.LiveAttestFunc
+	VerifyUser pairingproto.VerifyUserFunc
 }
 
 // DefaultPhoneKeyBackendConfig returns default configuration.
@@ -758,7 +763,12 @@ func (b *PhoneKeyBackend) proveLiveness(ctx context.Context) error {
 // over the established session, and returns nil only when cfg.VerifyUser
 // accepts the answer. The authenticator calls it before minting a
 // pinUvAuthToken through getPinUvAuthTokenUsingUvWithPermissions.
-func (b *PhoneKeyBackend) VerifyUser(ctx context.Context) error {
+//
+// rpName is the relying party the token is requested for, sent in the
+// request and bound into the signed transcript (ruling 180). A request
+// with no RP — a permission that is not RP-scoped, such as credential
+// management — names the authenticator itself, VerifyUserAuthenticatorName.
+func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
 	if b.cfg.VerifyUser == nil {
 		b.log.Error("user verification was requested but no verifier was supplied")
 		return ErrUserVerifierUnavailable
@@ -779,7 +789,10 @@ func (b *PhoneKeyBackend) VerifyUser(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return b.cfg.VerifyUser(ctx, b.SendRequest, binding)
+	if rpName == "" {
+		rpName = VerifyUserAuthenticatorName
+	}
+	return b.cfg.VerifyUser(ctx, b.SendRequest, binding, rpName)
 }
 
 // EnableBidirectional starts bidirectional JSON-RPC routing using the

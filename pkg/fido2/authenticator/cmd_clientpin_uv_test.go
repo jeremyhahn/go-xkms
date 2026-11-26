@@ -20,18 +20,20 @@ import (
 var errUserNotVerified = errors.New("test: user not verified")
 
 // verifyingKeyBackend is a key backend with a built-in user verification
-// method (keybackend.UserVerifier, ruling 167). It records each call and
-// answers with err.
+// method (keybackend.UserVerifier, ruling 167). It records each call and the
+// RP ID it was asked for, and answers with err.
 type verifyingKeyBackend struct {
 	mockUVKeyBackend
 	err   error
 	calls int
+	rpID  string
 }
 
 var _ keybackend.UserVerifier = (*verifyingKeyBackend)(nil)
 
-func (b *verifyingKeyBackend) VerifyUser(context.Context) error {
+func (b *verifyingKeyBackend) VerifyUser(_ context.Context, rpID string) error {
 	b.calls++
+	b.rpID = rpID
 	return b.err
 }
 
@@ -53,8 +55,9 @@ func newVerifyingAuthenticator(t *testing.T, backend *verifyingKeyBackend) *Auth
 }
 
 // uvTokenRequest builds a getPinUvAuthTokenUsingUvWithPermissions request
-// under protocol and returns it with the key the token comes back under.
-func uvTokenRequest(t *testing.T, auth *Authenticator, protocol uint8, permissions uint8) ([]byte, []byte) {
+// under protocol and returns it with the key the token comes back under. An
+// empty rpID leaves the optional rpId parameter out.
+func uvTokenRequest(t *testing.T, auth *Authenticator, protocol uint8, permissions uint8, rpID string) ([]byte, []byte) {
 	t.Helper()
 
 	auth.mu.Lock()
@@ -71,13 +74,16 @@ func uvTokenRequest(t *testing.T, auth *Authenticator, protocol uint8, permissio
 	var platformCOSEMap map[int]interface{}
 	require.NoError(t, cbor.Unmarshal(platformCOSE, &platformCOSEMap))
 
-	reqBytes, err := cbor.Marshal(map[int]interface{}{
+	request := map[int]interface{}{
 		clientPINKeyPinUvAuthProtocol: protocol,
 		clientPINKeySubCommand:        ClientPINSubCmdGetPinUvAuthTokenUsingUvWithPermissions,
 		clientPINKeyKeyAgreement:      platformCOSEMap,
 		clientPINKeyPermissions:       permissions,
-		clientPINKeyPermissionsRPID:   "example.com",
-	})
+	}
+	if rpID != "" {
+		request[clientPINKeyPermissionsRPID] = rpID
+	}
+	reqBytes, err := cbor.Marshal(request)
 	require.NoError(t, err)
 	return reqBytes, key
 }
@@ -92,11 +98,12 @@ func TestGetPinUvAuthTokenUsingUv_MintsAfterVerification(t *testing.T) {
 			auth := newVerifyingAuthenticator(t, backend)
 			auth.state.SetUVRetries(1)
 
-			reqBytes, key := uvTokenRequest(t, auth, protocol, PINPermissionCredentialMgmt)
+			reqBytes, key := uvTokenRequest(t, auth, protocol, PINPermissionCredentialMgmt, "example.com")
 			resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
 			require.NoError(t, err)
 			require.Equal(t, byte(StatusOK), resp[0])
 			require.Equal(t, 1, backend.calls)
+			require.Equal(t, "example.com", backend.rpID, "the user is asked on behalf of the token's RP (ruling 180)")
 
 			var body map[int][]byte
 			require.NoError(t, cbor.Unmarshal(resp[1:], &body))
@@ -117,6 +124,22 @@ func TestGetPinUvAuthTokenUsingUv_MintsAfterVerification(t *testing.T) {
 	}
 }
 
+// TestGetPinUvAuthTokenUsingUv_NoRPAsksWithoutOne pins that a request for
+// permissions that are not RP-scoped, which carries no rpId, reaches the
+// verifier with an empty RP ID rather than one the platform did not send.
+func TestGetPinUvAuthTokenUsingUv_NoRPAsksWithoutOne(t *testing.T) {
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+	auth := newVerifyingAuthenticator(t, backend)
+
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "")
+	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
+
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, 1, backend.calls)
+	require.Empty(t, backend.rpID)
+}
+
 // TestGetPinUvAuthTokenUsingUv_VerifierRefusalBlocksMinting pins that a
 // refused verification mints nothing, answers CTAP2_ERR_UV_INVALID, spends a
 // retry, and leaves an outstanding token as it was.
@@ -125,7 +148,7 @@ func TestGetPinUvAuthTokenUsingUv_VerifierRefusalBlocksMinting(t *testing.T) {
 	auth := newVerifyingAuthenticator(t, backend)
 	want := append([]byte(nil), installOutstandingToken(t, auth)...)
 
-	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt)
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
 	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
 
 	require.ErrorIs(t, err, ErrUVInvalid)
@@ -143,12 +166,12 @@ func TestGetPinUvAuthTokenUsingUv_Blocked(t *testing.T) {
 	auth := newVerifyingAuthenticator(t, backend)
 	auth.state.SetUVRetries(1)
 
-	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt)
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
 	_, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
 	require.ErrorIs(t, err, ErrUVBlocked)
 
 	backend.err = nil
-	reqBytes, _ = uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt)
+	reqBytes, _ = uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
 	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
 	require.ErrorIs(t, err, ErrUVBlocked)
 	require.Equal(t, []byte{byte(StatusUVBlocked)}, resp)
@@ -162,7 +185,7 @@ func TestGetPinUvAuthTokenUsingUv_CancelSpendsNoRetry(t *testing.T) {
 	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}, err: context.Canceled}
 	auth := newVerifyingAuthenticator(t, backend)
 
-	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt)
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionCredentialMgmt, "example.com")
 	resp, err := auth.ProcessCBOR(CmdClientPIN, reqBytes)
 
 	require.ErrorIs(t, err, context.Canceled)

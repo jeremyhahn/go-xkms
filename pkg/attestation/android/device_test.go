@@ -145,12 +145,20 @@ func TestRequireAttestedKeyOrigin_Refuses(t *testing.T) {
 	}
 }
 
-func TestRequireAttestedPerUseBiometric_Succeeds(t *testing.T) {
-	desc := &KeyDescription{TeeEnforced: AuthorizationList{UserAuthType: UserAuthTypeFingerprint}}
-	require.NoError(t, RequireAttestedPerUseBiometric(desc))
+func TestRequireAttestedPerUseUserVerification_Succeeds(t *testing.T) {
+	for name, authType := range map[string]int{
+		"device credential (1)":           UserAuthTypePassword,
+		"biometric (2)":                   UserAuthTypeFingerprint,
+		"biometric or the credential (3)": UserAuthTypePassword | UserAuthTypeFingerprint,
+	} {
+		t.Run(name, func(t *testing.T) {
+			desc := &KeyDescription{TeeEnforced: AuthorizationList{UserAuthType: authType}}
+			require.NoError(t, RequireAttestedPerUseUserVerification(desc))
+		})
+	}
 }
 
-func TestRequireAttestedPerUseBiometric_Refuses(t *testing.T) {
+func TestRequireAttestedPerUseUserVerification_Refuses(t *testing.T) {
 	biometric := AuthorizationList{UserAuthType: UserAuthTypeFingerprint}
 	with := func(edit func(*AuthorizationList)) AuthorizationList {
 		list := biometric
@@ -176,24 +184,27 @@ func TestRequireAttestedPerUseBiometric_Refuses(t *testing.T) {
 		{
 			name: "no userAuthType claim",
 			desc: &KeyDescription{TeeEnforced: AuthorizationList{}},
-			want: ErrKeyUserAuthTypeNotBiometric,
+			want: ErrKeyUserAuthTypeNotUserVerification,
 		},
 		{
-			name: "device credential only",
-			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.UserAuthType = UserAuthTypePassword })},
-			want: ErrKeyUserAuthTypeNotBiometric,
+			name: "a bit beyond the credential and the biometric",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.UserAuthType = 4 })},
+			want: ErrKeyUserAuthTypeNotUserVerification,
 		},
 		{
-			name: "biometric with a PIN fallback",
-			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) {
-				l.UserAuthType = UserAuthTypePassword | UserAuthTypeFingerprint
-			})},
-			want: ErrKeyUserAuthTypeNotBiometric,
+			name: "the biometric with an unknown bit",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.UserAuthType = UserAuthTypeFingerprint | 4 })},
+			want: ErrKeyUserAuthTypeNotUserVerification,
+		},
+		{
+			name: "any authenticator type (0xFFFFFFFF)",
+			desc: &KeyDescription{TeeEnforced: with(func(l *AuthorizationList) { l.UserAuthType = 0xFFFFFFFF })},
+			want: ErrKeyUserAuthTypeNotUserVerification,
 		},
 		{
 			name: "biometric claimed only in softwareEnforced",
 			desc: &KeyDescription{SoftwareEnforced: biometric},
-			want: ErrKeyUserAuthTypeNotBiometric,
+			want: ErrKeyUserAuthTypeNotUserVerification,
 		},
 		{
 			name: "nonzero authTimeout",
@@ -213,7 +224,7 @@ func TestRequireAttestedPerUseBiometric_Refuses(t *testing.T) {
 		{name: "nil description", desc: nil, want: ErrNilKeyDescription},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.ErrorIs(t, RequireAttestedPerUseBiometric(tc.desc), tc.want)
+			require.ErrorIs(t, RequireAttestedPerUseUserVerification(tc.desc), tc.want)
 		})
 	}
 }

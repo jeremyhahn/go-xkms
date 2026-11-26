@@ -68,18 +68,24 @@ var (
 
 // UserVerificationChallenge is what the desktop committed to when it asked the
 // phone to verify its user: the nonce it drew, the session binding the answer
-// must carry, and the deadline the answer must meet. It is answered once.
+// must carry, the relying party the phone's prompt names, and the deadline
+// the answer must meet. It is answered once.
 type UserVerificationChallenge struct {
 	Nonce          []byte
 	ChannelBinding []byte
+	RPName         string
 	Expires        time.Time
 
 	answered atomic.Bool
 }
 
 // NewUserVerificationChallenge draws a fresh 32-byte nonce for one verify-user
-// exchange on the session channelBinding was derived from.
-func NewUserVerificationChallenge(channelBinding []byte) (*UserVerificationChallenge, error) {
+// exchange for the relying party rpName, on the session channelBinding was
+// derived from. rpName must pass pairingproto.ValidateVerifyUserRPName.
+func NewUserVerificationChallenge(channelBinding []byte, rpName string) (*UserVerificationChallenge, error) {
+	if err := pairingproto.ValidateVerifyUserRPName(rpName); err != nil {
+		return nil, err
+	}
 	challenge, err := NewChallenge(pairingproto.AttestPurposeVerifyUser, channelBinding)
 	if err != nil {
 		return nil, err
@@ -87,6 +93,7 @@ func NewUserVerificationChallenge(channelBinding []byte) (*UserVerificationChall
 	return &UserVerificationChallenge{
 		Nonce:          challenge.Nonce,
 		ChannelBinding: challenge.ChannelBinding,
+		RPName:         rpName,
 		Expires:        time.Now().Add(UserVerificationChallengeLifetime),
 	}, nil
 }
@@ -98,6 +105,7 @@ func (c *UserVerificationChallenge) Params() *pairingproto.LocalVerifyUserParams
 	return &pairingproto.LocalVerifyUserParams{
 		ProtocolVersion: pairingproto.AttestProtocolV2,
 		Nonce:           c.Nonce,
+		RPName:          c.RPName,
 	}
 }
 
@@ -123,11 +131,13 @@ func (c *UserVerificationChallenge) consume() error {
 //     boot, generated origin, signing purpose, an allowed application;
 //  4. the leaf's attestation challenge marks it a UVK, so a DAK chain cannot
 //     stand in for one;
-//  5. the leaf's teeEnforced list binds every use to a fresh strong
-//     biometric: userAuthType 2 only, no authTimeout, no allowWhileOnBody,
-//     no noAuthRequired;
+//  5. the leaf's teeEnforced list binds every use to a fresh user
+//     verification: userAuthType 1 (device credential), 2 (biometric) or 3
+//     (either), as ruling 180 reads CTAP 2.1; no authTimeout, no
+//     allowWhileOnBody, no noAuthRequired;
 //  6. the UVK signed the verify-user transcript rebuilt from this challenge's
-//     nonce and binding and the verified leaf's fingerprint, as ES256 on P-256;
+//     nonce, binding and RP name and the verified leaf's fingerprint, as
+//     ES256 on P-256;
 //  7. the challenge is answered once and before it expired.
 //
 // Step 1, the response echo and the RPC error, is the exchange's
@@ -173,7 +183,7 @@ func verifyUserVerification(
 	if err := pairingproto.VerifyUserVerificationGenesisChallenge(key.Description.AttestationChallenge); err != nil {
 		return err
 	}
-	if err := xkms.RequireAndroidAttestedPerUseBiometric(key.Description); err != nil {
+	if err := xkms.RequireAndroidAttestedPerUseUserVerification(key.Description); err != nil {
 		return err
 	}
 
@@ -182,8 +192,8 @@ func verifyUserVerification(
 	if err != nil {
 		return err
 	}
-	transcript, err := pairingproto.BuildAttestTranscript(
-		pairingproto.AttestPurposeVerifyUser, challenge.Nonce, challenge.ChannelBinding, fingerprint[:])
+	transcript, err := pairingproto.BuildVerifyUserTranscript(
+		challenge.Nonce, challenge.ChannelBinding, fingerprint[:], challenge.RPName)
 	if err != nil {
 		return err
 	}
@@ -197,7 +207,7 @@ func verifyUserVerification(
 
 // NewUserVerifier builds the verify-user exchange a phone backend runs on its
 // established session when the authenticator needs a user verification. It
-// draws a fresh challenge, sends local.verifyUser, refuses a response that
+// draws a fresh challenge for the relying party, sends local.verifyUser, refuses a response that
 // does not answer the request, and judges the answer with
 // VerifyUserVerification.
 //
@@ -206,18 +216,18 @@ func verifyUserVerification(
 func NewUserVerifier(
 	loadTrust func() (*xkms.AndroidDeviceTrust, error),
 	logger *slog.Logger,
-) pairingproto.LiveAttestFunc {
+) pairingproto.VerifyUserFunc {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return func(ctx context.Context, exchange pairingproto.RPCExchange, channelBinding []byte) error {
+	return func(ctx context.Context, exchange pairingproto.RPCExchange, channelBinding []byte, rpName string) error {
 		trust, err := loadTrust()
 		if err != nil {
 			return &SentinelCauseError{Sentinel: ErrUserVerificationFailed, Cause: err}
 		}
 
-		challenge, err := NewUserVerificationChallenge(channelBinding)
+		challenge, err := NewUserVerificationChallenge(channelBinding, rpName)
 		if err != nil {
 			return err
 		}

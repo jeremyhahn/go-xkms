@@ -277,8 +277,8 @@ func TestParseKeyAttestation_RealChainUserAuthentication(t *testing.T) {
 			sw.UserAuthType, sw.HasAuthTimeout, sw.AllowWhileOnBody)
 	}
 
-	if err := RequireAttestedPerUseBiometric(desc); !errors.Is(err, ErrKeyNoAuthRequired) {
-		t.Errorf("RequireAttestedPerUseBiometric = %v, want ErrKeyNoAuthRequired", err)
+	if err := RequireAttestedPerUseUserVerification(desc); !errors.Is(err, ErrKeyNoAuthRequired) {
+		t.Errorf("RequireAttestedPerUseUserVerification = %v, want ErrKeyNoAuthRequired", err)
 	}
 }
 

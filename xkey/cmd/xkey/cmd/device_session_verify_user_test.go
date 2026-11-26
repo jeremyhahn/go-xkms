@@ -34,8 +34,8 @@ import (
 // verifyUserThroughBackend connects a PhoneKeyBackend to device over an
 // in-memory transport, with live attestation and user verification wired
 // as newPairedDeviceBackendConfig wires them, and returns the result of one
-// VerifyUser call. trusted is the CA the desktop trusts.
-func verifyUserThroughBackend(t *testing.T, trusted *attesttest.CA, dak *attesttest.DAK, device *attesttest.Phone) error {
+// VerifyUser call for rpName. trusted is the CA the desktop trusts.
+func verifyUserThroughBackend(t *testing.T, trusted *attesttest.CA, dak *attesttest.DAK, device *attesttest.Phone, rpName string) error {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -75,7 +75,7 @@ func verifyUserThroughBackend(t *testing.T, trusted *attesttest.CA, dak *attestt
 	device.Serve(ctx, t, responder, true, 2, done)
 
 	require.NoError(t, backend.Connect(ctx), "the device must still pass the reconnect's liveness proof")
-	verifyErr := backend.VerifyUser(ctx)
+	verifyErr := backend.VerifyUser(ctx, rpName)
 	require.NoError(t, <-done, "phone responder failed")
 	return verifyErr
 }
@@ -91,7 +91,16 @@ func TestPhoneKeyBackendVerifyUser_ThroughAttestedPhone(t *testing.T) {
 		device := attesttest.NewPairedPhone(t, dak, dak.Fingerprint())
 		device.UVK = attesttest.NewUVK(t, ca, attesttest.UserVerificationKeyClaims())
 
-		require.NoError(t, verifyUserThroughBackend(t, ca, dak, device))
+		require.NoError(t, verifyUserThroughBackend(t, ca, dak, device, "example.com"))
+		require.Equal(t, "example.com", device.VerifyUserRPName(), "the phone is asked on behalf of the RP")
+	})
+
+	t.Run("a token with no RP is asked for on behalf of the authenticator", func(t *testing.T) {
+		device := attesttest.NewPairedPhone(t, dak, dak.Fingerprint())
+		device.UVK = attesttest.NewUVK(t, ca, attesttest.UserVerificationKeyClaims())
+
+		require.NoError(t, verifyUserThroughBackend(t, ca, dak, device, ""))
+		require.Equal(t, phone.VerifyUserAuthenticatorName, device.VerifyUserRPName())
 	})
 
 	t.Run("a key under an untrusted root is refused", func(t *testing.T) {
@@ -99,7 +108,7 @@ func TestPhoneKeyBackendVerifyUser_ThroughAttestedPhone(t *testing.T) {
 		device := attesttest.NewPairedPhone(t, dak, dak.Fingerprint())
 		device.UVK = attesttest.NewUVK(t, rogue, attesttest.UserVerificationKeyClaims())
 
-		require.ErrorIs(t, verifyUserThroughBackend(t, ca, dak, device), attestation.ErrUserVerificationFailed)
+		require.ErrorIs(t, verifyUserThroughBackend(t, ca, dak, device, "example.com"), attestation.ErrUserVerificationFailed)
 	})
 
 	t.Run("a signature that does not cover this challenge is refused", func(t *testing.T) {
@@ -109,6 +118,6 @@ func TestPhoneKeyBackendVerifyUser_ThroughAttestedPhone(t *testing.T) {
 			r.Signature[len(r.Signature)-1] ^= 0xff
 		}
 
-		require.ErrorIs(t, verifyUserThroughBackend(t, ca, dak, device), attestation.ErrUserVerificationFailed)
+		require.ErrorIs(t, verifyUserThroughBackend(t, ca, dak, device, "example.com"), attestation.ErrUserVerificationFailed)
 	})
 }

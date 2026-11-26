@@ -148,11 +148,11 @@ var RequireAndroidAttestedBootState = android.RequireAttestedBootState
 // claim the key was generated in secure hardware and may sign.
 var RequireAndroidAttestedKeyOrigin = android.RequireAttestedKeyOrigin
 
-// RequireAndroidAttestedPerUseBiometric requires the hardware-enforced list
-// to bind every use of the key to a fresh strong-biometric authentication:
-// auth required, userAuthType fingerprint only, no authTimeout, not usable
-// while on body.
-var RequireAndroidAttestedPerUseBiometric = android.RequireAttestedPerUseBiometric
+// RequireAndroidAttestedPerUseUserVerification requires the hardware-enforced
+// list to bind every use of the key to a fresh user verification: auth
+// required, userAuthType the device credential, the biometric or both (1, 2
+// or 3), no authTimeout, not usable while on body.
+var RequireAndroidAttestedPerUseUserVerification = android.RequireAttestedPerUseUserVerification
 
 // RequireAndroidAttestedApplication requires the attesting application to
 // satisfy an AndroidApplicationMatcher.
@@ -181,9 +181,10 @@ var (
 	// ErrAndroidKeyNoAuthRequired means the key is usable without user
 	// authentication.
 	ErrAndroidKeyNoAuthRequired = android.ErrKeyNoAuthRequired
-	// ErrAndroidKeyUserAuthTypeNotBiometric means the key's hardware-enforced
-	// authenticator type is not biometric-only.
-	ErrAndroidKeyUserAuthTypeNotBiometric = android.ErrKeyUserAuthTypeNotBiometric
+	// ErrAndroidKeyUserAuthTypeNotUserVerification means the key's
+	// hardware-enforced authenticator type is neither the biometric nor the
+	// device credential.
+	ErrAndroidKeyUserAuthTypeNotUserVerification = android.ErrKeyUserAuthTypeNotUserVerification
 	// ErrAndroidKeyAuthTimeout means one authentication unlocks the key for a
 	// time window instead of a single use.
 	ErrAndroidKeyAuthTimeout = android.ErrKeyAuthTimeout
