@@ -15,6 +15,10 @@ package rest
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -119,4 +123,119 @@ func TestSignImage_GuardAdmitsCredentialFreeOrSecureRequests(t *testing.T) {
 		Registry:  &transport.ImageRegistryCredentials{Username: "ci", Password: types.SecretBytes("hunter2")},
 	})
 	assert.ErrorIs(t, err, ErrNotConnected, "credentials over TLS pass the guard")
+}
+
+// redirectingServer is an https server that redirects /redirect to location
+// with status and answers every other path, the health check included, with
+// a JSON body naming the path.
+func redirectingServer(t *testing.T, status int, location string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/redirect" {
+			http.Redirect(w, r, location, status)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := fmt.Fprintf(w, `{"status":"ok","path":%q}`, r.URL.Path); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// plaintextLanding is an http server that records how many requests reach
+// it and the body of the last one.
+type plaintextLanding struct {
+	srv      *httptest.Server
+	requests atomic.Int32
+	body     atomic.Value
+}
+
+func newPlaintextLanding(t *testing.T) *plaintextLanding {
+	t.Helper()
+	l := &plaintextLanding{}
+	l.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+		}
+		l.body.Store(string(body))
+		l.requests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(`{"status":"ok"}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(l.srv.Close)
+	return l
+}
+
+// connectOverTLS connects a transport to the httptest TLS server srv,
+// trusting its certificate.
+func connectOverTLS(t *testing.T, srv *httptest.Server, allowInsecure bool) *Transport {
+	t.Helper()
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	tr, err := NewWithConfig(&transport.Config{
+		Address:                srv.URL,
+		TLSEnabled:             true,
+		TLSConfig:              &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13},
+		AllowInsecureTransport: allowInsecure,
+	})
+	require.NoError(t, err)
+	require.NoError(t, tr.Connect(context.Background()))
+	return tr
+}
+
+var registryCredential = map[string]string{"password": "hunter2"}
+
+func TestRedirect_RefusesHTTPSToHTTP(t *testing.T) {
+	guardOn(t)
+
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			landing := newPlaintextLanding(t)
+			tr := connectOverTLS(t, redirectingServer(t, status, landing.srv.URL+"/landing"), false)
+
+			_, err := tr.DoRawRequest(context.Background(), http.MethodPost, "/redirect", registryCredential)
+			require.ErrorIs(t, err, transport.ErrInsecureTransport)
+			assert.Zero(t, landing.requests.Load(), "the body is never replayed over plaintext")
+		})
+	}
+}
+
+func TestRedirect_AdmitsHTTPSToHTTPWithOptOut(t *testing.T) {
+	guardOn(t)
+
+	for _, status := range []int{http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			landing := newPlaintextLanding(t)
+			tr := connectOverTLS(t, redirectingServer(t, status, landing.srv.URL+"/landing"), true)
+
+			_, err := tr.DoRawRequest(context.Background(), http.MethodPost, "/redirect", registryCredential)
+			require.NoError(t, err)
+			assert.Equal(t, int32(1), landing.requests.Load())
+			assert.Contains(t, landing.body.Load(), "hunter2", "the opt-out lets the redirect replay the body")
+		})
+	}
+}
+
+func TestRedirect_FollowsHTTPSToHTTPS(t *testing.T) {
+	guardOn(t)
+
+	tr := connectOverTLS(t, redirectingServer(t, http.StatusTemporaryRedirect, "/landing"), false)
+
+	body, err := tr.DoRawRequest(context.Background(), http.MethodPost, "/redirect", registryCredential)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), `"/landing"`, "the redirect was followed")
+}
+
+func TestRedirect_StopsAfterTenRedirects(t *testing.T) {
+	guardOn(t)
+
+	tr := connectOverTLS(t, redirectingServer(t, http.StatusFound, "/redirect"), false)
+
+	_, err := tr.DoRawRequest(context.Background(), http.MethodGet, "/redirect", nil)
+	require.ErrorIs(t, err, ErrTooManyRedirects)
 }
