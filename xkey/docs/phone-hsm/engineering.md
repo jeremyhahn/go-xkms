@@ -1038,7 +1038,10 @@ names `rpName` in it, and signs the transcript as
 A cancelled prompt, a lockout or a missing UVK is an RPC error, never a result.
 
 **Desktop verification.** The desktop mints nothing unless every check passes,
-in this order:
+in this order. Steps 2 to 7 are the library decision `userverify.Verify`
+(`pkg/attestation/userverify/userverify.go:120`, re-exported by
+`sdk/go/userverify`); step 1 is the exchange, `attestation.NewUserVerifier`
+(`xkey/pkg/attestation/verify_user.go:45`).
 
 1. The response echoes the request's `id` and `generation`, and carries no
    RPC error.
@@ -1104,7 +1107,8 @@ chain certificate is then checked against the revocation status list, as step
 3 describes.
 
 Status: shipped on the desktop. The wire definition (`pkg/pairingproto/verify_user.go:102`),
-the verifier (`xkey/pkg/attestation/verify_user.go:216`), the phone backend
+the verifier (`pkg/attestation/userverify/userverify.go:120`, through
+`sdk/go/userverify`), its exchange (`xkey/pkg/attestation/verify_user.go:45`), the phone backend
 (`xkey/pkg/phone/phone.go:771`) and the authenticator path
 (`pkg/fido2/authenticator/cmd_clientpin.go:867`) are in place, tested end
 to end against the `attesttest` phone (`device_session_verify_user_test.go`);
