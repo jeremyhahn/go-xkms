@@ -35,5 +35,5 @@ func init() {
 // The quantum backend uses in-memory storage for key material.
 // Configuration keys are reserved for future use.
 func newQuantumKeyProvider(config map[string]interface{}) (types.KeyProvider, error) {
-	return quantum.New(storage.New())
+	return keyProvider(quantum.New(storage.New()))
 }

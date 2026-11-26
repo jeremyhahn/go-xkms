@@ -80,5 +80,5 @@ func newAzureKVKeyProvider(config map[string]interface{}) (types.KeyProvider, er
 		azConfig.AllowLocalVaultURL = allowLocal
 	}
 
-	return azurekv.NewBackend(azConfig)
+	return keyProvider(azurekv.NewBackend(azConfig))
 }
