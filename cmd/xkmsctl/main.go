@@ -28,7 +28,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := Execute(); err != nil {
-		os.Exit(1)
+	if code := run(os.Args[1:], os.Stderr); code != 0 {
+		exitFunc(code)
 	}
 }
