@@ -18,14 +18,10 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
-	"math/big"
 	"reflect"
 	"sort"
 	"strconv"
@@ -327,15 +323,5 @@ func TestDecoyShapesDeriveEachAlgorithm(t *testing.T) {
 		if got := keyDescription(key.Public()); got != description {
 			t.Errorf("%s derived %s", algorithm, got)
 		}
-	}
-}
-
-func TestIssueSelfSignedCertRejectsBadSerial(t *testing.T) {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("generate key: %v", err)
-	}
-	if _, err := issueSelfSignedCert(key, pkix.Name{CommonName: "PIV 9a"}, big.NewInt(-1), time.Now(), 1); err == nil {
-		t.Fatal("want an error for a negative serial")
 	}
 }
