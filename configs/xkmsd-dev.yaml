@@ -29,6 +29,9 @@ logging:
 # the TLS server certificate on first start.
 tls:
   enabled: true
+  # Common Name of the CA-issued server certificate. Set it to the external
+  # host name clients use to reach this server.
+  server_cn: localhost
 
 auth:
   enabled: true
