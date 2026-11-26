@@ -117,6 +117,50 @@ func SigningKeyResolutionFromProto(r *pb.SigningKeyResolution) *transport.Signin
 	}
 }
 
+// SignCoRIMRequestToProto converts a transport SignCoRIMRequest.
+func SignCoRIMRequestToProto(r *transport.SignCoRIMRequest) *pb.SignCoRIMRequest {
+	return &pb.SignCoRIMRequest{
+		Repository: r.Repository,
+		Corim:      r.CoRIM,
+		SignerName: r.SignerName,
+		SignerUri:  r.SignerURI,
+		NotBefore:  timeToProto(r.NotBefore),
+		NotAfter:   timeToProto(r.NotAfter),
+	}
+}
+
+// SignCoRIMRequestFromProto converts a protobuf SignCoRIMRequest.
+func SignCoRIMRequestFromProto(r *pb.SignCoRIMRequest) *transport.SignCoRIMRequest {
+	return &transport.SignCoRIMRequest{
+		Repository: r.GetRepository(),
+		CoRIM:      r.GetCorim(),
+		SignerName: r.GetSignerName(),
+		SignerURI:  r.GetSignerUri(),
+		NotBefore:  timeFromProto(r.GetNotBefore()),
+		NotAfter:   timeFromProto(r.GetNotAfter()),
+	}
+}
+
+// SignedCoRIMToProto converts a transport SignedCoRIM.
+func SignedCoRIMToProto(s *transport.SignedCoRIM) *pb.SignedCoRIM {
+	if s == nil {
+		return nil
+	}
+	return &pb.SignedCoRIM{Key: SigningKeyResolutionToProto(&s.Key), Corim: s.CoRIM}
+}
+
+// SignedCoRIMFromProto converts a protobuf SignedCoRIM.
+func SignedCoRIMFromProto(s *pb.SignedCoRIM) *transport.SignedCoRIM {
+	if s == nil {
+		return nil
+	}
+	out := &transport.SignedCoRIM{CoRIM: s.GetCorim()}
+	if key := SigningKeyResolutionFromProto(s.GetKey()); key != nil {
+		out.Key = *key
+	}
+	return out
+}
+
 // Compile-time check that the client serves the whole signing-key API.
 var _ transport.SigningKeyService = SigningKeyClient{}
 
@@ -183,4 +227,16 @@ func (c SigningKeyClient) ResolveSigningKey(ctx context.Context, req *transport.
 		return nil, err
 	}
 	return SigningKeyResolutionFromProto(resp), nil
+}
+
+// SignCoRIM implements transport.SigningKeyService.
+func (c SigningKeyClient) SignCoRIM(ctx context.Context, req *transport.SignCoRIMRequest) (*transport.SignedCoRIM, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	resp, err := c.Client.SignCoRIM(ctx, SignCoRIMRequestToProto(req))
+	if err != nil {
+		return nil, err
+	}
+	return SignedCoRIMFromProto(resp), nil
 }

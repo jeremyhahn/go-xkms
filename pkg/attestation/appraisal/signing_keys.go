@@ -96,6 +96,35 @@ type SigningKeyResolution struct {
 	Default bool `json:"default"`
 }
 
+// SignCoRIMRequest asks for a tenant's CoRIM reference values to be signed
+// for a repository, draft-ietf-rats-corim-11 §4.2, with the key
+// ResolveSigningKey names for it. The corim-meta fields follow §4.2.3.
+type SignCoRIMRequest struct {
+	Repository string `json:"repository"`
+
+	// CoRIM is the CBOR unsigned-corim-map, tagged #6.501 or not.
+	CoRIM []byte `json:"corim"`
+
+	// SignerName is corim-meta's signer-name, §4.2.3.1. It is required.
+	SignerName string `json:"signer_name"`
+
+	// SignerURI is corim-meta's optional signer-uri, §4.2.3.1.
+	SignerURI string `json:"signer_uri,omitempty"`
+
+	// NotBefore and NotAfter are corim-meta's optional signature-validity,
+	// §7.3. NotBefore needs NotAfter.
+	NotBefore time.Time `json:"not_before,omitzero"`
+	NotAfter  time.Time `json:"not_after,omitzero"`
+}
+
+// SignedCoRIM is a §4.2 signed CoRIM and the key that signed it.
+type SignedCoRIM struct {
+	Key SigningKeyResolution `json:"key"`
+
+	// CoRIM is the COSE_Sign1 signed-corim.
+	CoRIM []byte `json:"corim"`
+}
+
 // ValidateRepository applies the binding-name rule: a repository is an OCI
 // repository path of at most 255 bytes. It returns a *RepositoryError.
 func ValidateRepository(repository string) error {

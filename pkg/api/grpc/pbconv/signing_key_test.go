@@ -41,6 +41,28 @@ func TestSigningKeyConversions_RoundTrip(t *testing.T) {
 
 	resolution := &transport.SigningKeyResolution{Repository: "acme/app", KeyID: "release", Default: true}
 	assert.Equal(t, resolution, SigningKeyResolutionFromProto(SigningKeyResolutionToProto(resolution)))
+
+	sign := &transport.SignCoRIMRequest{
+		Repository: "acme/app", CoRIM: []byte{0xd9, 0x01, 0xf5}, SignerName: "Acme", SignerURI: "https://acme.example",
+		NotBefore: time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC), NotAfter: time.Date(2026, 10, 25, 8, 0, 0, 0, time.UTC),
+	}
+	assert.Equal(t, sign, SignCoRIMRequestFromProto(SignCoRIMRequestToProto(sign)))
+
+	signed := &transport.SignedCoRIM{Key: *resolution, CoRIM: []byte{0xd2, 0x84}}
+	assert.Equal(t, signed, SignedCoRIMFromProto(SignedCoRIMToProto(signed)))
+}
+
+// TestSignCoRIMConversions_AbsentFields proves an unset validity stays zero
+// and a signed CoRIM without a key reads as one with an empty resolution.
+func TestSignCoRIMConversions_AbsentFields(t *testing.T) {
+	req := SignCoRIMRequestToProto(&transport.SignCoRIMRequest{Repository: "acme/app"})
+	assert.Nil(t, req.GetNotBefore())
+	assert.Nil(t, req.GetNotAfter())
+	assert.Equal(t, &transport.SignCoRIMRequest{}, SignCoRIMRequestFromProto(nil))
+
+	assert.Nil(t, SignedCoRIMToProto(nil))
+	assert.Nil(t, SignedCoRIMFromProto(nil))
+	assert.Equal(t, &transport.SignedCoRIM{CoRIM: []byte{0xd2}}, SignedCoRIMFromProto(&pb.SignedCoRIM{Corim: []byte{0xd2}}))
 }
 
 // TestSigningKeyConversions_NilMessages proves an absent message converts to
@@ -87,6 +109,12 @@ func (s *signingKeyRecordingServer) ResolveSigningKey(_ context.Context, r *pb.R
 	return &pb.SigningKeyResolution{Repository: r.GetRepository(), KeyId: "release", Default: true}, nil
 }
 
+func (s *signingKeyRecordingServer) SignCoRIM(_ context.Context, r *pb.SignCoRIMRequest) (*pb.SignedCoRIM, error) {
+	s.repositories = append(s.repositories, r.GetRepository())
+	key := &pb.SigningKeyResolution{Repository: r.GetRepository(), KeyId: "release", Default: true}
+	return &pb.SignedCoRIM{Key: key, Corim: append([]byte{0xd2}, r.GetCorim()...)}, nil
+}
+
 // TestSigningKeyClient_OverTheWire proves the client sends each request's
 // repository and returns the server's answer, and the server's status error
 // unchanged.
@@ -112,7 +140,12 @@ func TestSigningKeyClient_OverTheWire(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resolved.Default)
 
-	assert.Equal(t, []string{"acme/app", "acme/web", "acme/app", "acme/cli"}, srv.repositories)
+	signed, err := c.SignCoRIM(ctx, &transport.SignCoRIMRequest{Repository: "acme/sdk", CoRIM: []byte{0x01}, SignerName: "Acme"})
+	require.NoError(t, err)
+	assert.Equal(t, []byte{0xd2, 0x01}, signed.CoRIM)
+	assert.Equal(t, "release", signed.Key.KeyID)
+
+	assert.Equal(t, []string{"acme/app", "acme/web", "acme/app", "acme/cli", "acme/sdk"}, srv.repositories)
 }
 
 // TestSigningKeyClient_NilRequests proves a nil request is refused before
@@ -126,6 +159,8 @@ func TestSigningKeyClient_NilRequests(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNilRequest)
 	assert.ErrorIs(t, c.DeleteSigningKeyBinding(ctx, nil), ErrNilRequest)
 	_, err = c.ResolveSigningKey(ctx, nil)
+	assert.ErrorIs(t, err, ErrNilRequest)
+	_, err = c.SignCoRIM(ctx, nil)
 	assert.ErrorIs(t, err, ErrNilRequest)
 }
 
@@ -142,6 +177,8 @@ func TestSigningKeyClient_WireErrors(t *testing.T) {
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
 	assert.Equal(t, codes.Unimplemented, status.Code(c.DeleteSigningKeyBinding(ctx, &transport.DeleteSigningKeyBindingRequest{})))
 	_, err = c.ResolveSigningKey(ctx, &transport.ResolveSigningKeyRequest{})
+	assert.Equal(t, codes.Unimplemented, status.Code(err))
+	_, err = c.SignCoRIM(ctx, &transport.SignCoRIMRequest{})
 	assert.Equal(t, codes.Unimplemented, status.Code(err))
 }
 

@@ -131,6 +131,10 @@ func TestSigningKeyRPCs_GateEachPermission(t *testing.T) {
 			_, err := s.ResolveSigningKey(ctx, &pb.ResolveSigningKeyRequest{Repository: "acme/app"})
 			return err
 		}},
+		"sign corim": {auth.ActionSign, func() error {
+			_, err := s.SignCoRIM(ctx, &pb.SignCoRIMRequest{Repository: "acme/app"})
+			return err
+		}},
 	}
 	for name, c := range calls {
 		err := c.call()
