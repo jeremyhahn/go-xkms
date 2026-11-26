@@ -13,6 +13,121 @@ Generated from the xkey cobra command tree by `make skill-reference`; do not edi
 | `--socket` | string |  | IPC socket path of the xkey instance to talk to (default: derived from XKEY_HOME, or $XDG_RUNTIME_DIR/xkey/xkey.sock, or a per-user fallback: $TMPDIR or ~/Library/Caches on macOS, ~/.xkey/run elsewhere; the directory must be mode 0700 and owned by you) |
 | `--xkmsd-url` | string |  | xkmsd server URL (unix:// or grpc://) - enables server mode for all commands |
 
+## xkey acme
+
+ACME client: account and certificate revocation
+
+Usage: `xkey acme`
+
+Inherited by subcommands:
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--account-key` | string |  | PEM private key of the ACME account (required) |
+| `--directory` | string |  | ACME directory URL (required) |
+| `--system-roots` | bool | false | also trust the OS root certificates |
+| `--trusted-root` | stringArray | [] | PEM CA certificate file to trust (repeatable) |
+
+## xkey acme account
+
+Register, update or deactivate the ACME account
+
+Usage: `xkey acme account`
+
+## xkey acme account deactivate
+
+Permanently deactivate the ACME account (irreversible)
+
+Usage: `xkey acme account deactivate [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--yes` | bool | false | confirm the irreversible deactivation |
+
+## xkey acme account register
+
+Register the account key with the ACME server (idempotent)
+
+Usage: `xkey acme account register [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--contact` | string |  | account contact, e.g. mailto:admin@example.com |
+
+## xkey acme account update
+
+Replace the account contacts
+
+Usage: `xkey acme account update [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--contact` | stringArray | [] | account contact (repeatable); mailto: is added when missing |
+
+## xkey acme endorse
+
+Obtain an EK certificate for this device's TPM (endorse-01)
+
+Usage: `xkey acme endorse [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--common-name` | string |  | common name of the EK certificate ("{cn}-ek", default "ek") |
+| `--data-dir` | string |  | xkey data directory (TPM key store) |
+| `--ip` | string |  | device IP address the server validates (required) |
+| `--listen-host` | string |  | host the challenge listener binds |
+| `--out` | string |  | file for the EK certificate PEM (default stdout) |
+| `--port` | string | 8080 | port of the challenge listener |
+| `--timeout` | duration | 30s | endorsement timeout |
+| `--tpm-device` | string |  | TPM device path |
+| `--tpm-simulator` | bool | false | use the TPM simulator |
+
+## xkey acme enroll
+
+Enroll this device's TPM through an ACME device challenge
+
+Usage: `xkey acme enroll [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--challenge` | string |  | device challenge: enroll-01, endorse-01 or device-attest-01 (required) |
+| `--common-name` | string |  | common name of the device certificate |
+| `--data-dir` | string |  | xkey data directory (TPM key store) |
+| `--ip` | string |  | device IP address the server validates (required unless device-attest-01) |
+| `--listen-host` | string |  | host the challenge listener binds |
+| `--out-dir` | string |  | directory for idevid.pem, iak.pem and chain.pem (default stdout) |
+| `--port` | string | 8080 | port of the challenge listener |
+| `--timeout` | duration | 30s | enrollment timeout |
+| `--tpm-device` | string |  | TPM device path |
+| `--tpm-simulator` | bool | false | use the TPM simulator |
+
+## xkey acme renew
+
+Renew a certificate through the ACME account
+
+Usage: `xkey acme renew [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--authz-type` | string | dns | identifier type: dns, ip or permanent-identifier |
+| `--cert` | string |  | PEM certificate to renew (required) |
+| `--challenge` | string |  | challenge type, e.g. http-01 or dns-01 (required) |
+| `--csr` | string |  | PEM or DER certificate signing request (required) |
+| `--domain` | string |  | identifier value to authorize (required) |
+| `--http-addr` | string | :80 | address the http-01 token is served on |
+| `--out` | string |  | file for the renewed PEM certificate (default stdout) |
+
+## xkey acme revoke
+
+Revoke a certificate issued to the ACME account
+
+Usage: `xkey acme revoke [flags]`
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--cert` | string |  | PEM certificate to revoke (required) |
+| `--reason` | string | unspecified | RFC 5280 revocation reason name or number |
+
 ## xkey agent
 
 Manage the agent server (master side)
