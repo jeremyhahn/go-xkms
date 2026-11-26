@@ -192,3 +192,38 @@ func BuildVerifyUserTranscript(rpName string, nonce, channelBinding, uvkFingerpr
 	rpNameHash := sha256.Sum256([]byte(rpName))
 	return append(transcript, rpNameHash[:]...), nil
 }
+
+// The phone-side refusals of local.verifyUser (#1712), each its own code so
+// the desktop can tell them apart. A cancelled prompt is
+// ErrorCodeUserCancelled.
+const (
+	// ErrorCodeVerifyUserNotEnrolled means the phone has no strong biometric
+	// and no device credential enrolled, so it cannot verify its user.
+	ErrorCodeVerifyUserNotEnrolled = -32041
+
+	// ErrorCodeVerifyUserLockout means the phone has locked user
+	// authentication out after too many failed attempts.
+	ErrorCodeVerifyUserLockout = -32042
+
+	// ErrorCodeNotPaired means the phone holds no pairing with the desktop
+	// that sent the request.
+	ErrorCodeNotPaired = -32043
+)
+
+// MapVerifyUserRPCError maps the phone's RPC error answering local.verifyUser
+// to a typed error: a refusal code to its own sentinel, any other code as
+// MapRPCError does.
+func MapVerifyUserRPCError(rpcErr *RPCError) error {
+	if rpcErr == nil {
+		return nil
+	}
+	switch rpcErr.Code {
+	case ErrorCodeVerifyUserNotEnrolled:
+		return ErrUserVerificationNotEnrolled
+	case ErrorCodeVerifyUserLockout:
+		return ErrUserVerificationLockout
+	case ErrorCodeNotPaired:
+		return ErrNotPaired
+	}
+	return MapRPCError(rpcErr)
+}

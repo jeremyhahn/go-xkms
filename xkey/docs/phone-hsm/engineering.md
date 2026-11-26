@@ -1046,6 +1046,15 @@ session. The phone shows the user-authentication prompt naming `rpName` (a
 | `signatureAlgorithm` | string | `ES256` |
 
 A cancelled prompt, a lockout or a missing UVK is an RPC error, never a result.
+Each refusal has its own code (#1712), which `pairingproto.MapVerifyUserRPCError`
+maps to a typed error and `PhoneKeyBackend.VerifyUser` returns:
+
+| Refusal | Code | Typed error |
+|---|---|---|
+| The user cancelled the prompt | `-32001` `ErrorCodeUserCancelled` | `ErrUserCancelled` |
+| No strong biometric and no device credential enrolled | `-32041` `ErrorCodeVerifyUserNotEnrolled` | `ErrUserVerificationNotEnrolled` |
+| User authentication locked out | `-32042` `ErrorCodeVerifyUserLockout` | `ErrUserVerificationLockout` |
+| The phone is not paired with this desktop | `-32043` `ErrorCodeNotPaired` | `ErrNotPaired` |
 
 **Desktop verification.** The desktop mints nothing unless every check passes,
 in this order. Steps 2 to 7 are the library decision `userverify.Verify`

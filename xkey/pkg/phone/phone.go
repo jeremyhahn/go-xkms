@@ -818,6 +818,12 @@ func (b *PhoneKeyBackend) VerifyUser(ctx context.Context, rpName string) error {
 	if errors.Is(err, xkms.ErrAndroidStatusListUnavailable) {
 		return userVerificationUnavailable(err)
 	}
+	// A phone's refusal is typed by its code, so the caller can tell a
+	// cancelled prompt from a lockout or a missing pairing (#1712).
+	var rpcErr *pairingproto.RPCError
+	if errors.As(err, &rpcErr) {
+		return &SentinelCauseError{Sentinel: pairingproto.MapVerifyUserRPCError(rpcErr), Cause: err}
+	}
 	return err
 }
 
