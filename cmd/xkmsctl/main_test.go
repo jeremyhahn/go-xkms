@@ -21,10 +21,11 @@ import (
 )
 
 func TestRun_PrintsCommandError(t *testing.T) {
+	rootCmd.SetArgs([]string{"key", "copy", "src", "dst", "--no-such-flag"})
 	t.Cleanup(func() { rootCmd.SetArgs([]string{}) })
 
 	var stderr bytes.Buffer
-	code := run([]string{"key", "copy", "src", "dst", "--no-such-flag"}, &stderr)
+	code := run(&stderr)
 
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr.String(), "unknown flag: --no-such-flag")
