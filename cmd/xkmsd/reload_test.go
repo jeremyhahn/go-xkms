@@ -125,6 +125,7 @@ logging:
 
 tls:
   enabled: true
+  server_cn: "localhost"
 
 auth:
   enabled: true

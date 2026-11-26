@@ -17,7 +17,6 @@ package integration
 
 import (
 	"bytes"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -45,9 +44,7 @@ func newQUICClient(baseURL string) *QUICTestClient {
 		jwtToken: "test-jwt-token",
 		client: &http.Client{
 			Transport: &http3.Transport{
-				TLSClientConfig: &tls.Config{
-					RootCAs: loadCACertPool(),
-				},
+				TLSClientConfig: clientTLSConfig(),
 			},
 			Timeout: 10 * time.Second,
 		},
@@ -218,9 +215,10 @@ func TestQUIC_GenerateKey(t *testing.T) {
 			testKeyID := fmt.Sprintf("%s-%s", keyID, tt.keyType)
 
 			reqBody := map[string]interface{}{
-				"key_id":   testKeyID,
-				"backend":  "software",
-				"key_type": tt.keyType,
+				"key_id":    testKeyID,
+				"backend":   "software",
+				"key_type":  tt.keyType,
+				"algorithm": tt.keyType,
 			}
 
 			if tt.keySize > 0 {
@@ -284,10 +282,11 @@ func TestQUIC_ListKeys(t *testing.T) {
 
 	// Create a test key first
 	reqBody := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
@@ -352,10 +351,11 @@ func TestQUIC_GetKey(t *testing.T) {
 
 	// Create a test key
 	reqBody := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
@@ -405,10 +405,11 @@ func TestQUIC_SignAndVerify(t *testing.T) {
 
 	// Create a test key
 	reqBody := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
@@ -493,10 +494,11 @@ func TestQUIC_DeleteKey(t *testing.T) {
 
 	// Create a test key
 	reqBody := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "rsa",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
@@ -626,10 +628,11 @@ func TestQUIC_ConcurrentRequests(t *testing.T) {
 				keyIDs[idx] = keyID
 
 				reqBody := map[string]interface{}{
-					"key_id":   keyID,
-					"backend":  "software",
-					"key_type": "rsa",
-					"key_size": 2048,
+					"key_id":    keyID,
+					"backend":   "software",
+					"key_type":  "rsa",
+					"algorithm": "rsa",
+					"key_size":  2048,
 				}
 
 				resp, err := client.doRequest("POST", "/api/v1/keys", reqBody)
