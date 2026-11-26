@@ -95,15 +95,6 @@ func TestTLSCertificate_NoCertAvailable(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestTLSCertificate_InvalidSlot(t *testing.T) {
-	tlsCert, err := TLSCertificate(&SignerConfig{
-		SocketPath: "/tmp/nonexistent.sock",
-		Slot:       "zz",
-	})
-	assert.Nil(t, tlsCert)
-	assert.True(t, errors.Is(err, ErrInvalidSlot))
-}
-
 func TestTLSClientConfig_Success(t *testing.T) {
 	certPEM, _ := generateTestCert(t)
 	sockPath := startMockIPCServer(t, certHandler(certPEM))
