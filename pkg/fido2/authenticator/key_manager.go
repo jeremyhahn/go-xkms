@@ -23,8 +23,6 @@ import (
 	"io"
 	"sync"
 
-	"golang.org/x/crypto/argon2"
-
 	"github.com/jeremyhahn/go-enclave"
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 )
@@ -535,7 +533,7 @@ func (km *KeyManager) deriveUMK(pinHash []byte) []byte {
 		return nil
 	}
 
-	return argon2.IDKey(
+	return argon2IDKey(
 		pinHash,
 		salt,
 		umkIterations,
