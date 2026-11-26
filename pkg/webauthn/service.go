@@ -205,7 +205,7 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 		// users:create (CA ruling 602, go-xkms #2202): the refusal is the
 		// documented registration refusal, never a server fault.
 		var denied *qrdbsdk.PermissionDeniedError
-		if errors.As(err, &denied) {
+		if errors.As(err, &denied) || errors.Is(err, qrdbsdk.ErrUnauthenticated) {
 			return nil, "", ErrRegistrationRefused
 		}
 		return nil, "", WrapError("create user", err)

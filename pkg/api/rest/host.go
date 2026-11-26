@@ -438,17 +438,20 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 	}
 
 	var users webauthn.QRDBUsers = p.QRDBClient.Users()
+	callContext := p.CallContext
 	if p.NodeUsers != nil {
 		users = nodeWebAuthnUsers{
 			NodeUserClient: auth.NewNodeUserClient(p.NodeUsers),
 			creator:        users,
 		}
+		// The node user service needs no credentials; CreateUser keeps the request's own principal.
+		callContext = nil
 	}
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
 		Users:       users,
 		DAOFactory:  p.DAOFactory,
 		TenantID:    tenantID,
-		CallContext: p.CallContext,
+		CallContext: callContext,
 	})
 	if err != nil {
 		return nil, &WebAuthnServiceBuildError{Err: err}
