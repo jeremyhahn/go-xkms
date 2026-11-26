@@ -91,7 +91,11 @@ func init() {
 		return New(ctx, c)
 	})
 	providers.RegisterEnvFactory(providers.ProviderRoute53, func(ctx context.Context) (providers.Provider, error) {
-		return NewFromEnv(ctx)
+		provider, err := NewFromEnv(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return provider, nil
 	})
 }
 
