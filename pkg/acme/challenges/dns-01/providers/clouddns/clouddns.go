@@ -83,7 +83,11 @@ func init() {
 		if !ok {
 			return nil, providers.NewConfigError(providerName, "config", "expected clouddns.Config")
 		}
-		return New(ctx, c)
+		provider, err := New(ctx, c)
+		if err != nil {
+			return nil, err
+		}
+		return provider, nil
 	})
 	providers.RegisterEnvFactory(providers.ProviderCloudDNS, func(ctx context.Context) (providers.Provider, error) {
 		provider, err := NewFromEnv(ctx)
