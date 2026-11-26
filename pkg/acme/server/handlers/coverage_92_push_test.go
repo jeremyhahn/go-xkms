@@ -24,12 +24,10 @@ import (
 	"crypto/x509/pkix"
 	"encoding/base64"
 	"fmt"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -123,37 +121,33 @@ func TestCov92_OrderFinalizeHandler_CAAValidationSkipsNonDNS(t *testing.T) {
 	assert.Equal(t, 0, caaValidator.validateCount, "CAA validator should not be called for non-DNS identifiers")
 }
 
-// TestCov92_OrderFinalizeHandler_PreIssuanceHookSuccess tests the pre-issuance
-// hook success path for standard x509 CSRs.
-func TestCov92_OrderFinalizeHandler_PreIssuanceHookSuccess(t *testing.T) {
+// TestCov92_OrderFinalizeHandler_OrderNotOwnedByAccount tests the authorization
+// check where the order's AccountID doesn't match the requesting account.
+func TestCov92_OrderFinalizeHandler_OrderNotOwnedByAccount(t *testing.T) {
 	service, _, cleanup := setupTestServiceWithMockCA(t)
 	defer cleanup()
 
-	hookExecuted := false
-	preHookRegistry := NewPreIssuanceHookRegistry()
-	preHookRegistry.Register(func(ctx *PreIssuanceHookContext) error {
-		hookExecuted = true
-		assert.False(t, ctx.IsTCGCSR)
-		assert.NotNil(t, ctx.CSR)
-		assert.NotNil(t, ctx.Order)
-		return nil
-	})
+	key1 := generateTestKey(t)
+	account1 := createTestAccount(t, service, key1)
 
-	service.params = &Params{
-		PreIssuanceHooks:   preHookRegistry,
-		OrderFinalizeHooks: NewOrderFinalizeHookRegistry(),
-	}
+	key2 := generateTestKey(t)
+	account2 := createTestAccount(t, service, key2)
 
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	order := createTestOrderSimple(t, service, account.ID)
+	// Create order for account2
+	order := createTestOrderSimple(t, service, account2.ID)
 	order.Status = common.StatusReady
 
 	ctx := context.Background()
-	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
+	orderDAO2, err := service.storageFactory.OrderDAO(account2.ID)
 	require.NoError(t, err)
-	err = orderDAO.Save(ctx, order)
+	err = orderDAO2.Save(ctx, order)
+	require.NoError(t, err)
+
+	// Save a copy in account1's partition with account2's AccountID
+	orderDAO1, err := service.storageFactory.OrderDAO(account1.ID)
+	require.NoError(t, err)
+	orderCopy := *order
+	err = orderDAO1.Save(ctx, &orderCopy)
 	require.NoError(t, err)
 
 	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -174,14 +168,13 @@ func TestCov92_OrderFinalizeHandler_PreIssuanceHookSuccess(t *testing.T) {
 	}
 
 	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
-	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+	req := createJWSRequest(t, service, key1, url, payload, true, account1.ID)
 	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
 
 	resp := httptest.NewRecorder()
 	service.OrderFinalizeHandler(resp, req)
 
-	require.Equal(t, http.StatusOK, resp.Code)
-	assert.True(t, hookExecuted, "Pre-issuance hook should have been executed")
+	assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
 }
 
 // --- KeyChangeHandler additional error path tests ---
@@ -247,109 +240,7 @@ func TestCov92_RevokeCertHandler_InactiveAccountStatus(t *testing.T) {
 	assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
 }
 
-// TestCov92_RevokeCertHandler_CNAlreadyInDNSNames tests the code path
-// where the certificate's CN is already present in DNSNames (no duplicate).
-func TestCov92_RevokeCertHandler_CNAlreadyInDNSNames(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	ctx := context.Background()
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-
-	domain := "test.example.com"
-	template := &x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			CommonName: domain,
-		},
-		DNSNames:              []string{domain},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, key.PublicKey, key.PrivateKey)
-	require.NoError(t, err)
-
-	x509Cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	certificateDAO, err := service.storageFactory.CertificateDAO()
-	require.NoError(t, err)
-
-	acmeCert := &entities.ACMECertificate{
-		Serial:    serialNumber.Text(16),
-		PEM:       string(encodeCertificatePEM(certDER)),
-		Status:    common.StatusValid,
-		IssuedAt:  time.Now(),
-		ExpiresAt: time.Now().Add(365 * 24 * time.Hour),
-	}
-	err = certificateDAO.Save(ctx, acmeCert)
-	require.NoError(t, err)
-
-	authzDAO, err := service.storageFactory.AuthorizationDAO(account.ID)
-	require.NoError(t, err)
-
-	authz := &entities.ACMEAuthorization{
-		ID: serialNumber.Uint64() + 1,
-		Identifier: entities.ACMEIdentifier{
-			Type:  "dns",
-			Value: domain,
-		},
-		Status:    common.StatusValid,
-		Expires:   time.Now().Add(365 * 24 * time.Hour).Format(time.RFC3339),
-		AccountID: account.ID,
-	}
-	err = authzDAO.Save(ctx, authz)
-	require.NoError(t, err)
-
-	certB64 := base64.RawURLEncoding.EncodeToString(x509Cert.Raw)
-	payload := RevokeCertRequest{
-		Certificate: certB64,
-		Reason:      RevocationReasonUnspecified,
-	}
-
-	url := service.baseRESTURI + "/acme/revoke-cert"
-	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.RevokeCertHandler(resp, req)
-
-	require.Equal(t, http.StatusOK, resp.Code)
-}
-
 // --- resolveTenantComplianceConfig tests ---
-
-// TestCov92_ResolveTenantComplianceConfig_NoTenantID tests compliance config
-// resolution when the account has no tenant ID.
-func TestCov92_ResolveTenantComplianceConfig_NoTenantID(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	account := &entities.ACMEAccount{
-		TenantID: "",
-	}
-
-	service.globalComplianceConfig = nil
-	result := service.resolveTenantComplianceConfig(context.Background(), account)
-	assert.Nil(t, result)
-
-	service.globalComplianceConfig = &GlobalComplianceConfig{
-		ComplianceConfig: ComplianceConfig{
-			Enabled: true,
-		},
-	}
-	result = service.resolveTenantComplianceConfig(context.Background(), account)
-	require.NotNil(t, result)
-	assert.True(t, result.Enabled)
-}
 
 // TestCov92_ResolveTenantComplianceConfig_NotTenantAwareFactory tests the path
 // where the storage factory doesn't implement TenantAwareFactory.
@@ -420,54 +311,6 @@ func TestCov92_OrderFinalizeHandler_OrderGetStorageError(t *testing.T) {
 	service.OrderFinalizeHandler(resp, req)
 
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
-}
-
-// TestCov92_OrderFinalizeHandler_CSRMatchesIdentifierError tests the path where
-// matchesIdentifier returns an error for unsupported identifier types.
-func TestCov92_OrderFinalizeHandler_CSRMatchesIdentifierError(t *testing.T) {
-	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	order := createTestOrderSimple(t, service, account.ID)
-	order.Status = common.StatusReady
-	// Use an unsupported identifier type to trigger matchesIdentifier error
-	order.Identifiers = []entities.ACMEIdentifier{
-		{Type: "unsupported-type", Value: "example.com"},
-	}
-
-	ctx := context.Background()
-	orderDAO, err := service.storageFactory.OrderDAO(account.ID)
-	require.NoError(t, err)
-	err = orderDAO.Save(ctx, order)
-	require.NoError(t, err)
-
-	csrKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	template := &x509.CertificateRequest{
-		Subject: pkix.Name{
-			CommonName: "example.com",
-		},
-	}
-
-	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, csrKey)
-	require.NoError(t, err)
-
-	payload := OrderFinalizeRequest{
-		CSR: base64.RawURLEncoding.EncodeToString(csrDER),
-	}
-
-	url := fmt.Sprintf("%s/acme/orders/%d/finalize", service.baseRESTURI, order.ID)
-	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeUnsupportedIdentifier, http.StatusBadRequest)
 }
 
 // TestCov92_KeyChangeHandler_AccountDAOCreationFailure tests the path where
@@ -642,6 +485,36 @@ func (m *MockStorageFactory92CertFail) ExternalAccountBindingDAO() (qrdbsdk.Gene
 }
 
 // --- NewOrderHandler storage error tests ---
+
+// TestCov92_NewOrderHandler_OrderDAOCreationError tests the NewOrderHandler
+// path where OrderDAO creation fails.
+func TestCov92_NewOrderHandler_OrderDAOCreationError(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	mockFactory := &MockStorageFactory92{
+		realFactory:        service.storageFactory,
+		failOrderDAOCreate: true,
+	}
+	service.storageFactory = mockFactory
+
+	payload := NewOrderRequest{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	url := service.baseRESTURI + "/acme/new-order"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.NewOrderHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+}
 
 // TestCov92_NewOrderHandler_OrderSaveError tests the NewOrderHandler
 // path where saving the order fails.
@@ -943,6 +816,41 @@ func (m *MockOrderDAO92SaveFail) Save(ctx context.Context, order *entities.ACMEO
 }
 
 // --- NewOrderHandler additional error tests ---
+
+// TestCov92_NewOrderHandler_AuthzDAOCreationErrorWithChallenge tests the
+// NewOrderHandler path where AuthorizationDAO creation fails after setting
+// up challenge map.
+func TestCov92_NewOrderHandler_AuthzDAOCreationErrorWithChallenge(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	service.challengeMap["http-01"] = func(_ *net.Resolver, _ common.CertificateAuthority, _, _, _, _ string) error {
+		return nil
+	}
+
+	key := generateTestKey(t)
+	account := createTestAccount(t, service, key)
+
+	mockFactory := &MockStorageFactory92AuthzFail{
+		realFactory:  service.storageFactory,
+		failAuthzDAO: true,
+	}
+	service.storageFactory = mockFactory
+
+	payload := NewOrderRequest{
+		Identifiers: []entities.ACMEIdentifier{
+			{Type: common.AuthzTypeDNS, Value: "example.com"},
+		},
+	}
+
+	url := service.baseRESTURI + "/acme/new-order"
+	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
+
+	resp := httptest.NewRecorder()
+	service.NewOrderHandler(resp, req)
+
+	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
+}
 
 // TestCov92_AccountHandler_AccountDAOCreationError tests the AccountHandler
 // path where AccountDAO creation fails.

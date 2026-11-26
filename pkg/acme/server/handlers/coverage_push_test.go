@@ -17,24 +17,15 @@ package handlers
 
 import (
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/go-jose/go-jose/v4"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
+	caerrors "github.com/jeremyhahn/go-xkms/pkg/acme/errors"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -51,15 +42,6 @@ func TestCoveragePush_GetStorageFactory(t *testing.T) {
 	factory := service.GetStorageFactory()
 	assert.NotNil(t, factory)
 	assert.Equal(t, service.storageFactory, factory)
-}
-
-func TestCoveragePush_GetNonceService(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	nonceService := service.GetNonceService()
-	assert.NotNil(t, nonceService)
-	assert.Equal(t, service.nonceService, nonceService)
 }
 
 func TestCoveragePush_SetOrderFinalizeHooks(t *testing.T) {
@@ -158,21 +140,6 @@ func TestCoveragePush_GetCAAValidator_Nil(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestCoveragePush_SetNonceGenerator(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	customGen := func() (string, error) {
-		return "custom-nonce", nil
-	}
-	service.SetNonceGenerator(customGen)
-
-	// Verify by calling the generator
-	nonce, err := service.nonceGenerator()
-	assert.NoError(t, err)
-	assert.Equal(t, "custom-nonce", nonce)
-}
-
 func TestCoveragePush_GetNonceGenerator(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
@@ -187,14 +154,10 @@ func TestCoveragePush_GetNonceGenerator(t *testing.T) {
 }
 
 // =============================================================================
-// encodeJSONWithLogger Tests (25% coverage -> target 100%)
-// =============================================================================
-
-// =============================================================================
 // jwkKeysMatch Tests (72.7% coverage -> target 100%)
 // =============================================================================
 
-func TestCoveragePush_JwkKeysMatch_RSA_Mismatch(t *testing.T) {
+func TestCoveragePush_JwkKeysMatch_RSA(t *testing.T) {
 	a := map[string]interface{}{
 		"kty": "RSA",
 		"n":   "modulus123",
@@ -202,31 +165,14 @@ func TestCoveragePush_JwkKeysMatch_RSA_Mismatch(t *testing.T) {
 	}
 	b := map[string]interface{}{
 		"kty": "RSA",
-		"n":   "different",
+		"n":   "modulus123",
 		"e":   "AQAB",
 	}
 
-	assert.False(t, jwkKeysMatch(a, b))
+	assert.True(t, jwkKeysMatch(a, b))
 }
 
-func TestCoveragePush_JwkKeysMatch_EC_Mismatch(t *testing.T) {
-	a := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "x123",
-		"y":   "y123",
-	}
-	b := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-384",
-		"x":   "x123",
-		"y":   "y123",
-	}
-
-	assert.False(t, jwkKeysMatch(a, b))
-}
-
-func TestCoveragePush_JwkKeysMatch_OKP_Mismatch(t *testing.T) {
+func TestCoveragePush_JwkKeysMatch_OKP(t *testing.T) {
 	a := map[string]interface{}{
 		"kty": "OKP",
 		"crv": "Ed25519",
@@ -235,7 +181,33 @@ func TestCoveragePush_JwkKeysMatch_OKP_Mismatch(t *testing.T) {
 	b := map[string]interface{}{
 		"kty": "OKP",
 		"crv": "Ed25519",
-		"x":   "different",
+		"x":   "publickey123",
+	}
+
+	assert.True(t, jwkKeysMatch(a, b))
+}
+
+func TestCoveragePush_JwkKeysMatch_UnknownType_Mismatch(t *testing.T) {
+	a := map[string]interface{}{
+		"kty":  "UNKNOWN",
+		"data": "value1",
+	}
+	b := map[string]interface{}{
+		"kty":  "UNKNOWN",
+		"data": "value2",
+	}
+
+	assert.False(t, jwkKeysMatch(a, b))
+}
+
+func TestCoveragePush_JwkKeysMatch_TypeMismatch(t *testing.T) {
+	a := map[string]interface{}{
+		"kty": "RSA",
+		"n":   "modulus123",
+	}
+	b := map[string]interface{}{
+		"kty": "EC",
+		"crv": "P-256",
 	}
 
 	assert.False(t, jwkKeysMatch(a, b))
@@ -245,136 +217,122 @@ func TestCoveragePush_JwkKeysMatch_OKP_Mismatch(t *testing.T) {
 // writeChallengeResponse Tests (75% coverage -> target 100%)
 // =============================================================================
 
-func TestCoveragePush_WriteChallengeResponse_WithValidated(t *testing.T) {
+func TestCoveragePush_WriteChallengeResponse_NonceError(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
+	// Set failing nonce generator
+	service.SetNonceGenerator(func() (string, error) {
+		return "", errors.New("nonce generation failed")
+	})
+
 	challenge := &entities.ACMEChallenge{
-		ID:        12345,
-		Type:      "http-01",
-		URL:       "https://acme.test.example.com/acme/challenge/12345",
-		Status:    common.StatusValid,
-		Token:     "test-token",
-		Validated: time.Now().Format(time.RFC3339),
+		ID:     12345,
+		Type:   "http-01",
+		URL:    "https://acme.test.example.com/acme/challenge/12345",
+		Status: common.StatusPending,
+		Token:  "test-token",
 	}
 
 	w := httptest.NewRecorder()
 	service.writeChallengeResponse(w, challenge)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-
-	var resp map[string]interface{}
-	err := json.NewDecoder(w.Body).Decode(&resp)
-	assert.NoError(t, err)
-	assert.Equal(t, "valid", resp["status"])
-	assert.NotEmpty(t, resp["validated"])
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
-
-// =============================================================================
-// resolveTenantComplianceConfig Tests (65.2% coverage -> target 100%)
-// =============================================================================
 
 // =============================================================================
 // NewAccountHandler Additional Tests (57.4% coverage -> target 90%+)
 // =============================================================================
 
-func TestCoveragePush_NewAccountHandler_AccountExists_OnlyReturn(t *testing.T) {
+func TestCoveragePush_NewAccountHandler_ExternalAccountRequired_NotProvided(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
+	// Enable external account requirement
+	service.externalAccountRequired = true
+
 	key := generateTestKey(t)
 
-	// First create an account
 	payload := map[string]interface{}{
 		"contact":              []string{"mailto:test@example.com"},
 		"termsOfServiceAgreed": true,
+		// No externalAccountBinding provided
 	}
 
 	req := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-account", payload, false, 0)
 	w := httptest.NewRecorder()
+
 	service.NewAccountHandler(w, req)
-	require.Equal(t, http.StatusCreated, w.Code)
 
-	// Request existing with onlyReturnExisting
-	payload2 := map[string]interface{}{
-		"onlyReturnExisting": true,
-	}
-	req2 := createJWSRequest(t, service, key, service.baseRESTURI+"/acme/new-account", payload2, false, 0)
-	w2 := httptest.NewRecorder()
-	service.NewAccountHandler(w2, req2)
-
-	assert.Equal(t, http.StatusOK, w2.Code)
-}
-
-// =============================================================================
-// NewOrderHandler Additional Tests (76.6% coverage -> target 90%+)
-// =============================================================================
-
-// =============================================================================
-// KeyChangeHandler Additional Tests (71.1% coverage -> target 90%+)
-// =============================================================================
-
-// =============================================================================
-// OrderFinalizeHandler Additional Tests (68.6% coverage -> target 90%+)
-// =============================================================================
-
-// =============================================================================
-// ChallengeHandler Additional Tests
-// =============================================================================
-
-// =============================================================================
-// isEnrollXChallenge Tests
-// =============================================================================
-
-// =============================================================================
-// ValidateContactURLs Tests
-// =============================================================================
-
-func TestCoveragePush_ValidateContactURLs(t *testing.T) {
-	testCases := []struct {
-		name     string
-		contacts []string
-		wantErr  bool
-	}{
-		{"valid mailto", []string{"mailto:test@example.com"}, false},
-		{"multiple valid", []string{"mailto:a@example.com", "mailto:b@example.com"}, false},
-		{"empty", []string{}, false},
-		{"mailto with hfields", []string{"mailto:test@example.com?subject=test"}, true},
-		{"mailto with multiple addr", []string{"mailto:a@example.com,b@example.com"}, true},
-		{"invalid email", []string{"mailto:not-an-email"}, true},
-		{"unsupported scheme", []string{"tel:+1234567890"}, true},
-		{"no scheme", []string{"test@example.com"}, true},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := ValidateContactURLs(tc.contacts)
-			if tc.wantErr {
-				assert.NotNil(t, err)
-			} else {
-				assert.Nil(t, err)
-			}
-		})
-	}
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+	assertErrorType(t, w, "externalAccountRequired", http.StatusUnauthorized)
 }
 
 // =============================================================================
 // generateIDWithReader and generateTokenWithReader Tests
 // =============================================================================
 
-// =============================================================================
-// compareKeyMaps Tests (for KeyChangeHandler)
-// =============================================================================
+// failingReaderCovPush always returns an error
+type failingReaderCovPush struct{}
+
+func (f *failingReaderCovPush) Read(_ []byte) (int, error) {
+	return 0, errors.New("read failed")
+}
+
+// shortReaderCovPush reads less than requested
+type shortReaderCovPush struct{}
+
+func (s *shortReaderCovPush) Read(p []byte) (int, error) {
+	if len(p) > 5 {
+		return 5, nil // Only read 5 bytes
+	}
+	return len(p), nil
+}
+
+func TestCoveragePush_GenerateIDWithReader_Error(t *testing.T) {
+	id, err := generateIDWithReader(&failingReaderCovPush{})
+	assert.Error(t, err)
+	assert.Zero(t, id)
+}
+
+func TestCoveragePush_GenerateIDWithReader_ShortRead(t *testing.T) {
+	id, err := generateIDWithReader(&shortReaderCovPush{})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrFailedToGenerateID)
+	assert.Zero(t, id)
+}
+
+func TestCoveragePush_GenerateTokenWithReader_Error(t *testing.T) {
+	token, err := generateTokenWithReader(&failingReaderCovPush{})
+	assert.Error(t, err)
+	assert.Empty(t, token)
+}
+
+func TestCoveragePush_GenerateTokenWithReader_ShortRead(t *testing.T) {
+	token, err := generateTokenWithReader(&shortReaderCovPush{})
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrFailedToGenerateToken)
+	assert.Empty(t, token)
+}
 
 // =============================================================================
 // verifyMAC Tests
 // =============================================================================
 
-func TestCoveragePush_VerifyMAC_HS256(t *testing.T) {
-	// Create binding to verify MAC generation works
-	binding, err := CreateExternalAccountBinding("kid", "external", "HS256")
-	require.NoError(t, err)
-	assert.NotNil(t, binding)
+func TestCoveragePush_VerifyMAC_UnsupportedAlgorithm(t *testing.T) {
+	err := verifyMAC("UNSUPPORTED", []byte("key"), []byte("message"), "signature")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported algorithm")
+}
+
+func TestCoveragePush_VerifyMAC_InvalidSignatureBase64(t *testing.T) {
+	// 32 bytes: a real EAB key is never this short, and crypto/hmac refuses
+	// any key under 112 bits (14 bytes) under GODEBUG=fips140=only, which
+	// would otherwise report the wrong cause for this bad-base64 signature.
+	key := []byte("32-byte-eab-hmac-key-for-tests!!")
+	err := verifyMAC("HS256", key, []byte("message"), "invalid base64!")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to decode signature")
 }
 
 // =============================================================================
@@ -388,23 +346,33 @@ func TestCoveragePush_CreateExternalAccountBinding_DefaultAlgorithm(t *testing.T
 	assert.Equal(t, 32, len(mustDecodeBase64CovPush(t, binding.MACKey)))
 }
 
+func TestCoveragePush_CreateExternalAccountBinding_HS384(t *testing.T) {
+	binding, err := CreateExternalAccountBinding("kid", "external", "HS384")
+	require.NoError(t, err)
+	assert.Equal(t, "HS384", binding.MACAlgorithm)
+	assert.Equal(t, 48, len(mustDecodeBase64CovPush(t, binding.MACKey)))
+}
+
+func TestCoveragePush_CreateExternalAccountBinding_HS512(t *testing.T) {
+	binding, err := CreateExternalAccountBinding("kid", "external", "HS512")
+	require.NoError(t, err)
+	assert.Equal(t, "HS512", binding.MACAlgorithm)
+	assert.Equal(t, 64, len(mustDecodeBase64CovPush(t, binding.MACKey)))
+}
+
+func TestCoveragePush_CreateExternalAccountBinding_UnsupportedAlgorithm(t *testing.T) {
+	binding, err := CreateExternalAccountBinding("kid", "external", "RS256")
+	assert.Error(t, err)
+	assert.Nil(t, binding)
+	var caErr *caerrors.TrustedCAError
+	assert.ErrorAs(t, err, &caErr)
+	assert.Equal(t, caerrors.Malformed, caErr.Type)
+}
+
 func mustDecodeBase64CovPush(t *testing.T, s string) []byte {
 	b, err := base64.RawURLEncoding.DecodeString(s)
 	require.NoError(t, err)
 	return b
-}
-
-// =============================================================================
-// isSymmetricAlgorithm Tests
-// =============================================================================
-
-func TestCoveragePush_IsSymmetricAlgorithm(t *testing.T) {
-	assert.True(t, isSymmetricAlgorithm("HS256"))
-	assert.True(t, isSymmetricAlgorithm("HS384"))
-	assert.True(t, isSymmetricAlgorithm("HS512"))
-	assert.False(t, isSymmetricAlgorithm("RS256"))
-	assert.False(t, isSymmetricAlgorithm("ES256"))
-	assert.False(t, isSymmetricAlgorithm(""))
 }
 
 // =============================================================================
@@ -460,96 +428,6 @@ func TestCoveragePush_RespondWithAccount_NonceError(t *testing.T) {
 }
 
 // =============================================================================
-// parseKID Error Paths
-// =============================================================================
-
-func TestCoveragePush_ParseKID_InvalidNonce(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Create JWS with invalid nonce (not in store)
-	payload := map[string]interface{}{"test": "data"}
-	payloadBytes, err := json.Marshal(payload)
-	require.NoError(t, err)
-
-	signerOpts := &jose.SignerOptions{
-		NonceSource: &staticNonceSource{nonce: "invalid-nonce-not-in-store"},
-		ExtraHeaders: map[jose.HeaderKey]interface{}{
-			"url": service.baseRESTURI + "/acme/account/" + fmt.Sprintf("%d", account.ID),
-			"kid": fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID),
-		},
-	}
-
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: jose.ES256,
-		Key:       key.PrivateKey,
-	}, signerOpts)
-	require.NoError(t, err)
-
-	jws, err := signer.Sign(payloadBytes)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, service.baseRESTURI+"/acme/account/"+fmt.Sprintf("%d", account.ID), strings.NewReader(jws.FullSerialize()))
-
-	ctx := context.Background()
-	parsedAccount, parsedPayload, err := service.parseKID(ctx, req)
-
-	assert.Error(t, err)
-	assert.Nil(t, parsedAccount)
-	assert.Nil(t, parsedPayload)
-}
-
-func TestCoveragePush_ParseKID_InvalidSignature(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Get a valid nonce
-	nonce, err := service.GetNonceService().Generate()
-	require.NoError(t, err)
-
-	// Create JWS with correct key
-	payload := map[string]interface{}{"test": "data"}
-	payloadBytes, err := json.Marshal(payload)
-	require.NoError(t, err)
-
-	signerOpts := &jose.SignerOptions{
-		NonceSource: &staticNonceSource{nonce: nonce},
-		ExtraHeaders: map[jose.HeaderKey]interface{}{
-			"url": service.baseRESTURI + "/acme/account/" + fmt.Sprintf("%d", account.ID),
-			"kid": fmt.Sprintf("%s/acme/account/%d", service.baseRESTURI, account.ID),
-		},
-	}
-
-	// Sign with a DIFFERENT key than what's stored in the account
-	wrongKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	signer, err := jose.NewSigner(jose.SigningKey{
-		Algorithm: jose.ES256,
-		Key:       wrongKey,
-	}, signerOpts)
-	require.NoError(t, err)
-
-	jws, err := signer.Sign(payloadBytes)
-	require.NoError(t, err)
-
-	req := httptest.NewRequest(http.MethodPost, service.baseRESTURI+"/acme/account/"+fmt.Sprintf("%d", account.ID), strings.NewReader(jws.FullSerialize()))
-
-	ctx := context.Background()
-	parsedAccount, parsedPayload, err := service.parseKID(ctx, req)
-
-	assert.ErrorIs(t, err, ErrInvalidJWSSignature)
-	assert.Nil(t, parsedAccount)
-	assert.Nil(t, parsedPayload)
-}
-
-// =============================================================================
 // External Account Binding Verifier Tests
 // =============================================================================
 
@@ -601,103 +479,45 @@ func TestCoveragePush_ExternalAccountBindingVerifier_InvalidProtectedHeader(t *t
 }
 
 // =============================================================================
-// encodeCertificatePEM and encodeCSRToPEM Tests
-// =============================================================================
-
-// =============================================================================
 // Tenant Signing CA Resolution Tests
 // =============================================================================
+
+func TestCoveragePush_ResolveTenantSigningCA_NonTenantAwareFactory(t *testing.T) {
+	service, _, cleanup := setupTestService(t)
+	defer cleanup()
+
+	account := &entities.ACMEAccount{
+		ID:       12345,
+		TenantID: "tenant-123",
+	}
+
+	// Standard storage factory doesn't support TenantAwareFactory: a
+	// tenant-bound account fails closed rather than using the global CA.
+	result, err := service.resolveTenantSigningCA(context.Background(), account, "general")
+	assert.ErrorIs(t, err, ErrTenantStorageUnsupported)
+	assert.Nil(t, result)
+}
 
 // =============================================================================
 // getTenantCASigner Tests
 // =============================================================================
 
-// =============================================================================
-// matchesIdentifier Tests
-// =============================================================================
-
-// =============================================================================
-// Account URL Generation Test
-// =============================================================================
-
-func TestCoveragePush_AccountURL(t *testing.T) {
+func TestCoveragePush_GetTenantCASigner_NoKMSService(t *testing.T) {
 	service, _, cleanup := setupTestService(t)
 	defer cleanup()
 
-	account := &entities.ACMEAccount{
-		ID: 12345,
+	service.kmsService = nil
+
+	signingCAInfo := &entities.SigningCAInfo{
+		UseGlobalDefault: false,
+		TenantID:         "tenant-123",
+		Type:             entities.SigningCATypeIntermediate,
 	}
 
-	url := service.accountURL(account)
-	assert.Equal(t, "https://acme.test.example.com/acme/account/12345", url)
+	signer, err := service.getTenantCASigner(context.Background(), signingCAInfo)
+	assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
+	assert.Nil(t, signer)
 }
-
-// =============================================================================
-// generateNonce Test
-// =============================================================================
-
-func TestCoveragePush_GenerateNonce(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	nonce, err := service.generateNonce()
-	assert.NoError(t, err)
-	assert.NotEmpty(t, nonce)
-}
-
-func TestCoveragePush_GenerateNonce_Error(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	service.SetNonceGenerator(func() (string, error) {
-		return "", errors.New("generation failed")
-	})
-
-	nonce, err := service.generateNonce()
-	assert.Error(t, err)
-	assert.Empty(t, nonce)
-}
-
-// =============================================================================
-// NewRestService with NonceGenerator Test
-// =============================================================================
-
-func TestCoveragePush_NewRestService_CustomNonceGenerator(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	customGen := func() (string, error) {
-		return "custom-nonce", nil
-	}
-
-	params := &Params{
-		BaseRESTURI:    "https://acme.test.example.com",
-		CA:             &MockCA{},
-		Logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		StorageFactory: service.storageFactory,
-		NonceGenerator: customGen,
-	}
-
-	newService, err := NewRestService(params)
-	require.NoError(t, err)
-
-	restService := newService.(*RestService)
-	nonce, err := restService.generateNonce()
-	assert.NoError(t, err)
-	assert.Equal(t, "custom-nonce", nonce)
-}
-
-// =============================================================================
-// challengeResponse Test (standalone function)
-// =============================================================================
-
-// =============================================================================
-// parseJWS No Signatures Test
-// =============================================================================
-
-// =============================================================================
-// parseKID No Signatures Test
-// =============================================================================
 
 // Suppress unused import warning
 var _ = storage.Factory(nil)

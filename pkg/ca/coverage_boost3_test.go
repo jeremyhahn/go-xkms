@@ -594,3 +594,8 @@ func TestIssueCertificate_WithRSASigner_Verifies(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, chains)
 }
+
+func TestNewIntermediateCA_NilParams(t *testing.T) {
+	_, err := NewIntermediateCA(context.Background(), nil, nil)
+	assert.Error(t, err)
+}
