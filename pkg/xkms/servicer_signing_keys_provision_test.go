@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	tpmstore "github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 )
 
 // releaseResolution is the resolution of an unbound repository.
@@ -123,6 +124,26 @@ func TestSignCoRIM_ReleaseKeyGenerateFailure(t *testing.T) {
 	var provisionErr *ReleaseKeyProvisionError
 	require.ErrorAs(t, err, &provisionErr)
 	assert.Equal(t, "tenant-a", provisionErr.TenantID)
+}
+
+// A tenant-scoped TPM backend refuses to generate over an existing key with
+// a BlobWriteError wrapping ErrBlobExists, not ErrKeyAlreadyExists: of two
+// concurrent first uses, the one that loses still finds the key the other
+// made and signs with it.
+func TestProvisionReleaseKey_KeepsAKeyOnABlobCollision(t *testing.T) {
+	Reset()
+	t.Cleanup(Reset)
+	store := newMockKeyStore("software")
+	store.generateErr = &tpmstore.BlobWriteError{Name: "release-signing-key", Cause: tpmstore.ErrBlobExists}
+	require.NoError(t, Initialize(&ServiceConfig{
+		Backends:       map[string]Backend{"software": store},
+		DefaultBackend: "software",
+	}))
+	svc, err := Get()
+	require.NoError(t, err)
+	ctx := withSigningKeys(t, svc, corimSignPermission)
+
+	require.NoError(t, svc.provisionReleaseKey(ctx, "tenant-a", ""))
 }
 
 func TestSignCoRIM_SystemTenantIsNeverProvisioned(t *testing.T) {

@@ -33,6 +33,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -97,4 +98,12 @@ func TestSigningKeyREST_SignCoRIMErrors(t *testing.T) {
 	assert.Equal(t, &errSigningKeyStatus{code: http.StatusServiceUnavailable}, err)
 	_, err = wire.SigningKeyClient{}.SignCoRIM(context.Background(), nil)
 	assert.ErrorIs(t, err, wire.ErrNilRequest)
+
+	// SignCoRIM and SignImage admit the release key as Sign does.
+	denied := httptest.NewRecorder()
+	respondSigningKey[any](denied, nil, &keypolicy.PolicyDeniedError{KeyID: "release-signing", Operation: keypolicy.OpSign}, http.StatusOK)
+	assert.Equal(t, http.StatusForbidden, denied.Code)
+	revoked := httptest.NewRecorder()
+	respondSigningKey[any](revoked, nil, &keypolicy.KeyUnavailableError{KeyID: "release-signing", Status: keypolicy.StatusRevoked}, http.StatusOK)
+	assert.Equal(t, http.StatusConflict, revoked.Code)
 }

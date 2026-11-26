@@ -25,6 +25,7 @@ import (
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
@@ -151,4 +152,7 @@ func TestSigningKeyRPCs_GateEachPermission(t *testing.T) {
 func TestMapSigningKeyError_Unclassified(t *testing.T) {
 	assert.Equal(t, codes.Internal, status.Code(mapSigningKeyError(errOIDCUnclassified)))
 	assert.Equal(t, codes.PermissionDenied, status.Code(mapSigningKeyError(xkms.ErrSigningKeyForbidden)))
+	// SignCoRIM and SignImage admit the release key as Sign does.
+	assert.Equal(t, codes.PermissionDenied, status.Code(mapSigningKeyError(&keypolicy.PolicyDeniedError{KeyID: "release-signing", Operation: keypolicy.OpSign})))
+	assert.Equal(t, codes.FailedPrecondition, status.Code(mapSigningKeyError(&keypolicy.KeyUnavailableError{KeyID: "release-signing", Status: keypolicy.StatusRevoked})))
 }
