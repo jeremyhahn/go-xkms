@@ -372,8 +372,10 @@ func VerifyDeviceAttestation(
 	if challenge == nil || len(challenge.Nonce) == 0 {
 		return nil, fmt.Errorf("%w: no challenge to verify freshness against", ErrDeviceAttestVerifyFailed)
 	}
+	// No matcher at all: the library's refusal, the same one
+	// userverify.Verify returns for this trust (#1721).
 	if trust.Applications == nil {
-		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: pairing.ErrApplicationPolicyUnconfigured}
+		return nil, &SentinelCauseError{Sentinel: ErrDeviceAttestVerifyFailed, Cause: xkms.ErrAndroidNilApplicationMatcher}
 	}
 
 	// Version first. A device that cannot do challenge-response has nothing to

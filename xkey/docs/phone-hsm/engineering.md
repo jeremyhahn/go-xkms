@@ -534,7 +534,11 @@ defect and the shape of the fix is what the current design is for.
    `attestation.LoadTrust` returns `pairing.ErrApplicationPolicyUnconfigured`
    before any phone is asked for evidence, and the error text names exactly
    what to configure (`allowed_applications`: `package_name` and
-   `signing_digests`). A `devices.yaml` that exists but cannot be parsed
+   `signing_digests`). That error wraps the library's
+   `xkms.ErrAndroidNilApplicationMatcher`, which is the one contract for an
+   unconfigured policy: `errors.Is` against it matches on every path,
+   including a trust with no matcher at all, which pairing, re-attestation
+   and `userverify.Verify` all refuse with that sentinel (#1721). A `devices.yaml` that exists but cannot be parsed
    refuses too, rather than reading as "no policy". A debug build's package
    name carries a `.debug` suffix and is a **different** package that is not
    allow-listed by adding the release name — an operator who wants to pair a
