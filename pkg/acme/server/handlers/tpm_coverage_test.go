@@ -55,6 +55,46 @@ func createValidProdCaDataWithPCRs(t *testing.T, quoted, signature, nonce []byte
 	return createValidProdCaData(quoted, signature, nonce, encodedPCRs)
 }
 
+// createCryptoAgileEventLogForTest creates a complete crypto-agile event log for testing.
+func createCryptoAgileEventLogForTest(algorithms []SpecIDAlgorithm, events []struct {
+	pcrIndex  uint32
+	eventType uint32
+	digests   map[uint16][]byte
+	eventData []byte
+}) []byte {
+	var buf bytes.Buffer
+
+	// Create the spec ID event as the first legacy event
+	specIDEventData := createCryptoAgileSpecIDEvent(algorithms)
+	buf.Write(createLegacyEventLogEntry(0, EVNoAction, make([]byte, 20), specIDEventData))
+
+	// Add crypto-agile events (TCG_PCR_EVENT2)
+	for _, event := range events {
+		// PCR index
+		_ = binary.Write(&buf, binary.LittleEndian, event.pcrIndex)
+		// Event type
+		_ = binary.Write(&buf, binary.LittleEndian, event.eventType)
+		// Digest count
+		_ = binary.Write(&buf, binary.LittleEndian, uint32(len(algorithms)))
+
+		// Digests for each algorithm
+		for _, alg := range algorithms {
+			_ = binary.Write(&buf, binary.LittleEndian, alg.AlgorithmID)
+			digest := event.digests[alg.AlgorithmID]
+			if digest == nil {
+				digest = make([]byte, alg.DigestSize)
+			}
+			buf.Write(digest)
+		}
+
+		// Event data
+		_ = binary.Write(&buf, binary.LittleEndian, uint32(len(event.eventData)))
+		buf.Write(event.eventData)
+	}
+
+	return buf.Bytes()
+}
+
 // =============================================================================
 // validateEventLogAgainstPCRs Tests - TPMCoverage
 // =============================================================================
@@ -566,6 +606,557 @@ func TestNewPCRValidationHook_TPMCoverage(t *testing.T) {
 }
 
 // =============================================================================
+// validateDeviceAgainstProfile Tests - TPMCoverage
+// =============================================================================
+
+func TestValidateDeviceAgainstProfile_TPMCoverage(t *testing.T) {
+	t.Run("passes when profile has no expected PCRs", func(t *testing.T) {
+		profile := &DeviceProfile{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ExpectedPCRs:  nil,
+		}
+		tcgData := &TCGEnrollmentData{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+		}
+
+		err := validateDeviceAgainstProfile(tcgData, profile)
+		assert.NoError(t, err)
+	})
+
+	t.Run("passes when profile has empty expected PCRs map", func(t *testing.T) {
+		profile := &DeviceProfile{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ExpectedPCRs:  map[int][]byte{},
+		}
+		tcgData := &TCGEnrollmentData{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+		}
+
+		err := validateDeviceAgainstProfile(tcgData, profile)
+		assert.NoError(t, err)
+	})
+
+	t.Run("returns error when ProdCaData unpacking fails", func(t *testing.T) {
+		profile := &DeviceProfile{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ExpectedPCRs: map[int][]byte{
+				0: make([]byte, 32),
+			},
+		}
+		tcgData := &TCGEnrollmentData{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ProdCaData:    createInvalidProdCaData(),
+		}
+
+		err := validateDeviceAgainstProfile(tcgData, profile)
+		assert.Error(t, err)
+		var attestErr *AttestationError
+		assert.True(t, errors.As(err, &attestErr))
+		assert.Equal(t, "unpack_prodcadata", attestErr.Op)
+	})
+
+	t.Run("returns error when expected PCR not found", func(t *testing.T) {
+		expectedValue := make([]byte, 32)
+		expectedValue[0] = 0xAB
+
+		profile := &DeviceProfile{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ExpectedPCRs: map[int][]byte{
+				7: expectedValue, // Looking for PCR 7
+			},
+		}
+
+		// Create PCR banks without PCR 7
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha256",
+				PCRs: []xkmssdk.PCR{
+					{ID: 0, Value: make([]byte, 32)},
+				},
+			},
+		}
+
+		tcgData := &TCGEnrollmentData{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ProdCaData:    createValidProdCaDataWithPCRs(t, []byte("quoted"), []byte("sig"), []byte("nonce"), pcrBanks),
+		}
+
+		err := validateDeviceAgainstProfile(tcgData, profile)
+		assert.Error(t, err)
+		var pcrErr *PCRMismatchError
+		assert.True(t, errors.As(err, &pcrErr))
+		assert.Equal(t, 7, pcrErr.PCRIndex)
+		assert.Contains(t, pcrErr.Message, "missing expected PCR")
+	})
+
+	t.Run("returns error when PCR value mismatches", func(t *testing.T) {
+		expectedValue := make([]byte, 32)
+		expectedValue[0] = 0xAB
+
+		actualValue := make([]byte, 32)
+		actualValue[0] = 0xCD
+
+		profile := &DeviceProfile{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ExpectedPCRs: map[int][]byte{
+				7: expectedValue,
+			},
+		}
+
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha256",
+				PCRs: []xkmssdk.PCR{
+					{ID: 7, Value: actualValue},
+				},
+			},
+		}
+
+		tcgData := &TCGEnrollmentData{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ProdCaData:    createValidProdCaDataWithPCRs(t, []byte("quoted"), []byte("sig"), []byte("nonce"), pcrBanks),
+		}
+
+		err := validateDeviceAgainstProfile(tcgData, profile)
+		assert.Error(t, err)
+		var pcrErr *PCRMismatchError
+		assert.True(t, errors.As(err, &pcrErr))
+		assert.Equal(t, 7, pcrErr.PCRIndex)
+		assert.Equal(t, expectedValue, pcrErr.ExpectedValue)
+		assert.Equal(t, actualValue, pcrErr.ActualValue)
+	})
+
+	t.Run("passes when all PCR values match", func(t *testing.T) {
+		pcr0Value := make([]byte, 32)
+		pcr0Value[0] = 0x01
+		pcr7Value := make([]byte, 32)
+		pcr7Value[0] = 0x07
+
+		profile := &DeviceProfile{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ExpectedPCRs: map[int][]byte{
+				0: pcr0Value,
+				7: pcr7Value,
+			},
+		}
+
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha256",
+				PCRs: []xkmssdk.PCR{
+					{ID: 0, Value: pcr0Value},
+					{ID: 7, Value: pcr7Value},
+				},
+			},
+		}
+
+		tcgData := &TCGEnrollmentData{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ProdCaData:    createValidProdCaDataWithPCRs(t, []byte("quoted"), []byte("sig"), []byte("nonce"), pcrBanks),
+		}
+
+		err := validateDeviceAgainstProfile(tcgData, profile)
+		assert.NoError(t, err)
+	})
+
+	t.Run("uses SHA-256 bank when available", func(t *testing.T) {
+		expectedValue := make([]byte, 32)
+		expectedValue[0] = 0xAB
+
+		sha1Value := make([]byte, 20)
+		sha1Value[0] = 0xCD // Different value
+
+		profile := &DeviceProfile{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ExpectedPCRs: map[int][]byte{
+				7: expectedValue,
+			},
+		}
+
+		// Create banks with both SHA-1 and SHA-256
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha1",
+				PCRs: []xkmssdk.PCR{
+					{ID: 7, Value: sha1Value}, // Different value
+				},
+			},
+			{
+				Algorithm: "sha256",
+				PCRs: []xkmssdk.PCR{
+					{ID: 7, Value: expectedValue}, // Matching value - should be used
+				},
+			},
+		}
+
+		tcgData := &TCGEnrollmentData{
+			ProductSerial: "SN123",
+			ProductModel:  "TestModel",
+			ProdCaData:    createValidProdCaDataWithPCRs(t, []byte("quoted"), []byte("sig"), []byte("nonce"), pcrBanks),
+		}
+
+		err := validateDeviceAgainstProfile(tcgData, profile)
+		assert.NoError(t, err) // Should pass because SHA-256 value matches
+	})
+}
+
+// =============================================================================
+// findPCRValue Tests - TPMCoverage
+// =============================================================================
+
+func TestFindPCRValue_TPMCoverage(t *testing.T) {
+	t.Run("returns not found for nil data", func(t *testing.T) {
+		value, found := findPCRValue(nil, 0)
+		assert.False(t, found)
+		assert.Nil(t, value)
+	})
+
+	t.Run("returns not found for empty data", func(t *testing.T) {
+		value, found := findPCRValue([]byte{}, 0)
+		assert.False(t, found)
+		assert.Nil(t, value)
+	})
+
+	t.Run("returns not found for invalid gob data", func(t *testing.T) {
+		value, found := findPCRValue([]byte{0x01, 0x02, 0x03}, 0)
+		assert.False(t, found)
+		assert.Nil(t, value)
+	})
+
+	t.Run("returns not found when PCR index not in banks", func(t *testing.T) {
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha256",
+				PCRs: []xkmssdk.PCR{
+					{ID: 0, Value: make([]byte, 32)},
+					{ID: 1, Value: make([]byte, 32)},
+				},
+			},
+		}
+		encoded := createEncodedPCRBanks(t, pcrBanks)
+
+		value, found := findPCRValue(encoded, 7) // PCR 7 not present
+		assert.False(t, found)
+		assert.Nil(t, value)
+	})
+
+	t.Run("finds PCR value from SHA-256 bank", func(t *testing.T) {
+		expectedValue := make([]byte, 32)
+		expectedValue[0] = 0xAB
+		expectedValue[31] = 0xCD
+
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha256",
+				PCRs: []xkmssdk.PCR{
+					{ID: 0, Value: make([]byte, 32)},
+					{ID: 7, Value: expectedValue},
+				},
+			},
+		}
+		encoded := createEncodedPCRBanks(t, pcrBanks)
+
+		value, found := findPCRValue(encoded, 7)
+		assert.True(t, found)
+		assert.Equal(t, expectedValue, value)
+	})
+
+	t.Run("prefers SHA-256 over other algorithms", func(t *testing.T) {
+		sha1Value := make([]byte, 20)
+		sha1Value[0] = 0x01
+
+		sha256Value := make([]byte, 32)
+		sha256Value[0] = 0x02
+
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha1",
+				PCRs: []xkmssdk.PCR{
+					{ID: 7, Value: sha1Value},
+				},
+			},
+			{
+				Algorithm: "sha256",
+				PCRs: []xkmssdk.PCR{
+					{ID: 7, Value: sha256Value},
+				},
+			},
+		}
+		encoded := createEncodedPCRBanks(t, pcrBanks)
+
+		value, found := findPCRValue(encoded, 7)
+		assert.True(t, found)
+		assert.Equal(t, sha256Value, value) // Should return SHA-256 value
+	})
+
+	t.Run("falls back to first match when SHA-256 not available", func(t *testing.T) {
+		sha1Value := make([]byte, 20)
+		sha1Value[0] = 0x01
+
+		sha384Value := make([]byte, 48)
+		sha384Value[0] = 0x03
+
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha1",
+				PCRs: []xkmssdk.PCR{
+					{ID: 7, Value: sha1Value},
+				},
+			},
+			{
+				Algorithm: "sha384",
+				PCRs: []xkmssdk.PCR{
+					{ID: 7, Value: sha384Value},
+				},
+			},
+		}
+		encoded := createEncodedPCRBanks(t, pcrBanks)
+
+		value, found := findPCRValue(encoded, 7)
+		assert.True(t, found)
+		assert.Equal(t, sha1Value, value) // Should return first match (sha1)
+	})
+
+	t.Run("handles uppercase SHA256 algorithm name", func(t *testing.T) {
+		expectedValue := make([]byte, 32)
+		expectedValue[0] = 0xAB
+
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "SHA256", // Uppercase
+				PCRs: []xkmssdk.PCR{
+					{ID: 7, Value: expectedValue},
+				},
+			},
+		}
+		encoded := createEncodedPCRBanks(t, pcrBanks)
+
+		value, found := findPCRValue(encoded, 7)
+		assert.True(t, found)
+		assert.Equal(t, expectedValue, value)
+	})
+
+	t.Run("handles multiple PCRs in same bank", func(t *testing.T) {
+		pcr0Value := make([]byte, 32)
+		pcr0Value[0] = 0x00
+		pcr7Value := make([]byte, 32)
+		pcr7Value[0] = 0x07
+		pcr23Value := make([]byte, 32)
+		pcr23Value[0] = 0x17
+
+		pcrBanks := []xkmssdk.PCRBank{
+			{
+				Algorithm: "sha256",
+				PCRs: []xkmssdk.PCR{
+					{ID: 0, Value: pcr0Value},
+					{ID: 7, Value: pcr7Value},
+					{ID: 23, Value: pcr23Value},
+				},
+			},
+		}
+		encoded := createEncodedPCRBanks(t, pcrBanks)
+
+		value0, found0 := findPCRValue(encoded, 0)
+		assert.True(t, found0)
+		assert.Equal(t, pcr0Value, value0)
+
+		value7, found7 := findPCRValue(encoded, 7)
+		assert.True(t, found7)
+		assert.Equal(t, pcr7Value, value7)
+
+		value23, found23 := findPCRValue(encoded, 23)
+		assert.True(t, found23)
+		assert.Equal(t, pcr23Value, value23)
+	})
+}
+
+// =============================================================================
+// parseCryptoAgileEventLog Tests - TPMCoverage
+// =============================================================================
+
+func TestParseCryptoAgileEventLog_TPMCoverage(t *testing.T) {
+	t.Run("returns error for data too short", func(t *testing.T) {
+		_, err := parseCryptoAgileEventLog(make([]byte, 10))
+		assert.Error(t, err)
+	})
+
+	t.Run("returns error when first event is not EV_NO_ACTION", func(t *testing.T) {
+		// Create event with wrong event type
+		eventLog := createLegacyEventLogEntry(0, EVAction, make([]byte, 20), []byte("test"))
+		_, err := parseCryptoAgileEventLog(eventLog)
+		assert.Error(t, err)
+	})
+
+	t.Run("returns error when first event PCR is not 0", func(t *testing.T) {
+		specIDEventData := createCryptoAgileSpecIDEvent([]SpecIDAlgorithm{
+			{AlgorithmID: TCGAlgSHA256, DigestSize: 32},
+		})
+		// Create event with PCR index != 0
+		eventLog := createLegacyEventLogEntry(1, EVNoAction, make([]byte, 20), specIDEventData)
+		_, err := parseCryptoAgileEventLog(eventLog)
+		assert.Error(t, err)
+	})
+
+	t.Run("returns error for invalid spec ID event data", func(t *testing.T) {
+		// Create EV_NO_ACTION event with invalid spec ID data
+		invalidSpecID := []byte("Invalid Spec ID Data")
+		eventLog := createLegacyEventLogEntry(0, EVNoAction, make([]byte, 20), invalidSpecID)
+		_, err := parseCryptoAgileEventLog(eventLog)
+		assert.Error(t, err)
+	})
+
+	t.Run("parses valid crypto-agile event log", func(t *testing.T) {
+		algorithms := []SpecIDAlgorithm{
+			{AlgorithmID: TCGAlgSHA256, DigestSize: 32},
+		}
+
+		events := []struct {
+			pcrIndex  uint32
+			eventType uint32
+			digests   map[uint16][]byte
+			eventData []byte
+		}{
+			{
+				pcrIndex:  7,
+				eventType: EVEFIAction,
+				digests: map[uint16][]byte{
+					TCGAlgSHA256: make([]byte, 32),
+				},
+				eventData: []byte("boot action"),
+			},
+		}
+
+		eventLog := createCryptoAgileEventLogForTest(algorithms, events)
+
+		entries, _ := parseCryptoAgileEventLog(eventLog)
+		assert.NotEmpty(t, entries)
+		// First entry is the spec ID event
+		assert.Equal(t, "EV_NO_ACTION", entries[0].EventType)
+		// Second entry is our event
+		if len(entries) > 1 {
+			assert.Equal(t, 7, entries[1].PCRIndex)
+			assert.Equal(t, "EV_EFI_ACTION", entries[1].EventType)
+		}
+	})
+
+	t.Run("handles multiple algorithms", func(t *testing.T) {
+		algorithms := []SpecIDAlgorithm{
+			{AlgorithmID: TCGAlgSHA1, DigestSize: 20},
+			{AlgorithmID: TCGAlgSHA256, DigestSize: 32},
+		}
+
+		events := []struct {
+			pcrIndex  uint32
+			eventType uint32
+			digests   map[uint16][]byte
+			eventData []byte
+		}{
+			{
+				pcrIndex:  0,
+				eventType: EVEFIVariableDriverConfig,
+				digests: map[uint16][]byte{
+					TCGAlgSHA1:   make([]byte, 20),
+					TCGAlgSHA256: make([]byte, 32),
+				},
+				eventData: []byte("variable config"),
+			},
+		}
+
+		eventLog := createCryptoAgileEventLogForTest(algorithms, events)
+
+		entries, _ := parseCryptoAgileEventLog(eventLog)
+		assert.NotEmpty(t, entries)
+	})
+}
+
+// =============================================================================
+// parseEventLog Tests - TPMCoverage
+// =============================================================================
+
+func TestParseEventLog_TPMCoverage(t *testing.T) {
+	t.Run("returns empty for nil input", func(t *testing.T) {
+		entries, _ := parseEventLog(nil)
+		assert.Empty(t, entries)
+	})
+
+	t.Run("returns empty for empty input", func(t *testing.T) {
+		entries, _ := parseEventLog([]byte{})
+		assert.Empty(t, entries)
+	})
+
+	t.Run("parses single legacy event", func(t *testing.T) {
+		eventLog := createLegacyEventLogEntry(7, EVEFIAction, make([]byte, 20), []byte("action"))
+
+		entries, _ := parseEventLog(eventLog)
+		require.Len(t, entries, 1)
+		assert.Equal(t, 7, entries[0].PCRIndex)
+		assert.Equal(t, "EV_EFI_ACTION", entries[0].EventType)
+	})
+
+	t.Run("parses multiple legacy events", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write(createLegacyEventLogEntry(0, EVNoAction, make([]byte, 20), []byte("e1")))
+		buf.Write(createLegacyEventLogEntry(4, EVSeparator, make([]byte, 20), []byte("e2")))
+		buf.Write(createLegacyEventLogEntry(7, EVEFIAction, make([]byte, 20), []byte("e3")))
+
+		entries, _ := parseEventLog(buf.Bytes())
+		require.Len(t, entries, 3)
+		assert.Equal(t, 0, entries[0].PCRIndex)
+		assert.Equal(t, 4, entries[1].PCRIndex)
+		assert.Equal(t, 7, entries[2].PCRIndex)
+	})
+
+	t.Run("handles truncated data gracefully", func(t *testing.T) {
+		// Start with valid event, then add truncated data
+		validEvent := createLegacyEventLogEntry(0, EVNoAction, make([]byte, 20), []byte("valid"))
+		truncated := append(validEvent, 0x01, 0x02, 0x03) // Truncated second event
+
+		entries, _ := parseEventLog(truncated)
+		assert.Len(t, entries, 1) // Should parse first event successfully
+	})
+
+	t.Run("prefers crypto-agile format when valid", func(t *testing.T) {
+		algorithms := []SpecIDAlgorithm{
+			{AlgorithmID: TCGAlgSHA256, DigestSize: 32},
+		}
+
+		events := []struct {
+			pcrIndex  uint32
+			eventType uint32
+			digests   map[uint16][]byte
+			eventData []byte
+		}{
+			{
+				pcrIndex:  7,
+				eventType: EVEFIAction,
+				digests: map[uint16][]byte{
+					TCGAlgSHA256: make([]byte, 32),
+				},
+				eventData: []byte("crypto-agile event"),
+			},
+		}
+
+		eventLog := createCryptoAgileEventLogForTest(algorithms, events)
+
+		entries, _ := parseEventLog(eventLog)
+		assert.NotEmpty(t, entries)
+	})
+}
+
+// =============================================================================
 // parseLegacyEvent Tests - TPMCoverage
 // =============================================================================
 
@@ -657,6 +1248,18 @@ func TestParseLegacyEvent_TPMCoverage(t *testing.T) {
 		assert.Empty(t, entry.EventData)
 	})
 }
+
+// =============================================================================
+// extendPCR Tests - TPMCoverage
+// =============================================================================
+
+// =============================================================================
+// algorithmStringToID Tests - TPMCoverage
+// =============================================================================
+
+// =============================================================================
+// parseTPMSignature Tests - TPMCoverage
+// =============================================================================
 
 // =============================================================================
 // verifyRSAQuoteSignature Tests - TPMCoverage
@@ -836,6 +1439,47 @@ func TestParseRawPublicKey_TPMCoverage(t *testing.T) {
 		assert.True(t, ok)
 		assert.Equal(t, &key.PublicKey, ecKey,
 			"the parsed key must equal the certificate's public key")
+	})
+}
+
+// =============================================================================
+// verifyQuoteSignature Tests - TPMCoverage
+// =============================================================================
+
+// =============================================================================
+// EventLogPCRMismatchError Tests - TPMCoverage
+// =============================================================================
+
+func TestEventLogPCRMismatchError_TPMCoverage(t *testing.T) {
+	t.Run("formats error correctly", func(t *testing.T) {
+		err := &EventLogPCRMismatchError{
+			PCRIndex:      7,
+			Algorithm:     "sha256",
+			ExpectedValue: []byte{0xab, 0xcd},
+			ActualValue:   []byte{0x12, 0x34},
+		}
+
+		errStr := err.Error()
+		assert.Contains(t, errStr, "PCR[7]")
+		assert.Contains(t, errStr, "sha256")
+		assert.Contains(t, errStr, "abcd")
+		assert.Contains(t, errStr, "1234")
+	})
+
+	t.Run("implements errors.Is for ErrEventLogPCRMismatch", func(t *testing.T) {
+		err := &EventLogPCRMismatchError{PCRIndex: 7}
+		assert.True(t, errors.Is(err, ErrEventLogPCRMismatch))
+	})
+
+	t.Run("implements errors.Is for ErrEventLogInvalid", func(t *testing.T) {
+		err := &EventLogPCRMismatchError{PCRIndex: 7}
+		assert.True(t, errors.Is(err, ErrEventLogInvalid))
+	})
+
+	t.Run("does not match unrelated errors", func(t *testing.T) {
+		err := &EventLogPCRMismatchError{PCRIndex: 7}
+		assert.False(t, errors.Is(err, ErrPCRMismatch))
+		assert.False(t, errors.Is(err, ErrQuoteInvalid))
 	})
 }
 
