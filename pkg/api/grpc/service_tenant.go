@@ -51,6 +51,10 @@ var tenantErrorToGRPC = map[error]codes.Code{
 	xkms.ErrTenantSharesRequired:     codes.InvalidArgument,
 	xkms.ErrTenantStrategyConflict:   codes.FailedPrecondition,
 
+	// Tenant creation refuses an ID that is not a SPIFFE trust-domain
+	// name or is the cluster trust domain.
+	xkms.ErrInvalidTenantID: codes.InvalidArgument,
+
 	// The composed go-qrdb TenantService reports an unknown tenant with its
 	// own sentinel, and XKMSService's tenant binding refuses a foreign tenant
 	// with an error that unwraps to it (xkms.TenantBindingError); both are
