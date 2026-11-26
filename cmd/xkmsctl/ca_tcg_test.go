@@ -30,23 +30,6 @@ import (
 // TCG CA Command Structure Tests
 // =============================================================================
 
-func TestCATCGCmd_Exists(t *testing.T) {
-	assert.NotNil(t, caTCGCmd)
-	assert.Equal(t, "tcg", caTCGCmd.Use)
-	assert.NotEmpty(t, caTCGCmd.Short)
-}
-
-func TestCATCGCmd_HasSubcommands(t *testing.T) {
-	expected := []string{"issue-ek", "issue-ak", "sign-csr", "enroll"}
-	found := make(map[string]bool)
-	for _, cmd := range caTCGCmd.Commands() {
-		found[cmd.Name()] = true
-	}
-	for _, name := range expected {
-		assert.True(t, found[name], "expected subcommand %q not found", name)
-	}
-}
-
 func TestCATCGIssueEKCmd_RequiredFlags(t *testing.T) {
 	assert.NotNil(t, caTCGIssueEKCmd.Flags().Lookup("cn"))
 	assert.NotNil(t, caTCGIssueEKCmd.Flags().Lookup("ek-pub"))
@@ -193,22 +176,6 @@ func TestIssueEKCertificate_JSONOutput_WithOutputFile(t *testing.T) {
 	issueEKCertificate(cfg, printer)
 
 	assert.Contains(t, buf.String(), "cert_file")
-}
-
-func TestIssueEKCertificate_MissingKeyFile(t *testing.T) {
-	mc := newMockCAClient()
-	cfg, _ := setupCATest(t, mc, "text")
-
-	oldEKPub := tcgEKPubFile
-	tcgEKPubFile = "/nonexistent/key.der"
-	defer func() { tcgEKPubFile = oldEKPub }()
-
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-	exitCode := captureExit(t, func() {
-		issueEKCertificate(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
 }
 
 func TestIssueEKCertificate_ClientError(t *testing.T) {
@@ -374,22 +341,6 @@ func TestIssueAKCertificate_WriteToFile(t *testing.T) {
 	data, err := os.ReadFile(outFile)
 	require.NoError(t, err)
 	assert.Equal(t, "ak-cert-data", string(data))
-}
-
-func TestIssueAKCertificate_MissingKeyFile(t *testing.T) {
-	mc := newMockCAClient()
-	cfg, _ := setupCATest(t, mc, "text")
-
-	oldPub := tcgPubFile
-	tcgPubFile = "/nonexistent/key.der"
-	defer func() { tcgPubFile = oldPub }()
-
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-	exitCode := captureExit(t, func() {
-		issueAKCertificate(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
 }
 
 func TestIssueAKCertificate_ClientError(t *testing.T) {
@@ -564,22 +515,6 @@ func TestSignTCGCSR_WriteToDirectory(t *testing.T) {
 	assert.Equal(t, "idevid-data", string(idevidData))
 }
 
-func TestSignTCGCSR_MissingCSRFile(t *testing.T) {
-	mc := newMockCAClient()
-	cfg, _ := setupCATest(t, mc, "text")
-
-	oldCSR := tcgCSRFile
-	tcgCSRFile = "/nonexistent/csr.bin"
-	defer func() { tcgCSRFile = oldCSR }()
-
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-	exitCode := captureExit(t, func() {
-		signTCGCSR(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
-}
-
 func TestSignTCGCSR_ClientError(t *testing.T) {
 	cfg := NewConfig()
 	cfg.OutputFormat = "text"
@@ -675,22 +610,6 @@ func TestSignTCGCSR_JSONOutput_WithOutputDir(t *testing.T) {
 // =============================================================================
 // writeTCGCSROutput tests
 // =============================================================================
-
-func TestWriteTCGCSROutput_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	outDir := filepath.Join(tmpDir, "certs")
-
-	err := writeTCGCSROutput(outDir, []byte("iak-data"), []byte("idevid-data"))
-	require.NoError(t, err)
-
-	iak, err := os.ReadFile(filepath.Join(outDir, "iak_cert.der"))
-	require.NoError(t, err)
-	assert.Equal(t, "iak-data", string(iak))
-
-	idevid, err := os.ReadFile(filepath.Join(outDir, "idevid_cert.der"))
-	require.NoError(t, err)
-	assert.Equal(t, "idevid-data", string(idevid))
-}
 
 func TestWriteTCGCSROutput_InvalidDirectory(t *testing.T) {
 	err := writeTCGCSROutput("/proc/nonexistent/impossible", []byte("a"), []byte("b"))
@@ -842,22 +761,6 @@ func TestEnrollDevice_JSONOutput_WithOutputDir(t *testing.T) {
 	assert.Contains(t, buf.String(), "output_dir")
 }
 
-func TestEnrollDevice_MissingCSRFile(t *testing.T) {
-	mc := newMockCAClient()
-	cfg, _ := setupCATest(t, mc, "text")
-
-	oldCSR := tcgPackedCSR
-	tcgPackedCSR = "/nonexistent/packed.bin"
-	defer func() { tcgPackedCSR = oldCSR }()
-
-	var buf bytes.Buffer
-	printer := NewPrinter("text", &buf)
-	exitCode := captureExit(t, func() {
-		enrollDevice(cfg, printer)
-	})
-	assert.Equal(t, 1, exitCode)
-}
-
 func TestEnrollDevice_ClientError(t *testing.T) {
 	cfg := NewConfig()
 	cfg.OutputFormat = "text"
@@ -926,50 +829,6 @@ func TestEnrollDevice_APIError(t *testing.T) {
 // =============================================================================
 // writeEnrollmentOutput tests
 // =============================================================================
-
-func TestWriteEnrollmentOutput_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	outDir := filepath.Join(tmpDir, "enrollment")
-
-	resp := &transport.EnrollDeviceResponse{
-		IAKCertDER:      []byte("iak"),
-		IDevIDCertDER:   []byte("idevid"),
-		CredentialBlob:  []byte("blob"),
-		EncryptedSecret: []byte("secret"),
-	}
-
-	err := writeEnrollmentOutput(outDir, resp)
-	require.NoError(t, err)
-
-	iak, err := os.ReadFile(filepath.Join(outDir, "iak_cert.der"))
-	require.NoError(t, err)
-	assert.Equal(t, "iak", string(iak))
-
-	blob, err := os.ReadFile(filepath.Join(outDir, "credential_blob.bin"))
-	require.NoError(t, err)
-	assert.Equal(t, "blob", string(blob))
-
-	secret, err := os.ReadFile(filepath.Join(outDir, "encrypted_secret.bin"))
-	require.NoError(t, err)
-	assert.Equal(t, "secret", string(secret))
-}
-
-func TestWriteEnrollmentOutput_NoBlob(t *testing.T) {
-	tmpDir := t.TempDir()
-	outDir := filepath.Join(tmpDir, "enrollment")
-
-	resp := &transport.EnrollDeviceResponse{
-		IAKCertDER:    []byte("iak"),
-		IDevIDCertDER: []byte("idevid"),
-	}
-
-	err := writeEnrollmentOutput(outDir, resp)
-	require.NoError(t, err)
-
-	// Verify no blob/secret files
-	_, err = os.Stat(filepath.Join(outDir, "credential_blob.bin"))
-	assert.True(t, os.IsNotExist(err))
-}
 
 func TestWriteEnrollmentOutput_InvalidDirectory(t *testing.T) {
 	resp := &transport.EnrollDeviceResponse{

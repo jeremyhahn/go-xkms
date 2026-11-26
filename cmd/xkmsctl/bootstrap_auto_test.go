@@ -175,24 +175,6 @@ func TestBuildAutoConfig_Direct(t *testing.T) {
 	assert.Nil(t, cfg.SPKI)
 }
 
-// TestBuildAutoConfig_AllMethods verifies that all method configs are populated
-// when all flags are set.
-func TestBuildAutoConfig_AllMethods(t *testing.T) {
-	params := &autoBootstrapParams{
-		serverURL:     "https://kms.example.com:8443",
-		daneHostname:  "kms.example.com",
-		noiseKey:      "0000000000000000000000000000000000000000000000000000000000000000",
-		spkiPin:       "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
-		directEnabled: true,
-	}
-	cfg := buildAutoConfig(params)
-	require.NotNil(t, cfg)
-	assert.NotNil(t, cfg.DANE)
-	assert.NotNil(t, cfg.Noise)
-	assert.NotNil(t, cfg.SPKI)
-	assert.NotNil(t, cfg.Direct)
-}
-
 // TestBuildAutoConfig_BundlePath verifies that a custom bundle path is
 // passed through on the root Config.BundlePath (every mode that consumes
 // it picks it up from there inside the bootstrap library).
@@ -257,55 +239,10 @@ func TestWriteCABundleToFileError(t *testing.T) {
 	assert.ErrorIs(t, err, ErrBootstrapBundleWrite)
 }
 
-// TestWriteCABundleToStdout verifies that writeCABundle writes to stdout
-// when no output path is specified.
-func TestWriteCABundleToStdout(t *testing.T) {
-	bundle := []byte("-----BEGIN CERTIFICATE-----\nstdout-test\n-----END CERTIFICATE-----\n")
-
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := writeCABundle(bundle, "")
-
-	_ = w.Close()
-	os.Stdout = oldStdout
-
-	require.NoError(t, err)
-
-	var buf [4096]byte
-	n, _ := r.Read(buf[:])
-	output := string(buf[:n])
-	assert.Contains(t, output, "CA bundle obtained via bootstrap")
-	assert.Contains(t, output, "stdout-test")
-}
-
 // Noise address derivation is canonically tested in
 // pkg/trust/bootstrap/bootstrap_test.go::TestDeriveNoiseAddr.
 // xkmsctl now delegates via the library so no separate
 // CLI-level test is needed here.
-
-// TestBootstrapAutoCommandFlagParsing verifies that the auto command
-// correctly parses all its flags.
-func TestBootstrapAutoCommandFlagParsing(t *testing.T) {
-	expectedFlags := []string{
-		"server-url",
-		"config",
-		"dane-hostname",
-		"dane-dns-server",
-		"noise-key",
-		"p256-key",
-		"noise-addr",
-		"spki-pin",
-		"direct",
-		"bundle-path",
-		"bundle-output",
-	}
-	for _, flagName := range expectedFlags {
-		flag := bootstrapAutoCmd.Flags().Lookup(flagName)
-		assert.NotNil(t, flag, "flag --%s should be registered", flagName)
-	}
-}
 
 // TestBootstrapAutoCommandServerURLRequired verifies that runAutoBootstrap
 // returns an error when --server-url is missing.

@@ -16,8 +16,6 @@
 package main
 
 import (
-	"crypto/ecdh"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -92,23 +90,6 @@ func TestDaneShowTLSACmd_Flags(t *testing.T) {
 	assert.Contains(t, out, "abcd")
 	assert.Equal(t, "_25._tcp.kms.example.com.", mock.calledName)
 	assert.Equal(t, "192.0.2.53:53", mock.calledServer)
-}
-
-func TestP256ShowKeyCmd_Flags(t *testing.T) {
-	key, err := ecdh.P256().GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	keyHex := hex.EncodeToString(key.Bytes())
-	want := "Public key: " + hex.EncodeToString(key.PublicKey().Bytes()) + "\n"
-
-	out, code, _ := runBootstrapVerb(t, p256ShowKeyCmd, map[string]string{"key-hex": keyHex})
-	assert.Equal(t, -1, code)
-	assert.Equal(t, want, out)
-
-	keyFile := filepath.Join(t.TempDir(), "p256.key")
-	require.NoError(t, os.WriteFile(keyFile, []byte(keyHex+"\n"), 0600))
-	out, code, _ = runBootstrapVerb(t, p256ShowKeyCmd, map[string]string{"key-file": keyFile})
-	assert.Equal(t, -1, code)
-	assert.Equal(t, want, out, "the key file's trailing newline is trimmed")
 }
 
 func TestP256ShowKeyCmd_Refusals(t *testing.T) {

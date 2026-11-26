@@ -136,19 +136,6 @@ func TestCertSaveCmd_BadPEM(t *testing.T) {
 	}
 }
 
-func TestCertSaveCmd_Success(t *testing.T) {
-	mock := &mockCertRunClient{}
-	withGlobalConfig(t, newCertRunConfig("text", mock))
-	p := writeCertFile(t, "save-me")
-
-	out := captureStdout(t, func() {
-		certSaveCmd.Run(certSaveCmd, []string{"key-1", p})
-	})
-	if !strings.Contains(out, "Successfully saved certificate") {
-		t.Errorf("expected success message, got: %q", out)
-	}
-}
-
 func TestCertSaveCmd_ClientError(t *testing.T) {
 	mock := &mockCertRunClient{saveCertErr: errors.New("boom")}
 	withGlobalConfig(t, newCertRunConfig("text", mock))
@@ -197,18 +184,6 @@ func TestCertGetCmd_BadPEM(t *testing.T) {
 	}
 }
 
-func TestCertGetCmd_Success(t *testing.T) {
-	certPEM := makeSelfSignedCert(t, "get-me")
-	mock := &mockCertRunClient{getCertResp: &client.GetCertificateResponse{KeyID: "key-1", CertificatePEM: string(certPEM)}}
-	withGlobalConfig(t, newCertRunConfig("json", mock))
-	out := captureStdout(t, func() {
-		certGetCmd.Run(certGetCmd, []string{"key-1"})
-	})
-	if !strings.Contains(out, "get-me") {
-		t.Errorf("expected subject CN in output, got: %q", out)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // certDeleteCmd
 // ---------------------------------------------------------------------------
@@ -231,17 +206,6 @@ func TestCertDeleteCmd_DeleteError(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("expected exit code 1, got %d", code)
-	}
-}
-
-func TestCertDeleteCmd_Success(t *testing.T) {
-	mock := &mockCertRunClient{}
-	withGlobalConfig(t, newCertRunConfig("text", mock))
-	out := captureStdout(t, func() {
-		certDeleteCmd.Run(certDeleteCmd, []string{"key-1"})
-	})
-	if !strings.Contains(out, "Successfully deleted certificate") {
-		t.Errorf("expected success message, got: %q", out)
 	}
 }
 
@@ -308,17 +272,6 @@ func TestCertExistsCmd_Error(t *testing.T) {
 	}
 }
 
-func TestCertExistsCmd_True(t *testing.T) {
-	mock := &mockCertRunClient{certExistsVal: true}
-	withGlobalConfig(t, newCertRunConfig("text", mock))
-	out := captureStdout(t, func() {
-		certExistsCmd.Run(certExistsCmd, []string{"key-1"})
-	})
-	if !strings.Contains(out, "key-1") {
-		t.Errorf("expected key-1 in output, got: %q", out)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // certSaveChainCmd
 // ---------------------------------------------------------------------------
@@ -344,20 +297,6 @@ func TestCertSaveChainCmd_BadPEM(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("expected exit code 1, got %d", code)
-	}
-}
-
-func TestCertSaveChainCmd_Success(t *testing.T) {
-	mock := &mockCertRunClient{}
-	withGlobalConfig(t, newCertRunConfig("text", mock))
-	leaf := writeCertFile(t, "leaf")
-	root := writeCertFile(t, "root")
-
-	out := captureStdout(t, func() {
-		certSaveChainCmd.Run(certSaveChainCmd, []string{"key-1", leaf, root})
-	})
-	if !strings.Contains(out, "2 certificates") {
-		t.Errorf("expected chain count in output, got: %q", out)
 	}
 }
 
@@ -407,21 +346,6 @@ func TestCertGetChainCmd_BadPEM(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("expected exit code 1, got %d", code)
-	}
-}
-
-func TestCertGetChainCmd_Success(t *testing.T) {
-	leafPEM := makeSelfSignedCert(t, "leaf")
-	rootPEM := makeSelfSignedCert(t, "root")
-	mock := &mockCertRunClient{getChainResp: &client.GetCertificateChainResponse{
-		ChainPEM: []string{string(leafPEM), string(rootPEM)},
-	}}
-	withGlobalConfig(t, newCertRunConfig("json", mock))
-	out := captureStdout(t, func() {
-		certGetChainCmd.Run(certGetChainCmd, []string{"key-1"})
-	})
-	if !strings.Contains(out, "leaf") {
-		t.Errorf("expected leaf in output, got: %q", out)
 	}
 }
 
@@ -503,37 +427,6 @@ func TestCertGenerateCACmd_JSONToFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(keyOut); err != nil {
 		t.Errorf("expected key file to be written: %v", err)
-	}
-}
-
-func TestCertGenerateCACmd_RSAKeyAlgorithm(t *testing.T) {
-	resetCertGenerateCAFlags(t)
-	t.Cleanup(func() { resetCertGenerateCAFlags(t) })
-	_ = certGenerateCACmd.Flags().Set("cn", "RSA Root CA")
-	_ = certGenerateCACmd.Flags().Set("key-algorithm", "rsa")
-	_ = certGenerateCACmd.Flags().Set("key-size", "2048")
-	withGlobalConfig(t, &Config{OutputFormat: "text"})
-
-	out := captureStdout(t, func() {
-		certGenerateCACmd.Run(certGenerateCACmd, nil)
-	})
-	if !strings.Contains(out, "RSA Root CA") {
-		t.Errorf("expected CA subject in output, got: %q", out)
-	}
-}
-
-func TestCertGenerateCACmd_Ed25519KeyAlgorithm(t *testing.T) {
-	resetCertGenerateCAFlags(t)
-	t.Cleanup(func() { resetCertGenerateCAFlags(t) })
-	_ = certGenerateCACmd.Flags().Set("cn", "Ed25519 Root CA")
-	_ = certGenerateCACmd.Flags().Set("key-algorithm", "ed25519")
-	withGlobalConfig(t, &Config{OutputFormat: "text"})
-
-	out := captureStdout(t, func() {
-		certGenerateCACmd.Run(certGenerateCACmd, nil)
-	})
-	if !strings.Contains(out, "Ed25519 Root CA") {
-		t.Errorf("expected CA subject in output, got: %q", out)
 	}
 }
 

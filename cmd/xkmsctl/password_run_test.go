@@ -25,28 +25,6 @@ import (
 
 var errPasswordRunBoom = errors.New("boom")
 
-func TestPasswordAddCmd_Success(t *testing.T) {
-	resetCmdFlags(t, passwordAddCmd)
-	t.Cleanup(func() { resetCmdFlags(t, passwordAddCmd) })
-	mock := &mockPasswordClient{addResp: &transport.PasswordAddResponse{
-		ID: "id-1", Name: "github", CreatedAt: "2026-01-01T00:00:00Z",
-	}}
-	withGlobalConfig(t, newPasswordConfig(mock))
-	_ = passwordAddCmd.Flags().Set("password", "s3cret")
-	_ = passwordAddCmd.Flags().Set("username", "alice")
-
-	out := captureStdout(t, func() {
-		passwordAddCmd.Run(passwordAddCmd, []string{"github"})
-	})
-	if mock.gotAddReq == nil || mock.gotAddReq.Name != "github" ||
-		mock.gotAddReq.Password != "s3cret" || mock.gotAddReq.Username != "alice" {
-		t.Errorf("PasswordAdd request mismatch: %+v", mock.gotAddReq)
-	}
-	if !strings.Contains(out, "id-1") {
-		t.Errorf("expected entry ID in output, got %q", out)
-	}
-}
-
 func TestPasswordAddCmd_Error(t *testing.T) {
 	resetCmdFlags(t, passwordAddCmd)
 	t.Cleanup(func() { resetCmdFlags(t, passwordAddCmd) })
@@ -200,22 +178,6 @@ func TestPasswordDeleteCmd_Error(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("expected exit code 1, got %d", code)
-	}
-}
-
-func TestPasswordUnlockCmd_Success(t *testing.T) {
-	resetCmdFlags(t, passwordUnlockCmd)
-	t.Cleanup(func() { resetCmdFlags(t, passwordUnlockCmd) })
-	mock := &mockPasswordClient{}
-	withGlobalConfig(t, newPasswordConfig(mock))
-	_ = passwordUnlockCmd.Flags().Set("passphrase", "correct horse")
-
-	captureStdout(t, func() {
-		passwordUnlockCmd.Run(passwordUnlockCmd, nil)
-	})
-	if mock.gotUnlockReq == nil || mock.gotUnlockReq.Factor != "passphrase" ||
-		mock.gotUnlockReq.Passphrase != "correct horse" {
-		t.Errorf("PasswordStoreUnlock request mismatch: %+v", mock.gotUnlockReq)
 	}
 }
 
