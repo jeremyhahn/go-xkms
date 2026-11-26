@@ -15,16 +15,30 @@ package jwe
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/go-jose/go-jose/v4"
 )
 
-// parseEncryptedAny parses a JWE in either serialization: the JSON
-// serialization when the input starts with '{' after white space, the
-// compact serialization otherwise.
+// parseEncryptedAny parses a JWE in either serialization, as the
+// jose.ParseEncrypted of go-jose v4.1.6 did: every Unicode white space
+// character is removed from the input, and the result is parsed as the
+// JSON serialization when it starts with '{', as the compact
+// serialization otherwise.
 func parseEncryptedAny(s string, keyAlgs []jose.KeyAlgorithm, encs []jose.ContentEncryption) (*jose.JSONWebEncryption, error) {
-	if strings.HasPrefix(strings.TrimLeft(s, " \t\r\n"), "{") {
+	s = stripWhitespace(s)
+	if strings.HasPrefix(s, "{") {
 		return jose.ParseEncryptedJSON(s, keyAlgs, encs)
 	}
 	return jose.ParseEncryptedCompact(s, keyAlgs, encs)
+}
+
+// stripWhitespace removes every Unicode white space character from s.
+func stripWhitespace(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
