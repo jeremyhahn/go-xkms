@@ -76,6 +76,61 @@ func TestExportKey_NeverReleasesHardwareKeys(t *testing.T) {
 	})
 }
 
+// TestExportKeyTo_NeverRewrapsHardwareKeys pins that a TPM2 key is never
+// re-wrapped for a foreign destination, and that bad input is refused first.
+func TestExportKeyTo_NeverRewrapsHardwareKeys(t *testing.T) {
+	b := &Backend{}
+	attrs := &types.KeyAttributes{CN: "hw-key", StoreType: types.StoreTPM2, Exportable: true}
+	tests := []struct {
+		name      string
+		attrs     *types.KeyAttributes
+		dstParams *backend.ImportParameters
+		want      error
+	}{
+		{"nil attributes", nil, &backend.ImportParameters{}, ErrInvalidKeyAttributes},
+		{"nil destination parameters", attrs, nil, backend.ErrInvalidAttributes},
+		{"valid input is still refused", attrs, &backend.ImportParameters{}, backend.ErrExportToUnsupported},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wrapped, err := b.ExportKeyTo(context.Background(), tt.attrs, tt.dstParams)
+			if !errors.Is(err, tt.want) {
+				t.Errorf("error = %v, want %v", err, tt.want)
+			}
+			if wrapped != nil {
+				t.Fatalf("TPM2 backend returned wrapped material: %+v", wrapped)
+			}
+		})
+	}
+}
+
+// TestGetImportParameters_RequiresStorageParent pins that a backend with no
+// storage parent attributes refuses to hand out import parameters.
+func TestGetImportParameters_RequiresStorageParent(t *testing.T) {
+	b := &Backend{}
+	attrs := &types.KeyAttributes{CN: "import-target", StoreType: types.StoreTPM2}
+	params, err := b.GetImportParameters(context.Background(), attrs, importExportAlgorithm)
+	if !errors.Is(err, ErrUnsupportedOperation) {
+		t.Errorf("error = %v, want ErrUnsupportedOperation", err)
+	}
+	if params != nil {
+		t.Fatalf("returned import parameters without a storage parent: %+v", params)
+	}
+}
+
+// TestApplyKDF_RequiresParameters pins that an ECDH shared secret is never
+// returned raw: the KDF parameters are required.
+func TestApplyKDF_RequiresParameters(t *testing.T) {
+	b := &Backend{}
+	derived, err := b.applyKDF([]byte("shared-secret"), nil)
+	if !errors.Is(err, ErrInvalidKDFParams) {
+		t.Errorf("error = %v, want ErrInvalidKDFParams", err)
+	}
+	if derived != nil {
+		t.Fatalf("returned key material without KDF parameters: %x", derived)
+	}
+}
+
 // TestExportKeyMaterial_NeverReleasesRawMaterial mirrors the ExportKey
 // invariant for the raw-material entry point, including the case where the
 // caller has set Exportable — the flag must not unlock the hardware boundary
