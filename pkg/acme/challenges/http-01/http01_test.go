@@ -37,6 +37,98 @@ func loopbackClient() *validation.Client {
 	return validation.NewClient(validation.Config{AllowPrivateTargets: true})
 }
 
+func TestVerify_Success(t *testing.T) {
+	expectedKeyAuth := "test-token.test-thumbprint"
+
+	// Create a test HTTP server that serves the expected key authorization
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, wellKnownChallengePath) {
+			t.Errorf("Expected path to start with %s, got %s", wellKnownChallengePath, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, expectedKeyAuth)
+	}))
+	defer ts.Close()
+
+	// Parse the test server URL to get host and port
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("Failed to parse test server URL: %v", err)
+	}
+
+	client := loopbackClient()
+
+	err = Verify(client, host, port, "test-token", expectedKeyAuth)
+	if err != nil {
+		t.Errorf("Verify() failed: %v", err)
+	}
+}
+
+func TestVerify_KeyAuthMismatch(t *testing.T) {
+	expectedKeyAuth := "test-token.test-thumbprint"
+	wrongKeyAuth := "wrong-token.wrong-thumbprint"
+
+	// Create a test HTTP server that serves the wrong key authorization
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = fmt.Fprint(w, wrongKeyAuth)
+	}))
+	defer ts.Close()
+
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("Failed to parse test server URL: %v", err)
+	}
+
+	client := loopbackClient()
+
+	err = Verify(client, host, port, "test-token", expectedKeyAuth)
+	if err == nil {
+		t.Error("Verify() should have failed with key authorization mismatch")
+	}
+	if !strings.Contains(err.Error(), "key authorization mismatch") {
+		t.Errorf("Expected 'key authorization mismatch' error, got: %v", err)
+	}
+}
+
+func TestVerify_HTTPError(t *testing.T) {
+	expectedKeyAuth := "test-token.test-thumbprint"
+
+	// Create a test HTTP server that returns an error status
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = fmt.Fprint(w, "Not Found")
+	}))
+	defer ts.Close()
+
+	host, port, err := net.SplitHostPort(strings.TrimPrefix(ts.URL, "http://"))
+	if err != nil {
+		t.Fatalf("Failed to parse test server URL: %v", err)
+	}
+
+	client := loopbackClient()
+
+	err = Verify(client, host, port, "test-token", expectedKeyAuth)
+	if err == nil {
+		t.Error("Verify() should have failed with HTTP error")
+	}
+	if !strings.Contains(err.Error(), "unexpected HTTP status") {
+		t.Errorf("Expected 'unexpected HTTP status' error, got: %v", err)
+	}
+}
+
+func TestVerify_NetworkError(t *testing.T) {
+	client := loopbackClient()
+
+	// Use an invalid host/port combination to trigger a network error
+	err := Verify(client, "invalid-host-that-does-not-exist", "9999", "test-token", "test-keyauth")
+	if err == nil {
+		t.Error("Verify() should have failed with network error")
+	}
+}
+
 func TestVerify_WithWhitespace(t *testing.T) {
 	expectedKeyAuth := "test-token.test-thumbprint"
 
@@ -226,62 +318,44 @@ func TestChallengeHandlerHTTPx_WriteError(t *testing.T) {
 	handler(w, req)
 }
 
-// captureSlog swaps slog.Default for a Debug-level text handler writing to
-// the returned buffer and restores the previous logger on cleanup.
-func captureSlog(t *testing.T) *bytes.Buffer {
-	t.Helper()
+// TestChallengeHandlerHTTPx_LogsKeyAuthLength pins that the handler logs the
+// key authorization's length, never its value, on both the Debug (served) and
+// Error (write failed) paths (CA m2544: a 32 MiB value made a 33 MB log line
+// that stalled the runner's step output).
+func TestChallengeHandlerHTTPx_LogsKeyAuthLength(t *testing.T) {
 	var buf bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return &buf
-}
+	old := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(old) })
 
-// TestChallengeHandlerHTTPx_WriteErrorLogsLengthNotValue checks that a failed
-// write logs the key authorization's length, never its value (#2275).
-func TestChallengeHandlerHTTPx_WriteErrorLogsLengthNotValue(t *testing.T) {
-	buf := captureSlog(t)
-	keyAuth := "secret-key-authorization-value.thumbprint-2275"
+	const keyAuth = "secret-key-auth-value"
 	handler := challengeHandlerHTTPx(keyAuth)
+	wantLen := fmt.Sprintf(`"key-authorization-length":%d`, len(keyAuth))
 
-	req := httptest.NewRequest(http.MethodGet, wellKnownChallengePath+"test-token", nil)
-	handler(&failingWriter{}, req)
+	for _, tc := range []struct {
+		name string
+		w    http.ResponseWriter
+		msg  string
+	}{
+		{"served", httptest.NewRecorder(), "Served key authorization"},
+		{"write error", &failingWriter{}, "Failed to write response for key authorization"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf.Reset()
+			req := httptest.NewRequest(http.MethodGet, wellKnownChallengePath+"test-token", nil)
+			handler(tc.w, req)
 
-	out := buf.String()
-	if strings.Contains(out, keyAuth) {
-		t.Fatalf("log carries the key authorization value: %q", out)
-	}
-	want := fmt.Sprintf("key-authorization-length=%d", len(keyAuth))
-	if !strings.Contains(out, want) {
-		t.Fatalf("log lacks %q: %q", want, out)
-	}
-}
-
-// TestChallengeHandlerHTTPx_ServeLogsLengthNotValue checks that a served
-// request's Debug line logs the key authorization's length, never its value
-// (#2275).
-func TestChallengeHandlerHTTPx_ServeLogsLengthNotValue(t *testing.T) {
-	buf := captureSlog(t)
-	keyAuth := "secret-key-authorization-value.thumbprint-2275"
-	handler := challengeHandlerHTTPx(keyAuth)
-
-	req := httptest.NewRequest(http.MethodGet, wellKnownChallengePath+"test-token", nil)
-	rec := httptest.NewRecorder()
-	handler(rec, req)
-
-	if rec.Body.String() != keyAuth {
-		t.Fatalf("body = %q, want %q", rec.Body.String(), keyAuth)
-	}
-	out := buf.String()
-	if !strings.Contains(out, "Served key authorization") {
-		t.Fatalf("no Debug line for the served request: %q", out)
-	}
-	if strings.Contains(out, keyAuth) {
-		t.Fatalf("log carries the key authorization value: %q", out)
-	}
-	want := fmt.Sprintf("key-authorization-length=%d", len(keyAuth))
-	if !strings.Contains(out, want) {
-		t.Fatalf("log lacks %q: %q", want, out)
+			out := buf.String()
+			if !strings.Contains(out, tc.msg) {
+				t.Fatalf("log has no %q entry: %s", tc.msg, out)
+			}
+			if !strings.Contains(out, wantLen) {
+				t.Errorf("log lacks %s: %s", wantLen, out)
+			}
+			if strings.Contains(out, keyAuth) {
+				t.Errorf("log carries the key authorization value: %s", out)
+			}
+		})
 	}
 }
 
@@ -320,8 +394,8 @@ func TestVerify_HTTPStatusCodes(t *testing.T) {
 
 			err = Verify(client, host, port, "test-token", expectedKeyAuth)
 
-			if tc.shouldFail && (err == nil || !strings.Contains(err.Error(), "unexpected HTTP status")) {
-				t.Errorf("Verify() error = %v, want an 'unexpected HTTP status' error", err)
+			if tc.shouldFail && err == nil {
+				t.Error("Expected Verify to fail but it succeeded")
 			}
 			if !tc.shouldFail && err != nil {
 				t.Errorf("Expected Verify to succeed but got error: %v", err)
@@ -384,6 +458,35 @@ func TestVerify_EmptyResponse(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "key authorization mismatch") {
 		t.Errorf("Expected key authorization mismatch error, got: %v", err)
+	}
+}
+
+func TestChallengeHandlerHTTPx_RequestLogging(t *testing.T) {
+	keyAuth := "test-key-authorization-logging"
+	handler := challengeHandlerHTTPx(keyAuth)
+
+	req := httptest.NewRequest(http.MethodGet, wellKnownChallengePath+"test-token", nil)
+	req.RemoteAddr = "192.168.1.100:12345"
+	req.Header.Set("HOST", "example.com")
+
+	w := httptest.NewRecorder()
+
+	handler(w, req)
+
+	resp := w.Result()
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Expected status 200, got %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response: %v", err)
+	}
+
+	if string(body) != keyAuth {
+		t.Errorf("Expected body %q, got %q", keyAuth, string(body))
 	}
 }
 
