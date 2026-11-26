@@ -40,6 +40,9 @@ type QRDBUserStoreOptions struct {
 	// the system tenant ("system") for daemon-internal use, or a
 	// per-tenant id for multi-tenant deployments. Required.
 	TenantID string
+
+	// CallContext, when set, binds every user-client call.
+	CallContext CallContext
 }
 
 // qrdbUserStore implements xkms's UserStore over qrdb's user records. A
@@ -49,6 +52,22 @@ type qrdbUserStore struct {
 	users    qrdbtransport.UserClient
 	creds    CredentialStore
 	tenantID string
+	bind     CallContext
+}
+
+// CallContext derives the context a go-qrdb call runs on from the caller's.
+type CallContext func(context.Context) (context.Context, error)
+
+// callContext returns the context a user-client call runs on.
+func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error) {
+	if s.bind == nil {
+		return ctx, nil
+	}
+	bound, err := s.bind(ctx)
+	if err != nil {
+		return nil, WrapError("bind qrdb call context", err)
+	}
+	return bound, nil
 }
 
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair
@@ -70,7 +89,7 @@ func NewQRDBUserStoreAdapter(opts QRDBUserStoreOptions) (UserStore, CredentialSt
 	if err != nil {
 		return nil, nil, WrapError("build credential store", err)
 	}
-	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID}
+	users := &qrdbUserStore{users: opts.Users, creds: creds, tenantID: opts.TenantID, bind: opts.CallContext}
 	return users, creds, nil
 }
 
@@ -111,7 +130,11 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
-	u, err := s.users.GetUser(ctx, id)
+	callCtx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.GetUser(callCtx, id)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
@@ -129,7 +152,11 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 	if email == "" {
 		return nil, ErrUserNotFound
 	}
-	u, err := s.users.GetUserByEmail(ctx, s.tenantID, email)
+	callCtx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.GetUserByEmail(callCtx, s.tenantID, email)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
@@ -146,7 +173,11 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 	if email == "" {
 		return nil, &QRDBAdapterConfigError{Field: "email"}
 	}
-	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+	callCtx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.CreateUser(callCtx, &qrdbtransport.CreateUserRequest{
 		Username: email,
 		Email:    email,
 		Name:     displayName,
@@ -174,7 +205,11 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 	if err != nil {
 		return err
 	}
-	if _, uErr := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
+	callCtx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
+	if _, uErr := s.users.UpdateUser(callCtx, &qrdbtransport.UpdateUserRequest{
 		ID:   id,
 		Name: dn,
 	}); uErr != nil {
@@ -192,7 +227,11 @@ func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
 	if err != nil {
 		return err
 	}
-	if dErr := s.users.DeleteUser(ctx, id); dErr != nil {
+	callCtx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
+	if dErr := s.users.DeleteUser(callCtx, id); dErr != nil {
 		if isUserNotFound(dErr) {
 			return ErrUserNotFound
 		}
