@@ -252,6 +252,85 @@ func TestTransparencyLog_AppendFailureFailsIssuance(t *testing.T) {
 	require.Nil(t, cert)
 }
 
+// The direct TCG verbs issue through issueTCGCertificate, not the CSR path:
+// each certificate they return is logged once, before it is returned.
+func TestTransparencyLog_TCGVerbsAppendOnce(t *testing.T) {
+	f := newTLogFixture(t)
+	request := func(cn string) *CertificateRequest {
+		return &CertificateRequest{Subject: Subject{CommonName: cn}, Valid: 30, TenantID: testTenant}
+	}
+
+	t.Run("IssueEKCertificate", func(t *testing.T) {
+		before := f.size(t)
+		cert, err := f.ca.IssueEKCertificate(f.ctx, request("tlog-ek-direct"), newTLogTestKey(t).Public())
+		require.NoError(t, err)
+		f.requireOneEntry(t, before, certIssued(cert, ProfileNameTCGEndorsementKey, testTenant))
+	})
+	t.Run("IssueAKCertificate", func(t *testing.T) {
+		before := f.size(t)
+		cert, err := f.ca.IssueAKCertificate(f.ctx, request("tlog-ak-direct"), newTLogTestKey(t).Public())
+		require.NoError(t, err)
+		f.requireOneEntry(t, before, certIssued(cert, ProfileNameTCGAttestationKey, testTenant))
+	})
+	t.Run("IssueEKCertificateCallerSigned", func(t *testing.T) {
+		signerKey := generateTestECDSAKey(t)
+		req := createTestCertRequest(t, signerKey, createSelfSignedCACert(t, signerKey))
+		before := f.size(t)
+		cert, err := f.ca.IssueEKCertificate(f.ctx, req, newTLogTestKey(t).Public())
+		require.NoError(t, err)
+		f.requireOneEntry(t, before, certIssued(cert, ProfileNameTCGEndorsementKey, req.TenantID))
+	})
+	t.Run("SignTCGCSRIDevID", func(t *testing.T) {
+		device := buildSoftwareTCGCSR(t, softwareCSRModel, softwareCSRSerial)
+		config := f.ca.config
+		trustSoftwareCSREKCertificate(t, f.ca, device)
+		config.TCGConfig = f.ca.config.TCGConfig
+		f.ca.config = config
+
+		before := f.size(t)
+		iakDER, idevidDER, err := f.ca.SignTCGCSRIDevID(f.ctx, device.csr, &CertificateRequest{
+			TenantID: testTenant,
+			Subject:  Subject{CommonName: softwareCSRModel + "-" + softwareCSRSerial},
+		})
+		require.NoError(t, err)
+		iak, err := x509.ParseCertificate(iakDER)
+		require.NoError(t, err)
+		idevid, err := x509.ParseCertificate(idevidDER)
+		require.NoError(t, err)
+
+		head, err := f.log.SignedTreeHead(f.ctx)
+		require.NoError(t, err)
+		require.Equal(t, before+2, head.Checkpoint.Size, "the IAK and the IDevID are each appended once")
+		got, _, err := f.log.Entry(f.ctx, before)
+		require.NoError(t, err)
+		require.Equal(t, certIssued(iak, ProfileNameTCGInitialAK, testTenant), got)
+		got, _, err = f.log.Entry(f.ctx, before+1)
+		require.NoError(t, err)
+		require.Equal(t, certIssued(idevid, ProfileNameTCGDeviceIdentity, testTenant), got)
+	})
+}
+
+// A direct TCG verb whose append fails returns and stores no certificate.
+func TestTransparencyLog_TCGAppendFailureFailsIssuance(t *testing.T) {
+	f := newTLogFixture(t)
+	f.ca.SetTransparencyLog(f.missing)
+	request := func(cn string) *CertificateRequest {
+		return &CertificateRequest{Subject: Subject{CommonName: cn}, Valid: 30, TenantID: testTenant}
+	}
+
+	cert, err := f.ca.IssueEKCertificate(f.ctx, request("tlog-fail-ek-direct"), newTLogTestKey(t).Public())
+	require.ErrorIs(t, err, ErrTransparencyLogAppend)
+	require.Nil(t, cert)
+	_, err = f.ca.certStore.GetCertificate("tlog-fail-ek-direct")
+	require.Error(t, err, "a certificate the log does not hold is never stored")
+
+	cert, err = f.ca.IssueAKCertificate(f.ctx, request("tlog-fail-ak-direct"), newTLogTestKey(t).Public())
+	require.ErrorIs(t, err, ErrTransparencyLogAppend)
+	require.Nil(t, cert)
+	_, err = f.ca.certStore.GetCertificate("tlog-fail-ak-direct")
+	require.Error(t, err)
+}
+
 func TestTransparencyLog_AppendFailureLeavesRevocation(t *testing.T) {
 	f := newTLogFixture(t)
 	issue := func(t *testing.T, cn string) *x509.Certificate {
