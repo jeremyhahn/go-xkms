@@ -177,6 +177,58 @@ func TestAttestationAppraisalREST_Lifecycle(t *testing.T) {
 	assert.Len(t, all.Endorsements, 1)
 }
 
+// TestAttestationAppraisalREST_EscapedNames drives the standalone router with
+// the TypeScript client's encoding of "ak:root" ("ak%3Aroot") while a record
+// literally named "ak%3Aroot" also exists: every {name} route acts on the
+// decoded name, never on the escaped path segment.
+func TestAttestationAppraisalREST_EscapedNames(t *testing.T) {
+	a := newAppraisalREST(t)
+	server := &Server{
+		authenticator:                tenantScopedAuthenticator{tenantID: "acme"},
+		logger:                       testLogger(),
+		attestationAppraisalHandlers: NewAttestationAppraisalHandlers(a.svc),
+	}
+	router := server.setupRouter()
+	c := appraisalClient(t, router)
+	ctx := context.Background()
+	_, err := c.PutAttestationEndorsement(ctx, &transport.PutAttestationEndorsementRequest{
+		Name: "rv-ca", Kind: appraisal.EndorsementReferenceSigner, CertificatePEM: a.rvCA.CertificatePEM(),
+	})
+	require.NoError(t, err)
+	for _, name := range []string{"ak:root", "ak%3Aroot"} {
+		_, err := c.PutAttestationEndorsement(ctx, &transport.PutAttestationEndorsementRequest{
+			Name: name, Kind: appraisal.EndorsementAKRoot, CertificatePEM: a.akCA.CertificatePEM(),
+		})
+		require.NoError(t, err)
+		_, err = c.PutAttestationReferenceValues(ctx, &transport.PutAttestationReferenceValuesRequest{Name: name, SignedCoRIM: a.corim})
+		require.NoError(t, err)
+	}
+	serve := func(method, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, httptest.NewRequest(method, path, http.NoBody))
+		return w
+	}
+
+	w := serve(http.MethodGet, "/api/v1/attestation/reference-values/ak%3Aroot")
+	require.Equal(t, http.StatusOK, w.Code)
+	var got transport.AttestationReferenceValues
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+	assert.Equal(t, "ak:root", got.Name)
+
+	require.Equal(t, http.StatusNoContent, serve(http.MethodDelete, "/api/v1/attestation/endorsements/ak%3Aroot").Code)
+	roots, err := c.ListAttestationEndorsements(ctx, &transport.ListAttestationEndorsementsRequest{Kind: appraisal.EndorsementAKRoot})
+	require.NoError(t, err)
+	require.Len(t, roots.Endorsements, 1)
+	assert.Equal(t, "ak%3Aroot", roots.Endorsements[0].Name)
+
+	require.Equal(t, http.StatusNoContent, serve(http.MethodDelete, "/api/v1/attestation/reference-values/ak%3Aroot").Code)
+	_, err = c.GetAttestationReferenceValues(ctx, &transport.GetAttestationReferenceValuesRequest{Name: "ak:root"})
+	assert.Equal(t, &errSigningKeyStatus{code: http.StatusNotFound}, err)
+	left, err := c.GetAttestationReferenceValues(ctx, &transport.GetAttestationReferenceValuesRequest{Name: "ak%3Aroot"})
+	require.NoError(t, err)
+	assert.Equal(t, "ak%3Aroot", left.Name)
+}
+
 // TestAttestationAppraisalREST_TenantIsolation proves another tenant sees
 // none of a tenant's records and cannot appraise against them.
 func TestAttestationAppraisalREST_TenantIsolation(t *testing.T) {
