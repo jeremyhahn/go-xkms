@@ -82,9 +82,9 @@ func TestReleaseKeySigner_ProvisionsOnFirstUse(t *testing.T) {
 	svc := setupDeriveService(t)
 	ctx := context.Background()
 
-	first, err := svc.releaseKeySigner(ctx, "tenant-a", releaseResolution())
+	first, err := svc.releaseKeySigner(ctx, "tenant-a", releaseResolution(), 1)
 	require.NoError(t, err)
-	again, err := svc.releaseKeySigner(ctx, "tenant-a", releaseResolution())
+	again, err := svc.releaseKeySigner(ctx, "tenant-a", releaseResolution(), 1)
 	require.NoError(t, err)
 	assert.True(t, first.Public().(*ecdsa.PublicKey).Equal(again.Public()), "the second use signs with the provisioned key")
 }
@@ -93,15 +93,15 @@ func TestReleaseKeySigner_Errors(t *testing.T) {
 	svc := setupDeriveService(t)
 	ctx := context.Background()
 
-	_, err := svc.releaseKeySigner(ctx, "tenant-a", nil)
+	_, err := svc.releaseKeySigner(ctx, "tenant-a", nil, 1)
 	require.ErrorIs(t, err, appraisal.ErrNilRequest)
 
 	bound := &appraisal.SigningKeyResolution{Repository: "acme/app", KeyID: "deleted-key"}
-	_, err = svc.releaseKeySigner(ctx, "tenant-a", bound)
+	_, err = svc.releaseKeySigner(ctx, "tenant-a", bound, 1)
 	require.ErrorIs(t, err, ErrKeyNotFound, "a binding to a key the tenant does not hold is never provisioned")
 
 	for _, system := range []string{qrdbsdk.SystemTenantID, ""} {
-		_, err = svc.releaseKeySigner(ctx, system, releaseResolution())
+		_, err = svc.releaseKeySigner(ctx, system, releaseResolution(), 1)
 		require.ErrorIs(t, err, ErrKeyNotFound, "system tenant %q is never provisioned (owner ruling 165)", system)
 	}
 	_, err = svc.SigningPublicKey(ctx, qrdbsdk.SystemTenantID, releaseResolution())
@@ -173,7 +173,7 @@ func TestProvisionReleaseKey_CollisionWaitsForTheWinnersKey(t *testing.T) {
 	winner := generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
 	late.collide, late.misses, late.lists = ErrKeyAlreadyExists, 5, 0
 
-	signer, err := svc.releaseKeySigner(context.Background(), "tenant-a", releaseResolution())
+	signer, err := svc.releaseKeySigner(context.Background(), "tenant-a", releaseResolution(), 1)
 	require.NoError(t, err, "the loser of a collision signs once the winner's key resolves")
 	assert.True(t, winner.(*ecdsa.PublicKey).Equal(signer.Public()), "the loser signs with the winner's key")
 	assert.Greater(t, late.lists, late.misses, "the lookup is retried past the listings that miss the key")
