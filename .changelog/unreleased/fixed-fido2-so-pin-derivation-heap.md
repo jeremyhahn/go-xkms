@@ -1,0 +1,1 @@
+FIDO2: an `SOPINManager` now runs one Argon2id SO PIN derivation at a time, so concurrent callers hold one `Memory`-sized buffer instead of one each; concurrent derivations under the race detector had exhausted the runner's heap (main run 42509523145).

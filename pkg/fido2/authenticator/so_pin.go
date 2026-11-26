@@ -16,6 +16,7 @@ package authenticator
 import (
 	"crypto/rand"
 	"errors"
+	"sync"
 	"sync/atomic"
 
 	"golang.org/x/crypto/argon2"
@@ -109,6 +110,10 @@ type SOPINManager struct {
 
 	// IsSet indicates whether an SO PIN has been configured.
 	IsSet bool
+
+	// deriveMu serializes the Argon2id derivations, so concurrent callers
+	// hold one Memory-sized buffer at a time, not one each.
+	deriveMu sync.Mutex
 }
 
 // NewSOPINManager creates a new SOPINManager with default Argon2id parameters.
@@ -137,6 +142,9 @@ func (m *SOPINManager) DeriveKey(pin string) []byte {
 	if len(m.Salt) == 0 {
 		return nil
 	}
+
+	m.deriveMu.Lock()
+	defer m.deriveMu.Unlock()
 
 	return argon2.IDKey(
 		[]byte(pin),
