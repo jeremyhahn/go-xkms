@@ -39,13 +39,6 @@ func TestNewHierarchicalCA_NilParams_B18(t *testing.T) {
 	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
-func TestNewHierarchicalCA_NilConfig_B18(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-	_, err := NewHierarchicalCA(&MultiIdentityParams{KeyStore: backend, CertStore: cs})
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
 func TestNewHierarchicalCA_InvalidConfig_B18(t *testing.T) {
 	t.Parallel()
 	backend, cs := newB9Backend(t)

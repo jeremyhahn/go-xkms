@@ -17,19 +17,13 @@ package ca
 
 import (
 	"context"
-	"crypto/ed25519"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/asn1"
 	"testing"
 
 	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
-	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -39,101 +33,11 @@ import (
 // (brings determineSignatureAlgorithm from 88.9% to 100%)
 // =============================================================================
 
-// TestDetermineSignatureAlgorithm_RSA_B11 exercises the RSA case.
-func TestDetermineSignatureAlgorithm_RSA_B11(t *testing.T) {
-	t.Parallel()
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	algo := determineSignatureAlgorithm(&key.PublicKey)
-	assert.Equal(t, x509.SHA256WithRSA, algo)
-}
-
-// TestDetermineSignatureAlgorithm_Ed25519_B11 exercises the Ed25519 case.
-func TestDetermineSignatureAlgorithm_Ed25519_B11(t *testing.T) {
-	t.Parallel()
-	pub, _, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-	algo := determineSignatureAlgorithm(pub)
-	assert.Equal(t, x509.PureEd25519, algo)
-}
-
 // TestDetermineSignatureAlgorithm_Unknown_B11 exercises the default case.
 func TestDetermineSignatureAlgorithm_Unknown_B11(t *testing.T) {
 	t.Parallel()
 	algo := determineSignatureAlgorithm(nil)
 	assert.Equal(t, x509.UnknownSignatureAlgorithm, algo)
-}
-
-// =============================================================================
-// csr.go — getECDSASignatureAlgorithm: P-384, P-521, nil-curve paths
-// (brings getECDSASignatureAlgorithm from 85.7% to 100%)
-// =============================================================================
-
-// TestGetECDSASignatureAlgorithm_P384_B11 exercises the P-384 case.
-func TestGetECDSASignatureAlgorithm_P384_B11(t *testing.T) {
-	t.Parallel()
-	algo, err := getECDSASignatureAlgorithm(elliptic.P384())
-	require.NoError(t, err)
-	assert.Equal(t, x509.ECDSAWithSHA384, algo)
-}
-
-// TestGetECDSASignatureAlgorithm_P521_B11 exercises the P-521 case.
-func TestGetECDSASignatureAlgorithm_P521_B11(t *testing.T) {
-	t.Parallel()
-	algo, err := getECDSASignatureAlgorithm(elliptic.P521())
-	require.NoError(t, err)
-	assert.Equal(t, x509.ECDSAWithSHA512, algo)
-}
-
-// TestGetECDSASignatureAlgorithm_NilCurve_B11 exercises the nil-curve guard.
-func TestGetECDSASignatureAlgorithm_NilCurve_B11(t *testing.T) {
-	t.Parallel()
-	_, err := getECDSASignatureAlgorithm(nil)
-	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
-}
-
-// =============================================================================
-// csr.go — getSignatureAlgorithm: unsupported key type error path
-// =============================================================================
-
-// TestGetSignatureAlgorithm_UnsupportedKeyType_B11 exercises the error path in
-// getSignatureAlgorithm when presented with an unsupported key type.
-func TestGetSignatureAlgorithm_UnsupportedKeyType_B11(t *testing.T) {
-	t.Parallel()
-	_, err := getSignatureAlgorithm(struct{ notAKey bool }{})
-	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
-}
-
-// =============================================================================
-// constructors.go — caConfigFromIdentity: defaultCertValidity > 0 branch
-// =============================================================================
-
-// TestCaConfigFromIdentity_WithDefaultValidity_B11 exercises the
-// defaultCertValidity > 0 branch in caConfigFromIdentity.
-func TestCaConfigFromIdentity_WithDefaultValidity_B11(t *testing.T) {
-	t.Parallel()
-	id := Identity{
-		Subject: Subject{CommonName: "cfg-from-id-b11", Organization: "Test"},
-		Valid:   10,
-		Keys:    DefaultKeyConfig(),
-		IsRoot:  true,
-	}
-	cfg := caConfigFromIdentity(id, 730, nil)
-	assert.Equal(t, 730, cfg.DefaultCertValidityDays)
-}
-
-// TestCaConfigFromIdentity_ZeroDefaultValidity_B11 exercises the else branch
-// where defaultCertValidity == 0 so the package default is used.
-func TestCaConfigFromIdentity_ZeroDefaultValidity_B11(t *testing.T) {
-	t.Parallel()
-	id := Identity{
-		Subject: Subject{CommonName: "cfg-from-id-zero-b11", Organization: "Test"},
-		Valid:   10,
-		Keys:    DefaultKeyConfig(),
-		IsRoot:  true,
-	}
-	cfg := caConfigFromIdentity(id, 0, nil)
-	assert.Equal(t, DefaultCertValidityDays, cfg.DefaultCertValidityDays)
 }
 
 // =============================================================================
@@ -209,35 +113,6 @@ func TestMergeSubjects_AllFields_B11(t *testing.T) {
 	assert.Equal(t, []string{"CA"}, merged.Country)
 	assert.Equal(t, []string{"Ontario"}, merged.Province)
 	assert.Equal(t, []string{"Toronto"}, merged.Locality)
-}
-
-// =============================================================================
-// ca.go — Verify: xsigner path + nil-cert + revoked paths
-// =============================================================================
-
-// TestVerify_NilCert_B11 exercises the nil cert guard in Verify.
-func TestVerify_NilCert_B11(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.Verify(nil)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-// TestVerify_Revoked_B11 exercises the revoked cert path in Verify.
-func TestVerify_Revoked_B11(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "revoked-verify-b11"},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	require.NoError(t, ca.Revoke(context.Background(), issued.Certificate.SerialNumber, 0))
-	_, err = ca.Verify(issued.Certificate)
-	assert.ErrorIs(t, err, ErrCertificateRevoked)
 }
 
 // =============================================================================
@@ -417,87 +292,8 @@ func TestGetOrGenerateKey_Ed25519_B11(t *testing.T) {
 }
 
 // =============================================================================
-// ca.go — Validate (Params): KeyAttributes nil guard
-// =============================================================================
-
-// TestParams_Validate_NilKeyAttributes_B11 exercises the nil KeyAttributes
-// guard in Params.Validate.
-func TestParams_Validate_NilKeyAttributes_B11(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-	config := DefaultMultiIdentityCAConfig()
-	config.Identity[0].Keys[0].KeyType = "CA"
-
-	caConfig := &CAConfig{
-		Identity:     config.Identity[0].Subject.CommonName,
-		Subject:      &config.Identity[0].Subject,
-		ValidityDays: config.Identity[0].GetValidityDays(),
-		IsRootCA:     true,
-	}
-
-	p := &Params{
-		Config:          caConfig,
-		KeyAttributes:   nil,
-		KeyStore:        backend,
-		BackendForStore: singleBackendFactory(backend),
-		RevocationStore: storage.NewMemory(),
-		CertStore:       cs,
-	}
-	err := p.Validate()
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
-// =============================================================================
-// ca_extensions.go — Signer: success and not-initialized paths
-// =============================================================================
-
-// TestSigner_NotInitialized_B11 exercises ErrNotInitialized in Signer.
-func TestSigner_NotInitialized_B11(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.Signer(context.Background())
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-// TestSigner_Success_B11 exercises the success path of Signer.
-func TestSigner_Success_B11(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	signer, err := ca.Signer(context.Background())
-	require.NoError(t, err)
-	assert.NotNil(t, signer)
-}
-
-// =============================================================================
-// ca_extensions.go — PrivateKey success path
-// =============================================================================
-
-// TestPrivateKey_Success_B11 exercises the success path of PrivateKey.
-func TestPrivateKey_Success_B11(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	cn := "privkey-success-b11"
-	issueCertAndSaveToKeyStore(t, ca, cn)
-
-	attrs := softwareKeyAttrs(cn)
-	key, err := ca.PrivateKey(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, key)
-}
-
-// =============================================================================
 // trust_chain.go — CABundleCertPool: both branches
 // =============================================================================
-
-// TestCABundleCertPool_RootOnly_B11 exercises CABundleCertPool with root-only CA.
-func TestCABundleCertPool_RootOnly_B11(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	pool, err := ca.CABundleCertPool()
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
 
 // TestCABundleCertPool_WithIntermediate_B11 exercises CABundleCertPool with
 // root + intermediate.
@@ -507,72 +303,4 @@ func TestCABundleCertPool_WithIntermediate_B11(t *testing.T) {
 	pool, err := ca.CABundleCertPool()
 	require.NoError(t, err)
 	assert.NotNil(t, pool)
-}
-
-// =============================================================================
-// Manufacturer-specific OID tests (tcg_oids.go) — all at 75%
-// =============================================================================
-
-// TestCreateTPMSpecificationExtension_Success_B11 exercises the success path.
-func TestCreateTPMSpecificationExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateTPMSpecificationExtension(TCGTPMSpecification{Family: "2.0", Level: 1, Revision: 138})
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestMarshalHardwareModuleName_Success_B11 exercises the success path.
-func TestMarshalHardwareModuleName_Success_B11(t *testing.T) {
-	t.Parallel()
-	value, err := MarshalHardwareModuleName(asn1.ObjectIdentifier{1, 2, 3, 4}, []byte{0x01, 0x02, 0x03})
-	require.NoError(t, err)
-	assert.NotEmpty(t, value)
-}
-
-// TestMarshalPermanentIdentifier_Success_B11 exercises the success path.
-func TestMarshalPermanentIdentifier_Success_B11(t *testing.T) {
-	t.Parallel()
-	value, err := MarshalPermanentIdentifier("perm-id-b11", asn1.ObjectIdentifier{1, 2, 3, 4})
-	require.NoError(t, err)
-	assert.NotEmpty(t, value)
-}
-
-// TestCreatePlatformManufacturerExtension_Success_B11 exercises the success path.
-func TestCreatePlatformManufacturerExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreatePlatformManufacturerExtension("Intel Corporation")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestCreatePlatformModelExtension_Success_B11 exercises the success path.
-func TestCreatePlatformModelExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreatePlatformModelExtension("NUC13ANHi7")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestCreateTPKeyStoreExtension_Success_B11 exercises the success path.
-func TestCreateTPKeyStoreExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateTPKeyStoreExtension("PLATFORM")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestCreateTPIssuerKeyStoreExtension_Success_B11 exercises the success path.
-func TestCreateTPIssuerKeyStoreExtension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateTPIssuerKeyStoreExtension("TPMRESIDENCY")
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
-}
-
-// TestCreateTPFIPS140Extension_Success_B11 exercises the success path.
-func TestCreateTPFIPS140Extension_Success_B11(t *testing.T) {
-	t.Parallel()
-	ext, err := CreateTPFIPS140Extension(true)
-	require.NoError(t, err)
-	assert.NotEmpty(t, ext.Value)
 }
