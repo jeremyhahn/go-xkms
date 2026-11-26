@@ -65,7 +65,7 @@ as `request_id` (`pkg/api/mcp/module_support.go:162`).
 ### Unified-server registration
 
 xkmsd registers the same module on its own embedded node
-(`qrdbsdk.WithModule`, `pkg/server/qrdb_node.go:229`). Each surface late-binds,
+(`qrdbserver.WithModule`, `pkg/server/qrdb_node.go:229`). Each surface late-binds,
 so registration can run before the XKMSService exists:
 
 - **gRPC.** `RegisterGRPC` attaches the whole `KeystoreService`
