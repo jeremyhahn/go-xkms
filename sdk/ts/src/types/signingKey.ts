@@ -72,3 +72,44 @@ export interface SignedCoRIM {
   key: SigningKeyResolution;
   corim: Base64;
 }
+
+/**
+ * Mirrors transport.SignImageRequest: an image to sign with the key its
+ * repository resolves to, as a DSSE in-toto attestation pushed to its
+ * registry.
+ */
+export interface SignImageRequest {
+  /** registry/repository[:tag][@digest]; its repository picks the key. */
+  reference: string;
+  /** The in-toto predicate type; cosign's when absent. */
+  predicate_type?: string;
+  /** The statement's predicate, a JSON value; optional only for cosign's type. */
+  predicate?: unknown;
+  /** Credentials the service pushes the attestation with; absent sends none. */
+  registry?: ImageRegistryCredentials;
+}
+
+/**
+ * Mirrors transport.ImageRegistryCredentials. The password is sent only to
+ * the service, which wipes it after the push.
+ */
+export interface ImageRegistryCredentials {
+  username: string;
+  password?: string;
+}
+
+/** Mirrors transport.SignedImage: the pushed attestation and its key. */
+export interface SignedImage {
+  key: SigningKeyResolution;
+  /** The signed manifest digest. */
+  digest: string;
+  /** The pushed DSSE envelope JSON. */
+  envelope: Base64;
+  /** The PEM code-signing certificate the tenant's CA issued for the key. */
+  certificate: Base64;
+  /** The OCI 1.1 referrer manifest digest holding the attestation. */
+  referrer: string;
+  referrer_indexed: boolean;
+  /** The cosign ".att" tag the attestation was added to. */
+  attestation_tag: string;
+}
