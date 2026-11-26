@@ -138,12 +138,12 @@ func TestAnswerCredentialChallenge_ECCEKUsesTheResolvedCertIndex(t *testing.T) {
 	assert.Equal(t, secret, got)
 }
 
-// TestAnswerCredentialChallenge_P384ConfigRecoversTheEKActuallyCreated: an
-// ECDSA P-384 EK config still makes a P-256 EK (CreateEK has only the P-256
-// ECCEKTemplate), so it gets no P-384 certificate index: provisioning its
-// certificate is refused, and with no persistent EK, activation recovers
-// the real EK from a certificate for its public key at the configured index.
-func TestAnswerCredentialChallenge_P384ConfigRecoversTheEKActuallyCreated(t *testing.T) {
+// TestAnswerCredentialChallenge_P384ConfigReadsTheP384CertIndex: an ECDSA
+// P-384 EK config on the default CertHandle discovers its certificate at
+// 0x01C00016 (TCG EK Credential Profile v2.1 §2.2.1.4), so a manufacturer's
+// certificate there reads back. CreateEK has only the P-256 ECCEKTemplate,
+// so provisioning a P-384 certificate is refused with ErrEKCertKeyType.
+func TestAnswerCredentialChallenge_P384ConfigReadsTheP384CertIndex(t *testing.T) {
 	h := newSimHarness(t, func(c *Config) {
 		c.EK.HierarchyAuth = nil
 		c.EK.CertHandle = ekCertIndexRSA2048
@@ -168,26 +168,34 @@ func TestAnswerCredentialChallenge_P384ConfigRecoversTheEKActuallyCreated(t *tes
 	der, err := x509.CreateCertificate(rand.Reader, template, template, ekPub, caKey)
 	require.NoError(t, err)
 
+	// Provisioning refuses the P-384 index: no EK template makes that key.
 	assert.ErrorIs(t, h.TPM.ProvisionEKCert(nil, der), ErrEKCertKeyType)
 	_, err = tpm2.NVReadPublic{NVIndex: tpm2.TPMHandle(ekCertIndexECCP384)}.Execute(h.TPM.transport)
-	assert.ErrorIs(t, err, tpmRCHandle, "nothing is written at the P-384 index")
+	assert.ErrorIs(t, err, tpmRCHandle, "provisioning writes nothing at the P-384 index")
 
-	require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil, der))
+	// A certificate the manufacturer put at the P-384 index is still found,
+	// and the unrelated one at the configured RSA index is never read.
+	unrelated := createTestCertDER(t)
+	require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(ekCertIndexRSA2048), nil, unrelated))
+	require.NoError(t, h.TPM.writeCertToNVRAM(tpm2.TPMHandle(ekCertIndexECCP384), nil, der))
+	got, err := h.TPM.EKCertificate()
+	require.NoError(t, err)
+	assert.Equal(t, der, got.Raw, "EKCertificate reads the P-384 index")
+
 	evictPersistentEK(t, h.TPM)
 	h.TPM.ekAttrs = nil
-
 	ekAttrs, err := h.TPM.EKAttributes()
 	require.NoError(t, err)
-	assert.Equal(t, tpm2.TPMHandle(ekCertIndexRSA2048), ekAttrs.TPMAttributes.CertHandle)
+	assert.Equal(t, tpm2.TPMHandle(ekCertIndexECCP384), ekAttrs.TPMAttributes.CertHandle)
 
+	// Recovery has no transient template for a high-range index, so it is
+	// refused typed instead of activating with another certificate.
 	key, err := h.TPM.CreateActivationKey()
 	require.NoError(t, err)
-	challenge, secret, err := NewCredentialChallenge(ekPub, key.Name.Buffer)
+	challenge, _, err := NewCredentialChallenge(ekPub, key.Name.Buffer)
 	require.NoError(t, err)
-
-	got, err := h.TPM.AnswerCredentialChallenge(key, challenge)
-	require.NoError(t, err)
-	assert.Equal(t, secret, got)
+	_, err = h.TPM.AnswerCredentialChallenge(key, challenge)
+	assert.ErrorIs(t, err, ErrEKTemplateUnsupported)
 }
 
 // TestAnswerCredentialChallenge_NonPersistentEK_NoCertInNV proves a missing
