@@ -307,6 +307,17 @@ The FIDO2 methods are documented in the [BLE Protocol Specification](../ble/prot
 | -32039 | `ErrorCodeSyncNotApproved` |
 | -32040 | `ErrorCodeMessageTooLarge` |
 
+### `local.verifyUser` Refusals
+
+`pkg/pairingproto/verify_user.go:202-210`; a user who cancels the prompt is
+`-32001` `ErrorCodeUserCancelled`.
+
+| Code | Constant |
+|------|----------|
+| -32041 | `ErrorCodeVerifyUserNotEnrolled` |
+| -32042 | `ErrorCodeVerifyUserLockout` |
+| -32043 | `ErrorCodeNotPaired` |
+
 ---
 
 ## Message Flow Examples
