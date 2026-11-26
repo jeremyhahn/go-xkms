@@ -33,18 +33,23 @@ func TestSealUnseal_ConcurrentCallers_Simulator(t *testing.T) {
 	const callers = 8
 	var wg sync.WaitGroup
 	errc := make(chan error, callers)
+	sealAttrs := make([]*types.KeyAttributes, callers)
+	unsealAttrs := make([]*types.KeyAttributes, callers)
+	for i := range callers {
+		cn := fmt.Sprintf("concurrent-seal-%d", i)
+		sealAttrs[i] = sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword))
+		unsealAttrs[i] = sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword))
+	}
 	for i := range callers {
 		wg.Go(func() {
 			cn := fmt.Sprintf("concurrent-seal-%d", i)
 			want := bytes.Repeat([]byte{byte(i + 1)}, 32)
-			attrs := sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword))
-			sealed, err := h.TPM.Seal(ctx, want, &types.SealOptions{KeyAttributes: attrs})
+			sealed, err := h.TPM.Seal(ctx, want, &types.SealOptions{KeyAttributes: sealAttrs[i]})
 			if err != nil {
 				errc <- fmt.Errorf("%s: Seal: %w", cn, err)
 				return
 			}
-			attrs = sealedKeyAttrs(t, h, cn, false, mustPassword(t, objectPassword))
-			got, err := h.TPM.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: attrs})
+			got, err := h.TPM.Unseal(ctx, sealed, &types.UnsealOptions{KeyAttributes: unsealAttrs[i]})
 			if err != nil {
 				errc <- fmt.Errorf("%s: Unseal: %w", cn, err)
 				return
