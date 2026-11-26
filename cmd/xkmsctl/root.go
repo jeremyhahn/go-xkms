@@ -17,7 +17,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 
@@ -73,15 +72,6 @@ Supported backends:
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		// Cobra checks required flags and flag groups only after this hook,
-		// so check them here first: their errors are usage errors.
-		if err := cmd.ValidateRequiredFlags(); err != nil {
-			return err
-		}
-		if err := cmd.ValidateFlagGroups(); err != nil {
-			return err
-		}
-		commandStarted = true
 		globalConfig.PKCS11PIN = pkcs11PINSecret(cmd.Context(), pkcs11PINFlag)
 		return nil
 	},
@@ -116,35 +106,6 @@ func Execute() error {
 		return errors.Join(initErrors...)
 	}
 	return rootCmd.Execute()
-}
-
-// commandStarted records that rootCmd.PersistentPreRunE passed its flag
-// checks. Cobra parses flags and checks arguments before that hook, and the
-// hook checks required flags and flag groups before setting it, so an error
-// returned while it is false is a usage error and one after it is a runtime
-// error.
-var commandStarted bool
-
-// run executes rootCmd with args and reports any returned error on stderr.
-// rootCmd silences Cobra's own error and usage output, so this is the one
-// place a returned error is printed; usage errors also get a pointer to the
-// command's --help. It returns the process exit code.
-func run(args []string, stderr io.Writer) int {
-	commandStarted = false
-	if len(initErrors) > 0 {
-		_, _ = fmt.Fprintf(stderr, "Error: %v\n", errors.Join(initErrors...))
-		return 1
-	}
-	rootCmd.SetArgs(args)
-	cmd, err := rootCmd.ExecuteC()
-	if err == nil {
-		return 0
-	}
-	_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
-	if !commandStarted && cmd != nil {
-		_, _ = fmt.Fprintf(stderr, "Run '%s --help' for usage.\n", cmd.CommandPath())
-	}
-	return 1
 }
 
 func init() {
