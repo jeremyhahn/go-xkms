@@ -15,6 +15,9 @@ package ca
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -218,6 +221,72 @@ func newPKCS8CABackend(t *testing.T) (xkms.Backend, storage.Backend) {
 	return backend, keyStorage
 }
 
+// sharedParentBackend attaches one shared parent KeyAttributes to every
+// Signer lookup that has none, the way the TPM 2.0 backend attaches its
+// b.srkAttrs. The parent and its password belong to the backend, not to the
+// CA lookup that triggered the call.
+type sharedParentBackend struct {
+	xkms.Backend
+	parent *types.KeyAttributes
+}
+
+func (b *sharedParentBackend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypto.Signer, error) {
+	if attrs != nil && attrs.Parent == nil {
+		attrs.Parent = b.parent
+	}
+	return b.Backend.Signer(ctx, attrs)
+}
+
+// TestCA_PasswordCleanupKeepsBackendParentPassword proves the CA clears only
+// the passwords its own key lookup allocated: a parent password the backend
+// attached (shared across lookups, like the TPM SRK's) stays readable after
+// the issuing signer is taken and after each Sign.
+func TestCA_PasswordCleanupKeepsBackendParentPassword(t *testing.T) {
+	ctx := context.Background()
+	inner, _ := newPKCS8CABackend(t)
+	parentPassword, err := types.NewPassword([]byte("backend-parent-password"))
+	require.NoError(t, err)
+	backend := &sharedParentBackend{
+		Backend: inner,
+		parent:  &types.KeyAttributes{CN: "backend-parent", Password: parentPassword},
+	}
+	assertParentReadable := func(step string) {
+		t.Helper()
+		var got []byte
+		require.NoError(t, parentPassword.WithBytes(func(b []byte) error {
+			got = append([]byte(nil), b...)
+			return nil
+		}), "%s: the backend's parent password must stay readable", step)
+		require.Equal(t, "backend-parent-password", string(got),
+			"%s: the CA cleared a parent password it does not own", step)
+	}
+
+	root := passwordProtectedIdentity(t, rootIdentity("Backend Parent CA"), "ca-key-password")
+	trusted, err := NewParentCA(&Params{
+		Identity:           []Identity{root},
+		KeyStore:           backend,
+		BackendForStore:    singleBackendFactory(backend),
+		RevocationStore:    storage.NewMemory(),
+		CertStore:          newInMemoryCertStore(t),
+		RequireKeyPassword: true,
+	})
+	require.NoError(t, err)
+	require.NoError(t, trusted.Init(ctx))
+	assertParentReadable("Init")
+	ca, ok := trusted.(*CA)
+	require.True(t, ok, "NewParentCA must return a *CA")
+
+	signer, err := ca.getSigner(ctx)
+	require.NoError(t, err)
+	assertParentReadable("getSigner")
+	digest := sha256.Sum256([]byte("backend parent"))
+	for i := 0; i < 2; i++ {
+		_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+		require.NoError(t, err)
+		assertParentReadable(fmt.Sprintf("Sign %d", i+1))
+	}
+}
+
 // TestCA_RequireKeyPassword_ConfiguredPasswordInitializes covers #1768: the
 // constructors rebuild the CA identity from the flat CAConfig, and that
 // rebuild must carry the configured key password so a RequireKeyPassword CA
@@ -321,59 +390,50 @@ func TestCarryKeyPassword_NoPasswordLeavesIdentityUnchanged(t *testing.T) {
 	assert.NoError(t, carryKeyPassword(ctx, &noKeys, &types.KeyAttributes{Password: pw}), "an identity without keys is a no-op")
 }
 
-// unreadablePassword is a Password whose secret cannot be retrieved: Bytes
-// returns nil and WithBytes reports the retrieval error without calling fn,
-// as a platform password does when unsealing fails.
-type unreadablePassword struct {
-	err error
-}
+// errUnreadablePassword is the retrieval failure failingPassword reports.
+var errUnreadablePassword = errors.New("password retrieval failed")
 
-func (p unreadablePassword) Bytes() []byte { return nil }
+// failingPassword models a Password whose retrieval fails (a TPM unseal
+// failure of PlatformPassword, a RequiredPassword placeholder): Bytes returns
+// nil, exactly as for an empty password, and only WithBytes exposes the error.
+type failingPassword struct{}
 
-func (p unreadablePassword) WithBytes(func([]byte) error) error { return p.err }
+func (failingPassword) Bytes() []byte                      { return nil }
+func (failingPassword) WithBytes(func([]byte) error) error { return errUnreadablePassword }
+func (failingPassword) String() string                     { return types.PasswordRedacted }
+func (failingPassword) Clear()                             {}
 
-func (p unreadablePassword) String() string { return types.PasswordRedacted }
-
-func (p unreadablePassword) Clear() {}
-
-// TestCA_UnreadableKeyPassword_FailsConstruction verifies that a configured
-// key password which cannot be read fails CA construction with the retrieval
-// error, instead of building the identity with no password (which would let a
-// later initialization persist an unencrypted CA key).
-func TestCA_UnreadableKeyPassword_FailsConstruction(t *testing.T) {
+// TestCA_New_UnreadableKeyPasswordFails proves that a CA whose configured key
+// password cannot be read fails construction instead of building an identity
+// without a password, which Init would then persist as a plaintext key.
+func TestCA_New_UnreadableKeyPasswordFails(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	errUnavailable := errors.New("password unavailable")
 
-	t.Run("carryKeyPassword", func(t *testing.T) {
-		t.Parallel()
-		id := rootIdentity("Unreadable PW CA")
-		err := carryKeyPassword(ctx, &id, &types.KeyAttributes{Password: unreadablePassword{err: errUnavailable}})
-		require.ErrorIs(t, err, errUnavailable)
-		assert.Nil(t, id.Keys[0].Password, "no password may land on the identity")
+	id := rootIdentity("Unreadable Password CA")
+	require.ErrorIs(t, carryKeyPassword(ctx, &id, &types.KeyAttributes{Password: failingPassword{}}), errUnreadablePassword)
+	assert.Nil(t, id.Keys[0].Password, "no password may be carried from a failed read")
+
+	keyAttrs, err := (&Identity{
+		Subject: Subject{CommonName: "Unreadable Password CA"},
+		Keys:    rootIdentity("Unreadable Password CA").Keys,
+	}).ToKeyAttributes(ctx)
+	require.NoError(t, err)
+	keyAttrs.Password = failingPassword{}
+
+	instance, err := New(&Params{
+		Config: &CAConfig{
+			Identity:  "Unreadable Password CA",
+			Subject:   &Subject{CommonName: "Unreadable Password CA"},
+			IsRootCA:  true,
+			StoreType: types.StoreSoftware,
+		},
+		KeyAttributes:   keyAttrs,
+		KeyStore:        newInMemoryBackend(t),
+		BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
+		RevocationStore: storage.NewMemory(),
+		CertStore:       newInMemoryCertStore(t),
 	})
-
-	t.Run("New", func(t *testing.T) {
-		t.Parallel()
-		root := rootIdentity("Unreadable PW New CA")
-		keyAttrs, err := root.ToKeyAttributes(ctx)
-		require.NoError(t, err)
-		keyAttrs.Password = unreadablePassword{err: errUnavailable}
-
-		instance, err := New(&Params{
-			Config: &CAConfig{
-				Identity:  "Unreadable PW New CA",
-				Subject:   &Subject{CommonName: "Unreadable PW New CA"},
-				IsRootCA:  true,
-				StoreType: types.StoreSoftware,
-			},
-			KeyAttributes:   keyAttrs,
-			KeyStore:        newInMemoryBackend(t),
-			BackendForStore: singleBackendFactory(newInMemoryBackend(t)),
-			RevocationStore: storage.NewMemory(),
-			CertStore:       newInMemoryCertStore(t),
-		})
-		require.ErrorIs(t, err, errUnavailable)
-		assert.Nil(t, instance, "no CA may be built without its configured password")
-	})
+	require.ErrorIs(t, err, errUnreadablePassword, "construction must fail when the key password cannot be read")
+	assert.Nil(t, instance)
 }

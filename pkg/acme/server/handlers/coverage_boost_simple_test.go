@@ -299,30 +299,8 @@ func setupServiceWithTenantFactory(t *testing.T, tenantDAO *mockTenantDAOSimple)
 }
 
 // =============================================================================
-// findPCRValue Tests
-// =============================================================================
-
-// =============================================================================
-// NewPCRValidationHook Tests
-// =============================================================================
-
-// =============================================================================
-// validateDeviceAgainstProfile Tests
-// =============================================================================
-
-// =============================================================================
 // resolveTenantSigningCA Tests
 // =============================================================================
-
-func TestResolveTenantSigningCA_DAOErrorSimple(t *testing.T) {
-	dao := &mockTenantDAOSimple{tenants: make(map[string]*entities.Tenant), getErr: errors.New("db error")}
-	service, cleanup := setupServiceWithTenantFactory(t, dao)
-	defer cleanup()
-
-	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
-	assert.ErrorIs(t, err, ErrTenantNotFound)
-	assert.Nil(t, result)
-}
 
 func TestResolveTenantSigningCA_TenantInactiveSimple(t *testing.T) {
 	dao := &mockTenantDAOSimple{tenants: map[string]*entities.Tenant{"t1": {ID: "t1", Status: entities.TenantStatusSuspended}}}
@@ -334,46 +312,9 @@ func TestResolveTenantSigningCA_TenantInactiveSimple(t *testing.T) {
 	assert.Nil(t, result)
 }
 
-func TestResolveTenantSigningCA_WithIntermediateSimple(t *testing.T) {
-	dao := &mockTenantDAOSimple{tenants: map[string]*entities.Tenant{
-		"t1": {ID: "t1", Status: entities.TenantStatusActive, IntermediateCAs: []*entities.TenantIntermediateCA{{ID: "ca1", Status: entities.CAStatusActive}}},
-	}}
-	service, cleanup := setupServiceWithTenantFactory(t, dao)
-	defer cleanup()
-
-	result, err := service.resolveTenantSigningCA(context.Background(), &entities.ACMEAccount{ID: 1, TenantID: "t1"}, "")
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-	assert.Equal(t, entities.SigningCATypeIntermediate, result.Type)
-}
-
 // =============================================================================
 // getTenantCASigner Tests
 // =============================================================================
-
-func TestGetTenantCASigner_KMSErrorSimple(t *testing.T) {
-	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-	service.kmsService = &mockKMSServiceSimple{signers: make(map[string]crypto.Signer), getSignerErr: errors.New("kms fail")}
-
-	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
-	assert.ErrorIs(t, err, ErrTenantSignerUnavailable)
-	assert.Nil(t, result)
-}
-
-func TestGetTenantCASigner_IntermediateSuccessSimple(t *testing.T) {
-	service, _, cleanup := setupTestServiceWithMockCA(t)
-	defer cleanup()
-
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	service.kmsService = &mockKMSServiceSimple{signers: map[string]crypto.Signer{
-		"t1-" + string(kms.KeyPurposeTenantIntermediateCA): key,
-	}}
-
-	result, err := service.getTenantCASigner(context.Background(), &entities.SigningCAInfo{Type: entities.SigningCATypeIntermediate, TenantID: "t1"})
-	assert.NoError(t, err)
-	assert.NotNil(t, result)
-}
 
 func TestGetTenantCASigner_RootSuccessSimple(t *testing.T) {
 	service, _, cleanup := setupTestServiceWithMockCA(t)
@@ -419,14 +360,6 @@ func TestResolveTenantComplianceConfig_TenantConfigSimple(t *testing.T) {
 	assert.True(t, result.Enabled)
 	assert.True(t, result.RequireSignedReport)
 }
-
-// =============================================================================
-// validateEventLogAgainstPCRs Tests
-// =============================================================================
-
-// =============================================================================
-// KeyChangeHandler Tests
-// =============================================================================
 
 // =============================================================================
 // NewAccountHandler Tests

@@ -76,11 +76,6 @@ func newOTAImageRESTServer(t *testing.T) *Transport {
 		case "sign":
 			require.Equal(t, []byte("image"), body.Data)
 			writeOTAJSON(t, w, http.StatusOK, transport.SignResponse{Signature: []byte("sig"), KeyVersion: 2})
-		case "export":
-			writeOTAJSON(t, w, http.StatusOK, transport.ExportOTAImageKeyResponse{
-				BoardID: board, KeyID: "ota-image-" + board, KeyVersion: 2, Algorithm: "ES256",
-				PublicKey: []byte("x||y"), COSEKey: []byte("cose"),
-			})
 		default:
 			http.NotFound(w, r)
 		}
@@ -113,17 +108,6 @@ func TestOTAImageKey_REST(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte("sig"), signed.Signature)
 	assert.Equal(t, uint32(2), signed.KeyVersion)
-
-	exported, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: "cm4"})
-	require.NoError(t, err)
-	assert.Equal(t, &transport.ExportOTAImageKeyResponse{
-		BoardID:    "cm4",
-		KeyID:      "ota-image-cm4",
-		KeyVersion: 2,
-		Algorithm:  "ES256",
-		PublicKey:  []byte("x||y"),
-		COSEKey:    []byte("cose"),
-	}, exported, "every field crosses the wire")
 }
 
 func TestOTAImageKey_REST_ExportPublicKey(t *testing.T) {
@@ -156,10 +140,6 @@ func TestOTAImageKey_REST_InvalidBoard(t *testing.T) {
 		},
 		"sign": func() error {
 			_, err := tr.SignOTAImage(ctx, &transport.OTAImageSignRequest{Backend: "software", BoardID: otaBadBoard, Data: []byte("image")})
-			return err
-		},
-		"export": func() error {
-			_, err := tr.ExportOTAImageKey(ctx, &transport.OTAImageKeyRequest{Backend: "software", BoardID: otaBadBoard})
 			return err
 		},
 	}

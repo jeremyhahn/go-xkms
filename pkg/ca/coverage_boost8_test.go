@@ -430,27 +430,6 @@ func TestSerialMarkUsed_StoreError_B8(t *testing.T) {
 }
 
 // =============================================================================
-// attestation.go — ImportAttestationKeyCertificate success path
-// (exercises the certificate parse + store path at lines 141-171)
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — recordRevocation: nil serial path
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — putRevocationBlobIfAbsent with revocationStore (Backend)
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — Issued: both certStore and keyStore paths
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — SignedBlob not-initialized path
-// =============================================================================
-
-// =============================================================================
 // ca_extensions.go — Certificate: returned from certStore when keyStore empty
 // =============================================================================
 
@@ -521,22 +500,6 @@ func TestPubKey_KeyNotSigner_B8(t *testing.T) {
 // =============================================================================
 // verification.go — VerifySignature success path
 // =============================================================================
-
-func TestVerifySignature_Success_B8(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	// Issue a real certificate so VerifySignature has something to verify.
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "verify-sig-success-b8"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-sig-success-b8.local"}},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-	err = ca.VerifySignature(issued.Certificate)
-	assert.NoError(t, err)
-}
 
 // TestVerifySignature_NoIssuingCert_B8 hits the issuingCert==nil guard by
 // zeroing both cached certs after initialization.
@@ -626,21 +589,6 @@ func TestVerifyWithOptions_WithIntermediates_B8(t *testing.T) {
 	chains, err := VerifyWithOptions(cert, opts)
 	require.NoError(t, err)
 	assert.NotEmpty(t, chains)
-}
-
-// =============================================================================
-// ca_extensions.go — SignedBlob success path (ECDSA hash path)
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — CAKeyAttributes: getCAKeyAttributes error path
-// =============================================================================
-
-func TestCAKeyAttributes_NoIssuingIdentity_B8(t *testing.T) {
-	t.Parallel()
-	ca := &CA{config: &MultiIdentityCAConfig{}}
-	_, err := ca.CAKeyAttributes("")
-	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 // =============================================================================

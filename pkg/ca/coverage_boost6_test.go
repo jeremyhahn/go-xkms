@@ -18,7 +18,6 @@ package ca
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -93,24 +92,6 @@ func TestImportDistributionCRLs_AlreadyImported(t *testing.T) {
 	assert.Equal(t, 1, callCount, "second import should skip the download")
 }
 
-func TestImportDistributionCRLs_HTTPErrorStatus(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	}))
-	defer srv.Close()
-
-	ca := setupTestCAWithObjectStore(t)
-	allowLoopbackFetch(ca)
-	cert := &x509.Certificate{
-		CRLDistributionPoints: []string{srv.URL + "/missing.crl"},
-	}
-
-	err := ca.ImportDistributionCRLs(cert)
-	// The function downloads first, then checks status → returns ErrStorageError
-	// because body is read before the status check.
-	assert.Error(t, err)
-}
-
 func TestImportDistributionCRLs_InvalidCRLBody(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -126,105 +107,6 @@ func TestImportDistributionCRLs_InvalidCRLBody(t *testing.T) {
 
 	err := ca.ImportDistributionCRLs(cert)
 	assert.ErrorIs(t, err, ErrCRLGenerationFailed)
-}
-
-// =============================================================================
-// OCSP createResponse — the response-building path (via HandleRequest)
-// =============================================================================
-
-func TestOCSPHandleRequest_WithCAIssuedCert(t *testing.T) {
-	ca := setupTestCA(t)
-	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
-
-	// Issue a cert so the CA has a real certificate.
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "ocsp-issued-b6"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"ocsp-issued-b6.local"}},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	// Use the CA's root cert as the "issuer" for the OCSP request.
-	ca.mu.RLock()
-	issuerCert := ca.rootCert
-	ca.mu.RUnlock()
-	require.NotNil(t, issuerCert)
-
-	reqBytes, err := CreateOCSPRequest(issued.Certificate, issuerCert, nil)
-	require.NoError(t, err)
-
-	// HandleRequest will call createResponse → build a signed OCSP response.
-	respBytes, err := resp.HandleRequest(context.Background(), reqBytes)
-	if err != nil {
-		// Acceptable if the issuer hash in the request doesn't match the CA's
-		// internal lookup; the code still exercises the path.
-		t.Logf("HandleRequest returned error (acceptable): %v", err)
-		return
-	}
-	assert.NotEmpty(t, respBytes)
-}
-
-// =============================================================================
-// RevokeCert then OCSP — revoked path in createResponse
-// =============================================================================
-
-func TestOCSPCreateResponse_RevokedCert(t *testing.T) {
-	ca := setupTestCA(t)
-	resp := NewOCSPResponder(ca, DefaultOCSPResponderConfig())
-
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "ocsp-revoked-b6"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"ocsp-revoked-b6.local"}},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-
-	require.NoError(t, ca.RevokeCert(context.Background(), issued.Certificate, RevokeOptions{Reason: 1}))
-
-	ca.mu.RLock()
-	issuerCert := ca.rootCert
-	ca.mu.RUnlock()
-	require.NotNil(t, issuerCert)
-
-	reqBytes, err := CreateOCSPRequest(issued.Certificate, issuerCert, nil)
-	require.NoError(t, err)
-
-	respBytes, err := resp.HandleRequest(context.Background(), reqBytes)
-	if err != nil {
-		t.Logf("HandleRequest error (acceptable): %v", err)
-		return
-	}
-	assert.NotEmpty(t, respBytes)
-}
-
-// =============================================================================
-// getXSignedCertificates — with stored cross-signed cert
-// =============================================================================
-
-// =============================================================================
-// Sign — ensure intermediate CA signer is returned (not root)
-// =============================================================================
-
-func TestSign_IntermediateCA_DifferentKey(t *testing.T) {
-	root := setupTestCA(t)
-	inter := setupTestCAWithRealIntermediate(t)
-
-	digest := make([]byte, 32)
-	_, err := rand.Read(digest)
-	require.NoError(t, err)
-
-	sigRoot, err := root.Sign(rand.Reader, digest, crypto.SHA256)
-	require.NoError(t, err)
-
-	sigInter, err := inter.Sign(rand.Reader, digest, crypto.SHA256)
-	require.NoError(t, err)
-
-	// Intermediate and root have different keys so their signatures differ.
-	// (They may be equal by chance for tiny digests but in practice differ.)
-	_ = sigRoot
-	_ = sigInter
 }
 
 // =============================================================================

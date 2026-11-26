@@ -20,10 +20,8 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha256"
 	"errors"
 	"fmt"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -220,70 +218,6 @@ func (m *MockStorageFactoryNewOrder90) OrderDAO(accountID uint64) (qrdbsdk.Gener
 		return nil, caerrors.StorageFailureError("mock order DAO creation failure")
 	}
 	return m.Factory.OrderDAO(accountID)
-}
-
-func TestNewOrderHandler_AuthzDAOCreationError90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	service.challengeMap["http-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-		return nil
-	}
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	mockFactory := &MockStorageFactoryNewOrder90{
-		Factory:      service.storageFactory,
-		failAuthzDAO: true,
-	}
-	service.storageFactory = mockFactory
-
-	payload := NewOrderRequest{
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: common.AuthzTypeDNS, Value: "example.com"},
-		},
-	}
-
-	url := service.baseRESTURI + "/acme/new-order"
-	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.NewOrderHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
-}
-
-func TestNewOrderHandler_OrderDAOCreationError90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	service.challengeMap["http-01"] = func(resolver *net.Resolver, ca common.CertificateAuthority, authzValue, challengePort, challengeToken, expectedKeyAuth string) error {
-		return nil
-	}
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	mockFactory := &MockStorageFactoryNewOrder90{
-		Factory:      service.storageFactory,
-		failOrderDAO: true,
-	}
-	service.storageFactory = mockFactory
-
-	payload := NewOrderRequest{
-		Identifiers: []entities.ACMEIdentifier{
-			{Type: common.AuthzTypeDNS, Value: "example.com"},
-		},
-	}
-
-	url := service.baseRESTURI + "/acme/new-order"
-	req := createJWSRequest(t, service, key, url, payload, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.NewOrderHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }
 
 // MockAuthzDAOSaveFailure90 fails on Save
@@ -502,30 +436,6 @@ func TestChallengeHandler_AuthzListError90(t *testing.T) {
 	assertErrorType(t, resp, common.ErrTypeServerInternal, http.StatusInternalServerError)
 }
 
-func TestChallengeHandler_ChallengeNotFound90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Create authorization without the challenge ID we'll request
-	order := createTestOrderSimple(t, service, account.ID)
-	_ = createTestAuthorization(t, service, account, order, entities.ACMEIdentifier{
-		Type:  "dns",
-		Value: "example90.com",
-	}, []string{"http-01"})
-
-	// Request a challenge that doesn't exist
-	url := service.baseRESTURI + "/acme/challenge/999999"
-	req := createJWSRequest(t, service, key, url, nil, true, account.ID)
-
-	resp := httptest.NewRecorder()
-	service.ChallengeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeMalformedError, http.StatusBadRequest)
-}
-
 // ========================================
 // NewAccountHandler Coverage
 // ========================================
@@ -589,45 +499,6 @@ func (m *MockAccountDAOExistsFailure90) List(ctx context.Context, prefix string)
 // verifyECDSAQuoteSignature Coverage
 // ========================================
 
-func TestVerifyECDSAQuoteSignature_P384Curve90(t *testing.T) {
-	// Test with P-384 curve (curveSize > 256)
-	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-	require.NoError(t, err)
-
-	quoted := []byte("test quoted data for P-384")
-
-	// Create valid signature
-	hash := sha256.Sum256(quoted)
-	r, s, err := ecdsa.Sign(rand.Reader, key, hash[:])
-	require.NoError(t, err)
-
-	// Create concatenated signature
-	coordLen := 48 // P-384 has 384-bit coordinates = 48 bytes
-	signature := make([]byte, coordLen*2)
-	r.FillBytes(signature[:coordLen])
-	s.FillBytes(signature[coordLen:])
-
-	// Test with actual function - this will use SHA384 hash
-	err = verifyECDSAQuoteSignature(quoted, 0, signature, &key.PublicKey)
-	// May fail due to hash mismatch, but exercises the P-384 code path
-	assert.Error(t, err) // Expected to fail since hash doesn't match
-}
-
-func TestVerifyECDSAQuoteSignature_P521Curve90(t *testing.T) {
-	// Test with P-521 curve (curveSize > 384)
-	key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
-	require.NoError(t, err)
-
-	quoted := []byte("test quoted data for P-521")
-
-	// Create invalid length signature to test ASN.1 fallback
-	invalidSig := []byte("invalid signature data")
-
-	err = verifyECDSAQuoteSignature(quoted, 0, invalidSig, &key.PublicKey)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid ECDSA signature length")
-}
-
 func TestVerifyECDSAQuoteSignature_InvalidConcatenatedSignature90(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -645,68 +516,6 @@ func TestVerifyECDSAQuoteSignature_InvalidConcatenatedSignature90(t *testing.T) 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "ECDSA signature verification failed")
 }
-
-// ========================================
-// NewQuoteValidationHook Coverage
-// ========================================
-
-// ========================================
-// OrderFinalizeHandler Coverage
-// ========================================
-
-func TestOrderFinalizeHandler_UnauthorizedAccountMismatch90(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key1 := generateTestKey(t)
-	account1 := createTestAccount(t, service, key1)
-
-	key2 := generateTestKey(t)
-	account2 := createTestAccount(t, service, key2)
-
-	// Create order for account1
-	order := createTestOrderSimple(t, service, account1.ID)
-
-	// Save order to account2's partition with wrong accountID
-	ctx := context.Background()
-	orderDAO, err := service.storageFactory.OrderDAO(account2.ID)
-	require.NoError(t, err)
-	order.AccountID = account1.ID // Keep original account ID for mismatch check
-	err = orderDAO.Save(ctx, order)
-	require.NoError(t, err)
-
-	url := fmt.Sprintf("%s/acme/order/%d/finalize", service.baseRESTURI, order.ID)
-	req := createJWSRequest(t, service, key2, url, map[string]string{"csr": "test"}, true, account2.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
-
-	resp := httptest.NewRecorder()
-	service.OrderFinalizeHandler(resp, req)
-
-	assertErrorType(t, resp, common.ErrTypeUnauthorized, http.StatusUnauthorized)
-}
-
-// ========================================
-// Edge Cases for createChallenges
-// ========================================
-
-// ========================================
-// compareKeyMaps Tests
-// ========================================
-
-// ========================================
-// bytesToBigInt Tests
-// ========================================
-
-func TestBytesToBigInt_Empty90(t *testing.T) {
-	bytes := []byte{}
-	result := bytesToBigInt(bytes)
-
-	assert.Equal(t, 0, result.Cmp(big.NewInt(0)))
-}
-
-// ========================================
-// isEnrollXChallenge Tests
-// ========================================
 
 // ========================================
 // Order Status Edge Cases

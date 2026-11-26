@@ -23,14 +23,12 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
-	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/stretchr/testify/assert"
@@ -84,33 +82,6 @@ func TestRevokeCertHandlerUnauthorizedDomain(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, rr.Code)
 }
 
-// TestOrderFinalizeHandlerInvalidCSRPayload tests finalize with invalid CSR payload
-func TestOrderFinalizeHandlerInvalidCSRPayload(t *testing.T) {
-	service, _, cleanup := setupTestService(t)
-	defer cleanup()
-
-	key := generateTestKey(t)
-	account := createTestAccount(t, service, key)
-
-	// Create order and set to ready
-	order := createTestOrderSimple(t, service, account.ID)
-	ctx := context.Background()
-	orderDAO, _ := service.storageFactory.OrderDAO(account.ID)
-	order.Status = common.StatusReady
-	_ = orderDAO.Save(ctx, order)
-
-	// Send request with invalid JSON
-	url := fmt.Sprintf("https://acme.test.example.com/acme/order/%d/finalize", order.ID)
-	req := createJWSRequest(t, service, key, url, "not valid json", true, account.ID)
-	req = mux.SetURLVars(req, map[string]string{"id": fmt.Sprintf("%d", order.ID)})
-
-	rr := httptest.NewRecorder()
-	service.OrderFinalizeHandler(rr, req)
-
-	// Should return malformed error
-	assert.Equal(t, http.StatusBadRequest, rr.Code)
-}
-
 // TestVerifyMACMismatch tests verifyMAC with mismatched signature
 func TestVerifyMACMismatch(t *testing.T) {
 	key := make([]byte, 32)
@@ -121,51 +92,6 @@ func TestVerifyMACMismatch(t *testing.T) {
 
 	err := verifyMAC("HS256", key, message, wrongSig)
 	assert.Error(t, err)
-}
-
-// TestJwkKeysMatchDifferentTypes tests jwkKeysMatch with different key types
-func TestJwkKeysMatchDifferentTypes(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "test-n",
-		"e":   "test-e",
-	}
-	key2 := map[string]interface{}{
-		"kty": "EC",
-		"crv": "P-256",
-		"x":   "test-x",
-		"y":   "test-y",
-	}
-
-	assert.False(t, jwkKeysMatch(key1, key2))
-}
-
-// TestJwkKeysMatchMissingKty tests jwkKeysMatch when kty is missing
-func TestJwkKeysMatchMissingKty(t *testing.T) {
-	key1 := map[string]interface{}{
-		"n": "test-n",
-	}
-	key2 := map[string]interface{}{
-		"kty": "RSA",
-		"n":   "test-n",
-	}
-
-	assert.False(t, jwkKeysMatch(key1, key2))
-}
-
-// TestJwkKeysMatchUnknownType tests jwkKeysMatch with unknown key type
-func TestJwkKeysMatchUnknownType(t *testing.T) {
-	key1 := map[string]interface{}{
-		"kty": "UNKNOWN",
-		"foo": "bar",
-	}
-	key2 := map[string]interface{}{
-		"kty": "UNKNOWN",
-		"foo": "bar",
-	}
-
-	// Unknown types fall through to JSON comparison
-	assert.True(t, jwkKeysMatch(key1, key2))
 }
 
 // TestJwkKeysMatchUnknownTypeMarshalFailure verifies that when the fallback

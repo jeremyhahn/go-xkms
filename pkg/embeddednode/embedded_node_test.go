@@ -18,6 +18,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -156,6 +158,56 @@ func TestEmbeddedNodeStorageConfig_PinsClusterTrustDomain(t *testing.T) {
 	}}
 	qcfg = EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{})
 	assert.Equal(t, "example.org", qcfg.Auth.ClusterTrustDomain)
+}
+
+// A relative datastore path (the webauthn-browser harness uses
+// "./.runtime/storage") must reach qrdb as an absolute path: qrdb refuses a
+// relative volume pool path, and without the default pool registration has
+// nowhere to write (ruling 1009).
+func TestEmbeddedNodeStorageConfig_ResolvesRelativeDatastorePath(t *testing.T) {
+	const rel = "./.runtime/storage"
+	abs, err := filepath.Abs(rel)
+	require.NoError(t, err)
+
+	cfg := &config.Config{}
+	cfg.Datastore.Path = rel
+	qcfg := EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{Enabled: true})
+
+	require.Len(t, qcfg.Storage.VolumePools, 1)
+	pool := qcfg.Storage.VolumePools[0].Path
+	assert.True(t, filepath.IsAbs(pool), "volume pool path %q is not absolute", pool)
+	assert.Equal(t, filepath.Join(abs, "tenant-volumes"), pool)
+	assert.True(t, filepath.IsAbs(qcfg.Raft.DataDir), "raft data dir %q is not absolute", qcfg.Raft.DataDir)
+	assert.Equal(t, abs, qcfg.Raft.DataDir)
+}
+
+// On a clean start (the webauthn-browser harness deletes .runtime/storage
+// before init) nothing has created the default volume pool directory, and
+// qrdb's volume Open stats the pool path and refuses a missing one, leaving
+// the pool unserved. Opening the node must provision it, owner-only
+// (ruling 1009, Codex P1 on #2308).
+func TestOpenEmbeddedNode_CreatesDefaultVolumePoolDir(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const rel = "./.runtime/storage"
+	abs, err := filepath.Abs(rel)
+	require.NoError(t, err)
+
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Path: rel},
+		Barrier:   config.BarrierConfig{Enabled: true, Strategy: "none"},
+	}
+	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
+		Config: cfg,
+		Logger: testLogger(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, node)
+	defer func() { _ = node.Close() }()
+
+	info, err := os.Stat(filepath.Join(abs, "tenant-volumes"))
+	require.NoError(t, err, "default volume pool directory was not created")
+	assert.True(t, info.IsDir())
+	assert.Equal(t, os.FileMode(0o700), info.Mode().Perm())
 }
 
 // TestOpenEmbeddedNode_OverridesFactorRegistryAndAuditSink proves that a
@@ -315,4 +367,112 @@ func TestResolveNodeSeal_TPM2NoBackendConfigFailsClosed(t *testing.T) {
 
 	var nodeErr *NodeSealError
 	require.True(t, errors.As(err, &nodeErr), "error must unwrap to *NodeSealError, got %v", err)
+}
+
+// TestResolveNodeSeal_OperatorStrategiesAwaitTheOperator proves passphrase
+// and shamir enable the barrier without an xkms-built strategy: go-qrdb
+// builds the seal itself and waits for the operator to unseal it.
+func TestResolveNodeSeal_OperatorStrategiesAwaitTheOperator(t *testing.T) {
+	for _, strategy := range []string{"passphrase", "shamir"} {
+		t.Run(strategy, func(t *testing.T) {
+			cfg := &config.Config{
+				Datastore: config.DatastoreConfig{Path: t.TempDir()},
+				Barrier:   config.BarrierConfig{Enabled: true, Strategy: strategy},
+			}
+
+			res, err := ResolveNodeSeal(cfg, testLogger())
+			require.NoError(t, err)
+			assert.True(t, res.Enabled)
+			assert.Nil(t, res.Strategy)
+			assert.Nil(t, res.TPM)
+			assert.Nil(t, res.Close)
+		})
+	}
+}
+
+// TestResolveTPM2KeyDir_UnderTheDatastorePath proves the TPM2 seal keys live
+// under the datastore path.
+func TestResolveTPM2KeyDir_UnderTheDatastorePath(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: dir}}
+
+	keyDir, err := ResolveTPM2KeyDir(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, KeyDirSubdir), keyDir)
+}
+
+// TestResolveTPM2KeyDir_RequiresTheDatastorePath proves the key directory is
+// never resolved relative to the working directory.
+func TestResolveTPM2KeyDir_RequiresTheDatastorePath(t *testing.T) {
+	keyDir, err := ResolveTPM2KeyDir(&config.Config{})
+	var pathErr *ErrDatastorePathRequired
+	require.ErrorAs(t, err, &pathErr)
+	assert.Empty(t, keyDir)
+}
+
+// TestEmbeddedNodeStorageConfig_CarriesTheShamirQuorumAndRootKeyPath proves
+// an enabled shamir seal reaches go-qrdb with its quorum, the operator's root
+// key path and a tenant volume pool under the datastore path.
+func TestEmbeddedNodeStorageConfig_CarriesTheShamirQuorumAndRootKeyPath(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Datastore: config.DatastoreConfig{Path: dir},
+		Barrier: config.BarrierConfig{
+			Enabled:         true,
+			Strategy:        "shamir",
+			ShamirThreshold: 2,
+			ShamirTotal:     3,
+			RootKeyPath:     "core/operator-root-key",
+		},
+	}
+
+	qcfg := EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{Enabled: true})
+	assert.True(t, qcfg.Seal.Enabled)
+	assert.Equal(t, "shamir", qcfg.Seal.Strategy)
+	assert.EqualValues(t, 2, qcfg.Seal.ShamirThreshold)
+	assert.EqualValues(t, 3, qcfg.Seal.ShamirTotal)
+	assert.Equal(t, "core/operator-root-key", qcfg.Seal.RootKeyPath)
+	require.Len(t, qcfg.Storage.VolumePools, 1)
+	assert.Equal(t, filepath.Join(dir, "tenant-volumes"), qcfg.Storage.VolumePools[0].Path)
+}
+
+// TestNewEmbeddedAuditSink_ConfiguredPathIsAFileLogger proves an enabled
+// audit path gets the persistent file logger, not the in-memory ring.
+func TestNewEmbeddedAuditSink_ConfiguredPathIsAFileLogger(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "audit.log")
+	cfg := &config.Config{}
+	cfg.Auth.Audit = &config.AuditConfig{Enabled: true, Path: path}
+
+	sink, err := NewEmbeddedAuditSink(cfg, testLogger())
+	require.NoError(t, err)
+	require.NoError(t, sink.Close())
+	assert.FileExists(t, path)
+}
+
+// TestOpenEmbeddedNode_UnopenableAuditPathFailsBeforeTheNode proves an audit
+// log that cannot be opened refuses the node instead of opening it without
+// its audit trail.
+func TestOpenEmbeddedNode_UnopenableAuditPathFailsBeforeTheNode(t *testing.T) {
+	notADir := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(notADir, nil, 0o600))
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: t.TempDir()}}
+	cfg.Auth.Audit = &config.AuditConfig{Enabled: true, Path: filepath.Join(notADir, "audit.log")}
+
+	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{Config: cfg, Logger: testLogger()})
+	var pathErr *os.PathError
+	require.ErrorAs(t, err, &pathErr)
+	assert.Nil(t, node)
+}
+
+// TestOpenEmbeddedNode_UnusableDatastorePathFails proves a datastore path
+// go-qrdb cannot open is an error, never a node.
+func TestOpenEmbeddedNode_UnusableDatastorePathFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "file")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	cfg := &config.Config{Datastore: config.DatastoreConfig{Path: path}}
+
+	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{Config: cfg, Logger: testLogger()})
+	var pathErr *os.PathError
+	require.ErrorAs(t, err, &pathErr)
+	assert.Nil(t, node)
 }

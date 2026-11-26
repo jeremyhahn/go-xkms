@@ -184,6 +184,25 @@ func TestNewUserVerifier_Refuses(t *testing.T) {
 	}
 }
 
+func TestNewUserVerifier_TrustOutageIsUnavailable(t *testing.T) {
+	errNoStore := errors.New("devices.yaml unreadable")
+	verify := attestation.NewUserVerifier(
+		func() (*xkms.AndroidDeviceTrust, error) { return nil, errNoStore }, discardLogger())
+	exchange := func(context.Context, *pairingproto.Request) (*pairingproto.Response, error) {
+		t.Fatal("the phone is asked although the trust store could not be loaded")
+		return nil, nil
+	}
+	channelBinding := attesttest.FixedBytes(0x77, pairingproto.AttestChannelBindingSize)
+
+	for range 3 {
+		err := verify(context.Background(), exchange, channelBinding, uvRPName)
+
+		require.ErrorIs(t, err, attestation.ErrUserVerificationTrustUnavailable)
+		require.ErrorIs(t, err, errNoStore)
+		require.NotErrorIs(t, err, userverify.ErrVerificationFailed)
+	}
+}
+
 // TestNewUserVerifier_OverANoiseSession is the exchange end to end: a real
 // Noise XX session to the fixture phone, which derives its own channel binding
 // and signs with its UVK, judged by the desktop verifier.

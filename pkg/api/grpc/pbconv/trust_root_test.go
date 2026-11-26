@@ -18,127 +18,97 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
-func (s *cannedServer) TrustRootList(_ context.Context, in *pb.TrustRootListRequest) (*pb.TrustRootListResponse, error) {
-	return answer[*pb.TrustRootListResponse](s, in)
-}
-
-func (s *cannedServer) TrustRootGet(_ context.Context, in *pb.TrustRootRequest) (*pb.TrustRoot, error) {
-	return answer[*pb.TrustRoot](s, in)
-}
-
-func (s *cannedServer) TrustRootImport(_ context.Context, in *pb.TrustRootImportRequest) (*pb.TrustRootImportResponse, error) {
-	return answer[*pb.TrustRootImportResponse](s, in)
-}
-
-func (s *cannedServer) TrustRootQuarantine(_ context.Context, in *pb.TrustRootRequest) (*pb.TrustRoot, error) {
-	return answer[*pb.TrustRoot](s, in)
-}
-
-func (s *cannedServer) TrustRootRemove(_ context.Context, in *pb.TrustRootRequest) (*pb.TrustRootRemoveResponse, error) {
-	return answer[*pb.TrustRootRemoveResponse](s, in)
-}
-
-func sampleTrustRoot() *transport.TrustRoot {
-	return &transport.TrustRoot{
-		Fingerprint: "ab12", Purpose: "tls", Subject: "CN=Root", Issuer: "CN=Root", Algorithm: "ECDSA-P384",
-		NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2036-01-01T00:00:00Z", AddedAt: "2026-02-01T00:00:00Z",
-		Source: "aia", PEM: "-----BEGIN CERTIFICATE-----",
+func sampleTrustRoot() transport.TrustRoot {
+	return transport.TrustRoot{
+		Fingerprint: "ab12",
+		Purpose:     "tpm-manufacturer",
+		Subject:     "CN=EK Root",
+		Issuer:      "CN=EK Root",
+		Algorithm:   "ECDSA-P384",
+		NotBefore:   "2026-01-01T00:00:00Z",
+		NotAfter:    "2036-01-01T00:00:00Z",
+		AddedAt:     "2026-11-08T00:00:00Z",
+		Source:      "vendor bundle",
+		PEM:         "-----BEGIN CERTIFICATE-----",
 	}
 }
 
-func sampleTrustRootPB() *pb.TrustRoot {
-	return &pb.TrustRoot{
-		Fingerprint: "ab12", Purpose: "tls", Subject: "CN=Root", Issuer: "CN=Root", Algorithm: "ECDSA-P384",
-		NotBefore: "2026-01-01T00:00:00Z", NotAfter: "2036-01-01T00:00:00Z", AddedAt: "2026-02-01T00:00:00Z",
-		Source: "aia", Pem: "-----BEGIN CERTIFICATE-----",
-	}
-}
+func TestTrustRootConversions(t *testing.T) {
+	root := sampleTrustRoot()
+	assert.Equal(t, &root, TrustRootFromProto(TrustRootToProto(&root)))
 
-func TestTrustRootConversions_RoundTrip(t *testing.T) {
-	assert.Equal(t, sampleTrustRootPB(), TrustRootToProto(sampleTrustRoot()))
-	assert.Equal(t, sampleTrustRoot(), TrustRootFromProto(TrustRootToProto(sampleTrustRoot())))
-
-	list := &transport.TrustRootListResponse{Roots: []transport.TrustRoot{*sampleTrustRoot()}}
+	list := &transport.TrustRootListResponse{Roots: []transport.TrustRoot{root, {Fingerprint: "cd34", Purpose: "synced"}}}
 	assert.Equal(t, list, TrustRootListResponseFromProto(TrustRootListResponseToProto(list)))
 
-	assert.Equal(t, &transport.TrustRootImportRequest{PEM: "pem", Purpose: "tls", Source: "operator"},
-		TrustRootImportRequestFromProto(&pb.TrustRootImportRequest{Pem: "pem", Purpose: "tls", Source: "operator"}))
+	empty := TrustRootListResponseFromProto(&pb.TrustRootListResponse{})
+	assert.NotNil(t, empty.Roots, "an empty list is [], not null")
+	assert.Empty(t, empty.Roots)
+
+	assert.Equal(t,
+		&transport.TrustRootImportRequest{PEM: "pem", Purpose: "general", Source: "ops"},
+		TrustRootImportRequestFromProto(&pb.TrustRootImportRequest{Pem: "pem", Purpose: "general", Source: "ops"}))
 }
 
-func TestTrustRootConversions_EmptyListIsNotNil(t *testing.T) {
-	// A JSON consumer must see "roots": [] rather than null.
-	assert.Equal(t, []transport.TrustRoot{}, TrustRootListResponseFromProto(&pb.TrustRootListResponse{}).Roots)
-	assert.Equal(t, []transport.TrustRoot{}, TrustRootListResponseFromProto(nil).Roots)
-	assert.Empty(t, TrustRootListResponseToProto(&transport.TrustRootListResponse{}).Roots)
-}
-
-func TestTrustRootClient_CarriesEveryRequest(t *testing.T) {
-	byFingerprint := &transport.TrustRootRequest{Fingerprint: "ab12"}
-
-	runClientCases(t, func(c pb.KeystoreServiceClient) TrustRootClient { return TrustRootClient{Client: c} }, []clientCase[TrustRootClient]{
-		{
-			name: "TrustRootList",
-			call: func(ctx context.Context, c TrustRootClient) (any, error) {
-				return c.TrustRootList(ctx, &transport.TrustRootListRequest{Purpose: "tls"})
-			},
-			wantReq: &pb.TrustRootListRequest{Purpose: "tls"},
-			reply:   &pb.TrustRootListResponse{Roots: []*pb.TrustRoot{sampleTrustRootPB()}},
-			want:    &transport.TrustRootListResponse{Roots: []transport.TrustRoot{*sampleTrustRoot()}},
-		},
-		{
-			name: "TrustRootGet",
-			call: func(ctx context.Context, c TrustRootClient) (any, error) {
-				return c.TrustRootGet(ctx, byFingerprint)
-			},
-			wantReq: &pb.TrustRootRequest{Fingerprint: "ab12"},
-			reply:   sampleTrustRootPB(),
-			want:    sampleTrustRoot(),
-		},
-		{
-			name: "TrustRootImport",
-			call: func(ctx context.Context, c TrustRootClient) (any, error) {
-				return c.TrustRootImport(ctx, &transport.TrustRootImportRequest{PEM: "pem", Purpose: "tls", Source: "operator"})
-			},
-			wantReq: &pb.TrustRootImportRequest{Pem: "pem", Purpose: "tls", Source: "operator"},
-			reply:   &pb.TrustRootImportResponse{Added: 2, Skipped: 1},
-			want:    &transport.TrustRootImportResponse{Added: 2, Skipped: 1},
-		},
-		{
-			name: "TrustRootQuarantine",
-			call: func(ctx context.Context, c TrustRootClient) (any, error) {
-				return c.TrustRootQuarantine(ctx, byFingerprint)
-			},
-			wantReq: &pb.TrustRootRequest{Fingerprint: "ab12"},
-			reply:   sampleTrustRootPB(),
-			want:    sampleTrustRoot(),
-		},
-		{
-			name: "TrustRootRemove",
-			call: func(ctx context.Context, c TrustRootClient) (any, error) {
-				return nil, c.TrustRootRemove(ctx, byFingerprint)
-			},
-			wantReq: &pb.TrustRootRequest{Fingerprint: "ab12"},
-			reply:   &pb.TrustRootRemoveResponse{},
-		},
-	})
-}
-
-func TestTrustRootClient_RefusesNilRequests(t *testing.T) {
-	c := TrustRootClient{}
+func TestTrustRootClient(t *testing.T) {
+	root := sampleTrustRoot()
+	stub := &stubKeystoreClient{resp: map[string]any{
+		"TrustRootList":       &pb.TrustRootListResponse{Roots: []*pb.TrustRoot{TrustRootToProto(&root)}},
+		"TrustRootGet":        TrustRootToProto(&root),
+		"TrustRootImport":     &pb.TrustRootImportResponse{Added: 2, Skipped: 1},
+		"TrustRootQuarantine": &pb.TrustRoot{Fingerprint: "ab12", Purpose: "synced"},
+	}}
+	c := TrustRootClient{Client: stub}
 	ctx := context.Background()
-	calls := []error{
-		func() error { _, err := c.TrustRootList(ctx, nil); return err }(),
-		func() error { _, err := c.TrustRootGet(ctx, nil); return err }(),
-		func() error { _, err := c.TrustRootImport(ctx, nil); return err }(),
-		func() error { _, err := c.TrustRootQuarantine(ctx, nil); return err }(),
-		c.TrustRootRemove(ctx, nil),
-	}
-	for i, err := range calls {
-		assert.ErrorIs(t, err, ErrNilRequest, "call %d", i)
-	}
+
+	list, err := c.TrustRootList(ctx, &transport.TrustRootListRequest{Purpose: "tpm-manufacturer"})
+	require.NoError(t, err)
+	assert.Equal(t, []transport.TrustRoot{root}, list.Roots)
+	assert.Equal(t, "tpm-manufacturer", stub.got[0].(*pb.TrustRootListRequest).GetPurpose())
+
+	got, err := c.TrustRootGet(ctx, &transport.TrustRootRequest{Fingerprint: "ab12"})
+	require.NoError(t, err)
+	assert.Equal(t, &root, got)
+
+	imported, err := c.TrustRootImport(ctx, &transport.TrustRootImportRequest{PEM: "pem", Purpose: "general", Source: "ops"})
+	require.NoError(t, err)
+	assert.Equal(t, &transport.TrustRootImportResponse{Added: 2, Skipped: 1}, imported)
+	assert.Equal(t, "ops", stub.got[2].(*pb.TrustRootImportRequest).GetSource())
+
+	quarantined, err := c.TrustRootQuarantine(ctx, &transport.TrustRootRequest{Fingerprint: "ab12"})
+	require.NoError(t, err)
+	assert.Equal(t, "synced", quarantined.Purpose)
+
+	require.NoError(t, c.TrustRootRemove(ctx, &transport.TrustRootRequest{Fingerprint: "ab12"}))
+	assert.Equal(t, "ab12", stub.got[4].(*pb.TrustRootRequest).GetFingerprint())
+
+	rootReq := &transport.TrustRootRequest{Fingerprint: "ab12"}
+	assertClientCalls(t, stub, []clientCall{
+		{"TrustRootList",
+			func(ctx context.Context) error {
+				_, err := c.TrustRootList(ctx, &transport.TrustRootListRequest{})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.TrustRootList(ctx, nil); return err }},
+		{"TrustRootGet",
+			func(ctx context.Context) error { _, err := c.TrustRootGet(ctx, rootReq); return err },
+			func(ctx context.Context) error { _, err := c.TrustRootGet(ctx, nil); return err }},
+		{"TrustRootImport",
+			func(ctx context.Context) error {
+				_, err := c.TrustRootImport(ctx, &transport.TrustRootImportRequest{})
+				return err
+			},
+			func(ctx context.Context) error { _, err := c.TrustRootImport(ctx, nil); return err }},
+		{"TrustRootQuarantine",
+			func(ctx context.Context) error { _, err := c.TrustRootQuarantine(ctx, rootReq); return err },
+			func(ctx context.Context) error { _, err := c.TrustRootQuarantine(ctx, nil); return err }},
+		{"TrustRootRemove",
+			func(ctx context.Context) error { return c.TrustRootRemove(ctx, rootReq) },
+			func(ctx context.Context) error { return c.TrustRootRemove(ctx, nil) }},
+	})
 }

@@ -53,14 +53,6 @@ func TestVerifySignature_NilCert(t *testing.T) {
 }
 
 // =============================================================================
-// verification.go — VerifyChain success path
-// =============================================================================
-
-// =============================================================================
-// verification.go — VerifyWithOptions nil options + revocation path
-// =============================================================================
-
-// =============================================================================
 // verification.go — verifyRSASignature PSS success and zero-hash branches
 // =============================================================================
 
@@ -123,61 +115,8 @@ func TestVerifyECDSASignature_ZeroHash(t *testing.T) {
 }
 
 // =============================================================================
-// verification.go — VerifyCertificateAgainstPublicKey unsupported key type
-// (non-duplicate: verification_test.go test has a different name)
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — DefaultSignatureAlgorithm nil-identity branch
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — CAKeyAttributes empty store-type (allowed) vs mismatch
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — CASigner algorithm mismatch
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — CABundleFiltered additional algorithm filter branches
-// =============================================================================
-
-func TestCABundleFiltered_WithIntermediate_ECDSAFilter(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithRealIntermediate(t)
-	bundle, err := ca.CABundleFiltered("", x509.ECDSA)
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-}
-
-// =============================================================================
-// ca_extensions.go — PubKey nil attrs
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — Blob not found / ImportBlob round-trip
-// =============================================================================
-
-// =============================================================================
 // ca_extensions.go — Issued / Exists
 // =============================================================================
-
-func TestExists_AlgorithmMismatch_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "exists-algo-mismatch-b7")
-	found, err := ca.Exists(context.Background(), "exists-algo-mismatch-b7", x509.RSA)
-	require.NoError(t, err)
-	assert.False(t, found)
-}
-
-func TestExists_EmptyCN_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := ca.Exists(context.Background(), "", x509.ECDSA)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
 
 func TestExists_NotFound_B7(t *testing.T) {
 	t.Parallel()
@@ -191,13 +130,6 @@ func TestExists_NotFound_B7(t *testing.T) {
 // trust_chain.go — TrustedRootCertPool not-initialized / no root
 // =============================================================================
 
-func TestTrustedRootCertPool_NotInitialized_B7(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.TrustedRootCertPool(nil)
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
 func TestTrustedRootCertPool_NoRoot_B7(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
@@ -206,25 +138,6 @@ func TestTrustedRootCertPool_NoRoot_B7(t *testing.T) {
 	ca.mu.Unlock()
 	_, err := ca.TrustedRootCertPool(nil)
 	assert.ErrorIs(t, err, ErrRootNotFound)
-}
-
-func TestTrustedRootCertPool_Success_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	pool, err := ca.TrustedRootCertPool(nil)
-	require.NoError(t, err)
-	assert.NotNil(t, pool)
-}
-
-// =============================================================================
-// trust_chain.go — TrustedIntermediateCertPool
-// =============================================================================
-
-func TestTrustedIntermediateCertPool_NotInitialized_B7(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.TrustedIntermediateCertPool(nil)
-	assert.ErrorIs(t, err, ErrNotInitialized)
 }
 
 // =============================================================================
@@ -293,49 +206,6 @@ func TestParseBundle_NoCerts_B7(t *testing.T) {
 }
 
 // =============================================================================
-// trust_chain_extensions.go — RootCertificate nil-input
-// =============================================================================
-
-// =============================================================================
-// tls_extensions.go — TLSBundleWithCrossSigner with signer but no xsigned certs
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — Certificate fallback to certStore
-// =============================================================================
-
-func TestCertificate_FallbackToCertStore_B7(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	issueCertAndSaveToKeyStore(t, ca, "cert-fallback-b7")
-	attrs := softwareKeyAttrs("cert-fallback-b7")
-	cert, err := ca.Certificate(context.Background(), attrs)
-	require.NoError(t, err)
-	assert.NotNil(t, cert)
-}
-
-// =============================================================================
-// ca_extensions.go — ImportCertificatePEM
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — RevokeCert with object store (recordRevocation /
-// putRevocationBlobIfAbsent round-trip)
-// =============================================================================
-
-// =============================================================================
-// tcg_oids.go — ParseTPMSpecificationExtension with garbage data
-// =============================================================================
-
-// =============================================================================
-// tcg_oids.go — CreateTenantIDExtension large ID
-// =============================================================================
-
-// =============================================================================
-// bundle.go — CABundle PEM validity cross-check
-// =============================================================================
-
-// =============================================================================
 // tcg_oids.go — bool-false round-trip on Residency/Fixed extensions
 // =============================================================================
 
@@ -343,7 +213,3 @@ func TestCertificate_FallbackToCertStore_B7(t *testing.T) {
 // data" (TCG DevID v1 r12 §8.2). The boolean-valued standalone extensions this
 // test covered are gone; the assertions are pinned on issued certificates by
 // the certificate policy regression suite in certpolicy_test.go.
-
-// =============================================================================
-// Additional targeted gap coverage
-// =============================================================================

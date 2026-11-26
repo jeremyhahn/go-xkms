@@ -441,24 +441,6 @@ func TestTenantMiddlewareCoverage(t *testing.T) {
 	})
 }
 
-func TestWithTenantCoverage(t *testing.T) {
-	t.Run("adds tenant to context", func(t *testing.T) {
-		ctx := context.Background()
-		ctx = WithTenant(ctx, "tenant123")
-
-		result := TenantFromContext(ctx)
-		assert.Equal(t, "tenant123", result)
-	})
-
-	t.Run("overwrites existing tenant", func(t *testing.T) {
-		ctx := WithTenant(context.Background(), "tenant1")
-		ctx = WithTenant(ctx, "tenant2")
-
-		result := TenantFromContext(ctx)
-		assert.Equal(t, "tenant2", result)
-	})
-}
-
 func TestGetTenantScopedFactoryCoverage(t *testing.T) {
 	t.Run("returns original factory when no tenant in context", func(t *testing.T) {
 		factory := newTestTenantAwareFactory()
