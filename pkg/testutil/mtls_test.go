@@ -47,3 +47,25 @@ func TestMutualTLSState_FreshIdentityPerCall(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, first.PeerCertificates[0].Raw, second.PeerCertificates[0].Raw)
 }
+
+// The state's verified leaf carries the URI SANs and chains to its CA.
+func TestVerifiedClientState(t *testing.T) {
+	state, err := VerifiedClientState("spiffe://acme/svc/billing", "https://acme.example/profile")
+	require.NoError(t, err)
+
+	require.Len(t, state.VerifiedChains, 1)
+	chain := state.VerifiedChains[0]
+	require.Len(t, chain, 2)
+	leaf := chain[0]
+	assert.Equal(t, state.PeerCertificates[0], leaf)
+	require.Len(t, leaf.URIs, 2)
+	assert.Equal(t, "spiffe://acme/svc/billing", leaf.URIs[0].String())
+	assert.Equal(t, "https://acme.example/profile", leaf.URIs[1].String())
+	assert.NoError(t, leaf.CheckSignatureFrom(chain[1]), "the leaf is issued by the chain's CA")
+}
+
+// A URI SAN that does not parse is an error, not a certificate without it.
+func TestVerifiedClientState_InvalidURI(t *testing.T) {
+	_, err := VerifiedClientState("spiffe://acme/%zz")
+	require.Error(t, err)
+}
