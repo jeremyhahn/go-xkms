@@ -1,0 +1,1 @@
+Tests: `pkg/embeddednode` drops five tests whose path and assertions a kept test already makes: the options-validation, trust-domain, default-factor-registry, extra-server-options and pre-seal-directory datastore-path tests. The nil-QRDB-config refusal is now asserted through `NewNode` (#1794).
