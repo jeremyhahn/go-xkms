@@ -71,3 +71,10 @@ func (s *Server) handleSigningKeyDelete(ctx context.Context, req *JSONRPCRequest
 func (s *Server) handleSigningKeyResolve(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	return signingKeyCall(s, ctx, req, "signing key resolve", s.xkmsService.ResolveSigningKey)
 }
+
+// handleSigningKeySignCoRIM handles attestation.signing_key.sign_corim: it
+// signs a repository's CoRIM with the key the repository resolves to,
+// draft-ietf-rats-corim-11 §4.2.
+func (s *Server) handleSigningKeySignCoRIM(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	return signingKeyCall(s, ctx, req, "signing key sign corim", s.xkmsService.SignCoRIM)
+}
