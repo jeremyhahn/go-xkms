@@ -617,6 +617,16 @@ func (ca *CA) issueTCGCertificate(
 	if err != nil {
 		return nil, &errs.Detail{Err: ErrTCGCertIssuanceFailed, Detail: fmt.Sprintf("%v", err)}
 	}
+
+	// Every TCG certificate (EK, AK, IAK, IDevID, LAK) is recorded here
+	// once, before its caller stores or returns it (fail closed).
+	tenant := ""
+	if spec.Request != nil {
+		tenant = spec.Request.TenantID
+	}
+	if err := ca.appendCertIssued(ctx, cert, spec.Profile, tenant); err != nil {
+		return nil, err
+	}
 	if !ownSigner {
 		return cert, nil
 	}
