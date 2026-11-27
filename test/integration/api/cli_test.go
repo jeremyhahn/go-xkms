@@ -29,7 +29,10 @@ func execCLI(t *testing.T, cfg *TestConfig, args ...string) (string, string, err
 	t.Helper()
 
 	// Prepend --server flag to use the configured Unix socket path
-	allArgs := append([]string{"--server", "unix://" + cfg.UnixSocketPath}, args...)
+	allArgs := []string{"--server", "unix://" + cfg.UnixSocketPath,
+		"--tls-ca", getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")}
+	allArgs = append(allArgs, clientCertArgs()...)
+	allArgs = append(allArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, allArgs...)
 
 	var stdout, stderr bytes.Buffer

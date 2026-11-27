@@ -80,13 +80,18 @@ func (s *CLITestSuite) runCLI(serverURL string, args ...string) (string, string,
 	}
 
 	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-	needsTLS := strings.HasPrefix(serverURL, "https://") ||
+	needsTLS := strings.HasPrefix(serverURL, "unix://") ||
+		strings.HasPrefix(serverURL, "mcps://") ||
+		strings.HasPrefix(serverURL, "https://") ||
 		strings.HasPrefix(serverURL, "grpc://") ||
 		strings.HasPrefix(serverURL, "grpcs://") ||
 		strings.HasPrefix(serverURL, "quic://")
 
 	if needsTLS && s.tlsCACert != "" {
 		prefixArgs = append(prefixArgs, "--tls-ca", s.tlsCACert)
+	}
+	if needsTLS {
+		prefixArgs = append(prefixArgs, clientCertArgs()...)
 	}
 
 	args = append(prefixArgs, args...)
@@ -794,9 +799,6 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				args := []string{
 					"key", "copy", sourceKeyID, destKeyID,
 					"--backend", "software",
-					"--key-type", "signing",
-					"--key-algorithm", "ecdsa",
-					"--curve", "P-256",
 					"--key-dir", suite.keyDir,
 					"--dest-backend", "software",
 					"--dest-keydir", destKeyDir,
