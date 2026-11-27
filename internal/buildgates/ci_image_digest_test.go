@@ -36,10 +36,14 @@ const (
 	// outputs the producer's outputs name.
 	publishStep = "publish"
 	resolveStep = "resolve"
-	// producerRunsOn puts ci-images on the release runner for a push to main
-	// and on the pull-request pool otherwise.
-	producerRunsOn   = "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}"
-	digestRefPattern = `^[^@ ]+@sha256:[0-9a-f]{64}$`
+	// producerRunsOn puts ci-images, on github.com, on preflight's
+	// runner_docker like the image job (DS-10474); on the forge, on the
+	// release runner for a push to main and on bigdisk otherwise.
+	producerRunsOn = "${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}"
+	// producerHostedOnly is the runs-on ci-images had before DS-10474:
+	// ubuntu-latest on github.com, whatever preflight selected.
+	producerHostedOnly = "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}"
+	digestRefPattern   = `^[^@ ]+@sha256:[0-9a-f]{64}$`
 	// consumerFloor is the number of jobs in ci.yml that run a stage in the
 	// toolchain image; a parse that finds fewer has stopped seeing them.
 	consumerFloor = 9
@@ -457,7 +461,7 @@ env:
   CI_REGISTRY_OWNER: ${{ github.server_url != 'https://github.com' && vars.CI_REGISTRY_OWNER || '' }}
 jobs:
   ci-images:
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
     permissions:
       contents: read
       packages: write
@@ -549,6 +553,7 @@ func TestCIImageDigest_CanFail(t *testing.T) {
 		{"images under another namespace", ownerCond, "${{ github.server_url != 'https://github.com' && 'jeremyhahn' || '' }}", "workflow: CI_REGISTRY_OWNER is"},
 		{"producer missing", "  ci-images:\n", "  images:\n", "ci-images: no such job"},
 		{"producer on the pull-request pool", producerRunsOn, "bigdisk", "ci-images: runs on"},
+		{"producer hosted-only on github.com", producerRunsOn, producerHostedOnly, "ci-images: runs on"},
 		{"producer cannot push", "packages: write", "packages: read", "no packages: write"},
 		{"publish on a pull request", "if: ${{ env.CI_PUBLISH == 'true' }}", "if: ${{ env.CI_PUBLISH == 'true' || github.event_name == 'pull_request' }}", "publishes outside a push to main"},
 		{"publish under a negation", "if: ${{ env.CI_PUBLISH == 'true' }}", "if: ${{ !(env.CI_PUBLISH == 'true') }}", "no step publishes the toolchain image"},

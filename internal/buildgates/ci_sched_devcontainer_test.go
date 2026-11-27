@@ -180,7 +180,7 @@ func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 // is incomplete. It also returns the selector's own log. The limits are
 // v1.54's repository variables: CI_HOSTED_SHARE 12, so 12 hosted jobs fill
 // the hosted pool, and 10 units of each self-hosted label, none in use.
-func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int) (output, calls, log string) {
+func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int, extraEnv ...string) (output, calls, log string) {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
@@ -225,6 +225,7 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 		"C1=10",
 		"C2=10",
 		"EVENT=pull_request",
+		"REF=refs/pull/1/merge",
 		"REPO=o/r",
 		"HEAD_REPO="+headRepo(fork),
 		"GITHUB_OUTPUT="+out,
@@ -232,6 +233,9 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 		"STUB_DIR="+dir,
 		"STUB_LOG="+callLog,
 	)
+	// os/exec keeps the last value of a duplicated key, so extraEnv
+	// overrides the defaults above (EVENT=, REF=).
+	cmd.Env = append(cmd.Env, extraEnv...)
 	b, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("selector (fork=%s): %v\n%s", fork, err, b)
@@ -288,6 +292,73 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 		if calls != "" {
 			t.Errorf("fork=%q: the selector called the Actions API:\n%s", fork, calls)
 		}
+	}
+}
+
+// TestCIRunnerSelectionPoolsOnlyPushToMainAndSameRepoPullRequests pins the
+// DS-10474 event gate: the self-hosted image hook refuses schedule and
+// workflow_dispatch, so only a push to main and a same-repository pull
+// request may be balanced onto the pool. Every other event or ref takes the
+// GitHub-hosted default without calling the Actions API.
+func TestCIRunnerSelectionPoolsOnlyPushToMainAndSameRepoPullRequests(t *testing.T) {
+	wf := readDigestWorkflow(t)
+	var step *digestStep
+	for i, s := range wf.Jobs[preflightJob].Steps {
+		if s.ID == runnerSelectStep {
+			step = &wf.Jobs[preflightJob].Steps[i]
+		}
+	}
+	if step == nil {
+		t.Fatalf("%s has no step with id: %s", preflightJob, runnerSelectStep)
+	}
+	if got, want := step.Env["REF"], "${{ github.ref }}"; got != want {
+		t.Fatalf("%s step %s env REF = %q, want %q", preflightJob, runnerSelectStep, got, want)
+	}
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not installed: the selector script needs it", tool)
+		}
+	}
+	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+
+	// 12 of 12 hosted jobs listed: the hosted pool is full, so a balanced
+	// run picks the self-hosted pool.
+	pooled := []struct{ name, event, ref string }{
+		{"push to main", "push", "refs/heads/main"},
+		{"same-repository pull request", "pull_request", "refs/pull/1/merge"},
+	}
+	for _, c := range pooled {
+		t.Run(c.name, func(t *testing.T) {
+			out, _, log := runRunnerSelectListing(t, step.Run, "false", 12, 12, "EVENT="+c.event, "REF="+c.ref)
+			if out != overflow {
+				t.Errorf("output %q, want %q\n%s", out, overflow, log)
+			}
+		})
+	}
+	hostedOnly := []struct{ name, event, ref string }{
+		{"schedule", "schedule", "refs/heads/main"},
+		{"workflow_dispatch", "workflow_dispatch", "refs/heads/main"},
+		{"push to another branch", "push", "refs/heads/feature"},
+	}
+	for _, c := range hostedOnly {
+		t.Run(c.name, func(t *testing.T) {
+			out, calls, log := runRunnerSelectListing(t, step.Run, "false", 12, 12, "EVENT="+c.event, "REF="+c.ref)
+			if out != hosted {
+				t.Errorf("output %q, want %q\n%s", out, hosted, log)
+			}
+			if calls != "" {
+				t.Errorf("the selector called the Actions API:\n%s", calls)
+			}
+			for _, want := range []string{"::notice::runner selection:", "DS-10474"} {
+				if !strings.Contains(log, want) {
+					t.Errorf("log lacks %q:\n%s", want, log)
+				}
+			}
+			if strings.Contains(log, "::warning::") {
+				t.Errorf("log has a ::warning:::\n%s", log)
+			}
+		})
 	}
 }
 

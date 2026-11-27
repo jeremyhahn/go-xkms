@@ -988,13 +988,18 @@ jobs:
       # v1.52 (Tenant Agent order, kept): on a pull request whose head
       # repository is not this repository (a fork, or a fork since deleted),
       # it makes no call and outputs the hosted default with a ::notice: a
-      # fork never reaches a self-hosted runner. Its tests:
+      # fork never reaches a self-hosted runner. DS-10474 (Tenant): after the
+      # fork check only a push to main or a same-repository pull request is
+      # balanced; any other event or ref takes the hosted default with a
+      # ::notice and no call (TestCIRunnerSelectionPoolsOnlyPushToMainAndSameRepoPullRequests,
+      # .github/workflows/testdata/runner-select-tests.py section F). Its tests:
       # internal/buildgates/ci_sched_devcontainer_test.go (TestCIRunnerSelection*).
       - name: Balanced runner pool (ruling 1137)
         id: runner
         env:
           SERVER: ${{ github.server_url }}
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           REPO: ${{ github.repository }}
           API: ${{ github.api_url }}/repos/${{ github.repository }}/actions
@@ -1030,6 +1035,15 @@ jobs:
                 emit "$HOSTED" "$HOSTED"
                 exit 0
               fi ;;
+          esac
+          # DS-10474: the self-hosted image hook refuses schedule and dispatch, so
+          # only a push to main or a same-repository pull request is balanced.
+          case "$EVENT:$REF" in
+            push:refs/heads/main|pull_request:*) ;;
+            *)
+              echo "::notice::runner selection: $EVENT on $REF is neither a push to main nor a same-repository pull request; every job of this run takes the GitHub-hosted default, ubuntu-latest (the self-hosted image hook refuses schedule and workflow_dispatch; DS-10474)"
+              emit "$HOSTED" "$HOSTED"
+              exit 0 ;;
           esac
           # whole <value>: a whole number above 0, at most 6 digits.
           whole() { [[ "$1" =~ ^[0-9]{1,6}$ ]] && [ "$((10#$1))" -gt 0 ]; }
@@ -1264,9 +1278,10 @@ jobs:
     # schedule guard's `run`; every CUSTOMIZE job needs this one, so it skips
     # with it.
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    # v1.48: publishes to the registry, so it never overflows to a pool runner
-    # (as the template's publish-images); ubuntu-latest on github.com.
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    # github.com: preflight's runner_docker like the image job (DS-10474, Tenant),
+    # a pool only for a push to main or a same-repository pull request; the forge
+    # keeps release/bigdisk. Pinned by internal/buildgates/ci_image_digest_test.go.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
     timeout-minutes: 120
     permissions:
       contents: read

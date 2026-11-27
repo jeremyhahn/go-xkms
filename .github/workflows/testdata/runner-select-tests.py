@@ -34,6 +34,15 @@ also fails a case whose curl command line carries the token.
      this repository (a fork, or one since deleted) gets the hosted default
      with a ::notice and no call, even when self-hosted would win; a
      same-repository pull request and a push still balance.
+  F. go-xkms DS-10474: only a push to main and a same-repository pull
+     request balance; a schedule run, a workflow_dispatch run, a push to
+     another branch and any other event (a same-repository
+     pull_request_target included) get the hosted default with a ::notice
+     and no call, because the self-hosted image hook refuses schedule and
+     dispatch.
+
+This file is customized from handbook ci-template v1.54 for go-xkms
+DS-10474 (section F and the REF env); the handbook copy does not have them.
 
 Run: python3 -I software/templates/github-actions/testdata/runner-select-tests.py
 """
@@ -120,7 +129,8 @@ def jobs(*js, total=None):
     return json.dumps({"total_count": len(js) if total is None else total, "jobs": list(js)})
 
 
-def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="push", head=""):
+def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="push", head="",
+        ref="refs/heads/main"):
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
         (d / "bin").mkdir()
@@ -138,7 +148,7 @@ def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="pus
             "GITHUB_OUTPUT": str(d / "out"), "RUNNER_TEMP": str(d / "tmp"),
             "SERVER": server, "API": "https://api.github.com/repos/o/r/actions", "RUN_ID": "100",
             "JOB_TOKEN": TOKEN, "HS": hs, "C1": c1, "C2": c2,
-            "EVENT": event, "HEAD_REPO": head, "REPO": "o/r",
+            "EVENT": event, "REF": ref, "HEAD_REPO": head, "REPO": "o/r",
         }
         p = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(d / "step.sh")],
                            env=env, capture_output=True, text=True, timeout=60)
@@ -311,6 +321,17 @@ case("E5 a push still balances",
      WIN, SELF, SELF_D, ["run on the Dells"], ["a fork"])
 case("E6 off github.com a fork keeps the forge labels: no call, no fork notice",
      [], HOSTED, HOSTED, ["not github.com"], ["a fork"], calls=0, server="gitea", event="pull_request", head="fork/r")
+
+# F. go-xkms DS-10474: only a push to main and a same-repository pull request balance
+F_WANT, F_NOT = ["::notice::", "DS-10474"], ["::warning::", "a fork"]
+case("F1 a schedule run: hosted, no call",
+     WIN, HOSTED, HOSTED, F_WANT, F_NOT, calls=0, event="schedule")
+case("F2 a workflow_dispatch run: hosted, no call",
+     WIN, HOSTED, HOSTED, F_WANT, F_NOT, calls=0, event="workflow_dispatch")
+case("F3 a push to another branch: hosted, no call",
+     WIN, HOSTED, HOSTED, F_WANT, F_NOT, calls=0, ref="refs/heads/feature")
+case("F4 a same-repository pull_request_target (the existing arm) is not a pool path: hosted, no call",
+     WIN, HOSTED, HOSTED, F_WANT, F_NOT, calls=0, event="pull_request_target", head="o/r")
 
 print(f"{'ALL PASS' if not FAILS else f'{FAILS} FAILED'}")
 sys.exit(1 if FAILS else 0)
