@@ -78,12 +78,12 @@ ARG TARGETARCH
 RUN CGO_ENABLED=1 GOOS=linux go build \
         -buildvcs=false \
         -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault" \
-        -ldflags="-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
-        -o /build/xkms-cli \
+        -ldflags="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -s -w" \
+        -o /build/xkmsctl \
         ./cmd/xkmsctl
 
 # Verify binary was built
-RUN test -f /build/xkms-cli || (echo "ERROR: CLI binary not built" && exit 1)
+RUN test -f /build/xkmsctl || (echo "ERROR: CLI binary not built" && exit 1)
 
 # Stage 2: Runtime
 FROM ${RUNTIME_IMAGE}
@@ -121,7 +121,7 @@ RUN mkdir -p /etc/xkms /var/lib/xkms /var/lib/softhsm/tokens && \
 COPY --from=builder /build/softhsm-install/ /
 
 # Copy binary from builder
-COPY --from=builder /build/xkms-cli /usr/local/bin/xkms-cli
+COPY --from=builder /build/xkmsctl /usr/local/bin/xkmsctl
 
 # Switch to non-root user
 USER xkms
@@ -136,7 +136,7 @@ VOLUME ["/var/lib/xkms", "/etc/xkms"]
 ENV KEYSTORE_CONFIG=/etc/xkms/config.yaml
 
 # Set entrypoint
-ENTRYPOINT ["/usr/local/bin/xkms-cli"]
+ENTRYPOINT ["/usr/local/bin/xkmsctl"]
 
 # Default command - show help
 CMD ["--help"]

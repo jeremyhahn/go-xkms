@@ -133,12 +133,13 @@ func finalizeAdminModule(srv *server.Server, acme *acmeServer, logger *slog.Logg
 		acme.StorageFactory(),
 		qrdbClient,
 		logger,
-		version,
+		Version,
 	)
 	if err != nil {
 		return &acmeInitError{Stage: "construct tenant-aware admin service", Err: err}
 	}
 	adminSvc.SetTenantService(srv.TenantService())
+	adminSvc.SetClusterTrustDomain(srv.TrustDomain())
 
 	// The core /api/v1/tenants routes own the tenant lifecycle; the admin
 	// service keeps each tenant's CA record beside it (go-xkms#794).
