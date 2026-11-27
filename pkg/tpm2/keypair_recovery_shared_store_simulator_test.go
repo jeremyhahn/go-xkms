@@ -132,3 +132,35 @@ func TestSaveKeyPair_RecoverersSharingOnlyTheBlobStoreLeaveOneMatchingPair(t *te
 	require.NoError(t, err, "the stored pair must load")
 	h.TPM.Flush(loaded.ObjectHandle)
 }
+
+// The incomplete private blob already holds B's private bytes, so B's winning
+// recovery stores the same bytes back: A, paused before its private write,
+// must still not replace them.
+func TestSaveKeyPair_StaleRecovererKeepsOffAPrivateBlobRewrittenWithTheSameBytes(t *testing.T) {
+	h := newSimHarness(t, nil)
+	attrs := signingKeyAttrs(t, h, "shared-store-recovery-same-bytes", x509.RSA, nil)
+	privA, pubA := createdKeyPair(t, h, attrs)
+	privB, pubB := createdKeyPair(t, h, attrs)
+
+	shared := newSharedBlobStore(t)
+	require.NoError(t, shared.Save(attrs, privB, store.FSEXT_PRIVATE_BLOB, false))
+
+	recoverA := &privateWritePausingBackend{KeyBackend: shared, beforePrivateWrite: func() {
+		recoverInOtherProcess(t, shared, attrs, privB, pubB)
+	}}
+	aErr := h.TPM.SaveKeyPair(attrs, tpm2.TPM2BPrivate{Buffer: privA},
+		tpm2.BytesAs2B[tpm2.TPMTPublic](pubA), recoverA, false)
+
+	gotPriv, err := shared.Get(attrs, store.FSEXT_PRIVATE_BLOB)
+	require.NoError(t, err)
+	gotPub, err := shared.Get(attrs, store.FSEXT_PUBLIC_BLOB)
+	require.NoError(t, err)
+	require.Equal(t, pubB, gotPub, "process B's publication must stand (A err=%v)", aErr)
+	require.Equal(t, privB, gotPriv,
+		"the private blob must be the one matching the published public blob (A err=%v)", aErr)
+	require.Error(t, aErr, "the recoverer that lost the fence must fail")
+
+	loaded, err := h.TPM.LoadKeyPair(attrs, nil, shared)
+	require.NoError(t, err, "the stored pair must load")
+	h.TPM.Flush(loaded.ObjectHandle)
+}
