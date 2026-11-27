@@ -529,7 +529,9 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 
 	// Create a cancellable context for this CBOR command. CTAPHID_CANCEL
 	// calls h.cancelCBOR() to abort blocking operations like user presence.
-	ctx, cancel := context.WithCancel(context.Background())
+	// The context carries the channel ID: a presence grant from an approved
+	// authenticatorSelection is bound to the channel it arrived on.
+	ctx, cancel := context.WithCancel(WithCTAPHIDChannel(context.Background(), cid))
 	h.cancelCBOR = cancel
 
 	// Multi-authenticator coexistence: when this authenticator has no
@@ -634,7 +636,8 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 	//     required) and the authenticator is waiting for a physical touch.
 	keepaliveDone := make(chan struct{})
 	var keepaliveWG sync.WaitGroup
-	if cmd == CmdMakeCredential || cmd == CmdGetAssertion {
+	//   - authenticatorSelection always waits for a touch (CTAP 2.1 §6.9).
+	if cmd == CmdMakeCredential || cmd == CmdGetAssertion || cmd == CmdSelection {
 		keepaliveStatus := byte(KeepaliveStatusUpNeeded)
 		if h.authenticator.NeedsPINBeforeTouch(cmd, data) {
 			keepaliveStatus = KeepaliveStatusProcessing

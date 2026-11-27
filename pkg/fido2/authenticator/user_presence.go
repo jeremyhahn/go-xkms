@@ -58,6 +58,11 @@ type UserPresenceRequest struct {
 	// Operation describes the operation type: "register" or "authenticate".
 	Operation string
 
+	// AuthenticatorName names the authenticator asking (Config.DisplayName,
+	// default DefaultAuthenticatorDisplayName), so a user with several
+	// authenticators can tell which one wants the touch.
+	AuthenticatorName string
+
 	// Timeout specifies how long to wait for user response.
 	// A zero value uses the default timeout.
 	Timeout time.Duration
