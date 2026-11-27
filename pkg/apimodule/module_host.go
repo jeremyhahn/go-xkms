@@ -173,14 +173,15 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 			// RBAC client decides on its projection.
 			// The host owns the service it resolves: an authorizer it
 			// set already (auth.NewAuthorizer(nil) with authorization
-			// disabled, auth.NewNodeAuthorizer for its node's
+			// disabled, an RBAC client deciding through its node's authorizer for its node's
 			// full-identity decision) is its choice and is kept.
 			if x.Authorizer() == nil {
 				switch {
 				case m.authDisabled:
 					x.SetAuthorizer(auth.NewAuthorizer(nil))
-				case m.tenantTarget != nil:
-					x.SetAuthorizer(auth.NewHostAuthorizer(client.RBAC(), m.tenantTarget))
+				case m.tenantTarget != nil && client.RBAC() != nil:
+					x.SetAuthorizer(auth.NewAuthorizer(hostRBAC{RBACClient: client.RBAC(), target: m.tenantTarget}))
+					x.SetTenantTargetAuthorizer(m.tenantTarget)
 				default:
 					x.SetAuthorizer(auth.NewAuthorizer(client.RBAC()))
 				}

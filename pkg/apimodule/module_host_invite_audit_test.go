@@ -176,7 +176,7 @@ func TestModule_HostMount_NoNodeAuditLoggerStillInvites(t *testing.T) {
 }
 
 // TestModule_HostMount_PreconfiguredAuthorizerIsAudited: a host that set its
-// own authorizer (auth.NewNodeAuthorizer, the delegated-grant path) still
+// own authorizer (an RBAC client deciding through its node's authorizer, the delegated-grant path) still
 // gets the node's audit sink, so its invite decisions reach the trail.
 func TestModule_HostMount_PreconfiguredAuthorizerIsAudited(t *testing.T) {
 	client := newHostNodeClient(t)

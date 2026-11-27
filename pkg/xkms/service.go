@@ -141,6 +141,11 @@ type XKMSService struct {
 	// Nil means auditing is off, as audit.Emit treats it.
 	auditLogger qrdbsdk.NodeAuditLogger
 
+	// tenantTarget decides a request that names a tenant other than the
+	// caller's (SetTenantTargetAuthorizer). Nil confines decisions to the
+	// caller's own tenant.
+	tenantTarget qrdbsdk.TenantTargetAuthorizer
+
 	// escrow holds the configured external key-escrow agents (pkg/escrow).
 	// Nil when escrow is not configured, in which case every EscrowServicer
 	// method returns ErrNotConfigured.
@@ -351,8 +356,47 @@ func (s *XKMSService) AuditLogger() qrdbsdk.NodeAuditLogger {
 	return s.auditLogger
 }
 
+// SetTenantTargetAuthorizer wires the host's target-aware authorizer (the
+// AuthMiddleware its transports gate on), which decides a request naming a
+// tenant other than the caller's under go-qrdb's scope rules. Nil confines
+// every decision to the caller's own tenant.
+func (s *XKMSService) SetTenantTargetAuthorizer(a qrdbsdk.TenantTargetAuthorizer) {
+	s.tenantTarget = a
+}
+
+// authorizeTenant is AuthorizeCaller for identity against tenantID ("" is the
+// identity's own tenant). A foreign tenant is decided by the tenant-target
+// authorizer on the supplied identity, and refused when none is wired.
+func (s *XKMSService) authorizeTenant(ctx context.Context, identity *auth.Identity, tenantID, resource, action string) error {
+	if !s.authorizer.Enabled() {
+		return nil
+	}
+	if identity == nil {
+		return auth.ErrUnauthenticated
+	}
+	own := identity.TenantID
+	if own == "" {
+		own = qrdbsdk.SystemTenantID
+	}
+	if tenantID == "" || tenantID == own {
+		return s.authorizer.Authorize(ctx, identity, resource, action)
+	}
+	if s.tenantTarget == nil {
+		return &qrdbsdk.PermissionDeniedError{
+			Resource: resource,
+			Action:   action,
+			Subject:  identity.Subject,
+			Reason:   "target tenant is not the caller's tenant",
+		}
+	}
+	bound := *identity
+	bound.TenantID = own
+	authzCtx := qrdbsdk.ContextWithTenant(auth.WithIdentity(ctx, &bound), own)
+	return s.tenantTarget.AuthorizeTenantTarget(authzCtx, tenantID, qrdbsdk.Permission(resource+":"+action))
+}
+
 // authorizeAudited is AuthorizeCaller against tenantID (the tenant the
-// request names; "" is the caller's own, auth.Authorizer.AuthorizeTenant)
+// request names; "" is the caller's own, authorizeTenant)
 // with the decision recorded on the audit chain, allow or deny
 // (docs/audit-log/engineering.md: denials are logged, always). A failed
 // audit write fails the call with go-qrdb's *AuditGateError rather than let
@@ -360,7 +404,7 @@ func (s *XKMSService) AuditLogger() qrdbsdk.NodeAuditLogger {
 // unchanged otherwise.
 func (s *XKMSService) authorizeAudited(ctx context.Context, tenantID, resource, action string) error {
 	identity := auth.GetIdentity(ctx)
-	err := s.authorizer.AuthorizeTenant(ctx, identity, tenantID, resource, action)
+	err := s.authorizeTenant(ctx, identity, tenantID, resource, action)
 
 	event := &audit.Event{
 		Timestamp: time.Now(),

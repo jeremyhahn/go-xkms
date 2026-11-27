@@ -127,7 +127,7 @@ func (nodeScopeAuthorizer) Authorize(_ context.Context, identity *auth.Identity,
 // TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer: a delegated caller
 // granted users:invite only through ScopePermissions gets its invitation
 // when the host sets its node's authorizer on the service it owns
-// (auth.NewNodeAuthorizer), which decides on the original identity; the
+// (an RBAC client deciding through its node's authorizer), which decides on the original identity; the
 // module keeps it rather than replacing it with the SDK RBAC client, which
 // drops ScopePermissions.
 func TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer(t *testing.T) {

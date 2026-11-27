@@ -1575,7 +1575,7 @@ func (s *Server) initializeAuthorization() error {
 				node = na
 			}
 		}
-		s.rbacAuthorizer = auth.NewNodeAuthorizer(s.qrdbClient.RBAC(), node)
+		s.rbacAuthorizer = newNodeAuthorizer(s.qrdbClient.RBAC(), node)
 		s.logger.Info("RBAC authorization enabled (qrdb-backed)")
 	} else {
 		s.rbacAuthorizer = nil
