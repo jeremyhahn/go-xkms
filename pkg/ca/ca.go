@@ -302,6 +302,9 @@ type CA struct {
 	// real validity window.
 	clock Clock
 
+	// crlMu serializes CRL generation so each CRL number is read and persisted as one step.
+	crlMu sync.Mutex
+
 	// fetchClient downloads the PKI objects certificate extensions point at
 	// (AIA caIssuers certificates, CRL distribution points). nil in
 	// production, which uses the address-filtered pkiFetchClient (see
