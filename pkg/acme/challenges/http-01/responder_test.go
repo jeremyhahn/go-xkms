@@ -19,10 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -363,17 +366,15 @@ func TestResponder_CloseStopsTheResponder(t *testing.T) {
 // shutdown so the graceful path cannot complete, and asserts the deadline is
 // reported as a typed error rather than swallowed.
 func TestResponder_ShutdownContextExpired(t *testing.T) {
-	// A body far larger than any socket buffer keeps the server blocked in
-	// its response write while the test refuses to read, so the connection is
-	// unambiguously active when Shutdown runs. The drain check below allows
-	// half the body: loopback receive and send buffers autotune to several MB
-	// on a loaded host, and a closed socket still flushes its send buffer, so
-	// half of 8 MiB was within reach of buffered bytes alone (CI run 21302).
-	keyAuth := strings.Repeat("k", 32<<20)
-
+	// The response must still be in flight when Shutdown runs, or the
+	// connection is idle and Shutdown closes it and succeeds. A client with a
+	// small receive window that never reads past the status line keeps the
+	// server blocked in its write with a body of only inFlightBodySize; no
+	// assertion depends on how many bytes the kernel buffered.
+	discardLogs(t)
 	responder, err := NewResponder(ResponderConfig{
 		Addr:         "127.0.0.1:0",
-		KeyAuth:      keyAuth,
+		KeyAuth:      strings.Repeat("k", inFlightBodySize),
 		WriteTimeout: time.Minute,
 	})
 	if err != nil {
@@ -381,29 +382,23 @@ func TestResponder_ShutdownContextExpired(t *testing.T) {
 	}
 	defer func() { _ = responder.Close() }()
 
-	conn, err := net.DialTimeout("tcp", responder.Addr().String(), 5*time.Second)
-	if err != nil {
-		t.Fatalf("dial responder: %v", err)
-	}
-	defer func() { _ = conn.Close() }()
+	baseline := countServeGoroutines()
+	conn := dialSmallWindow(t, responder.Addr().String())
+	sendChallengeRequest(t, conn, "token-expired")
 
-	request := fmt.Sprintf("GET %stoken-expired HTTP/1.1\r\nHost: acme\r\n\r\n", wellKnownChallengePath)
-	if _, err := io.WriteString(conn, request); err != nil {
-		t.Fatalf("write challenge request: %v", err)
-	}
-
-	// Reading the status line proves the server accepted the connection and
-	// entered the handler; the remaining megabytes stay unread.
+	// Reading the status line proves the server entered the handler; the
+	// body stays unread.
 	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
 		t.Fatalf("set read deadline: %v", err)
 	}
-	statusLine, err := bufio.NewReader(conn).ReadString('\n')
+	statusLine, err := bufio.NewReaderSize(conn, 16).ReadString('\n')
 	if err != nil {
 		t.Fatalf("read status line: %v", err)
 	}
 	if !strings.Contains(statusLine, "200") {
 		t.Fatalf("status line = %q, want a 200", statusLine)
 	}
+	waitForBlockedWrite(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -421,9 +416,10 @@ func TestResponder_ShutdownContextExpired(t *testing.T) {
 		t.Errorf("error message %q does not identify its origin", err.Error())
 	}
 
-	// A Shutdown that missed its deadline leaves the responder running, and
-	// Close is the remedy: it must actually force the teardown rather than
-	// report the earlier failure and do nothing.
+	// A Shutdown that missed its deadline leaves the in-flight response
+	// running (its write timeout is a minute away), and Close is the remedy:
+	// it must force the teardown rather than report the earlier failure and
+	// do nothing.
 	if err := responder.Close(); err != nil {
 		t.Fatalf("Close after a failed Shutdown: %v", err)
 	}
@@ -433,32 +429,222 @@ func TestResponder_ShutdownContextExpired(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not stop a responder whose Shutdown had timed out")
 	}
+	// Shutdown already closed the listener, so Done alone does not prove the
+	// response stopped: the serving goroutine must be released while the
+	// client still reads nothing, and the client must then see the
+	// connection end.
+	waitForServeGoroutines(t, baseline, "Close did not stop the in-flight response")
+	expectConnClosed(t, conn)
+}
 
-	// The connection the server was still writing to must be gone. Draining it
-	// has to end in an error well short of the full body: had Close been a
-	// no-op, the write would have continued until the one-minute write
-	// timeout. Bytes already sitting in the socket buffer read back first,
-	// which is why this drains rather than reading a single byte.
+// inFlightBodySize is the challenge body the in-flight tests serve: far more
+// than the few tens of KiB a dialSmallWindow connection lets the kernels
+// buffer, and no more than 1 MiB, since multi-MiB loopback writes silenced
+// GitHub-hosted runners (docs/plans/2183-narrowing.md, part 25).
+const inFlightBodySize = 512 << 10
+
+// dialSmallWindow dials addr with a 4 KiB receive buffer and a 1 KiB maximum
+// segment size, both set before connect so the server sizes its send buffer
+// to them. A response of inFlightBodySize to a client that does not read
+// then leaves the server blocked in its write.
+func dialSmallWindow(t *testing.T, addr string) net.Conn {
+	t.Helper()
+
+	dialer := net.Dialer{
+		Timeout: 5 * time.Second,
+		Control: func(_, _ string, rawConn syscall.RawConn) error {
+			var sockErr error
+			if err := rawConn.Control(func(fd uintptr) {
+				sockErr = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 4<<10)
+				if sockErr == nil {
+					sockErr = syscall.SetsockoptInt(int(fd), syscall.IPPROTO_TCP, syscall.TCP_MAXSEG, 1<<10)
+				}
+			}); err != nil {
+				return err
+			}
+			return sockErr
+		},
+	}
+	conn, err := dialer.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("dial responder: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+// discardLogs sends the default logger to a discard handler until the test
+// ends. The challenge handler logs the whole key authorization when a write
+// fails, which is a line of inFlightBodySize bytes for each in-flight test.
+func discardLogs(t *testing.T) {
+	t.Helper()
+
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.DiscardHandler))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+}
+
+// sendChallengeRequest writes a challenge request for token on conn.
+func sendChallengeRequest(t *testing.T, conn net.Conn, token string) {
+	t.Helper()
+
+	request := fmt.Sprintf("GET %s%s HTTP/1.1\r\nHost: acme\r\n\r\n", wellKnownChallengePath, token)
+	if _, err := io.WriteString(conn, request); err != nil {
+		t.Fatalf("write challenge request: %v", err)
+	}
+}
+
+// goroutineStacks returns the stack of every goroutine.
+func goroutineStacks() []string {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			return strings.Split(string(buf[:n]), "\n\n")
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+}
+
+// countServeGoroutines counts the goroutines serving an HTTP connection.
+func countServeGoroutines() int {
+	count := 0
+	for _, stack := range goroutineStacks() {
+		if strings.Contains(stack, "net/http.(*conn).serve(") {
+			count++
+		}
+	}
+	return count
+}
+
+// waitForBlockedWrite waits until a goroutine serving an HTTP connection is
+// blocked writing to its socket, which proves a response is in flight.
+func waitForBlockedWrite(t *testing.T) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, stack := range goroutineStacks() {
+			if strings.Contains(stack, "net/http.(*conn).serve(") &&
+				strings.Contains(stack, "internal/poll.(*FD).Write(") {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("no response blocked in a socket write; the test cannot hold a response in flight")
+}
+
+// waitForServeGoroutines waits until no more than baseline goroutines serve
+// an HTTP connection, and fails with failure if that takes over 10 s.
+func waitForServeGoroutines(t *testing.T, baseline int, failure string) {
+	t.Helper()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		count := countServeGoroutines()
+		if count <= baseline {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: %d connection-serving goroutines, want at most %d", failure, count, baseline)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// expectConnClosed reads conn until it ends, and fails unless it ends in EOF
+// or a reset within 10 s. Bytes already buffered read back first.
+func expectConnClosed(t *testing.T, conn net.Conn) {
+	t.Helper()
+
 	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		t.Fatalf("set drain deadline: %v", err)
+		t.Fatalf("set read deadline: %v", err)
 	}
 	buf := make([]byte, 32<<10)
-	drained := 0
 	for {
-		n, err := conn.Read(buf)
-		drained += n
-		if err != nil {
-			break
+		_, err := conn.Read(buf)
+		if err == nil {
+			continue
 		}
-		// A killed connection yields at most what the socket buffers already
-		// held (receive plus the server's flushed send buffer), well below
-		// half the body. Reaching
-		// this much means the server kept streaming, so Close did nothing.
-		if drained > len(keyAuth)/2 {
-			t.Fatalf("drained %d bytes of an %d-byte body; Close did not stop the response",
-				drained, len(keyAuth))
+		if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) {
+			return
+		}
+		t.Fatalf("connection did not end in EOF or a reset: %v", err)
+	}
+}
+
+func TestResponder_WriteTimeoutReleasesNonReadingClient(t *testing.T) {
+	discardLogs(t)
+	responder, err := NewResponder(ResponderConfig{
+		Addr:         "127.0.0.1:0",
+		KeyAuth:      strings.Repeat("k", inFlightBodySize),
+		WriteTimeout: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("NewResponder: %v", err)
+	}
+	t.Cleanup(func() { _ = responder.Close() })
+
+	baseline := countServeGoroutines()
+	conn := dialSmallWindow(t, responder.Addr().String())
+	sendChallengeRequest(t, conn, "token-write-timeout")
+
+	// The client reads nothing until the write timeout has released the
+	// serving goroutine; only the timeout can end the blocked write.
+	waitForBlockedWrite(t)
+	waitForServeGoroutines(t, baseline, "the write timeout did not release a client that never reads")
+	expectConnClosed(t, conn)
+}
+
+func TestNewResponder_NonPositiveWriteTimeoutUsesDefault(t *testing.T) {
+	for _, writeTimeout := range []time.Duration{0, -time.Second} {
+		responder, err := NewResponder(ResponderConfig{
+			Addr:         "127.0.0.1:0",
+			KeyAuth:      "token-write-timeout.thumbprint",
+			WriteTimeout: writeTimeout,
+		})
+		if err != nil {
+			t.Fatalf("NewResponder(WriteTimeout %v): %v", writeTimeout, err)
+		}
+		t.Cleanup(func() { _ = responder.Close() })
+
+		if responder.server.WriteTimeout != DefaultWriteTimeout {
+			t.Errorf("WriteTimeout %v: server WriteTimeout = %v, want %v",
+				writeTimeout, responder.server.WriteTimeout, DefaultWriteTimeout)
 		}
 	}
+}
+
+func TestResponder_CloseAbortsBlockedWrite(t *testing.T) {
+	// The write timeout is a minute away, so only Close can stop the write.
+	discardLogs(t)
+	responder, err := NewResponder(ResponderConfig{
+		Addr:         "127.0.0.1:0",
+		KeyAuth:      strings.Repeat("k", inFlightBodySize),
+		WriteTimeout: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("NewResponder: %v", err)
+	}
+	t.Cleanup(func() { _ = responder.Close() })
+
+	baseline := countServeGoroutines()
+	conn := dialSmallWindow(t, responder.Addr().String())
+	sendChallengeRequest(t, conn, "token-close-blocked")
+	waitForBlockedWrite(t)
+
+	if err := responder.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case <-responder.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not stop the responder")
+	}
+	waitForServeGoroutines(t, baseline, "Close did not abort the blocked write")
+	expectConnClosed(t, conn)
 }
 
 // TestResponder_ShutdownAfterCloseIsNoop pins the other order of the pair: a

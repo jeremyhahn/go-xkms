@@ -22,6 +22,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -112,7 +113,7 @@ type XKMSService struct {
 	trustRoots      subsystem[*truststore.DAOStore]
 	peerEvidence    subsystem[*peergate.Collector]
 	appraiser       subsystem[*appraisal.Appraiser]
-	webauthnService *webauthn.Service
+	webauthnService atomic.Pointer[webauthn.Service]
 
 	// tokenIssuer mints and revokes the browser/desktop session token
 	// pairs behind the WebAuthn, PIV, and mTLS login flows. DisableUser and
@@ -123,7 +124,7 @@ type XKMSService struct {
 	// but revoke no session directly; the refresh-time re-check
 	// (pkg/auth.QRDBUserResolver, consulted by pkg/auth/token.Issuer on
 	// every refresh) is the enforcement backstop either way.
-	tokenIssuer *token.Issuer
+	tokenIssuer atomic.Pointer[token.Issuer]
 
 	credentialService subsystem[*credentialspkg.Service]
 
@@ -219,6 +220,10 @@ type XKMSService struct {
 	// pkg/compose/invite.go).
 	inviteStore InviteStore
 
+	// inviteUsers, when set, is the user client the public invite routes
+	// read and activate the invited user through (SetInviteUserClient).
+	inviteUsers atomic.Pointer[inviteUserClientRef]
+
 	// inviteConfig holds the operator-configured invitation link base URL
 	// and TTL bounds. The zero value is usable: an empty PublicBaseURL
 	// yields a link with no origin, and empty TTL bounds fall back to
@@ -288,7 +293,14 @@ func (s *XKMSService) SetUserClients(users qrdbtransport.UserClient, roles qrdbt
 // SetTokenIssuer wires the session-token issuer so DisableUser and
 // DeleteUser can revoke every refresh-token session belonging to the
 // affected account (go-xkms#1297).
-func (s *XKMSService) SetTokenIssuer(issuer *token.Issuer) { s.tokenIssuer = issuer }
+//
+// The issuer is stored atomically: a REST host built after the service is
+// serving (pkg/api/rest NewHostServer) sets it while other transports
+// already read it.
+func (s *XKMSService) SetTokenIssuer(issuer *token.Issuer) { s.tokenIssuer.Store(issuer) }
+
+// issuer is SetTokenIssuer's issuer, or nil.
+func (s *XKMSService) issuer() *token.Issuer { return s.tokenIssuer.Load() }
 
 // SetPlatformStore sets the sealed platform credential store subsystem.
 func (s *XKMSService) SetPlatformStore(p seal.PlatformStore) { s.platformStore.store(p) }
@@ -298,7 +310,11 @@ func (s *XKMSService) SetPlatformStore(p seal.PlatformStore) { s.platformStore.s
 func (s *XKMSService) SetEscrowRegistry(r *escrow.Registry) { s.escrow = r }
 
 // SetWebAuthn sets the WebAuthn/FIDO2 subsystem.
-func (s *XKMSService) SetWebAuthn(w *webauthn.Service) { s.webauthnService = w }
+// Stored atomically for the same reason as SetTokenIssuer.
+func (s *XKMSService) SetWebAuthn(w *webauthn.Service) { s.webauthnService.Store(w) }
+
+// webAuthn is SetWebAuthn's service, or nil.
+func (s *XKMSService) webAuthn() *webauthn.Service { return s.webauthnService.Load() }
 
 // SetInviteStore wires the per-tenant enrollment-invitation store
 // (go-xkms#1294 part B) into the service. Nil leaves invitations

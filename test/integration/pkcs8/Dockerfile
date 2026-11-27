@@ -1,6 +1,6 @@
 FROM golang:1.27.4-bookworm
 
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
 ENV GOTOOLCHAIN=auto
 ENV GOWORK=off

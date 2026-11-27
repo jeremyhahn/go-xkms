@@ -7,7 +7,7 @@ ENV GOTOOLCHAIN=auto
 ENV GOFLAGS="-buildvcs=false"
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     # Core build tools
     build-essential \
     pkg-config \
@@ -33,7 +33,7 @@ ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 
 # Install Node.js 20.x LTS for Svelte/Vite frontend build
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
+    timeout 300 apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

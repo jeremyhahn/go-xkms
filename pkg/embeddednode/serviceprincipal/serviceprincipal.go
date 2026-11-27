@@ -53,7 +53,6 @@ const Name = "xkms"
 //   - admin:shard_state -- a clustered xkmsd waits for its shard's leader
 //     before serving (Server.waitForClusterLeader); the leader query is a
 //     shard-state read.
-//   - users:create, users:read, users:update -- the WebAuthn relying party's ceremonies read, create and update accounts.
 var grant = []qrdbsdk.Permission{
 	"kv:get",
 	"kv:put",
@@ -69,9 +68,6 @@ var grant = []qrdbsdk.Permission{
 	"index:create",
 	"index:query",
 	"admin:shard_state",
-	"users:create",
-	"users:read",
-	"users:update",
 }
 
 var registerOnce sync.Once
@@ -119,5 +115,76 @@ func CeremonyGrant() []qrdbsdk.Permission {
 func RegisterCeremonyGrant() {
 	registerCeremonyOnce.Do(func() {
 		qrdbsdk.RegisterPermissionRoleGrant(Name, ceremonyGrant...)
+	})
+}
+
+// webauthnGrant is what the principal additionally holds when xkmsd builds
+// its WebAuthn relying party over the embedded node: the relying party's
+// user store (pkg/webauthn qrdbUserStore) runs as the principal, since a
+// login is anonymous (#2541).
+//
+//   - users:read -- the GetByEmail probe at registration begin and the
+//     user lookups of login, add-a-passkey and registration finish.
+//   - users:update -- recording the user's WebAuthn identity.
+//   - users:delete -- rolling a failed registration back.
+//
+// It deliberately holds no users:create (CA ruling 602): an anonymous
+// public registration/begin would create a durable account before any
+// credential is verified, so over an enforcing node the store's create is
+// refused and the begin answers ErrRegistrationRefused (HTTP 403). Anonymous
+// public registration stays refused pending the owner's decision on a
+// pending-account lifecycle (go-xkms #2202); accounts are provisioned by an
+// administrator and add passkeys from their own session.
+//
+// It is registered only by RegisterWebAuthnGrant, so a node without the
+// WebAuthn service never holds it.
+var webauthnGrant = []qrdbsdk.Permission{
+	"users:read",
+	"users:update",
+	"users:delete",
+}
+
+var registerWebAuthnOnce sync.Once
+
+// WebAuthnGrant returns a copy of the permissions RegisterWebAuthnGrant adds.
+func WebAuthnGrant() []qrdbsdk.Permission {
+	return append([]qrdbsdk.Permission(nil), webauthnGrant...)
+}
+
+// RegisterWebAuthnGrant adds the WebAuthn user store's permissions to the
+// principal, once per process. The server calls it when it builds the
+// WebAuthn service over the embedded node; go-qrdb honours the grant from
+// the next Node.ServiceContext on.
+func RegisterWebAuthnGrant() {
+	registerWebAuthnOnce.Do(func() {
+		qrdbsdk.RegisterPermissionRoleGrant(Name, webauthnGrant...)
+	})
+}
+
+// tokenResolverGrant is what the principal additionally holds when xkmsd
+// builds its session token issuer over the embedded node: the issuer's user
+// resolver (pkg/auth QRDBUserResolver) re-reads the current account on every
+// refresh as the principal, since POST /api/v1/auth/refresh is anonymous.
+// It is read-only (users:read) and independent of WebAuthn, so a PIV/mTLS-
+// only deployment can refresh its sessions without the WebAuthn grant.
+var tokenResolverGrant = []qrdbsdk.Permission{
+	"users:read",
+}
+
+var registerTokenResolverOnce sync.Once
+
+// TokenResolverGrant returns a copy of the permissions
+// RegisterTokenResolverGrant adds.
+func TokenResolverGrant() []qrdbsdk.Permission {
+	return append([]qrdbsdk.Permission(nil), tokenResolverGrant...)
+}
+
+// RegisterTokenResolverGrant adds the token issuer's user-resolver
+// permission to the principal, once per process. The server calls it when
+// it builds the token issuer over the embedded node; go-qrdb honours the
+// grant from the next Node.ServiceContext on.
+func RegisterTokenResolverGrant() {
+	registerTokenResolverOnce.Do(func() {
+		qrdbsdk.RegisterPermissionRoleGrant(Name, tokenResolverGrant...)
 	})
 }

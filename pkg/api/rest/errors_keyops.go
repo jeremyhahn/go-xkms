@@ -73,6 +73,11 @@ var keyOpSentinelStatus = []struct {
 	{backend.ErrAsymmetricKeyExportNotAllowed, http.StatusBadRequest},
 	{xkms.ErrWrapTargetNotSymmetric, http.StatusBadRequest},
 	{backend.ErrKeyNotExportable, http.StatusForbidden},
+	// A source that cannot re-wrap its keys for a foreign destination (a
+	// hardware-bound tpm2 key) refuses the copy pair: policy, not a fault.
+	{backend.ErrExportToUnsupported, http.StatusForbidden},
+	// A wrapping algorithm the source cannot produce is a bad request.
+	{backend.ErrInvalidAlgorithm, http.StatusBadRequest},
 
 	// A caller-supplied nonce against a backend whose remote encryption
 	// service manages its own nonces (AWS KMS, GCP KMS, Vault Transit, the

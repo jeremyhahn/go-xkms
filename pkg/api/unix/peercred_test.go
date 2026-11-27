@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/peercred"
 )
@@ -42,9 +43,7 @@ import (
 // same private-directory shape a real daemon's runtime directory has.
 func privateSocketDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0700))
-	return dir
+	return testsupport.SocketDir(t)
 }
 
 // TestPeerCredentialPolicy_Allowed verifies the accept-time policy admits
@@ -115,7 +114,7 @@ func TestPeerCredentialPolicy_Allowed(t *testing.T) {
 // in this test suite -- is accepted by the accept-time peer-credential
 // check.
 func TestGRPCServer_PeerCredential_SameUIDAccepted(t *testing.T) {
-	socketPath := filepath.Join(privateSocketDir(t), "peercred-same-uid.sock")
+	socketPath := filepath.Join(privateSocketDir(t), "same-uid.sock")
 
 	server, err := NewGRPCServer(&GRPCConfig{SocketPath: socketPath})
 	require.NoError(t, err)

@@ -36,6 +36,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	acmeentities "github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	acmestorage "github.com/jeremyhahn/go-xkms/pkg/acme/storage"
 	nativeca "github.com/jeremyhahn/go-xkms/pkg/ca"
@@ -87,7 +88,7 @@ func embeddedQRDBConfig(t *testing.T) *config.Config {
 		Server:    config.ServerConfig{Host: "127.0.0.1", RESTPort: 0},
 		Protocols: config.ProtocolsConfig{Unix: true},
 		Unix: config.UnixConfig{
-			SocketPath: filepath.Join(tempDir, "xkms.sock"),
+			SocketPath: filepath.Join(testsupport.SocketDir(t), "xkms.sock"),
 		},
 		Logging:   config.LoggingConfig{Level: "error", Format: "json"},
 		TLS:       config.TLSConfig{Enabled: true, ServerCN: "localhost"},

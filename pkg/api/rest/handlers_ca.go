@@ -71,16 +71,15 @@ var (
 
 // caErrorStatusMap maps CA errors to HTTP status codes for O(1) lookup.
 var caErrorStatusMap = map[error]int{
-	xkms.ErrNotConfigured:        http.StatusServiceUnavailable,
-	xkms.ErrNilRequest:           http.StatusBadRequest,
-	xkms.ErrNilData:              http.StatusBadRequest,
-	xkms.ErrInvalidKeyAttributes: http.StatusBadRequest,
-	xkms.ErrCertNotFound:         http.StatusNotFound,
-	xkms.ErrInvalidEncodingPEM:   http.StatusBadRequest,
-	ca.ErrCRLNotFound:            http.StatusNotFound,
-	ca.ErrNotInitialized:         http.StatusServiceUnavailable,
-	// IssueCertificate refuses a common name that already has a certificate.
+	xkms.ErrNotConfigured:          http.StatusServiceUnavailable,
+	xkms.ErrNilRequest:             http.StatusBadRequest,
+	xkms.ErrNilData:                http.StatusBadRequest,
+	xkms.ErrInvalidKeyAttributes:   http.StatusBadRequest,
+	xkms.ErrCertNotFound:           http.StatusNotFound,
+	xkms.ErrInvalidEncodingPEM:     http.StatusBadRequest,
+	ca.ErrCRLNotFound:              http.StatusNotFound,
 	ca.ErrCertificateAlreadyExists: http.StatusConflict,
+	ca.ErrNotInitialized:           http.StatusServiceUnavailable,
 	// SignCSR's SPIFFE tenant is caller-supplied; the service's tenant
 	// binding refuses a foreign one as not-found (xkms.TenantBindingError).
 	qrdbsdk.ErrTenantMissing: http.StatusNotFound,

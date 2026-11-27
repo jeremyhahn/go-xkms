@@ -15,7 +15,6 @@ package serviceprincipal
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -152,19 +151,6 @@ func TestGrant_IsLeastPrivilegeCopy(t *testing.T) {
 	assert.NotEqual(t, got[0], Grant()[0], "Grant returns a copy")
 }
 
-// TestGrant_UsersPermissionsAreTheWebAuthnCeremonySet asserts the grant's
-// users permissions are exactly those the WebAuthn store's ceremonies call:
-// GetUser/GetUserByEmail (read), CreateUser (create), UpdateUser (update).
-func TestGrant_UsersPermissionsAreTheWebAuthnCeremonySet(t *testing.T) {
-	var users []string
-	for _, p := range Grant() {
-		if strings.HasPrefix(string(p), "users:") {
-			users = append(users, string(p))
-		}
-	}
-	assert.ElementsMatch(t, []string{"users:create", "users:read", "users:update"}, users)
-}
-
 // TestRegisterCeremonyGrant_AuthorizesAdminLookup proves the ceremony grant
 // reaches the principal: the cert-thumbprint lookup `xkmsd init` makes is
 // authorized, so an unknown thumbprint fails as not-found, never as denied.
@@ -190,4 +176,59 @@ func TestCeremonyGrant_IsLeastPrivilegeCopy(t *testing.T) {
 
 	got[0] = "admin:*"
 	assert.NotEqual(t, got[0], CeremonyGrant()[0], "CeremonyGrant returns a copy")
+}
+
+// TestRegisterWebAuthnGrant_AuthorizesUserLookup is #2541's second layer: a
+// running xkmsd's WebAuthn user store looks a sign-up's user up as the
+// service principal, which go-qrdb refused with "cannot read on users".
+func TestRegisterWebAuthnGrant_AuthorizesUserLookup(t *testing.T) {
+	node := newNode(t, Option())
+	RegisterWebAuthnGrant()
+	ctx, err := node.ServiceContext(context.Background())
+	require.NoError(t, err)
+
+	_, err = node.Client().Users().GetUserByEmail(ctx, "system", "nobody@example.com")
+	require.Error(t, err)
+	var denied *qrdbsdk.PermissionDeniedError
+	assert.NotErrorAs(t, err, &denied)
+}
+
+// TestWebAuthnGrant_HoldsNoUsersCreate is CA ruling 602: the principal never
+// creates a user for the WebAuthn store, so an anonymous registration/begin
+// over an enforcing node cannot persist an account (go-xkms #2202).
+func TestWebAuthnGrant_HoldsNoUsersCreate(t *testing.T) {
+	RegisterWebAuthnGrant()
+	assert.NotContains(t, WebAuthnGrant(), qrdbsdk.Permission("users:create"))
+	assert.False(t, qrdbsdk.HasPermissionRoleGrant(Name, "users:create"),
+		"no grant this package registers holds users:create")
+}
+
+func TestWebAuthnGrant_IsUsersCopy(t *testing.T) {
+	base := Grant()
+	RegisterWebAuthnGrant()
+
+	got := WebAuthnGrant()
+	assert.ElementsMatch(t, []qrdbsdk.Permission{
+		"users:read", "users:update", "users:delete",
+	}, got)
+	assert.Equal(t, base, Grant(), "registering the WebAuthn grant leaves the base grant unchanged")
+	for _, p := range got {
+		assert.NotContains(t, Grant(), p, "the base grant never holds a WebAuthn permission")
+	}
+
+	got[0] = "users:*"
+	assert.NotEqual(t, got[0], WebAuthnGrant()[0], "WebAuthnGrant returns a copy")
+}
+
+func TestTokenResolverGrant_IsUsersReadCopy(t *testing.T) {
+	base := Grant()
+	RegisterTokenResolverGrant()
+
+	got := TokenResolverGrant()
+	assert.Equal(t, []qrdbsdk.Permission{"users:read"}, got)
+	assert.Equal(t, base, Grant(), "registering the resolver grant leaves the base grant unchanged")
+	assert.NotContains(t, Grant(), qrdbsdk.Permission("users:read"), "the base grant never holds users:read")
+
+	got[0] = "users:*"
+	assert.Equal(t, qrdbsdk.Permission("users:read"), TokenResolverGrant()[0], "TokenResolverGrant returns a copy")
 }

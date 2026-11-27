@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	apitransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	mcptransport "github.com/jeremyhahn/go-xkms/pkg/api/transport/mcp"
@@ -140,7 +141,7 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 
 	// The Unix socket lives in a private runtime directory, as a daemon's
 	// would.
-	socketDir := t.TempDir()
+	socketDir := testsupport.SocketDir(t)
 	require.NoError(t, os.Chmod(socketDir, 0o700))
 	socketPath := filepath.Join(socketDir, "xkms.sock")
 
@@ -210,7 +211,7 @@ func TestUnifiedAPIServer_E2E_RESTThroughEmbeddedNode(t *testing.T) {
 
 	ports.Release(t)
 
-	server, err := New(cfg, WithExtraModules(adminModule))
+	server, err := newServerWithCleanup(t, cfg, WithExtraModules(adminModule))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = server.Shutdown() })
 

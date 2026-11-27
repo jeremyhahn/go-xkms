@@ -5,7 +5,10 @@ server:
   host: "0.0.0.0"
   rest_port: 8443
   grpc_port: 9443
-  quic_port: 8444
+  # QUIC is HTTP/3 on the REST port (pkg/server: "http3 on rest_port"), so
+  # the listener is 8443/udp, which docker-compose.yml exposes and
+  # KEYSTORE_QUIC_URL targets; quic_port names the same port.
+  quic_port: 8443
   mcp_port: 9444
 
 # Enable ALL protocols for complete integration testing
@@ -31,11 +34,10 @@ tls:
   key_file: /etc/xkms/certs/server.key
   ca_file: /etc/xkms/certs/ca.crt
   min_version: TLS1.3
-  # verify requests a client certificate (the init admin's mTLS credential) without requiring one.
+  # Request but do not require a client certificate: the init-ceremony admin
+  # credential authenticates over mTLS to provision test accounts, while
+  # anonymous and session clients still connect.
   client_auth: verify
-  # xkmsd init issues the admin credential from this bundle's CA, beside the credential.
-  client_cas:
-    - "/data/storage/ca-bundle.pem"
 
 # Adaptive authentication: anonymous until the first user is provisioned, then
 # enforced. This keeps the integration suites able to exercise the API without
@@ -44,9 +46,12 @@ tls:
 auth:
   enabled: true
   type: "composite"
-  # The suites run every login and ceremony from one address within seconds; the limiter stays on.
+  # Test-only: the WebAuthn, session and invite routes sit behind the login
+  # rate limiter (pkg/api/rest/routes.go), default 10/min per client. The
+  # suite runs every ceremony from one container address, so it would see
+  # 429 long before a test fails on its own merit. Production keeps 10.
   session:
-    login_rate_per_min: 6000
+    login_rate_per_min: 600
 
 # WebAuthn/FIDO2 authentication enabled for integration tests
 webauthn:
@@ -60,13 +65,11 @@ webauthn:
   authenticator_attachment: ""
   resident_key: "preferred"
   user_verification: "preferred"
-  # Registration is closed by default (go-xkms#184); the suite creates its
-  # users through open sign-up, so opt in explicitly.
+  # Registration is closed by default (go-xkms#184). Even opted in, an
+  # enforcing node refuses anonymous sign-up with 403 registration_refused
+  # (ruling 602, pending #2202); the suite proves that and provisions its
+  # accounts as admin, redeeming each invitation with a passkey.
   allow_public_registration: true
-
-# Submitted credentials persist in the barrier, so the PKCS#11 PIN survives a restart.
-credentials:
-  seal_strategy: "barrier"
 
 ratelimit:
   enabled: false
@@ -83,7 +86,7 @@ health:
 # Storage configuration
 datastore:
   engine: file
-  path: "/data/storage"
+  path: "/data/xkms"
 
 # Certificate Authority configuration
 ca:
@@ -118,13 +121,13 @@ backends:
     simulator_port: 2321
 
   pkcs11:
-    # PKCS#11 loads in-process: the server container's own SoftHSM2 install
-    # is used (Debian path); the token is initialized by the entrypoint.
-    enabled: true
+    # Off: a literal pin is refused as a protected target (#654). The api SSH
+    # matrix (make integration-test-api-ssh, XKMS_SSH_TEST_BACKENDS) runs
+    # software,tpm2 only until go-xkms#2262 lets xkmsd start a PIN-protected
+    # PKCS#11 backend from this config; PKCS#11 keeps its own suite.
+    enabled: false
     library: "/usr/lib/softhsm/libsofthsm2.so"
     token: "test-token"
-    # A protected target: scripts/start-xkms-server.sh submits this credential on first boot.
-    pin: "credential://pkcs11-user-pin"
 
 # Encryption-at-rest. Required by the secure-by-default gate (the daemon has
 # no insecure override). There is no config-sourced boot-time secret any more
@@ -134,5 +137,12 @@ backends:
 barrier:
   enabled: true
   strategy: "passphrase"
-  # The test containers dial xkms-server over the compose network, so the window binds 0.0.0.0 too.
+  # The node boots sealed and serves the pre-unseal window on server.host
+  # (0.0.0.0): the api test container reaches xkms-server over the compose
+  # network, which is the trusted test network here. Listening beyond
+  # loopback is acceptable only because this is a throwaway test server
+  # with a test passphrase over a disposable data volume; a deployment
+  # binds the window to loopback or a trusted management interface. Same
+  # precedent as configs/xkmsd-integration.yaml and
+  # test/integration/cluster/config.node.yaml.
   sealed_window_allow_remote: true

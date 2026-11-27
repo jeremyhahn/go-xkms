@@ -28,12 +28,21 @@ logging:
 tls:
   enabled: true
   server_cn: "localhost"
+  # Request but do not require a client certificate: the suite's fixture
+  # (tests/support/passkeyAccount.ts) presents the init-ceremony admin
+  # credential (.runtime/storage/admin-cert.pem) to provision its operators,
+  # while the browser connects without one.
+  client_auth: verify
 
-# Adaptive: anonymous while zero users exist (so the SPA's own /register
-# ceremony can create the first operator), required auth afterwards.
+# Composite auth, enforced: anonymous sign-up is refused (ruling 602, pending
+# #2202), so the fixture provisions each operator as admin and the operator
+# redeems its invitation with a passkey.
 auth:
   enabled: true
   type: "composite"
+  # One address signs in many times a minute; the limiter stays on.
+  session:
+    login_rate_per_min: 6000
 
 # A passphrase barrier, initialized the way a real deployment is: run-server.sh
 # runs `xkmsd init` with the SO PIN in the environment, then unseals through

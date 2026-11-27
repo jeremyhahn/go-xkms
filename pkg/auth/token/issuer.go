@@ -265,8 +265,11 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 // refresh-time re-check a UserResolver performs is the backstop for a
 // lifecycle change that reaches the identity plane through a path this
 // method is never called from.
-func (i *Issuer) RevokeBySubject(ctx context.Context, subject string) error {
-	return i.store.RevokeBySubject(ctx, subject)
+//
+// tenantID is the account's tenant: usernames are tenant-scoped, so only
+// subject's sessions in that tenant end (empty means the system tenant).
+func (i *Issuer) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
+	return i.store.RevokeBySubject(ctx, tenantID, subject)
 }
 
 // Revoke invalidates the refresh token's whole family (logout). An invalid
@@ -331,6 +334,7 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		JTI:       jti,
 		Family:    family,
 		Subject:   id.Subject,
+		TenantID:  id.TenantID,
 		ExpiresAt: refreshExp.Unix(),
 	}); err != nil {
 		return nil, err

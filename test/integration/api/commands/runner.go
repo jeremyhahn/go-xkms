@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/test/integration/api/apiharness"
 )
 
 // ProtocolType represents the communication protocol
@@ -76,10 +78,6 @@ type TestRunner struct {
 	Backend        string
 	Timeout        time.Duration
 	Verbose        bool
-	TLSCACert      string
-	// TLSCert and TLSKey are the client mTLS credential, the init admin's in the compose stack.
-	TLSCert string
-	TLSKey  string
 }
 
 // NewTestRunner creates a new test runner with default configuration
@@ -92,15 +90,12 @@ func NewTestRunner() *TestRunner {
 		UnixSocketPath: getEnv("KEYSTORE_UNIX_SOCKET", "/var/run/xkms/xkms.sock"),
 		RESTBaseURL:    getEnv("KEYSTORE_REST_URL", "http://localhost:8443"),
 		GRPCAddr:       getEnv("KEYSTORE_GRPC_ADDR", "localhost:9443"),
-		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:8444"),
+		QUICBaseURL:    getEnv("KEYSTORE_QUIC_URL", "https://localhost:8443"),
 		MCPAddr:        getEnv("KEYSTORE_MCP_ADDR", "localhost:9444"),
 		KeyDir:         "",
 		Backend:        "software",
 		Timeout:        30 * time.Second,
 		Verbose:        getEnv("VERBOSE", "") != "",
-		TLSCACert:      getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
-		TLSCert:        getEnv("KEYSTORE_TLS_CERT", ""),
-		TLSKey:         getEnv("KEYSTORE_TLS_KEY", ""),
 	}
 }
 
@@ -135,12 +130,28 @@ func (r *TestRunner) GetServerURL(protocol ProtocolType) string {
 	case ProtocolQUIC:
 		return "quic://" + strings.TrimPrefix(strings.TrimPrefix(r.QUICBaseURL, "https://"), "http://")
 	case ProtocolMCP:
+		// The MCP listener is streamable HTTP over TLS: mcps://.
 		return "mcps://" + r.MCPAddr
 	case ProtocolEmbedded:
 		// Embedded mode uses --local flag, no server URL needed
 		return ""
 	default:
 		return ""
+	}
+}
+
+// needsClientTLS reports whether a CLI invocation over protocol dials one of
+// the server's TLS listeners and so carries the admin client credential and
+// the trust bundle: the Unix socket, REST over HTTPS, gRPC, QUIC and MCP
+// (streamable HTTP over TLS, mcps://). Embedded runs in process.
+func needsClientTLS(protocol ProtocolType, restBaseURL string) bool {
+	switch protocol {
+	case ProtocolUnix, ProtocolGRPC, ProtocolQUIC, ProtocolMCP:
+		return true
+	case ProtocolREST:
+		return strings.HasPrefix(restBaseURL, "https://")
+	default:
+		return false
 	}
 }
 
@@ -213,18 +224,17 @@ func (r *TestRunner) RunCommandWithProtocol(t *testing.T, protocol ProtocolType,
 			prefixArgs = append(prefixArgs, "--server", serverURL)
 		}
 
-		// Add TLS options for protocols that use TLS (Unix socket, REST with HTTPS, gRPC, QUIC)
-		needsTLS := protocol == ProtocolUnix ||
-			protocol == ProtocolMCP ||
-			protocol == ProtocolREST && strings.HasPrefix(r.RESTBaseURL, "https://") ||
-			protocol == ProtocolGRPC ||
-			protocol == ProtocolQUIC
-
-		if needsTLS && r.TLSCACert != "" {
-			prefixArgs = append(prefixArgs, "--tls-ca", r.TLSCACert)
-		}
-		if needsTLS && r.TLSCert != "" && r.TLSKey != "" {
-			prefixArgs = append(prefixArgs, "--tls-cert", r.TLSCert, "--tls-key", r.TLSKey)
+		// Every transport that dials the server's TLS listeners -- the Unix
+		// socket (the qrdb node's TLS listener), REST over HTTPS, gRPC and
+		// QUIC -- authenticates as the init-ceremony admin over mTLS and
+		// verifies the server against the suite's trust bundle.
+		// MCP (mcps://) is streamable HTTP over TLS and carries them too.
+		if needsClientTLS(protocol, r.RESTBaseURL) {
+			tlsArgs, err := apiharness.ClientTLSArgs()
+			if err != nil {
+				t.Fatalf("admin mTLS credential for %s: %v", protocol, err)
+			}
+			prefixArgs = append(prefixArgs, tlsArgs...)
 		}
 	}
 
@@ -387,25 +397,7 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 			continue
 		}
 
-		// Build overrides to replace hardcoded key IDs with unique ones
-		overrides := make(map[string]string)
-		for _, arg := range cmd.RequiredArgs {
-			if arg.Description == "Key ID" {
-				if uniqueID, ok := keyIDs[arg.Value]; ok {
-					overrides[arg.Description] = uniqueID
-				}
-			}
-			// Make CA issue CN unique per protocol+run to avoid "certificate
-			// already exists". Including the protocol prevents collisions when two
-			// RunAllCommandsForProtocol calls share a runID (coarse clock).
-			if arg.Flag == "cn" && cmd.Category == CategoryCA {
-				overrides[arg.Flag] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
-			}
-			// A TPM policy name is unique per tenant, so it is made unique per protocol+run.
-			if arg.IsPositional && cmd.Name == "tpm-policy-create" {
-				overrides[arg.Description] = fmt.Sprintf("%s-%s-%d", arg.Value, protocol, runID)
-			}
-		}
+		overrides := runOverrides(cmd, protocol, runID, keyIDs)
 
 		// For key-verify, use the captured signature from key-sign
 		if cmd.Name == "key-verify" && capturedSignature != "" {
@@ -441,6 +433,43 @@ func (r *TestRunner) RunAllCommandsForProtocol(t *testing.T, protocol ProtocolTy
 	}
 
 	return results
+}
+
+// runOverrides replaces a command's fixed names with ones unique to this
+// protocol and run, so the server state one protocol's pass leaves behind
+// does not fail the next protocol's pass.
+func runOverrides(cmd CommandDefinition, protocol ProtocolType, runID int64, keyIDs map[string]string) map[string]string {
+	overrides := make(map[string]string)
+	for _, arg := range cmd.RequiredArgs {
+		if arg.Description == "Key ID" {
+			if uniqueID, ok := keyIDs[arg.Value]; ok {
+				overrides[arg.Description] = uniqueID
+			}
+		}
+		// Make CA issue CN unique per protocol+run to avoid "certificate
+		// already exists". Including the protocol prevents collisions when two
+		// RunAllCommandsForProtocol calls share a runID (coarse clock).
+		//
+		// The override is keyed by the flag: BuildCommandArgs looks a
+		// flagged argument up by Flag only, so the Description key this
+		// used to set never applied and every protocol issued the same CN.
+		// A unique subdomain keeps the CN a host name, and the SAN names the
+		// same host the CN does.
+		if arg.Flag == "cn" && cmd.Category == CategoryCA {
+			cn := fmt.Sprintf("%s-%d.%s", protocol, runID, arg.Value)
+			overrides[arg.Flag] = cn
+			overrides["sans"] = "DNS:" + cn
+		}
+		// The same holds for tpm-policy-create: the policy registry is shared
+		// by every protocol (and every run against one server), so a fixed
+		// name fails "tpmpolicy: policy already exists" after the first. The
+		// unique name keeps the fixed one as its prefix, so
+		// ExpectedOutputContains still matches.
+		if arg.IsPositional && cmd.Category == CategoryPolicy && arg.Description == "Policy name" {
+			overrides[arg.Description] = uniqueRunName(arg.Value, protocol, runID)
+		}
+	}
+	return overrides
 }
 
 // commandTagsAvailable checks if all required build tags are available
@@ -514,4 +543,11 @@ func uniqueKeyIDs(runID int64) map[string]string {
 		"test-symmetric-exportable": fmt.Sprintf("test-symmetric-exportable-%d", runID),
 		"test-symmetric-sensitive":  fmt.Sprintf("test-symmetric-sensitive-%d", runID),
 	}
+}
+
+// uniqueRunName makes a fixed command-table name unique per protocol and per
+// run: base-<protocol>-<runID>. Including the protocol keeps two
+// RunAllCommandsForProtocol calls that share a runID (coarse clock) apart.
+func uniqueRunName(base string, protocol ProtocolType, runID int64) string {
+	return fmt.Sprintf("%s-%s-%d", base, protocol, runID)
 }

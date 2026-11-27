@@ -71,6 +71,8 @@ var ImportExportSentinelClasses = []SentinelClass{
 	{backend.ErrAsymmetricKeyExportNotAllowed, ClassInvalidArgument},
 	{xkms.ErrWrapTargetNotSymmetric, ClassInvalidArgument},
 	{backend.ErrKeyNotExportable, ClassPermissionDenied},
+	{backend.ErrExportToUnsupported, ClassPermissionDenied},
+	{backend.ErrInvalidAlgorithm, ClassInvalidArgument},
 	// ErrCallerNonceNotSupported is a malformed request against a backend
 	// whose remote encryption service manages its own nonces (AWS KMS, GCP
 	// KMS, Vault Transit, the paired phone): the caller asked for a

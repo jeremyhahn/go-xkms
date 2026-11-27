@@ -39,7 +39,9 @@ func TestPermissionScopeResolverReadsDeclaredScopes(t *testing.T) {
 	}{
 		{"self-scoped built-in", qrdbsdk.Permission("keys:get"), qrdbsdk.PermissionScopeSelf},
 		{"tenant-only built-in", qrdbsdk.Permission("tenant_barrier:init"), qrdbsdk.PermissionScopeTenantOnly},
-		{"cross-scoped built-in", qrdbsdk.Permission("credentials:submit"), qrdbsdk.PermissionScopeCross},
+		// go-qrdb v0.58 made credentials:submit self-scoped; roles:reconcile_all
+		// (ReconcileBuiltInRolesAllTenants) is its cross-scoped built-in.
+		{"cross-scoped built-in", qrdbsdk.Permission("roles:reconcile_all"), qrdbsdk.PermissionScopeCross},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

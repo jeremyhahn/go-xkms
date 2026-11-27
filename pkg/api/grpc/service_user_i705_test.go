@@ -154,6 +154,20 @@ func (f *grpcFakeUserClient) UnsuspendUser(_ context.Context, id uint64) error {
 	return f.setLifecycle(id, "active")
 }
 
+// The guarded activation methods make the fake an xkms.InviteUserClient,
+// as the node-local qrdb user client is: the invite routes and an invited
+// CreateUser refuse a client without them.
+func (f *grpcFakeUserClient) ActivatePendingUser(_ context.Context, userID uint64) (*qrdbtransport.User, error) {
+	if err := f.setLifecycle(userID, string(qrdbsdk.LifecycleActive)); err != nil {
+		return nil, err
+	}
+	return f.byID[userID], nil
+}
+
+func (f *grpcFakeUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, _ string, _ int64) (*qrdbtransport.User, error) {
+	return f.ActivatePendingUser(ctx, userID)
+}
+
 func (f *grpcFakeUserClient) setLifecycle(id uint64, lifecycle string) error {
 	u, ok := f.byID[id]
 	if !ok {
@@ -208,6 +222,10 @@ func (f *grpcFakeRoleClient) ResolvePermissions(context.Context, *qrdbtransport.
 	return nil, errors.New("not used")
 }
 func (f *grpcFakeRoleClient) ReconcileBuiltInRoles(context.Context, *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
+	return nil, errors.New("not used")
+}
+
+func (f *grpcFakeRoleClient) ReconcileBuiltInRolesAllTenants(context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
 	return nil, errors.New("not used")
 }
 

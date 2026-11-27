@@ -44,6 +44,16 @@ xkmsctl key generate signing-key --backend tpm2 --key-algorithm ecdsa --curve P-
 Once created, a key stays in its backend. Moving it is `key copy`, and only
 works if the source key is exportable.
 
+Copying a software key into tpm2 uses the TPM's own import format:
+
+```
+xkmsctl key copy signing-key signing-key-tpm --backend software \
+  --dest-backend tpm2 --algorithm TPM2_DUPLICATE
+```
+
+The tpm2 copy signs exactly as the source did. Keys never leave a TPM: a
+copy out of tpm2 is refused with 403.
+
 ## The three decisions you make once per key
 
 1. **Algorithm** — `--key-algorithm rsa|ecdsa|ed25519`, plus `--key-size` or

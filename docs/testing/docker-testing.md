@@ -118,6 +118,18 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
     line naming the case: main has not published the tag (not found), the
     registry refused the read (401/403), the registry did not
     answer, or an unexpected reply (quoted).
+- **Same-repo pull request** (`CI_POOL=true`, #2299): `ci-images` runs on the
+  self-hosted `bigdisk-docker` pool. It resolves `<hash>-main` as above; for
+  each image main has not published, the step "Build the CI images on the
+  pool" runs `scripts/ci-registry.sh pool`, which builds it once and pushes
+  `go-xkms-ci-{toolchain,it}:<hash>` to the pool registry named by the
+  `CI_IMAGE_REGISTRY` secret (an image already there is not rebuilt). The
+  registry is masked first ("Mask the pool registry") and never printed: the
+  output is `go-xkms-ci-<family>@sha256:...` with no registry, since Actions
+  drops a job output that holds a secret, and each consumer's `use` adds the
+  registry back from the secret and pulls by digest with no login. An empty
+  reference on a same-repo pull request fails `use`; no consumer builds its
+  own image. Fork pull requests keep the path above.
 - **The publish log** shows each step: the login (`==> logged in to ... with
   the release runner's credential`), the lookup (`published already as
   <digest>`, or `has not published ... building and pushing it`), and
@@ -137,7 +149,11 @@ hands them to every job that runs a stage, through `scripts/ci-registry.sh`
   namespace, and holds the
   image with a never-started
   container until the job's `if: always()` teardown releases it. A consumer
-  on a push to `main` never rebuilds an image `ci-images` published.
+  on a push to `main` or a same-repo pull request never rebuilds an image
+  `ci-images` published. Each "Take the toolchain image" step has
+  `timeout-minutes: 30`, and every Dockerfile `apt-get` runs under
+  `timeout 300`, so a hung fetch from the in-network apt cache fails within
+  minutes instead of holding the job for hours (#2299).
 
 The registry is derived from `github.server_url` (GHCR on GitHub; on the
 forge, the same host as its web UI), so no address is written in the tree.
@@ -145,8 +161,8 @@ forge, the same host as its web UI), so no address is written in the tree.
 and keeps any image a container uses, a hold included. The gate
 `internal/buildgates/ci_image_digest_test.go` fails the build when a consumer
 stops taking its image from `ci-images`. It also fails when an output of
-`ci-images` stops naming both the `publish` step (main) and the `resolve` step
-(pull requests), when either step stops writing that output, or when the
+`ci-images` stops naming the `publish` step (main), the `pool` step
+(same-repo pull requests) and the `resolve` step (pull requests), when either step stops writing that output, or when the
 Validate step stops checking it. It fails when `ci.yml`'s `CI_REGISTRY_OWNER`
 stops taking the repository variable on the forge, when `scripts/ci-registry.sh`
 writes a namespace itself or a read leaves `CI_REGISTRY_OWNER`'s namespace,
@@ -155,6 +171,10 @@ logs in or takes the token outside its login functions, sends it to the
 forge, or stops using it for a GHCR resolve or pull, or when `imagetools`
 returns.
 `test/scripts/ci-registry.test.sh` covers the script.
+`internal/buildgates/pool_toolchain_image_test.go` fails the build when a
+Dockerfile `apt-get` loses `timeout 300`, a "Take the toolchain image" step
+loses its 30-minute bound or the pool registry, `ci-images` loses its pool
+branch, or `scripts/ci-registry.sh use` builds on a same-repo pull request.
 
 ### Run Individual Backend Tests
 

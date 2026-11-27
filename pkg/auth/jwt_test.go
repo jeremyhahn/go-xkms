@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/metadata"
@@ -792,6 +793,48 @@ func TestJWTAuthenticator_TenantID(t *testing.T) {
 	assert.Equal(t, "user123", identity.Subject)
 	assert.Equal(t, "tenant-xyz", identity.TenantID)
 	assert.False(t, IsCrossTenant(identity))
+}
+
+// A passkey token binds to its account (UserID and Username) while Subject
+// stays the handle it carried, so a key policy naming that handle in its
+// allowed or denied principals still decides for the bound identity.
+func TestJWTAuthenticator_UserHandleBindingKeepsSubject(t *testing.T) {
+	privateKey, publicKey := generateTestKeyPair(t)
+	authn, err := NewJWTAuthenticator(&JWTConfig{PublicKey: publicKey})
+	require.NoError(t, err)
+
+	handle := "AAAAAAAAACo" // base64url of account id 42
+	token := createTestToken(t, privateKey, jwt.MapClaims{
+		"sub":                  handle,
+		SubjectKindMetadataKey: SubjectKindUserHandle,
+		"username":             "alice",
+		"exp":                  time.Now().Add(time.Hour).Unix(),
+	})
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	identity, err := authn.AuthenticateHTTP(req)
+	require.NoError(t, err)
+	// The account is carried in its own field; the subject every persisted
+	// principal reference names stays the handle.
+	assert.Equal(t, uint64(42), identity.UserID)
+	assert.Equal(t, "alice", identity.Username)
+	assert.Equal(t, handle, identity.Subject)
+
+	// A key policy written against the handle before binding still holds.
+	now := time.Now()
+	denied := &keypolicy.Record{
+		KeyID:  "k1",
+		Status: keypolicy.StatusEnabled,
+		Policy: &keypolicy.Policy{DeniedPrincipals: []string{handle}},
+	}
+	assert.Error(t, denied.Check(identity.Subject, keypolicy.OpEncrypt, 0, now))
+	allowed := &keypolicy.Record{
+		KeyID:  "k1",
+		Status: keypolicy.StatusEnabled,
+		Policy: &keypolicy.Policy{AllowedPrincipals: []string{handle}},
+	}
+	assert.NoError(t, allowed.Check(identity.Subject, keypolicy.OpEncrypt, 0, now))
 }
 
 func TestJWTAuthenticator_NoTenantID(t *testing.T) {

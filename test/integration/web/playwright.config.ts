@@ -27,6 +27,8 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests',
+  // passkey-node.spec.ts runs on its own server: playwright.node.config.ts.
+  testIgnore: 'passkey-node.spec.ts',
   timeout: 60_000,
   retries: 0,
   // The registration/login specs share one operator identity created on
