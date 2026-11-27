@@ -149,7 +149,10 @@ func TestPhoneKeyBackend_TypeAndCapabilities(t *testing.T) {
 	assert.Equal(t, BackendTypePhone, backend.Type())
 
 	caps := backend.Capabilities()
-	assert.Equal(t, []int{pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512}, caps.SupportedAlgorithms)
+	assert.Equal(t, []int{
+		pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512,
+		pairingproto.COSEAlgMLDSA44, pairingproto.COSEAlgMLDSA65, pairingproto.COSEAlgMLDSA87,
+	}, caps.SupportedAlgorithms)
 	assert.False(t, caps.SupportsExport, "phone keys must never leave the secure element")
 	assert.False(t, caps.SupportsImport)
 	assert.False(t, caps.SupportsAttestation)
