@@ -191,3 +191,26 @@ func TestCeremonyGrant_IsLeastPrivilegeCopy(t *testing.T) {
 	got[0] = "admin:*"
 	assert.NotEqual(t, got[0], CeremonyGrant()[0], "CeremonyGrant returns a copy")
 }
+
+// TestPrincipal_HoldsNoUserDeletePermission checks no grant this package registers lets the service principal delete a user.
+func TestPrincipal_HoldsNoUserDeletePermission(t *testing.T) {
+	grants := map[string][]qrdbsdk.Permission{
+		"base":     Grant(),
+		"ceremony": CeremonyGrant(),
+	}
+	for name, grant := range grants {
+		for _, p := range []qrdbsdk.Permission{"users:delete", "users:*"} {
+			assert.NotContains(t, grant, p, "the %s grant", name)
+		}
+	}
+}
+
+// TestPrincipal_NoUserManagementBeyondTheCeremonySet checks the registered principal holds no users permission outside the WebAuthn ceremony set.
+func TestPrincipal_NoUserManagementBeyondTheCeremonySet(t *testing.T) {
+	_ = Option()
+	RegisterCeremonyGrant()
+
+	for _, p := range []qrdbsdk.Permission{"users:list", "users:delete", "users:*"} {
+		assert.False(t, qrdbsdk.HasPermissionRoleGrant(Name, p), "the service principal must not hold %s", p)
+	}
+}

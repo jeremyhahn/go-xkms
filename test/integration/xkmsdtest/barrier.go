@@ -81,12 +81,22 @@ func (e *UnansweredError) Unwrap() error { return e.Err }
 
 // BarrierState is what a node's sealed window reports about its barrier.
 type BarrierState struct {
-	Sealed        bool   `json:"sealed"`
-	InitializedAt string `json:"initialized_at"`
+	Sealed bool `json:"sealed"`
+	// InitializedFlag is the initialized flag. go-qrdb v0.58.4 sets it on a
+	// sealed barrier but leaves initialized_at empty, so it is authoritative
+	// when present.
+	InitializedFlag *bool  `json:"initialized"`
+	InitializedAt   string `json:"initialized_at"`
 }
 
-// Initialized reports whether the barrier has a root key.
-func (s BarrierState) Initialized() bool { return s.InitializedAt != "" }
+// Initialized reports whether the barrier has a root key: the initialized
+// flag, or initialized_at when the response carries no flag.
+func (s BarrierState) Initialized() bool {
+	if s.InitializedFlag != nil {
+		return *s.InitializedFlag
+	}
+	return s.InitializedAt != ""
+}
 
 // SealedWindowClient returns a client for an xkmsd node, trusting only the
 // anchors the node persisted: the bootstrap TLS certificate at certPath

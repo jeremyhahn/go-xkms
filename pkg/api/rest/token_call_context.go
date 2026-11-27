@@ -16,6 +16,7 @@ package rest
 import (
 	"context"
 
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 )
@@ -23,58 +24,12 @@ import (
 // CallContextFunc derives the context a go-qrdb call runs on from the caller's.
 type CallContextFunc func(context.Context) (context.Context, error)
 
-// boundRefreshStore runs every call of the wrapped store on the bound context.
-type boundRefreshStore struct {
-	inner token.RefreshStore
-	bind  CallContextFunc
-}
-
-// bindRefreshStore wraps store so its calls run on bind's context; nil bind returns store.
-func bindRefreshStore(store token.RefreshStore, bind CallContextFunc) token.RefreshStore {
+// newRefreshStore builds the qrdb refresh store, its KV calls bound by bind on the system tenant; nil bind keeps the caller's context.
+func newRefreshStore(kv qrdbtransport.KVClient, bind CallContextFunc) (*token.QRDBRefreshStore, error) {
 	if bind == nil {
-		return store
+		return token.NewQRDBRefreshStore(kv)
 	}
-	return &boundRefreshStore{inner: store, bind: bind}
-}
-
-func (b *boundRefreshStore) Save(ctx context.Context, rec *token.Record) error {
-	c, err := b.bind(ctx)
-	if err != nil {
-		return err
-	}
-	return b.inner.Save(c, rec)
-}
-
-func (b *boundRefreshStore) Get(ctx context.Context, family, jti string) (*token.Record, error) {
-	c, err := b.bind(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return b.inner.Get(c, family, jti)
-}
-
-func (b *boundRefreshStore) MarkRotated(ctx context.Context, family, jti string) error {
-	c, err := b.bind(ctx)
-	if err != nil {
-		return err
-	}
-	return b.inner.MarkRotated(c, family, jti)
-}
-
-func (b *boundRefreshStore) RevokeFamily(ctx context.Context, family string) error {
-	c, err := b.bind(ctx)
-	if err != nil {
-		return err
-	}
-	return b.inner.RevokeFamily(c, family)
-}
-
-func (b *boundRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
-	c, err := b.bind(ctx)
-	if err != nil {
-		return err
-	}
-	return b.inner.RevokeBySubject(c, subject)
+	return token.NewQRDBRefreshStore(kv, token.WithCallContext(token.CallContext(bind)))
 }
 
 // boundUserResolver runs every lookup of the wrapped resolver on the bound context.

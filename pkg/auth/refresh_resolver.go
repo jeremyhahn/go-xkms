@@ -51,6 +51,28 @@ const (
 	SubjectKindUserHandle = "user_handle"
 )
 
+// PasskeyHandleMetadataKey is the Identity.Metadata key under which the JWT
+// authenticator keeps a passkey token's signed subject, the account's base64
+// WebAuthn handle. go-qrdb's AuthMiddleware binds every request to its
+// account (Identity.BindUser), which rewrites Subject to the account id but
+// leaves Metadata alone, so the handle survives binding here.
+const PasskeyHandleMetadataKey = "passkey_handle"
+
+// PolicySubject returns the principal name persisted references hold for id:
+// the passkey handle when id authenticated with a passkey token, otherwise
+// its Subject. Key-policy principals, key-policy owners and the personal
+// password vault were written under the handle a passkey identity carried
+// before account binding, so they keep resolving after it. A nil id has none.
+func PolicySubject(id *Identity) string {
+	if id == nil {
+		return ""
+	}
+	if handle := id.Metadata[PasskeyHandleMetadataKey]; handle != "" {
+		return handle
+	}
+	return id.Subject
+}
+
 // QRDBUserResolver re-resolves the CURRENT state of the user behind a
 // refresh token at refresh time, straight from the qrdb user client -- the
 // same source MTLSAuthenticator.userIdentity reads for an mTLS login
@@ -59,11 +81,49 @@ const (
 // import would cycle, and the interface is implemented here rather than
 // declared.
 type QRDBUserResolver struct {
-	users qrdbtransport.UserClient
+	users tenantUserLookup
+}
+
+// RefreshUserLookup is the part of qrdbtransport.UserClient the refresh
+// re-check reads; qrdbtransport.UserClient satisfies it.
+type RefreshUserLookup interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
+	GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
+}
+
+// tenantUserLookup is the resolver's view of a user source: the by-id
+// lookup takes the validated refresh token's tenant. NodeUserClient
+// satisfies it and binds that tenant itself.
+type tenantUserLookup interface {
+	GetUser(ctx context.Context, tenantID string, id uint64) (*qrdbtransport.User, error)
+	GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error)
+}
+
+// clientUserLookup adapts a RefreshUserLookup (the credentialed qrdb
+// client) to tenantUserLookup by binding the tenant on ctx.
+type clientUserLookup struct {
+	users RefreshUserLookup
+}
+
+func (l clientUserLookup) GetUser(ctx context.Context, tenantID string, id uint64) (*qrdbtransport.User, error) {
+	return l.users.GetUser(bindTenant(ctx, tenantID), id)
+}
+
+func (l clientUserLookup) GetUserByUsername(ctx context.Context, tenantID, username string) (*qrdbtransport.User, error) {
+	return l.users.GetUserByUsername(ctx, tenantID, username)
 }
 
 // NewQRDBUserResolver wires the qrdb user client into a QRDBUserResolver.
-func NewQRDBUserResolver(users qrdbtransport.UserClient) *QRDBUserResolver {
+func NewQRDBUserResolver(users RefreshUserLookup) *QRDBUserResolver {
+	return &QRDBUserResolver{users: clientUserLookup{users: users}}
+}
+
+// NewNodeUserResolver wires an embedded node's user client into a
+// QRDBUserResolver. The public refresh route uses it on an embedded node,
+// since its request context carries no qrdb credentials (ruling 973); the
+// node client binds the validated token's tenant on each by-id lookup and
+// refuses a token with none.
+func NewNodeUserResolver(users *NodeUserClient) *QRDBUserResolver {
 	return &QRDBUserResolver{users: users}
 }
 
@@ -137,7 +197,10 @@ func (r *QRDBUserResolver) lookup(ctx context.Context, id *Identity) (*qrdbtrans
 		if !ok {
 			return nil, ErrRefreshSubjectNotFound
 		}
-		u, err := r.users.GetUser(ctx, uid)
+		// The by-id lookup takes the validated refresh token's tenant, or a
+		// routing user service resolves the anonymous refresh route in the
+		// system tenant.
+		u, err := r.users.GetUser(ctx, id.TenantID, uid)
 		if err != nil {
 			if errors.As(err, &notFound) {
 				return nil, ErrRefreshSubjectNotFound

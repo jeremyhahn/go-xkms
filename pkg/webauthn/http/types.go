@@ -16,6 +16,14 @@ package http
 // HeaderSessionID is the header name for the session ID.
 const HeaderSessionID = "X-Session-Id"
 
+// corsAllowedHeaders lists the request headers a cross-origin browser may send to the REST API.
+var corsAllowedHeaders = []string{"Content-Type", "Authorization", HeaderSessionID}
+
+// CORSAllowedHeaders returns a copy of the request headers the REST and outer CORS layers allow.
+func CORSAllowedHeaders() []string {
+	return append([]string(nil), corsAllowedHeaders...)
+}
+
 // BeginRegistrationRequest is the request body for starting registration.
 type BeginRegistrationRequest struct {
 	// Email is the user's email address (required).

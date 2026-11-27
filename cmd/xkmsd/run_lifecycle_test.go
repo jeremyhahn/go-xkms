@@ -30,6 +30,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // writeRunLifecycleConfig writes a configuration that clears both
@@ -52,7 +54,7 @@ protocols:
 
 unix:
   enabled: true
-  socket_path: "` + filepath.Join(dir, "xkms.sock") + `"
+  socket_path: "` + filepath.Join(testsupport.SocketDir(t), "xkms.sock") + `"
   protocol: "grpc"
 
 logging:

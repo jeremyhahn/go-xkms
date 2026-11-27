@@ -267,6 +267,22 @@ func TestController_Unseal_CredentialsFailureSurfacesError(t *testing.T) {
 		"Unseal must surface a CredentialsFor failure rather than swallow it")
 }
 
+// TestController_Unseal_EmptyPassphraseReturnsError covers a nil and an empty
+// passphrase: CredentialsFor returns zero Credentials (no Secret), the
+// passphrase strategy rejects them, and Unseal must return that error
+// rather than panic while cleaning up the missing secret.
+func TestController_Unseal_EmptyPassphraseReturnsError(t *testing.T) {
+	for name, passphrase := range map[string][]byte{"nil": nil, "empty": {}} {
+		t.Run(name, func(t *testing.T) {
+			ctrl, _, err := New(storage.NewMemory(), testRootKeyPath, nil)
+			require.NoError(t, err)
+
+			require.NotPanics(t, func() { err = ctrl.Unseal(passphrase) })
+			assert.Error(t, err, "an empty passphrase must not open the barrier")
+		})
+	}
+}
+
 // TestController_Rekey_OldCredentialsFailureSurfacesError proves the
 // oldPassphrase CredentialsFor failure inside a sealed Rekey is returned to
 // the caller.

@@ -90,10 +90,11 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 			Name:   "generateKey_RSA",
 			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
-				"key_id":   testKeyID,
-				"key_type": "rsa",
-				"key_size": 2048,
-				"backend":  "software",
+				"key_id":    testKeyID,
+				"key_type":  "signing",
+				"algorithm": "rsa",
+				"key_size":  2048,
+				"backend":   "software",
 			},
 			Validate: func(t *testing.T, result map[string]interface{}) {
 				keyID, ok := result["key_id"].(string)
@@ -108,10 +109,11 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 			Name:   "generateKey_ECDSA",
 			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
-				"key_id":   testKeyID + "-ecdsa",
-				"key_type": "ecdsa",
-				"curve":    "P-256",
-				"backend":  "software",
+				"key_id":    testKeyID + "-ecdsa",
+				"key_type":  "signing",
+				"algorithm": "ecdsa",
+				"curve":     "P-256",
+				"backend":   "software",
 			},
 			Validate: func(t *testing.T, result map[string]interface{}) {
 				keyID, ok := result["key_id"].(string)
@@ -126,9 +128,10 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 			Name:   "generateKey_Ed25519",
 			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
-				"key_id":   testKeyID + "-ed25519",
-				"key_type": "ed25519",
-				"backend":  "software",
+				"key_id":    testKeyID + "-ed25519",
+				"key_type":  "signing",
+				"algorithm": "ed25519",
+				"backend":   "software",
 			},
 			Validate: func(t *testing.T, result map[string]interface{}) {
 				keyID, ok := result["key_id"].(string)
@@ -371,10 +374,11 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 			Name:   "generateKey_forCert",
 			Method: "xkms.generateKey",
 			Params: map[string]interface{}{
-				"key_id":   testCertKeyID,
-				"key_type": "rsa",
-				"key_size": 2048,
-				"backend":  "software",
+				"key_id":    testCertKeyID,
+				"key_type":  "signing",
+				"algorithm": "rsa",
+				"key_size":  2048,
+				"backend":   "software",
 			},
 			Validate: func(t *testing.T, result map[string]interface{}) {
 				keyID, _ := result["key_id"].(string)
@@ -692,7 +696,7 @@ func TestMCPComprehensiveOperations(t *testing.T) {
 				t.Fatal(op.SkipReason)
 			}
 
-			client, err := NewMCPClient(cfg.MCPAddr)
+			client, err := NewMCPClient(t, cfg.MCPAddr)
 			if err != nil {
 				t.Fatalf("Failed to create MCP client: %v", err)
 			}
@@ -778,7 +782,7 @@ func TestMCPAllKeyTypes(t *testing.T) {
 
 	for _, kt := range keyTypes {
 		t.Run(kt.name, func(t *testing.T) {
-			client, err := NewMCPClient(cfg.MCPAddr)
+			client, err := NewMCPClient(t, cfg.MCPAddr)
 			if err != nil {
 				t.Fatalf("Failed to create MCP client: %v", err)
 			}
@@ -788,19 +792,24 @@ func TestMCPAllKeyTypes(t *testing.T) {
 
 			// Generate key
 			t.Run("generate", func(t *testing.T) {
+				// xkms.generateKey requires an algorithm (pkg/api/mcp/handlers.go,
+				// GenerateKeyParams); key_type is a purpose, so an asymmetric
+				// row sends "signing" and names its key kind as the algorithm.
+				keyType, algorithm := kt.keyType, kt.algorithm
+				if algorithm == "" {
+					keyType, algorithm = "signing", kt.keyType
+				}
 				params := map[string]interface{}{
-					"key_id":   keyID,
-					"key_type": kt.keyType,
-					"backend":  "software",
+					"key_id":    keyID,
+					"key_type":  keyType,
+					"algorithm": algorithm,
+					"backend":   "software",
 				}
 				if kt.keySize > 0 {
 					params["key_size"] = kt.keySize
 				}
 				if kt.curve != "" {
 					params["curve"] = kt.curve
-				}
-				if kt.algorithm != "" {
-					params["algorithm"] = kt.algorithm
 				}
 
 				resp, err := client.Call("xkms.generateKey", params)
@@ -937,7 +946,7 @@ func TestMCPErrorScenarios(t *testing.T) {
 
 	for _, tc := range errorCases {
 		t.Run(tc.name, func(t *testing.T) {
-			client, err := NewMCPClient(cfg.MCPAddr)
+			client, err := NewMCPClient(t, cfg.MCPAddr)
 			if err != nil {
 				t.Fatalf("Failed to create MCP client: %v", err)
 			}

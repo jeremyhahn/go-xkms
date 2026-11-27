@@ -155,6 +155,18 @@ func TestNewFeature(t *testing.T) {
 }
 ```
 
+## Authentication
+
+The server requires a verified client certificate on every TLS transport
+(`client_auth: verify`). Every CLI invocation in the suite passes the admin
+credential `xkmsd init --admin-factor mtls` wrote on the data volume
+(`XKMS_ADMIN_CERT`, `XKMS_ADMIN_KEY`) as `--tls-cert`/`--tls-key`. It also
+passes `--tls-ca` with one bundle of `KEYSTORE_TLS_CA`, the ceremony root
+(`XKMS_CEREMONY_CA`) and the unified listener's CA bundle (`XKMS_UNIFIED_CA`)
+when the server has written it (`apiharness.ClientTLSArgs`). This covers unix,
+rest, grpc and quic, and it never skips verification. QUIC is HTTP/3 on the
+REST port, 8443/udp.
+
 ## Troubleshooting
 
 ### Server not starting

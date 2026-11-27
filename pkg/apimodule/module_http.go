@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 )
@@ -79,7 +80,7 @@ func WithRESTServer(resolve RESTResolver) Option {
 // than once in the table (availability variants, e.g. the CA bundle
 // endpoint's full-CA and bootstrap-only forms) register once, choosing the
 // enabled variant at request time.
-func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
+func (m *Module) RegisterHTTP(r *qrdbserver.ModuleHTTPRegistrar) {
 	type routeKey struct{ method, pattern string }
 	variants := map[routeKey][]rest.RouteSpec{}
 	var order []routeKey
@@ -98,9 +99,10 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 	// Cross-origin policy (WithCORS): each handler carries the CORS headers,
 	// and each pattern gets a public OPTIONS route so the browser's preflight
 	// is answered before the auth chain (#2329).
-	corsEnabled := m.cors != nil && len(m.cors.AllowedOrigins) > 0
+	// The middleware passes every request through untouched when no policy
+	// is set, so only the OPTIONS routes need the policy's own check.
 	cors := rest.NewCORSMiddleware(m.cors)
-	if corsEnabled {
+	if m.cors.Enabled() {
 		preflight := cors(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			// Reached only for an origin outside the allowlist: no CORS
 			// headers, and the method stays unserved.
@@ -124,10 +126,7 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 	for _, key := range order {
 		specs := variants[key]
 		lead := specs[0]
-		h := m.lazyHTTPHandler(specs)
-		if corsEnabled {
-			h = cors(h).ServeHTTP
-		}
+		h := cors(m.lazyHTTPHandler(specs)).ServeHTTP
 		switch lead.Auth {
 		case rest.RouteAuthPublic:
 			r.HandlePublic(lead.Method, lead.Pattern, h)
@@ -137,6 +136,26 @@ func (m *Module) RegisterHTTP(r *qrdbsdk.ModuleHTTPRegistrar) {
 			r.Handle(lead.Method, lead.Pattern,
 				qrdbsdk.Permission(lead.Resource+":"+lead.Action), h)
 		}
+	}
+
+	// CORS preflights: a browser sends OPTIONS with no credentials before a
+	// cross-origin request, so each pattern gets one public OPTIONS route
+	// that only the REST server's CORS policy answers. A pattern the route
+	// table already serves for OPTIONS keeps its own handler. With the
+	// module's own policy (WithCORS) those routes are registered above and
+	// answer the preflight themselves.
+	preflight := map[string]bool{}
+	for _, key := range order {
+		if m.cors.Enabled() || key.method == http.MethodOptions {
+			preflight[key.pattern] = true
+		}
+	}
+	for _, key := range order {
+		if preflight[key.pattern] {
+			continue
+		}
+		preflight[key.pattern] = true
+		r.HandlePublic(http.MethodOptions, key.pattern, m.lazyPreflightHandler())
 	}
 
 	// Embedded web UI: the SPA is public by design (the login page renders
@@ -207,6 +226,9 @@ func (m *Module) lazyHTTPHandler(specs []rest.RouteSpec) http.HandlerFunc {
 				http.StatusServiceUnavailable)
 			return
 		}
+		// The chi router's global chain does not run on this surface, so
+		// the server's CORS policy is applied to each route here.
+		cors := srv.CORSMiddleware()
 		var chosen *rest.RouteSpec
 		for i := range specs {
 			if srv.RouteEnabled(specs[i]) {
@@ -215,11 +237,45 @@ func (m *Module) lazyHTTPHandler(specs []rest.RouteSpec) http.HandlerFunc {
 			}
 		}
 		if chosen == nil {
-			http.Error(w, "xkms subsystem for this route is not configured on this server",
-				http.StatusNotImplemented)
+			cors(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "xkms subsystem for this route is not configured on this server",
+					http.StatusNotImplemented)
+			})).ServeHTTP(w, req)
 			return
 		}
-		h := srv.BindRoute(*chosen)
+		h := cors(srv.BindRoute(*chosen))
+		if !bound.CompareAndSwap(nil, &h) {
+			h = *bound.Load()
+		}
+		h.ServeHTTP(w, req)
+	}
+}
+
+// lazyPreflightHandler answers the CORS preflight (OPTIONS) of a registered
+// pattern. It late-binds like lazyHTTPHandler and serves no data: the REST
+// server's CORS middleware answers the preflight of an allow-listed origin
+// itself, and every other request gets 405 with no CORS header, as the chi
+// router answers it.
+func (m *Module) lazyPreflightHandler() http.HandlerFunc {
+	var bound atomic.Pointer[http.Handler]
+	return func(w http.ResponseWriter, req *http.Request) {
+		if h := bound.Load(); h != nil {
+			(*h).ServeHTTP(w, req)
+			return
+		}
+		srv, err := m.restServer()
+		if err != nil {
+			http.Error(w, "xkms rest surface: "+err.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		if srv == nil {
+			http.Error(w, "xkms rest surface is not yet available (server still composing)",
+				http.StatusServiceUnavailable)
+			return
+		}
+		h := srv.CORSMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}))
 		if !bound.CompareAndSwap(nil, &h) {
 			h = *bound.Load()
 		}
@@ -230,7 +286,7 @@ func (m *Module) lazyHTTPHandler(specs []rest.RouteSpec) http.HandlerFunc {
 // Compile-time proof the module implements qrdb's authentication fallback:
 // the unified server consults it when its own authenticators produce no
 // identity for a request on an xkms route.
-var _ qrdbsdk.ModuleAuthFallback = (*Module)(nil)
+var _ qrdbserver.ModuleAuthFallback = (*Module)(nil)
 
 // AuthenticateHTTP authenticates a request with xkms's session-vehicle
 // chain (the JWT pairs the FIDO2/PIV login ceremonies mint, plus mTLS).

@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	qrdbtenant "github.com/jeremyhahn/go-qrdb/pkg/tenant"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 )
 
@@ -56,12 +58,41 @@ type Record struct {
 	// Subject is the identity the token refreshes.
 	Subject string `json:"subject"`
 
+	// TenantID is the tenant of the account the token refreshes. Usernames
+	// are tenant-scoped and every tenant's records share one store, so a
+	// revocation matches tenant and subject together. A record saved before
+	// this field existed carries none; its tenant is unknown, so it fails
+	// closed and is revoked by its subject's revocation in any tenant.
+	// Refresh refuses such a record unless the token's tenant is the system
+	// tenant.
+	TenantID string `json:"tenant_id,omitempty"`
+
 	// ExpiresAt is the refresh token's absolute expiry (Unix seconds).
 	ExpiresAt int64 `json:"expires_at"`
 
 	// Rotated marks a token that was already exchanged for a successor.
 	// Presenting a rotated token again is reuse — the family is revoked.
 	Rotated bool `json:"rotated"`
+}
+
+// ownedBy reports whether r refreshes subject in tenantID. A record that
+// carries a tenant matches tenant and subject together (an empty tenantID is
+// the system tenant). A record saved before Record carried a tenant fails
+// closed: its tenant is unknown, so it matches a revocation of its subject in
+// any tenant and is never assumed to belong to the system tenant.
+func (r *Record) ownedBy(tenantID, subject string) bool {
+	if r.Subject != subject {
+		return false
+	}
+	return r.TenantID == "" || canonicalTenant(r.TenantID) == canonicalTenant(tenantID)
+}
+
+// canonicalTenant maps the empty tenant to the system tenant.
+func canonicalTenant(tenantID string) string {
+	if tenantID == "" {
+		return qrdbsdk.SystemTenantID
+	}
+	return tenantID
 }
 
 // revocation is the tombstone written when a family is revoked.
@@ -103,13 +134,13 @@ type RefreshStore interface {
 	// slip a successor past the sweep.
 	RevokeFamily(ctx context.Context, family string) error
 
-	// RevokeBySubject revokes every family whose Record.Subject equals
-	// subject, exactly as RevokeFamily revokes one -- so a user-lifecycle
+	// RevokeBySubject revokes every family whose Record carries subject in
+	// tenantID (an empty tenant, on either side, is the system tenant), exactly as RevokeFamily revokes one -- so a user-lifecycle
 	// change (disable, delete) ends every session the account holds, no
 	// matter which login flow minted it. It is idempotent: a subject with no
 	// live family is a no-op success, matching RevokeFamily's own logout
 	// semantics.
-	RevokeBySubject(ctx context.Context, subject string) error
+	RevokeBySubject(ctx context.Context, tenantID, subject string) error
 }
 
 // refreshKey builds the KV key for a record.
@@ -206,13 +237,13 @@ func (s *MemoryRefreshStore) RevokeFamily(_ context.Context, family string) erro
 }
 
 // RevokeBySubject implements RefreshStore.
-func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, subject string) error {
+func (s *MemoryRefreshStore) RevokeBySubject(_ context.Context, tenantID, subject string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	families := make(map[string]struct{})
 	for _, rec := range s.records {
-		if rec.Subject == subject {
+		if rec.ownedBy(tenantID, subject) {
 			families[rec.Family] = struct{}{}
 		}
 	}
@@ -269,7 +300,42 @@ func expired(rec *Record) bool {
 // CompareAndSwap and revocation with PutIfAbsent, both evaluated inside the
 // Raft state machine, so two nodes cannot both win.
 type QRDBRefreshStore struct {
-	kv qrdbtransport.GuardedKVClient
+	kv   qrdbtransport.GuardedKVClient
+	bind CallContext
+}
+
+// CallContext derives the context the store's own KV calls run under from
+// the caller's context. pkg/server and apimodule pass the embedded node's
+// ServiceContext, so the bookkeeping runs as the node's service principal
+// even on public routes whose request context carries no identity
+// (go-xkms#2287). It has the shape of qrdbstorage.CallContext.
+type CallContext func(context.Context) (context.Context, error)
+
+// QRDBRefreshStoreOption configures a QRDBRefreshStore.
+type QRDBRefreshStoreOption func(*QRDBRefreshStore)
+
+// WithCallContext sets the binder applied to every KV call the store makes.
+// A nil binder keeps the caller's context.
+func WithCallContext(bind CallContext) QRDBRefreshStoreOption {
+	return func(s *QRDBRefreshStore) { s.bind = bind }
+}
+
+// callContext applies the binder, if any, to ctx.
+func (s *QRDBRefreshStore) callContext(ctx context.Context) (context.Context, error) {
+	if s.bind == nil {
+		return ctx, nil
+	}
+	// Refresh bookkeeping lives in system storage whatever tenant the
+	// request serves: the public login paths save it there, and the
+	// service identity the binder applies is not in any other tenant, so a
+	// request's tenant binding must not reach it (an RBAC-enforcing node
+	// refuses "identity not in target tenant", and a disable on a
+	// non-system request would leave the user's sessions live).
+	bound, err := s.bind(qrdbtenant.WithTenantID(ctx, qrdbsdk.SystemTenantID))
+	if err != nil {
+		return nil, &StoreError{Op: "bind call context", Err: err}
+	}
+	return bound, nil
 }
 
 // NewQRDBRefreshStore constructs a store over the given KV client.
@@ -281,7 +347,7 @@ type QRDBRefreshStore struct {
 // second refresh can slip between — so construction fails instead. There is
 // deliberately no degraded non-atomic path: a refresh store that cannot
 // arbitrate a race is a refresh store that mints two live successors.
-func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
+func NewQRDBRefreshStore(kv qrdbtransport.KVClient, opts ...QRDBRefreshStoreOption) (*QRDBRefreshStore, error) {
 	if kv == nil {
 		return nil, &NilInputError{Field: "kv"}
 	}
@@ -289,7 +355,11 @@ func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
 	if !ok {
 		return nil, &GuardedKVUnsupportedError{ClientType: fmt.Sprintf("%T", kv)}
 	}
-	return &QRDBRefreshStore{kv: guarded}, nil
+	s := &QRDBRefreshStore{kv: guarded}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s, nil
 }
 
 // Save implements RefreshStore.
@@ -302,6 +372,10 @@ func NewQRDBRefreshStore(kv qrdbtransport.KVClient) (*QRDBRefreshStore, error) {
 func (s *QRDBRefreshStore) Save(ctx context.Context, rec *Record) error {
 	if rec == nil {
 		return &NilInputError{Field: "record"}
+	}
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
@@ -330,6 +404,10 @@ func (s *QRDBRefreshStore) Save(ctx context.Context, rec *Record) error {
 
 // Get implements RefreshStore.
 func (s *QRDBRefreshStore) Get(ctx context.Context, family, jti string) (*Record, error) {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	rec, _, err := s.load(ctx, family, jti)
 	if err != nil {
 		return nil, err
@@ -367,6 +445,10 @@ func (s *QRDBRefreshStore) load(ctx context.Context, family, jti string) (*Recor
 
 // MarkRotated implements RefreshStore.
 func (s *QRDBRefreshStore) MarkRotated(ctx context.Context, family, jti string) error {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	rec, current, err := s.load(ctx, family, jti)
 	if err != nil {
 		return err
@@ -398,6 +480,15 @@ func (s *QRDBRefreshStore) MarkRotated(ctx context.Context, family, jti string) 
 
 // RevokeFamily implements RefreshStore.
 func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) error {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
+	return s.revokeFamily(ctx, family)
+}
+
+// revokeFamily is RevokeFamily under an already bound context.
+func (s *QRDBRefreshStore) revokeFamily(ctx context.Context, family string) error {
 	tombstone, err := json.Marshal(&revocation{
 		Family:    family,
 		ExpiresAt: time.Now().Add(RevocationTombstoneTTL).Unix(),
@@ -436,7 +527,11 @@ func (s *QRDBRefreshStore) RevokeFamily(ctx context.Context, family string) erro
 // have to stay consistent with RevokeFamily's own delete-by-prefix sweep,
 // and a lifecycle change is rare enough next to a refresh that the scan's
 // cost is the right place to pay it.
-func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) error {
+func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
+	ctx, err := s.callContext(ctx)
+	if err != nil {
+		return err
+	}
 	entries, err := s.kv.Scan(ctx, refreshPrefix)
 	if err != nil {
 		return &StoreError{Op: "scan", Err: err}
@@ -448,12 +543,12 @@ func (s *QRDBRefreshStore) RevokeBySubject(ctx context.Context, subject string) 
 		if err := json.Unmarshal(data, &rec); err != nil {
 			return &StoreError{Op: "decode", Err: err}
 		}
-		if rec.Subject == subject {
+		if rec.ownedBy(tenantID, subject) {
 			families[rec.Family] = struct{}{}
 		}
 	}
 	for family := range families {
-		if err := s.RevokeFamily(ctx, family); err != nil {
+		if err := s.revokeFamily(ctx, family); err != nil {
 			return err
 		}
 	}

@@ -25,9 +25,22 @@ import (
 )
 
 // QRDBUserStoreOptions configures the adapter pair at construction time.
+// QRDBUsers is the part of qrdbtransport.UserClient the WebAuthn user
+// store calls.
+type QRDBUsers interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
+	GetUserByEmail(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error)
+	CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error)
+	UpdateUser(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
+	DeleteUser(ctx context.Context, id uint64) error
+}
+
 type QRDBUserStoreOptions struct {
 	// Users is the qrdb user client, used for create/get/list of users.
-	Users qrdbtransport.UserClient
+	// On an embedded node it is the node's user service
+	// (auth.NodeUserClient): the ceremony routes are public, so their
+	// request context carries no qrdb credentials (ruling 973).
+	Users QRDBUsers
 
 	// DAOFactory is the injected go-qrdb DAO factory the credential store
 	// builds its DAO from. Its default store must support atomic
@@ -41,7 +54,12 @@ type QRDBUserStoreOptions struct {
 	// per-tenant id for multi-tenant deployments. Required.
 	TenantID string
 
-	// CallContext, when set, binds every user-client call.
+	// CallContext binds the context every users and credentials call runs
+	// on, as datastore.WithCallContext does for the DAOs. Over an embedded
+	// node pass Node.ServiceContext: the store is xkms's own persistence, so
+	// it runs as the node's service principal, not as the HTTP caller (a
+	// sign-up's registration/begin is anonymous). A bind error fails the
+	// call. Nil keeps the caller's context.
 	CallContext CallContext
 }
 
@@ -49,7 +67,7 @@ type QRDBUserStoreOptions struct {
 // user's credentials are read from, and deleted through, the credential
 // store it was built with.
 type qrdbUserStore struct {
-	users    qrdbtransport.UserClient
+	users    QRDBUsers
 	creds    CredentialStore
 	tenantID string
 	bind     CallContext
@@ -58,7 +76,7 @@ type qrdbUserStore struct {
 // CallContext derives the context a go-qrdb call runs on from the caller's.
 type CallContext func(context.Context) (context.Context, error)
 
-// callContext returns the context a user-client call runs on.
+// callContext returns the context a call into qrdb runs on.
 func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error) {
 	if s.bind == nil {
 		return ctx, nil
@@ -68,6 +86,40 @@ func (s *qrdbUserStore) callContext(ctx context.Context) (context.Context, error
 		return nil, WrapError("bind qrdb call context", err)
 	}
 	return bound, nil
+}
+
+// scope binds the store's configured tenant on ctx for the user service's
+// by-id calls (GetUser, UpdateUser, DeleteUser), which carry no tenant of
+// their own: on the anonymous public routes a routing user service would
+// otherwise act in the system tenant. A tenant the caller already bound (a
+// validated invite's) is kept.
+func (s *qrdbUserStore) scope(ctx context.Context) context.Context {
+	if s.tenantID == "" {
+		return ctx
+	}
+	if id, ok := qrdbsdk.TenantFromContext(ctx); ok && id != "" {
+		return ctx
+	}
+	return qrdbsdk.ContextWithTenant(ctx, s.tenantID)
+}
+
+// TenantID is the tenant the store resolves accounts in when the caller
+// binds none: the relying party's configured tenant.
+func (s *qrdbUserStore) TenantID() string {
+	return s.tenantID
+}
+
+// credentialScope clears any tenant binding on ctx for the credential
+// store's calls. The credential DAO is system bookkeeping: the production
+// datastore runs it as the system service principal but keeps an explicit
+// tenant binding, and under RBAC qrdb refuses a system principal acting in
+// another tenant. The tenant scope binds for the user service must not
+// reach it.
+func credentialScope(ctx context.Context) context.Context {
+	if _, ok := qrdbsdk.TenantFromContext(ctx); !ok {
+		return ctx
+	}
+	return qrdbsdk.ContextWithTenant(ctx, "")
 }
 
 // NewQRDBUserStoreAdapter constructs the (UserStore, CredentialStore) pair
@@ -123,6 +175,7 @@ func UserIDFromHandle(handle []byte) (uint64, error) {
 // GetByID retrieves the user by webauthn handle. The handle is the
 // 8-byte big-endian form of the qrdb uint64 user id.
 func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error) {
+	ctx = s.scope(ctx)
 	if len(userID) == 0 {
 		return nil, ErrUserNotFound
 	}
@@ -130,11 +183,11 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	if err != nil {
 		return nil, ErrUserNotFound
 	}
-	callCtx, err := s.callContext(ctx)
+	ctx, err = s.callContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(callCtx, id)
+	u, err := s.users.GetUser(ctx, id)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
@@ -149,14 +202,15 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 // surfaced as a WebAuthn login that verified correctly and then failed to
 // resolve a principal (go-xkms #185, go-quicbaas #359).
 func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, error) {
+	ctx = s.scope(ctx)
 	if email == "" {
 		return nil, ErrUserNotFound
 	}
-	callCtx, err := s.callContext(ctx)
+	ctx, err := s.callContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUserByEmail(callCtx, s.tenantID, email)
+	u, err := s.users.GetUserByEmail(ctx, s.tenantID, email)
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
@@ -170,14 +224,15 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 // no Name field — which made this store a second source of truth for an
 // identity qrdb already owned. Both now live in the record itself.
 func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
+	ctx = s.scope(ctx)
 	if email == "" {
 		return nil, &QRDBAdapterConfigError{Field: "email"}
 	}
-	callCtx, err := s.callContext(ctx)
+	ctx, err := s.callContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.CreateUser(callCtx, &qrdbtransport.CreateUserRequest{
+	u, err := s.users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
 		Username: email,
 		Email:    email,
 		Name:     displayName,
@@ -194,6 +249,7 @@ func (s *qrdbUserStore) Create(ctx context.Context, email, displayName string) (
 // credentials, so Save is a near no-op for the user record. A display-name
 // change is an update to the qrdb record, not a write to a parallel key.
 func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
+	ctx = s.scope(ctx)
 	if user == nil {
 		return &QRDBAdapterConfigError{Field: "user"}
 	}
@@ -205,11 +261,11 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 	if err != nil {
 		return err
 	}
-	callCtx, err := s.callContext(ctx)
+	ctx, err = s.callContext(ctx)
 	if err != nil {
 		return err
 	}
-	if _, uErr := s.users.UpdateUser(callCtx, &qrdbtransport.UpdateUserRequest{
+	if _, uErr := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{
 		ID:   id,
 		Name: dn,
 	}); uErr != nil {
@@ -223,15 +279,16 @@ func (s *qrdbUserStore) Save(ctx context.Context, user User) error {
 // caller, since an orphaned credential would go on referencing a user that
 // no longer exists.
 func (s *qrdbUserStore) Delete(ctx context.Context, userID []byte) error {
+	ctx = s.scope(ctx)
 	id, err := UserIDFromHandle(userID)
 	if err != nil {
 		return err
 	}
-	callCtx, err := s.callContext(ctx)
+	ctx, err = s.callContext(ctx)
 	if err != nil {
 		return err
 	}
-	if dErr := s.users.DeleteUser(callCtx, id); dErr != nil {
+	if dErr := s.users.DeleteUser(ctx, id); dErr != nil {
 		if isUserNotFound(dErr) {
 			return ErrUserNotFound
 		}

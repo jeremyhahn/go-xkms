@@ -4726,12 +4726,15 @@ message BeginInviteRegistrationRequest {
   string token = 2;
 }
 
-// BeginInviteRegistrationResponse carries the begun ceremony: the session ID
-// and JSON-marshaled WebAuthn registration options
-// (PublicKeyCredentialCreationOptions).
+// BeginInviteRegistrationResponse carries the begun ceremony: the session ID,
+// the JSON-marshaled WebAuthn options and the ceremony they are for:
+// "create" (CredentialCreation, a new credential) or "get"
+// (CredentialAssertion for the credential already enrolled under this
+// invitation, resuming a failed activation).
 message BeginInviteRegistrationResponse {
   string session_id = 1;
   string options_json = 2;
+  string ceremony = 3;
 }
 
 // FinishInviteRegistrationRequest completes the invite-authorized WebAuthn

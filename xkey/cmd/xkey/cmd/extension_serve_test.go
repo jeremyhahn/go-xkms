@@ -469,7 +469,7 @@ func TestExtensionServeCmd_BarrierMode_IPCConnectivity(t *testing.T) {
 	enableLocalAppAccessForTest(t)
 	defer xhome.ResetRoot()
 
-	socketPath := filepath.Join(privateTempDir(t), "test-barrier-serve.sock")
+	socketPath := filepath.Join(privateTempDir(t), "barrier.sock")
 	barrierPassword := "test-barrier-password-123"
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -966,7 +966,7 @@ func TestExtensionServeCmd_NoAuth_NoBarrier(t *testing.T) {
 	enableLocalAppAccessForTest(t)
 	defer xhome.ResetRoot()
 
-	socketPath := filepath.Join(privateTempDir(t), "test-noauth-serve.sock")
+	socketPath := filepath.Join(privateTempDir(t), "noauth.sock")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

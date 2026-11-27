@@ -28,6 +28,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -71,7 +72,7 @@ type ipcCertPKCS11Result struct {
 func startTestIPCServer(t *testing.T, certPEM string) string {
 	t.Helper()
 
-	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 	ln, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { ln.Close() })
@@ -150,7 +151,7 @@ func TestWithXKeyAuth_EmptyPath(t *testing.T) {
 }
 
 func TestWithXKeyAuth_NoServer(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "nonexistent.sock")
 
 	opts := newDefaultClientOptions()
 	opt := WithXKeyAuth(sockPath)
@@ -172,7 +173,7 @@ func TestXKeyAuthResolver_ResolveTLSConfig(t *testing.T) {
 }
 
 func TestXKeyAuthResolver_ResolveTLSConfig_NoServer(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "nonexistent.sock")
 
 	resolver := &xkeyAuthResolver{socketPath: sockPath}
 	tlsCfg, err := resolver.ResolveTLSConfig()
@@ -189,7 +190,7 @@ func TestXKeyAuthResolver_HasCertificate_True(t *testing.T) {
 }
 
 func TestXKeyAuthResolver_HasCertificate_False(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "nonexistent.sock")
 
 	resolver := &xkeyAuthResolver{socketPath: sockPath}
 	assert.False(t, resolver.HasCertificate())

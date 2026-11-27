@@ -3,3 +3,6 @@ dist/
 .runtime/
 test-results/
 playwright-report/
+.runtime-node/
+test-results-node/
+playwright-report-node/

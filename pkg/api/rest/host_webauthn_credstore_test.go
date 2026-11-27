@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
@@ -160,6 +161,63 @@ func TestBuildWebAuthnService_CredentialStoreDecoratorSeesRegistration(t *testin
 	persisted, err := independentQRDBCredentialStore(t, client, factory).GetByCredentialID(context.Background(), credID)
 	require.NoError(t, err, "the decorated write must still reach the qrdb-backed store")
 	assert.Equal(t, credID, persisted.ID)
+}
+
+// TestBuildWebAuthnService_CredentialStoreDecoratorSeesInviteEnrollment: an
+// invitation enrollment stores the account's first credential under a
+// first-credential claim, and that write must still pass through the
+// configured decorator's Save (in production it enrolls the qrdb fido2
+// factor; skipping it leaves an account that finished enrollment but cannot
+// log in), while the claim keeps fencing the credential until Commit.
+func TestBuildWebAuthnService_CredentialStoreDecoratorSeesInviteEnrollment(t *testing.T) {
+	ctx := context.Background()
+	client, ft := newFakeQRDBClient(t)
+	factory := testutil.NewMemoryDAOFactory()
+
+	var recorder *recordingCredentialStore
+	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
+		Config:     qrdbWebAuthnConfig(),
+		QRDBClient: client,
+		DAOFactory: factory,
+		CredentialStoreDecorator: func(inner webauthn.CredentialStore) webauthn.CredentialStore {
+			recorder = &recordingCredentialStore{CredentialStore: inner}
+			return recorder
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, recorder)
+
+	// An administrator provisioned the pending account the invitation names.
+	const email = "invitee@example.com"
+	created, err := ft.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+		Username: email,
+		Email:    email,
+		TenantID: DefaultWebAuthnTenant,
+		Pending:  true,
+	})
+	require.NoError(t, err)
+	// The fake creates every user active; the record it returns is the one
+	// it stores, so mark it pending as qrdb does for a Pending create.
+	created.Lifecycle = string(qrdbsdk.LifecyclePending)
+	handle := webauthn.HandleFromUserID(created.ID)
+
+	authenticator, err := webauthn.NewMockAuthenticator("example.com")
+	require.NoError(t, err)
+	options, sessionID, err := svc.BeginInviteRegistration(ctx, handle)
+	require.NoError(t, err)
+	attestation, err := authenticator.CreateAttestationObject(options.Response.Challenge, handle, "https://example.com")
+	require.NoError(t, err)
+	_, err = svc.FinishInviteRegistration(ctx, sessionID, handle, attestation)
+	require.NoError(t, err)
+
+	saved := recorder.savedIDs()
+	require.Len(t, saved, 1, "the decorator must see the invite enrollment's Save")
+	assert.Equal(t, authenticator.CredentialID, saved[0])
+
+	// The claim committed: the credential is readable through the store.
+	persisted, err := independentQRDBCredentialStore(t, client, factory).GetByCredentialID(ctx, authenticator.CredentialID)
+	require.NoError(t, err, "the claimed credential must be persisted and committed")
+	assert.Equal(t, authenticator.CredentialID, persisted.ID)
 }
 
 // TestBuildWebAuthnService_NoDecoratorPersistsToQRDBStore pins the default:

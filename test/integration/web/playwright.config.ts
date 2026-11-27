@@ -27,12 +27,17 @@ import { defineConfig } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests',
+  // passkey-node.spec.ts runs on its own server: playwright.node.config.ts.
+  testIgnore: 'passkey-node.spec.ts',
   timeout: 60_000,
   retries: 0,
   // The registration/login specs share one operator identity created on
   // first boot; running them out of process order would race that state.
   workers: 1,
   outputDir: 'test-results',
+  // runtime is run-server.sh's state directory (XKMS_E2E_RUNTIME); the
+  // passkey helper reads the admin credential from <runtime>/storage.
+  metadata: { runtime: '.runtime' },
   reporter: [
     ['list'],
     ['html', { open: 'never', outputFolder: 'playwright-report' }],

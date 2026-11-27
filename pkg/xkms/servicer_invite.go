@@ -26,6 +26,9 @@ import (
 
 	"github.com/go-webauthn/webauthn/protocol"
 
+	// The go-qrdb SDK does not export the user service's activation and
+	// lifecycle errors yet; internal/buildgates allow-lists this import.
+	qrdbuser "github.com/jeremyhahn/go-qrdb/pkg/user"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -42,15 +45,22 @@ import (
 // creates it LifecyclePending and mints a single-use invitation through
 // s.inviteStore. The invitee redeems the token through exactly one of the
 // two entry points below — FIDO2 (BeginInviteRegistration /
-// FinishInviteRegistration) or PIV (ActivateInvitePIV) — which binds their
-// first credential, activates the account, and redeems the invitation, in
-// that order: the credential is bound to a still-PENDING account, so a
-// failure before activation leaves the invitation intact and the token
-// retryable, and activation is confirmed (by re-reading the account on an
-// ambiguous write) before the single-use token is spent — a redeemed
-// invitation never outlives an unbound credential, and an active account is
-// never left with a still-live token (mirrors go-quicbaas's
-// PIVActivator.Activate / ActivateFIDO2Finish ordering).
+// FinishInviteRegistration) or PIV (ActivateInvitePIV).
+//
+// FIDO2 binds the first credential, activates the account, and redeems the
+// invitation, in that order. The ceremony session must belong to the user
+// the invitation names: the webauthn finish refuses any other account's
+// session before it persists a credential. The single-use session (taken
+// atomically) serialises concurrent finishes of one ceremony, and a failure
+// before activation leaves the invitation intact and the token retryable;
+// activation is confirmed (by re-reading the account on an ambiguous
+// write) before the token is spent.
+//
+// PIV runs validate, bind and activate, redeem: the certificate chain and the
+// pending account are checked first, then the binding and the activation are
+// one conditional commit on the pending account, so of concurrent requests
+// only one binds a certificate. The invitation is redeemed only after that
+// commit: a failure before it leaves the invitation redeemable for a retry.
 //
 // Every unauthenticated lookup collapses "not found", "expired" and
 // "already redeemed" into ErrInviteUnusable (classifyInviteError): telling a
@@ -175,7 +185,7 @@ func (s *XKMSService) createInvite(ctx context.Context, tenantID string, userID 
 		return nil, ErrNotConfigured
 	}
 	ttl := s.effectiveInviteTTL(requestedTTL)
-	token, entity, err := s.inviteStore.Create(ctx, strconv.FormatUint(userID, 10), tenantID, ttl)
+	token, entity, err := s.inviteStore.Create(inviteStoreContext(ctx), strconv.FormatUint(userID, 10), tenantID, ttl)
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "create invite", Err: err}
 	}
@@ -195,18 +205,19 @@ func (s *XKMSService) GetInvite(ctx context.Context, req *transport.GetInviteReq
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.users == nil {
+	if s.inviteStore == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
-	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
+	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
+	ctx = bindInviteTenant(ctx, req.TenantID)
 	userID, err := inviteUserID(entity)
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
+	u, err := s.inviteUserClient().GetUser(ctx, req.TenantID, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
@@ -228,34 +239,59 @@ func (s *XKMSService) BeginInviteRegistration(ctx context.Context, req *transpor
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.webauthnService == nil || s.users == nil {
+	if s.inviteStore == nil || s.webAuthn() == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
-	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
+	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
+	// After the lookup: an unknown invite answers the same for any tenant,
+	// so the refusal does not reveal the served tenant (ruling 1041 (2)).
+	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
+		return nil, err
+	}
+	ctx = bindInviteTenant(ctx, req.TenantID)
 	userID, err := inviteUserID(entity)
 	if err != nil {
 		return nil, err
 	}
-	u, err := s.users.GetUser(ctx, userID)
-	if err != nil {
+	if _, err := s.inviteUserClient().GetUser(ctx, req.TenantID, userID); err != nil {
 		return nil, ErrInviteUnusable
 	}
 
-	options, sessionID, err := s.webauthnService.BeginInviteRegistration(ctx, u.Email)
-	if err != nil {
-		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
-			return nil, ErrInviteUnusable
+	// The invite's own account, by id, in the invite's validated tenant
+	// (bound on ctx): never re-resolve its email in the WebAuthn store's
+	// configured scope.
+	invitedHandle := xkmswebauthn.HandleFromUserID(userID)
+
+	// An account whose credential was stored under this invitation but
+	// whose activation then failed resumes with a possession proof: the
+	// options are a WebAuthn get for exactly that credential, answered
+	// through FinishInviteRegistration.
+	var options any
+	ceremony := transport.InviteCeremonyGet
+	assertion, sessionID, err := s.webAuthn().BeginInviteResume(ctx, invitedHandle, entity.CreatedAt)
+	switch {
+	case err == nil:
+		options = assertion
+	case errors.Is(err, xkmswebauthn.ErrInviteNotResumable):
+		creation, regSessionID, regErr := s.webAuthn().BeginInviteRegistrationForUser(ctx, invitedHandle)
+		if regErr != nil {
+			if errors.Is(regErr, xkmswebauthn.ErrRegistrationRefused) {
+				return nil, ErrInviteUnusable
+			}
+			return nil, &ErrWebAuthnCeremony{Operation: "begin invite registration", Err: regErr}
 		}
-		return nil, &ErrWebAuthnCeremony{Operation: "begin invite registration", Err: err}
+		options, sessionID, ceremony = creation, regSessionID, transport.InviteCeremonyCreate
+	default:
+		return nil, &ErrWebAuthnCeremony{Operation: "begin invite resume", Err: err}
 	}
 	optsJSON, err := json.Marshal(options)
 	if err != nil {
 		return nil, &ErrWebAuthnCeremony{Operation: "marshal options", Err: err}
 	}
-	return &transport.BeginInviteRegistrationResponse{SessionID: sessionID, OptionsJSON: string(optsJSON)}, nil
+	return &transport.BeginInviteRegistrationResponse{SessionID: sessionID, OptionsJSON: string(optsJSON), Ceremony: ceremony}, nil
 }
 
 // FinishInviteRegistration completes the invite-authorized WebAuthn
@@ -266,25 +302,52 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.webauthnService == nil || s.users == nil {
+	if s.inviteStore == nil || s.webAuthn() == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
 	// Looked up (not redeemed) BEFORE the ceremony is validated: the
 	// expensive, failure-prone work must not burn a single-use token when it
 	// fails, and a caller whose attestation is rejected can retry with a
 	// working authenticator instead of needing to be re-invited.
-	if _, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token); err != nil {
+	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
+	if err != nil {
 		return nil, classifyInviteError(err)
 	}
-
-	parsed, err := protocol.ParseCredentialCreationResponseBody(strings.NewReader(req.AttestationJSON))
+	// The ceremony must be the one begun for THIS invitation's user: the
+	// webauthn finish refuses a session of any other account before it
+	// persists a credential, so one live token cannot complete (and
+	// activate) a ceremony begun with another.
+	inviteeID, err := inviteUserID(entity)
 	if err != nil {
-		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: err}
+		return nil, err
 	}
+	// After the lookup, as in BeginInviteRegistration (ruling 1041 (2)).
+	if err := s.ensureInviteTenantServed(req.TenantID); err != nil {
+		return nil, err
+	}
+	ctx = bindInviteTenant(ctx, req.TenantID)
 
-	user, err := s.webauthnService.FinishInviteRegistration(ctx, req.SessionID, parsed)
+	// The answer is either the attestation of a new enrolment or, after a
+	// finish whose credential was stored but whose activation then failed,
+	// the assertion answering BeginInviteResume's get ceremony. Re-sending
+	// the attestation proves nothing (its credential ID and public key are
+	// public), so only a valid assertion by the enrolled credential over
+	// the resume session's challenge resumes. Both are bound to this
+	// invitation's account; neither touches another invitation.
+	invitedHandle := xkmswebauthn.HandleFromUserID(inviteeID)
+	var user xkmswebauthn.User
+	if parsed, perr := protocol.ParseCredentialCreationResponseBody(strings.NewReader(req.AttestationJSON)); perr == nil {
+		user, err = s.webAuthn().FinishInviteRegistration(ctx, req.SessionID, invitedHandle, parsed)
+	} else if asserted, aerr := protocol.ParseCredentialRequestResponseBody(strings.NewReader(req.AttestationJSON)); aerr == nil {
+		user, err = s.webAuthn().FinishInviteResume(ctx, req.SessionID, invitedHandle, entity.CreatedAt, asserted)
+	} else {
+		// No assertion: the session is still claimed, so a refused
+		// answer leaves no challenge to sign later.
+		_, _ = s.webAuthn().FinishInviteResume(ctx, req.SessionID, invitedHandle, entity.CreatedAt, nil)
+		return nil, &ErrWebAuthnCeremony{Operation: "parse attestation", Err: perr}
+	}
 	if err != nil {
-		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) {
+		if errors.Is(err, xkmswebauthn.ErrRegistrationRefused) || errors.Is(err, xkmswebauthn.ErrInviteNotResumable) {
 			return nil, ErrInviteUnusable
 		}
 		return nil, &ErrWebAuthnCeremony{Operation: "finish invite registration", Err: err}
@@ -294,26 +357,33 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 	if err != nil {
 		return nil, &ErrUserOperation{Operation: "decode invite user handle", Err: err}
 	}
+	// Defence in depth: the enrolled account is the invited one.
+	if userID != inviteeID {
+		return nil, ErrInviteUnusable
+	}
 
-	if err := s.activateInviteUser(ctx, userID); err != nil {
+	if err := s.activateInviteUser(ctx, req.TenantID, userID); err != nil {
 		return nil, err
 	}
-	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
+	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
 		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}
 	}
 	return &transport.FinishInviteRegistrationResponse{UserID: userID}, nil
 }
 
-// ActivateInvitePIV completes PIV invite activation: it verifies the
-// presented certificate's chain against the CA's trust roots, binds its SPKI
-// thumbprint to the still-pending account, activates the account, and
-// redeems the invitation — the same safe order FinishInviteRegistration
-// uses, and for the same reason. Implements transport.InviteServicer.
+// ActivateInvitePIV completes PIV invite activation in the safe order
+// validate, bind and activate, redeem: it verifies the presented
+// certificate's chain against the CA's trust roots and checks the account is
+// still pending, then binds the certificate's SPKI thumbprint to the account
+// and activates it in one conditional commit, and only then redeems the
+// invitation. Of concurrent requests only the one whose conditional commit
+// finds the account pending binds; a request that fails before that commit
+// leaves the invitation redeemable for a retry.
 func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if s.inviteStore == nil || s.users == nil {
+	if s.inviteStore == nil || s.inviteUserClient() == nil {
 		return nil, ErrNotConfigured
 	}
 	if _, err := s.getCA(); err != nil {
@@ -324,10 +394,11 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 	// reason FinishInviteRegistration looks up first: an unauthenticated
 	// caller posting an arbitrary certificate must not be able to burn, or
 	// probe the state of, a token that was never theirs.
-	entity, err := s.inviteStore.Lookup(ctx, req.TenantID, req.Token)
+	entity, err := s.inviteStore.Lookup(inviteStoreContext(ctx), req.TenantID, req.Token)
 	if err != nil {
 		return nil, classifyInviteError(err)
 	}
+	ctx = bindInviteTenant(ctx, req.TenantID)
 	userID, err := inviteUserID(entity)
 	if err != nil {
 		return nil, err
@@ -350,29 +421,85 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		return nil, &ErrPIVCertRejected{Err: err}
 	}
 
-	u, err := s.users.GetUser(ctx, userID)
+	// The certificate must name the invited account's tenant under the
+	// rule and trust-domain pin PIV login applies (handlePIVLogin reads
+	// qrdbsdk.TenantFromClientCert under the same pin): a certificate the
+	// CA trusts but that names another tenant would be bound where login
+	// never looks it up. Checked before anything is claimed or bound.
+	certTenant, err := qrdbsdk.TenantFromClientCert(cert, s.SPIFFETrustDomain())
+	if err != nil {
+		return nil, &ErrPIVCertRejected{Err: err}
+	}
+
+	u, err := s.inviteUserClient().GetUser(ctx, req.TenantID, userID)
 	if err != nil {
 		return nil, ErrInviteUnusable
 	}
 	if u.Lifecycle != string(qrdbsdk.LifecyclePending) {
 		return nil, ErrInviteUnusable
 	}
+	if certTenant != req.TenantID || (u.TenantID != "" && u.TenantID != req.TenantID) {
+		return nil, &ErrPIVCertRejected{Err: errPIVCertTenantMismatch}
+	}
 
+	// Before anything is claimed or bound, the PIV activation takes the
+	// account's first-credential claim, the one a WebAuthn invite finish
+	// stores its passkey under: while a finish holds it (its passkey saved,
+	// the account not yet active) or after it committed (its activation
+	// then failed and only the WebAuthn resume, with its possession proof,
+	// may finish), PIV is refused, binds nothing and leaves the invitation
+	// to the WebAuthn finish (Codex round-1 P1).
+	var claim xkmswebauthn.FirstCredentialClaim
+	if wa := s.webAuthn(); wa != nil {
+		claim, err = wa.ClaimInviteFirstCredential(ctx, xkmswebauthn.HandleFromUserID(userID))
+		switch {
+		case errors.Is(err, xkmswebauthn.ErrRegistrationRefused):
+			return nil, ErrInviteUnusable
+		case errors.Is(err, xkmswebauthn.ErrNotConfigured):
+			// No WebAuthn ceremony can enrol this account: nothing to claim.
+			claim = nil
+		case err != nil:
+			return nil, &ErrUserOperation{Operation: "claim invited user's first credential", Err: err}
+		}
+	}
+	// releaseClaim frees the claim when nothing was bound: a later
+	// activation, by either method, may claim afresh.
+	releaseClaim := func() {
+		if claim != nil {
+			_ = claim.Release(context.WithoutCancel(ctx))
+		}
+	}
+
+	// The binding and the activation are one conditional commit: an
+	// account that left pending after the check above (an administrator's
+	// disable, or a concurrent activation of the same invitation) is refused
+	// with nothing bound, so of concurrent requests only one binds. The
+	// invitation is redeemed only after that commit, so a failed activation
+	// leaves it redeemable.
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
-	if _, err := s.users.AddCertBinding(ctx, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
-		return nil, &ErrUserOperation{Operation: "bind piv certificate", Err: err}
+	if _, err := s.inviteUserClient().ActivateWithCertBinding(ctx, req.TenantID, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
+		releaseClaim()
+		if notPending := (*qrdbuser.AccountNotPendingError)(nil); errors.As(err, &notPending) {
+			return nil, ErrInviteUnusable
+		}
+		return nil, &ErrUserOperation{Operation: "activate invited user with piv certificate", Err: err}
 	}
-
-	if err := s.activateInviteUser(ctx, userID); err != nil {
-		return nil, err
+	if claim != nil {
+		// The activation is the commit point: the account is active, so no
+		// WebAuthn invite finish can enrol it whatever becomes of the claim.
+		// Committing it with no credential keeps it held for good.
+		_ = claim.Commit(context.WithoutCancel(ctx), nil)
 	}
-	if _, err := s.inviteStore.Redeem(ctx, req.TenantID, req.Token); err != nil {
+	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
 		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}
 	}
 	return &transport.ActivateInvitePIVResponse{UserID: userID}, nil
 }
 
-// activateInviteUser transitions userID from pending to active.
+// activateInviteUser transitions userID from pending to active, in a write
+// conditional on the account still being pending when it commits: an
+// account that left pending after the caller's check (an administrator's
+// disable, for one) is refused and stays as it is.
 //
 // A failed write does not prove the state did not land: a commit whose
 // response was lost reports failure on an account that IS now active.
@@ -382,14 +509,140 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 // write happened and the invite must still be redeemed by the caller; any
 // other outcome (including a failed re-read) keeps the fail-closed refusal,
 // which leaves the invitation intact and the account recoverable — mirrors
-// go-quicbaas's ActivateFIDO2Finish / PIVActivator.Activate.
-func (s *XKMSService) activateInviteUser(ctx context.Context, userID uint64) error {
+// go-quicbaas's ActivateFIDO2Finish / PIVActivator.Activate. The re-read
+// follows only the guarded write, so it can never be what activates a
+// disabled account.
+func (s *XKMSService) activateInviteUser(ctx context.Context, tenantID string, userID uint64) error {
 	active := string(qrdbsdk.LifecycleActive)
-	if _, err := s.users.UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: userID, Lifecycle: active}); err != nil {
-		if u, gErr := s.users.GetUser(ctx, userID); gErr == nil && u != nil && u.Lifecycle == active {
+	if _, err := s.inviteUserClient().ActivatePendingUser(ctx, tenantID, userID); err != nil {
+		if u, gErr := s.inviteUserClient().GetUser(ctx, tenantID, userID); gErr == nil && u != nil && u.Lifecycle == active {
 			return nil
 		}
+		if notPending := (*qrdbuser.AccountNotPendingError)(nil); errors.Is(err, ErrInviteUnusable) || errors.As(err, &notPending) {
+			return ErrInviteUnusable
+		}
 		return &ErrUserOperation{Operation: "activate invited user", Err: err}
+	}
+	return nil
+}
+
+// InviteUserClient is what the invite routes call on qrdb: they read the
+// invited user and activate it. Both activations are conditional on the
+// account still being pending when they commit, so an administrator's
+// disable landing after the routes' pending check is never undone: an
+// account that is no longer pending is refused with
+// *qrdbuser.AccountNotPendingError and nothing is written.
+type InviteUserClient interface {
+	// GetUser reads a user by id within tenantID.
+	GetUser(ctx context.Context, tenantID string, id uint64) (*qrdbtransport.User, error)
+	// ActivatePendingUser moves a pending account in tenantID to active.
+	ActivatePendingUser(ctx context.Context, tenantID string, userID uint64) (*qrdbtransport.User, error)
+	// ActivateWithCertBinding binds a first certificate to a pending
+	// account in tenantID holding no binding and activates it, in one
+	// commit.
+	ActivateWithCertBinding(ctx context.Context, tenantID string, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+}
+
+// contextInviteUserClient is the shape of a user client that reads the
+// tenant from ctx (the credentialed qrdb client and its test doubles).
+type contextInviteUserClient interface {
+	GetUser(ctx context.Context, id uint64) (*qrdbtransport.User, error)
+	ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error)
+	ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
+}
+
+// contextInviteUsers adapts a contextInviteUserClient to InviteUserClient
+// by binding the tenant on ctx.
+type contextInviteUsers struct {
+	users contextInviteUserClient
+}
+
+func (u contextInviteUsers) GetUser(ctx context.Context, tenantID string, id uint64) (*qrdbtransport.User, error) {
+	return u.users.GetUser(bindInviteTenant(ctx, tenantID), id)
+}
+
+func (u contextInviteUsers) ActivatePendingUser(ctx context.Context, tenantID string, userID uint64) (*qrdbtransport.User, error) {
+	return u.users.ActivatePendingUser(bindInviteTenant(ctx, tenantID), userID)
+}
+
+func (u contextInviteUsers) ActivateWithCertBinding(ctx context.Context, tenantID string, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	return u.users.ActivateWithCertBinding(bindInviteTenant(ctx, tenantID), userID, thumbprint, notAfterUnix)
+}
+
+// SetInviteUserClient wires the user client the invite routes use. The
+// invite routes are public, so their request context carries no qrdb
+// credentials: on an embedded node that enforces authentication, the user
+// client SetUserClients wires (the datastore client's) is refused there
+// with qrdb/auth: unauthenticated, which GetInvite reported as an unusable
+// link (ruling 973 (2)). xkmsd and a host with an embedded node pass the
+// node's user service (auth.NodeUserClient). The user an invite call acts
+// on is the one the invite record names, never one the caller chooses.
+func (s *XKMSService) SetInviteUserClient(users InviteUserClient) {
+	if users == nil {
+		s.inviteUsers.Store(nil)
+		return
+	}
+	s.inviteUsers.Store(&inviteUserClientRef{client: users})
+}
+
+// inviteUserClientRef boxes an InviteUserClient so the interface value can
+// be stored in an atomic.Pointer: the client is set once at composition
+// while the invite routes may already be serving.
+type inviteUserClientRef struct{ client InviteUserClient }
+
+// inviteUserClient is SetInviteUserClient's client, or SetUserClients'
+// when none is set; nil when neither is.
+func (s *XKMSService) inviteUserClient() InviteUserClient {
+	if ref := s.inviteUsers.Load(); ref != nil {
+		return ref.client
+	}
+	// A plain qrdb user client has no conditional activation: the invite
+	// routes stay unconfigured rather than activate unguarded.
+	if users, ok := s.users.(contextInviteUserClient); ok {
+		return contextInviteUsers{users: users}
+	}
+	return nil
+}
+
+// bindInviteTenant binds the tenant an invite record was found in on ctx,
+// once inviteStore.Lookup has validated it there. The invite routes are
+// anonymous, so the embedded node's user service would otherwise route the
+// invited user's by-ID reads and writes to the system tenant. An empty
+// tenant leaves ctx unchanged.
+func bindInviteTenant(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return qrdbsdk.ContextWithTenant(ctx, tenantID)
+}
+
+// inviteStoreContext is the context every invite store call runs on. The
+// invitations live in system storage, written and read as the node's
+// service principal, whatever tenant the invited account is in: the
+// invite's tenant binding (bindInviteTenant), which the user operations of
+// the same request need, must not reach it, or an RBAC-enforcing node
+// refuses the call ("identity not in target tenant").
+func inviteStoreContext(ctx context.Context) context.Context {
+	return qrdbsdk.ContextWithTenant(ctx, qrdbsdk.SystemTenantID)
+}
+
+// ensureInviteTenantServed refuses invitation enrolment for an account
+// outside the tenant the relying party serves (ruling 1029 B): the passkey
+// login ceremony resolves accounts in that one tenant, so a passkey enrolled
+// elsewhere could never sign in. An empty tenant on either side is the
+// system tenant.
+func (s *XKMSService) ensureInviteTenantServed(inviteTenant string) error {
+	// A user store that names no tenant fails closed: it is never read as
+	// the system tenant (ruling 1041 (1)).
+	served, err := s.webAuthn().UserStoreTenant()
+	if err != nil {
+		return errors.Join(ErrInviteTenantNotServed, err)
+	}
+	if inviteTenant == "" {
+		inviteTenant = qrdbsdk.SystemTenantID
+	}
+	if inviteTenant != served {
+		return ErrInviteTenantNotServed
 	}
 	return nil
 }
@@ -417,3 +670,7 @@ func (s *XKMSService) caRootPool() (*x509.CertPool, error) {
 
 // errCABundleEmpty reports a CA bundle that parsed no certificates.
 var errCABundleEmpty = errors.New("ca bundle contains no parsable certificates")
+
+// errPIVCertTenantMismatch refuses a PIV invitation activation whose
+// certificate names a tenant other than the invited account's.
+var errPIVCertTenantMismatch = errors.New("certificate tenant is not the invited account's tenant")

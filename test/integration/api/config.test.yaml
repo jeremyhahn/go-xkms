@@ -5,7 +5,10 @@ server:
   host: "0.0.0.0"
   rest_port: 8443
   grpc_port: 9443
-  quic_port: 8444
+  # QUIC is HTTP/3 on the REST port (pkg/server: "http3 on rest_port"), so
+  # the listener is 8443/udp, which docker-compose.yml exposes and
+  # KEYSTORE_QUIC_URL targets; quic_port names the same port.
+  quic_port: 8443
   mcp_port: 9444
 
 # Enable ALL protocols for complete integration testing
@@ -60,8 +63,10 @@ webauthn:
   authenticator_attachment: ""
   resident_key: "preferred"
   user_verification: "preferred"
-  # Registration is closed by default (go-xkms#184); the suite creates its
-  # users through open sign-up, so opt in explicitly.
+  # Registration is closed by default (go-xkms#184). Even opted in, an
+  # enforcing node refuses anonymous sign-up with 403 registration_refused
+  # (ruling 602, pending #2202); the suite proves that and provisions its
+  # accounts as admin, redeeming each invitation with a passkey.
   allow_public_registration: true
 
 # Submitted credentials persist in the barrier, so the PKCS#11 PIN survives a restart.

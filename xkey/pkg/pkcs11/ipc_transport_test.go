@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -28,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/xhome"
 )
@@ -227,7 +227,7 @@ func TestIPCTransport_Sign_ServerError(t *testing.T) {
 }
 
 func TestIPCTransport_Sign_ConnectionRefused(t *testing.T) {
-	tr := NewIPCTransport(filepath.Join(t.TempDir(), "nonexistent.sock"))
+	tr := NewIPCTransport(filepath.Join(testsupport.SocketDir(t), "nonexistent.sock"))
 	resp, err := tr.Sign(context.Background(), &transport.SignRequest{
 		Backend: "software",
 		KeyID:   "key",
@@ -431,7 +431,7 @@ func TestIPCTransport_OperationTimeout(t *testing.T) {
 	assert.Equal(t, 10*time.Second, defaultIPCTimeout)
 	assert.Equal(t, 3*time.Minute, keyGenerationTimeout)
 
-	tr := NewIPCTransport(filepath.Join(t.TempDir(), "unused.sock"))
+	tr := NewIPCTransport(filepath.Join(testsupport.SocketDir(t), "unused.sock"))
 	generations := map[string]bool{ipc.ActionGenerateKey: true, ipc.ActionGeneratePIVKey: true}
 
 	actions := []string{ipc.ActionBarrierStatus}
@@ -527,7 +527,7 @@ func TestIPCTransport_ContextDeadlineBoundsTheCall(t *testing.T) {
 }
 
 func TestIPCTransport_EveryOperation_NilRequest(t *testing.T) {
-	tr := NewIPCTransport(filepath.Join(t.TempDir(), "never-dialed.sock"))
+	tr := NewIPCTransport(filepath.Join(testsupport.SocketDir(t), "never-dialed.sock"))
 	for action, op := range clientOperations() {
 		assert.ErrorIs(t, op.call(tr, false), ErrNilRequest, action)
 	}
@@ -592,7 +592,5 @@ func TestIPCTransport_SendMessage_MalformedResponse(t *testing.T) {
 // (ipc.Dial), and t.TempDir creates its directory 0777 &^ umask.
 func privateTempDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
-	require.NoError(t, os.Chmod(dir, 0o700))
-	return dir
+	return testsupport.SocketDir(t)
 }

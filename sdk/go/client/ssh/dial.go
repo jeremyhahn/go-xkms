@@ -17,6 +17,8 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/url"
+
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
 // ServerOptions is the connection material for NewClientForServerWith.
@@ -25,6 +27,15 @@ type ServerOptions struct {
 	// mTLS client certificate or an SPKI pin. nil selects a TLS 1.3
 	// configuration over the system roots.
 	TLSConfig *tls.Config
+
+	// TLSCertFile and TLSKeyFile name a PEM mTLS client certificate and its
+	// key, presented on every TLS transport (https, grpcs, unix, quic,
+	// mcps). They are loaded by the SDK's one TLS loader
+	// (transport.BuildTLSConfig) when the client is built, so a half pair,
+	// an unreadable file or a mismatched pair is refused before any
+	// connection. The certificate replaces any in TLSConfig.Certificates.
+	TLSCertFile string
+	TLSKeyFile  string
 
 	// Token is the bearer token presented on every call, on every
 	// transport. Empty presents none.
@@ -63,9 +74,9 @@ func NewClientForServerWith(server string, opts ServerOptions) (Client, error) {
 	if err != nil {
 		return nil, &ProtocolError{Message: "parse server url", Err: err}
 	}
-	tlsCfg := opts.TLSConfig
-	if tlsCfg == nil {
-		tlsCfg = &tls.Config{MinVersion: tls.VersionTLS13}
+	tlsCfg, err := serverTLSConfig(opts)
+	if err != nil {
+		return nil, err
 	}
 	switch u.Scheme {
 	case "http", "https":
@@ -96,4 +107,30 @@ func NewClientForServerWith(server string, opts ServerOptions) (Client, error) {
 	default:
 		return nil, &ProtocolError{Message: "unsupported server scheme: " + u.Scheme}
 	}
+}
+
+// serverTLSConfig returns the TLS configuration NewClientForServerWith dials
+// with: opts.TLSConfig (or a TLS 1.3 default) carrying the client
+// certificate named by opts.TLSCertFile/TLSKeyFile, loaded through
+// buildTLSConfig. The caller's config is cloned, never mutated.
+func serverTLSConfig(opts ServerOptions) (*tls.Config, error) {
+	cfg := opts.TLSConfig
+	if cfg == nil {
+		cfg = &tls.Config{MinVersion: tls.VersionTLS13}
+	}
+	switch {
+	case opts.TLSCertFile == "" && opts.TLSKeyFile == "":
+		return cfg, nil
+	case opts.TLSCertFile == "":
+		return nil, &NilInputError{Field: "TLSCertFile"}
+	case opts.TLSKeyFile == "":
+		return nil, &NilInputError{Field: "TLSKeyFile"}
+	}
+	loaded, err := buildTLSConfig(transport.TLSOptions{CertFile: opts.TLSCertFile, KeyFile: opts.TLSKeyFile})
+	if err != nil {
+		return nil, err
+	}
+	cfg = cfg.Clone()
+	cfg.Certificates = loaded.Certificates
+	return cfg, nil
 }

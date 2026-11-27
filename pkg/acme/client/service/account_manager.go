@@ -318,11 +318,18 @@ func createStateBackend(cfg StorageConfig) (xkmsstorage.Backend, error) {
 	for k, v := range cfg.Options {
 		options[k] = fmt.Sprintf("%v", v)
 	}
-	return xkmsstorage.OpenEngine(xkmsstorage.EngineConfig{
+	engineCfg := xkmsstorage.EngineConfig{
 		Kind:     xkmsstorage.EngineObjstore,
 		Provider: provider,
 		Options:  options,
-	})
+	}
+	if cfg.KeyFile != "" || cfg.SecretFile != "" {
+		engineCfg.CredentialFiles = &xkmsstorage.ObjStoreCredentialFiles{
+			KeyFile:    cfg.KeyFile,
+			SecretFile: cfg.SecretFile,
+		}
+	}
+	return xkmsstorage.OpenEngine(engineCfg)
 }
 
 // validateAccountConfig checks that the account configuration has all required fields.

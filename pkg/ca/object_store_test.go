@@ -18,7 +18,7 @@ import (
 	"errors"
 	"testing"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +29,7 @@ var errObjectStoreTest = errors.New("object_store_test: simulated storage failur
 // failingObjectStore decorates a go-qrdb storage so every read, write and
 // listing fails with errObjectStoreTest.
 type failingObjectStore struct {
-	qrdbsdk.Storage
+	qrdbstorage.Storage
 }
 
 func (s *failingObjectStore) Get([]byte) ([]byte, error)    { return nil, errObjectStoreTest }
@@ -40,7 +40,7 @@ func (s *failingObjectStore) Exists([]byte) (bool, error)   { return false, errO
 func setupTestCAWithFailingObjectStore(t *testing.T) *CA {
 	t.Helper()
 	ca := setupTestCA(t)
-	ca.objectStore = &failingObjectStore{Storage: qrdbsdk.NewMemoryStorage()}
+	ca.objectStore = &failingObjectStore{Storage: qrdbstorage.NewMemoryStorage()}
 	return ca
 }
 

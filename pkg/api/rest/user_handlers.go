@@ -70,6 +70,12 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err, http.StatusBadRequest)
 			return
 		}
+		// An invited account outside the system tenant (named, or resolved
+		// from the caller's context) is refused by policy: a client error.
+		if errors.Is(err, xkms.ErrInviteUnusable) {
+			writeError(w, err, http.StatusForbidden)
+			return
+		}
 		writeError(w, err, http.StatusInternalServerError)
 		return
 	}

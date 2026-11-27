@@ -81,7 +81,7 @@ func (f *enrollFixture) attest(t *testing.T, options *protocol.CredentialCreatio
 // with options/sessionID using credential, returning FinishInviteRegistration's
 // result. Unlike attest, it does not mint a token: invite redemption does not
 // authenticate a session, it enrolls a credential.
-func (f *enrollFixture) attestInvite(t *testing.T, options *protocol.CredentialCreation, sessionID string, credential virtualwebauthn.Credential) (User, error) {
+func (f *enrollFixture) attestInvite(t *testing.T, invitedHandle []byte, options *protocol.CredentialCreation, sessionID string, credential virtualwebauthn.Credential) (User, error) {
 	t.Helper()
 	optionsJSON, err := json.Marshal(options.Response)
 	require.NoError(t, err)
@@ -90,7 +90,7 @@ func (f *enrollFixture) attestInvite(t *testing.T, options *protocol.CredentialC
 	attestation := virtualwebauthn.CreateAttestationResponse(f.rp, virtualwebauthn.NewAuthenticator(), credential, *parsedOptions)
 	parsed, err := parseAttestationResponse(attestation)
 	require.NoError(t, err)
-	return f.svc.FinishInviteRegistration(context.Background(), sessionID, parsed)
+	return f.svc.FinishInviteRegistration(context.Background(), sessionID, invitedHandle, parsed)
 }
 
 // enroll registers a first passkey for email through the public ceremony.
@@ -240,11 +240,43 @@ func TestBeginInviteRegistration_EnrollsPendingAccount(t *testing.T) {
 	require.NoError(t, err)
 	f.setStanding(t, "new@example.com", qrdbsdk.LifecyclePending, nil)
 
-	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, "new@example.com")
+	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, provisioned.WebAuthnID())
 	require.NoError(t, err)
-	enrolled, err := f.attestInvite(t, options, sessionID, newEC2Credential(t))
+	enrolled, err := f.attestInvite(t, provisioned.WebAuthnID(), options, sessionID, newEC2Credential(t))
 	require.NoError(t, err)
 	assert.Equal(t, provisioned.WebAuthnID(), enrolled.WebAuthnID())
+}
+
+// TestFinishInviteRegistration_RefusesAnotherAccountsSessionBeforeStoring
+// pins that a session begun for account A, finished under the invitation of
+// account B, is refused before a credential is stored: A still holds no
+// credential, so a fresh invite ceremony for A opens and completes.
+func TestFinishInviteRegistration_RefusesAnotherAccountsSessionBeforeStoring(t *testing.T) {
+	f := newEnrollFixture(t, false)
+	ctx := context.Background()
+	a, err := f.users.Create(ctx, "a@example.com", "A")
+	require.NoError(t, err)
+	f.setStanding(t, "a@example.com", qrdbsdk.LifecyclePending, nil)
+	b, err := f.users.Create(ctx, "b@example.com", "B")
+	require.NoError(t, err)
+	f.setStanding(t, "b@example.com", qrdbsdk.LifecyclePending, nil)
+
+	options, sessionID, err := f.svc.BeginInviteRegistration(ctx, a.WebAuthnID())
+	require.NoError(t, err)
+	_, err = f.attestInvite(t, b.WebAuthnID(), options, sessionID, newEC2Credential(t))
+	require.ErrorIs(t, err, ErrRegistrationRefused)
+
+	creds, err := f.creds.GetByUserID(ctx, a.WebAuthnID())
+	require.NoError(t, err)
+	assert.Empty(t, creds, "a refused mismatched finish must store no credential")
+
+	for _, u := range []User{a, b} {
+		options, sessionID, err := f.svc.BeginInviteRegistration(ctx, u.WebAuthnID())
+		require.NoError(t, err)
+		enrolled, err := f.attestInvite(t, u.WebAuthnID(), options, sessionID, newEC2Credential(t))
+		require.NoError(t, err)
+		assert.Equal(t, u.WebAuthnID(), enrolled.WebAuthnID())
+	}
 }
 
 // TestBeginRegistration_RefusalsAreIndistinguishable is go-xkms#1296: with

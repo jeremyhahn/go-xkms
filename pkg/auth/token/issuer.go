@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	xkmsjwt "github.com/jeremyhahn/go-xkms/pkg/encoding/jwt"
@@ -221,6 +222,8 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 	}
 
 	identity := identityFromClaims(claims)
+	// The token's own tenant, captured before the resolver replaces identity.
+	claimTenant := identity.TenantID
 	if i.resolver != nil {
 		fresh, resolveErr := i.resolver.ResolveUser(ctx, identity)
 		if resolveErr != nil {
@@ -234,6 +237,15 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 		return nil, err
 	}
 	if rec == nil {
+		return nil, &RefreshRevokedError{}
+	}
+	if rec.TenantID == "" && canonicalTenant(claimTenant) != qrdbsdk.SystemTenantID {
+		// A record saved before Record carried a tenant: only a system-tenant
+		// token may rotate it. Anyone else signs in again (no migration), so
+		// the lineage cannot launder itself into a tenant-scoped successor.
+		if revokeErr := i.store.RevokeFamily(ctx, family); revokeErr != nil {
+			return nil, revokeErr
+		}
 		return nil, &RefreshRevokedError{}
 	}
 	if rec.Rotated {
@@ -265,8 +277,11 @@ func (i *Issuer) Refresh(ctx context.Context, refreshToken string) (*Pair, error
 // refresh-time re-check a UserResolver performs is the backstop for a
 // lifecycle change that reaches the identity plane through a path this
 // method is never called from.
-func (i *Issuer) RevokeBySubject(ctx context.Context, subject string) error {
-	return i.store.RevokeBySubject(ctx, subject)
+//
+// tenantID is the account's tenant: usernames are tenant-scoped, so only
+// subject's sessions in that tenant end (empty means the system tenant).
+func (i *Issuer) RevokeBySubject(ctx context.Context, tenantID, subject string) error {
+	return i.store.RevokeBySubject(ctx, tenantID, subject)
 }
 
 // Revoke invalidates the refresh token's whole family (logout). An invalid
@@ -331,6 +346,7 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		JTI:       jti,
 		Family:    family,
 		Subject:   id.Subject,
+		TenantID:  id.TenantID,
 		ExpiresAt: refreshExp.Unix(),
 	}); err != nil {
 		return nil, err

@@ -31,11 +31,10 @@ import (
 // CLITestSuite provides comprehensive testing of all CLI commands across all protocols.
 // This ensures 100% of the xkms service is implemented and working across all interfaces.
 type CLITestSuite struct {
-	t         *testing.T
-	cfg       *TestConfig
-	keyDir    string
-	certDir   string
-	tlsCACert string
+	t       *testing.T
+	cfg     *TestConfig
+	keyDir  string
+	certDir string
 }
 
 // NewCLITestSuite creates a new CLI test suite
@@ -55,11 +54,10 @@ func NewCLITestSuite(t *testing.T) *CLITestSuite {
 	}
 
 	return &CLITestSuite{
-		t:         t,
-		cfg:       cfg,
-		keyDir:    keyDir,
-		certDir:   certDir,
-		tlsCACert: getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt"),
+		t:       t,
+		cfg:     cfg,
+		keyDir:  keyDir,
+		certDir: certDir,
 	}
 }
 
@@ -79,20 +77,10 @@ func (s *CLITestSuite) runCLI(serverURL string, args ...string) (string, string,
 		prefixArgs = append(prefixArgs, "--server", serverURL)
 	}
 
-	// Add TLS options for protocols that use TLS (REST with HTTPS, gRPC, QUIC)
-	needsTLS := strings.HasPrefix(serverURL, "unix://") ||
-		strings.HasPrefix(serverURL, "mcps://") ||
-		strings.HasPrefix(serverURL, "https://") ||
-		strings.HasPrefix(serverURL, "grpc://") ||
-		strings.HasPrefix(serverURL, "grpcs://") ||
-		strings.HasPrefix(serverURL, "quic://")
-
-	if needsTLS && s.tlsCACert != "" {
-		prefixArgs = append(prefixArgs, "--tls-ca", s.tlsCACert)
-	}
-	if needsTLS {
-		prefixArgs = append(prefixArgs, clientCertArgs()...)
-	}
+	// The admin mTLS credential and the trust bundle on every TLS transport
+	// (unix, REST over HTTPS, gRPC, QUIC, and MCP as streamable HTTP over
+	// TLS, mcps://).
+	prefixArgs = append(prefixArgs, cliTLSArgs(s.t, serverURL)...)
 
 	args = append(prefixArgs, args...)
 	cmd := exec.Command(s.cfg.CLIBinPath, args...)
@@ -333,17 +321,17 @@ func TestCLICompleteKeyLifecycle(t *testing.T) {
 					"--key-dir", suite.keyDir,
 				}
 
+				// RSA decrypt through the CLI is PKCS#1 v1.5, refused by
+				// policy (see legacyWrapRefusal); the refusal is the result.
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
-				if err != nil {
-					t.Logf("stdout: %s", stdout)
-					t.Logf("stderr: %s", stderr)
-					t.Fatalf("key decrypt failed: %v", err)
+				if err == nil {
+					t.Fatalf("key decrypt (RSA PKCS#1 v1.5) succeeded with legacy key wrap off; stdout: %s", stdout)
+				}
+				if !strings.Contains(stderr+stdout, legacyWrapRefusal) {
+					t.Fatalf("key decrypt failed for another reason than the legacy-wrap policy: %v\nstdout: %s\nstderr: %s", err, stdout, stderr)
 				}
 
-				output := strings.TrimSpace(stdout)
-				assertNotEmpty(t, output, "Decrypted output should not be empty")
-
-				t.Logf("[%s] key decrypt passed", proto)
+				t.Logf("[%s] key decrypt refused by the legacy-wrap policy as expected", proto)
 			})
 
 			// Test key rotate
@@ -758,16 +746,19 @@ func TestCLICompleteKeyImportExport(t *testing.T) {
 }
 
 // TestCLICompleteKeyCopy tests key copy between backends
+// legacyWrapRefusal is the policy refusal xkmsctl's `key decrypt` meets on an
+// RSA key: the command has no padding flag, so it asks for Decrypt's
+// asymmetric fallback, RSA PKCS#1 v1.5, which authenticates nothing and is
+// refused while crypto.allow_legacy_key_wrap is off (pkg/xkms/errors.go
+// ErrLegacyWrapDisabled, pkg/xkms/servicer_crypto.go legacyRSAPKCS1v15Refusal).
+// The suite keeps the policy on and proves the refusal.
+const legacyWrapRefusal = "unauthenticated key wrapping is disabled by policy"
+
 func TestCLICompleteKeyCopy(t *testing.T) {
 	suite := NewCLITestSuite(t)
 	defer suite.Cleanup()
 
 	protocols := getAvailableProtocols(t, suite.cfg)
-
-	destKeyDir := filepath.Join(suite.keyDir, "dest")
-	if err := os.MkdirAll(destKeyDir, 0755); err != nil {
-		t.Fatalf("Failed to create dest key directory: %v", err)
-	}
 
 	for _, proto := range protocols {
 		t.Run(string(proto), func(t *testing.T) {
@@ -794,33 +785,129 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				}
 			})
 
-			// Test key copy
+			// key copy takes only --dest-backend, --dest-keydir and --algorithm
+			// (cmd/xkmsctl/key.go); the copy inherits the source's algorithm
+			// and curve. pkcs11 is disabled in config.test.yaml, so tpm2 is
+			// the other backend to copy into. A TPM imports only TCG
+			// duplication blobs, so the copy names TPM2_DUPLICATE.
 			t.Run("key_copy", func(t *testing.T) {
 				args := []string{
 					"key", "copy", sourceKeyID, destKeyID,
 					"--backend", "software",
 					"--key-dir", suite.keyDir,
-					"--dest-backend", "software",
-					"--dest-keydir", destKeyDir,
-					"--algorithm", "RSAES_OAEP_SHA_256",
+					"--dest-backend", "tpm2",
+					"--algorithm", "TPM2_DUPLICATE",
 				}
 
 				stdout, stderr, err := suite.runCLI(serverURL, args...)
 				if err != nil {
 					t.Logf("stdout: %s", stdout)
 					t.Logf("stderr: %s", stderr)
-					t.Fatalf("key copy failed: %v", err)
+					t.Fatalf("key copy software->tpm2 failed: %v", err)
+				}
+
+				_, stderr, err = suite.runCLI(serverURL, "key", "get", destKeyID, "--backend", "tpm2")
+				if err != nil {
+					t.Fatalf("copied key %s not found on tpm2: %v - %s", destKeyID, err, stderr)
 				}
 
 				t.Logf("[%s] key copy passed", proto)
 			})
 
+			t.Run("copy_signs_as_source", func(t *testing.T) {
+				assertTPM2CopySignsAsSource(t, suite, serverURL, destKeyID, sourceKeyID,
+					"--backend", "software", "--key-dir", suite.keyDir)
+			})
+
+			t.Run("tpm2_to_software_refused", func(t *testing.T) {
+				assertTPM2CopyOutRefused(t, suite, serverURL, string(proto))
+			})
+
 			// Cleanup
 			suite.runCLI(serverURL, "key", "delete", sourceKeyID,
 				"--backend", "software",
-				"--key-type", "signing",
 				"--key-dir", suite.keyDir)
+			suite.runCLI(serverURL, "key", "delete", destKeyID, "--backend", "tpm2")
 		})
+	}
+}
+
+// assertTPM2CopySignsAsSource signs with the tpm2 copy and verifies the
+// signature with the software source key: the copy holds the source's
+// private key, so the source public key verifies what the TPM signed.
+// sourceArgs locate the source key (--backend and, where used, --key-dir).
+func assertTPM2CopySignsAsSource(t *testing.T, suite *CLITestSuite, serverURL, copyKeyID, sourceKeyID string, sourceArgs ...string) {
+	t.Helper()
+	const data = "signed by the tpm2 copy, verified by the software source"
+
+	stdout, stderr, err := suite.runCLI(serverURL,
+		"key", "sign", copyKeyID, data, "--backend", "tpm2", "--hash", "sha256")
+	if err != nil {
+		t.Fatalf("sign with tpm2 copy %s failed: %v\nstdout: %s\nstderr: %s", copyKeyID, err, stdout, stderr)
+	}
+	signature := strings.TrimSpace(stdout)
+	if _, err := base64.StdEncoding.DecodeString(signature); signature == "" || err != nil {
+		t.Fatalf("tpm2 copy signature is not base64 (%v): %q", err, signature)
+	}
+
+	args := append([]string{"key", "verify", sourceKeyID, data, signature}, sourceArgs...)
+	args = append(args, "--hash", "sha256")
+	stdout, stderr, err = suite.runCLI(serverURL, args...)
+	if err != nil {
+		t.Fatalf("source %s does not verify the copy's signature: %v\nstdout: %s\nstderr: %s", sourceKeyID, err, stdout, stderr)
+	}
+	if !strings.Contains(strings.ToLower(stdout+stderr), "valid") {
+		t.Fatalf("verify with the source key did not report a valid signature: %s", stdout+stderr)
+	}
+}
+
+// assertTPM2CopyOutRefused copies a tpm2 key to software and expects the
+// typed refusal (TPM keys are hardware-bound): a 4xx-class error, never an
+// internal error, and no key created on the destination.
+func assertTPM2CopyOutRefused(t *testing.T, suite *CLITestSuite, serverURL, proto string) {
+	t.Helper()
+	srcID := generateUniqueID("test-copy-tpm2-src-" + proto)
+	dstID := generateUniqueID("test-copy-tpm2-dst-" + proto)
+	t.Cleanup(func() {
+		_, _, _ = suite.runCLI(serverURL, "key", "delete", srcID, "--backend", "tpm2")
+		_, _, _ = suite.runCLI(serverURL, "key", "delete", dstID, "--backend", "software")
+	})
+
+	if _, stderr, err := suite.runCLI(serverURL,
+		"key", "generate", srcID,
+		"--backend", "tpm2",
+		"--key-type", "signing",
+		"--key-algorithm", "ecdsa",
+		"--curve", "P-256",
+	); err != nil {
+		t.Fatalf("tpm2 source key generate failed: %v\nstderr: %s", err, stderr)
+	}
+
+	stdout, stderr, err := suite.runCLI(serverURL,
+		"key", "copy", srcID, dstID,
+		"--backend", "tpm2",
+		"--dest-backend", "software",
+		"--algorithm", "RSAES_OAEP_SHA_256",
+	)
+	if err == nil {
+		t.Fatalf("tpm2->software copy succeeded; want the hardware-bound refusal\nstdout: %s", stdout)
+	}
+	out := strings.ToLower(stdout + stderr)
+	if strings.Contains(out, "internal") {
+		t.Fatalf("tpm2->software copy refusal is an internal error, want 4xx: %s", stdout+stderr)
+	}
+	refused := false
+	for _, marker := range []string{"hardware-bound", "not exportable", "forbidden", "permission", "403"} {
+		if strings.Contains(out, marker) {
+			refused = true
+			break
+		}
+	}
+	if !refused {
+		t.Fatalf("tpm2->software copy error is not the typed refusal: %s", stdout+stderr)
+	}
+	if _, _, err := suite.runCLI(serverURL, "key", "get", dstID, "--backend", "software"); err == nil {
+		t.Fatalf("refused copy created %s on software", dstID)
 	}
 }
 
