@@ -84,10 +84,6 @@ type Config struct {
 	// keep the default header and their own typ claim.
 	AccessTokenType string
 
-	// ClientID is the client_id claim (RFC 9068 §2.2) of at+jwt access
-	// tokens. Defaults to the issuer, the first-party session client.
-	ClientID string
-
 	// Issuer is the iss claim. Defaults to "go-xkms".
 	Issuer string
 
@@ -119,7 +115,6 @@ type Issuer struct {
 	keyAttrs   *types.KeyAttributes
 	keyID      string
 	accessTyp  string
-	clientID   string
 	issuer     string
 	audience   []string
 	accessTTL  time.Duration
@@ -148,10 +143,6 @@ func NewIssuer(cfg *Config) (*Issuer, error) {
 	if issuer == "" {
 		issuer = "go-xkms"
 	}
-	clientID := cfg.ClientID
-	if clientID == "" {
-		clientID = issuer
-	}
 	audience := cfg.Audience
 	if len(audience) == 0 {
 		audience = []string{"go-xkms"}
@@ -176,7 +167,6 @@ func NewIssuer(cfg *Config) (*Issuer, error) {
 		keyAttrs:   cfg.KeyAttributes,
 		keyID:      cfg.KeyID,
 		accessTyp:  cfg.AccessTokenType,
-		clientID:   clientID,
 		issuer:     issuer,
 		audience:   audience,
 		accessTTL:  accessTTL,
@@ -325,7 +315,8 @@ func (i *Issuer) mintPair(ctx context.Context, id *auth.Identity, family string)
 		if err != nil {
 			return nil, &SigningError{Err: err}
 		}
-		accessClaims["client_id"] = i.clientID
+		// The session client is first-party, so client_id is the issuer (RFC 9068 §2.2).
+		accessClaims["client_id"] = i.issuer
 		accessClaims["jti"] = accessJTI
 	}
 
