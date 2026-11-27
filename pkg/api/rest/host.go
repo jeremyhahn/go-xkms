@@ -91,11 +91,6 @@ type TokenIssuerParams struct {
 	// token.DefaultRefreshTTL.
 	RefreshTTL time.Duration
 
-	// AccessTokenType is the access token's typ header (RFC 7515 §4.1.9).
-	// token.ATJWTType selects RFC 9068 §2.1 access tokens; empty keeps
-	// "JWT". Refresh tokens are unaffected.
-	AccessTokenType string
-
 	// QRDBClient persists refresh-token records on the qrdb identity plane
 	// when set; nil falls back to an in-memory store (sessions then end on
 	// restart).
@@ -233,16 +228,15 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 	}
 
 	issuer, err := token.NewIssuer(&token.Config{
-		Signer:          signer,
-		KeyAttributes:   attrs,
-		KeyID:           kid,
-		AccessTokenType: p.AccessTokenType,
-		Issuer:          p.IssuerName,
-		Audience:        p.Audience,
-		AccessTTL:       accessTTL,
-		RefreshTTL:      refreshTTL,
-		RefreshStore:    refreshStore,
-		UserResolver:    userResolver,
+		Signer:        signer,
+		KeyAttributes: attrs,
+		KeyID:         kid,
+		Issuer:        p.IssuerName,
+		Audience:      p.Audience,
+		AccessTTL:     accessTTL,
+		RefreshTTL:    refreshTTL,
+		RefreshStore:  refreshStore,
+		UserResolver:  userResolver,
 	})
 	if err != nil {
 		return nil, &TokenIssuerConfigError{Err: err}
@@ -644,11 +638,6 @@ type SessionOptions struct {
 	// token.DefaultRefreshTTL.
 	RefreshTTL time.Duration
 
-	// AccessTokenType is the access token's typ header (RFC 7515 §4.1.9).
-	// token.ATJWTType selects RFC 9068 §2.1 access tokens; empty keeps
-	// "JWT". Refresh tokens are unaffected.
-	AccessTokenType string
-
 	// LoginRatePerMin caps per-client login/refresh attempts per minute.
 	// Zero uses the default (10), matching xkmsd.
 	LoginRatePerMin int
@@ -790,17 +779,16 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 	// own lenient "issuer stays nil" behavior.
 	if backend, err := hc.XKMSService.LookupDefaultBackend(); err == nil {
 		issuer, tiErr := BuildTokenIssuer(ctx, TokenIssuerParams{
-			Backend:         backend,
-			BackendName:     hc.XKMSService.DefaultBackendName(),
-			SigningKeyCN:    session.SigningKeyCN,
-			IssuerName:      session.Issuer,
-			Audience:        session.Audience,
-			AccessTTL:       session.AccessTTL,
-			RefreshTTL:      session.RefreshTTL,
-			AccessTokenType: session.AccessTokenType,
-			QRDBClient:      hc.QRDBClient,
-			CallContext:     CallContextFunc(hc.ServiceCallContext),
-			Logger:          logger,
+			Backend:      backend,
+			BackendName:  hc.XKMSService.DefaultBackendName(),
+			SigningKeyCN: session.SigningKeyCN,
+			IssuerName:   session.Issuer,
+			Audience:     session.Audience,
+			AccessTTL:    session.AccessTTL,
+			RefreshTTL:   session.RefreshTTL,
+			QRDBClient:   hc.QRDBClient,
+			CallContext:  CallContextFunc(hc.ServiceCallContext),
+			Logger:       logger,
 		})
 		if tiErr != nil {
 			logger.Error("host REST surface: token issuer construction failed; "+

@@ -33,7 +33,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
-	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/encoding/jwk"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -84,11 +83,6 @@ func TestSessionSigningJWK_VerifiesTheHostSurfaceTokens(t *testing.T) {
 	}{
 		{name: "default signing CN", opts: nil, wantAccessTyp: "JWT"},
 		{name: "custom signing CN", opts: &SessionOptions{SigningKeyCN: "composer-session-key"}, wantAccessTyp: "JWT"},
-		{
-			name:          "RFC 9068 access tokens",
-			opts:          &SessionOptions{SigningKeyCN: "composer-session-key", AccessTokenType: token.ATJWTType},
-			wantAccessTyp: "at+jwt",
-		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
