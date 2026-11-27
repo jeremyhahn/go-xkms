@@ -19,7 +19,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -51,10 +50,9 @@ var canCallPattern = regexp.MustCompile(
 func webSrcPath(t *testing.T) string {
 	t.Helper()
 
-	_, thisFile, _, ok := runtime.Caller(0)
-	require.True(t, ok, "runtime.Caller failed to resolve this test file's path")
-
-	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "..", "web", "app", "src")
+	// go test runs in the package directory. runtime.Caller is not used:
+	// under -trimpath (#2309) it yields the module path, not a disk path.
+	path := filepath.Join("..", "..", "..", "web", "app", "src")
 	path, err := filepath.Abs(path)
 	require.NoError(t, err)
 	return path

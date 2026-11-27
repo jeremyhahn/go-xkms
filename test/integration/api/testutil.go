@@ -26,7 +26,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -55,12 +54,23 @@ type TestConfig struct {
 
 // getProjectRoot returns the project root directory by walking up from the test file location
 func getProjectRoot() string {
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
+	// Walk up from the working directory (go test runs in the package
+	// directory) to the module root. runtime.Caller is not used: under
+	// -trimpath (#2309) it yields the module path, not a disk path.
+	dir, err := os.Getwd()
+	if err != nil {
 		return ""
 	}
-	// This file is in test/integration/api/, so go up 3 levels
-	return filepath.Join(filepath.Dir(filename), "..", "..", "..")
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // LoadTestConfig loads test configuration from environment or defaults

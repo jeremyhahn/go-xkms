@@ -10,8 +10,15 @@ VERSION := $(shell cat VERSION 2>/dev/null || echo "0.0.1-alpha")
 GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE := $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 LDFLAGS := -X main.Version=$(VERSION) \
+           -X github.com/jeremyhahn/go-xkms/pkg/xkms.buildVersion=$(VERSION) \
            -X main.GitCommit=$(GIT_COMMIT) \
            -X main.BuildDate=$(BUILD_DATE)
+
+# -trimpath on every go build/test (#2309, DS-9612): without it cmd/go hashes
+# the package directory into each action ID, so every lane and verify clone
+# builds new keys and the shared Go build cache grows without reuse. The
+# filter-out keeps the flag single across recursive and env -i sub-makes.
+export GOFLAGS := $(strip $(filter-out -trimpath,$(GOFLAGS)) -trimpath)
 
 # Every pinned tool version and download checksum: GO_IMAGE, GOLANGCI_VERSION,
 # ACTIONLINT_VERSION, TRIVY_VERSION and the rest. One file, also sourced by the
@@ -399,7 +406,10 @@ endif
 # declare no USER. The integration image runs `make test` as testuser
 # (Dockerfile), which cannot traverse /root, so docker-run and docker-test take
 # GITEA_MODULE_ENV alone and resolve modules inside the image as before.
+# `-e GOFLAGS` (no value) forwards the recipe's exported GOFLAGS, so the
+# global -trimpath and any target-specific GOFLAGS reach the builder (#2309).
 BUILDER_MODULE_ENV := $(GITEA_MODULE_ENV) \
+                    -e GOFLAGS \
                     -e GOMODCACHE=/root/go/pkg/mod \
                     -v $(GOMODCACHE_HOST):/root/go/pkg/mod:cached
 
@@ -456,8 +466,12 @@ XKMS_GRPC_TLS_INSECURE ?= true
 GOFIPS140 ?= off
 GOFIPS140_FIPS ?= latest
 
-# Test timeout
-PKCS11_TEST_TIMEOUT ?= 10m
+# Test timeout for the pkcs11 integration targets. The pkcs11/module package
+# took 485s at normal load (run 72047 attempt 1) and more than 600s at
+# loadavg 498 on 80 CPUs (attempt 2, fsync-bound in ModuleStorage.SaveObject).
+# 20m is about 2.5x the normal-load time, which covers the loaded-runner
+# slowdown (go-xkms#1763).
+PKCS11_TEST_TIMEOUT ?= 20m
 # Backends the OpenSSL matrix exercises. Naming a backend asserts it is
 # compiled in; the matrix fails rather than skips if it is not.
 XKMS_PKCS11_BACKENDS ?= software
@@ -1113,6 +1127,7 @@ test-scripts:
 	@bash test/scripts/credential-ignores.test.sh
 	@bash test/scripts/no-credential-echo.test.sh
 	@bash test/scripts/ci-registry.test.sh
+	@bash test/scripts/trim-ci-caches.test.sh
 	@bash test/scripts/build-web-deps.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
 	@bash test/scripts/touched-features.test.sh
@@ -2727,6 +2742,11 @@ endif
 ci_sync_devcontainer_workspace = if [ "$(COMPOSE_RUN_ID)" != "local" ] && ! $(DOCKER_COMPOSE) exec -T devcontainer test -f /workspace/go.mod >/dev/null 2>&1; then echo "$(CYAN)$(BOLD)→ Populating devcontainer /workspace from this job's checkout (CI)...$(RESET)"; tar -cf - . | $(DOCKER_COMPOSE) exec -T devcontainer tar -xf - --no-same-owner -C /workspace; fi
 
 # Helper to run command in devcontainer (auto-starts if needed)
+# The global GOFLAGS export (-trimpath, #2309) stops at `docker compose exec`:
+# each exec below forwards it as XKMS_CALLER_GOFLAGS, and devcontainer_goflags
+# appends it to the devcontainer's own GOFLAGS (-mod=readonly) in the command.
+devcontainer_goflags = export GOFLAGS=\"\$${GOFLAGS:+\$$GOFLAGS }\$$XKMS_CALLER_GOFLAGS\";
+
 define run_in_devcontainer
 	@if [ -n "$$XKMS_DEVCONTAINER" ]; then \
 		$(1); \
@@ -2736,7 +2756,7 @@ define run_in_devcontainer
 		$(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; \
 		$(ci_sync_devcontainer_workspace); \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(1)"; \
+		$(DOCKER_COMPOSE) exec -T -e XKMS_CALLER_GOFLAGS="$$GOFLAGS" devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(devcontainer_goflags) $(1)"; \
 	fi
 endef
 
@@ -2801,7 +2821,7 @@ define run_with_server
 		{ $(DOCKER_COMPOSE) up -d devcontainer --wait 2>/dev/null || $(DOCKER_COMPOSE) up -d devcontainer; } && \
 		$(ci_sync_devcontainer_workspace) && \
 		echo "$(CYAN)$(BOLD)→ Building PKCS#11 shared library in devcontainer...$(RESET)" && \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -tags '$(call go_tags,$(BUILD_TAGS))' -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
+		$(DOCKER_COMPOSE) exec -T -e XKMS_CALLER_GOFLAGS="$$GOFLAGS" devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(devcontainer_goflags) mkdir -p build/lib && GOFIPS140=$(GOFIPS140) CGO_ENABLED=1 go build -buildvcs=false -tags '$(call go_tags,$(BUILD_TAGS))' -buildmode=c-shared -o build/lib/libxkms_pkcs11.so ./cmd/pkcs11-module" && \
 		echo "$(GREEN)✓ PKCS#11 module built in devcontainer$(RESET)" || \
 		{ echo "$(RED)✗ Could not build the PKCS#11 module; the suite would run against a stale .so$(RESET)"; exit 1; }; \
 	fi
@@ -2817,10 +2837,10 @@ define run_with_server
 		$(1); \
 	else \
 		echo "$(CYAN)$(BOLD)→ Running in devcontainer: $(2)$(RESET)"; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && \
+		$(DOCKER_COMPOSE) exec -T -e XKMS_CALLER_GOFLAGS="$$GOFLAGS" devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(devcontainer_goflags) \
 			bash scripts/start-test-xkmsd.sh $(XKMS_UNIX_SOCKET)" || \
 			{ $(xkms_server_diagnostics); exit 1; }; \
-		$(DOCKER_COMPOSE) exec -T devcontainer bash -c "cd $(DEVCONTAINER_REPO) && \
+		$(DOCKER_COMPOSE) exec -T -e XKMS_CALLER_GOFLAGS="$$GOFLAGS" devcontainer bash -c "cd $(DEVCONTAINER_REPO) && $(devcontainer_goflags) \
 			bash build/docker/devcontainer/scripts/ensure-server-ca.sh && \
 			$(1)"; \
 	fi
@@ -4306,7 +4326,10 @@ lint-gates: fmt-check check-insecure-tls check-public-literals check-test-helper
 ## lint: Run actionlint over the workflows, then golangci-lint across every module (LINT_MODULES), plus the root module's backend and raft tag sets
 lint: actionlint
 	@echo "$(CYAN)$(BOLD)→ Running linters...$(RESET)"
-	@GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
+	@# golangci-lint's cgocall re-reads cgo files by their build paths, which
+	@# -trimpath makes module-relative (#2309): lint without it.
+	@export GOFLAGS="$(filter-out -trimpath,$(GOFLAGS))"; \
+	GOLANGCI_LINT_BIN=$$(command -v golangci-lint 2>/dev/null || echo "$$HOME/go/bin/golangci-lint"); \
 	if [ ! -x "$$GOLANGCI_LINT_BIN" ]; then \
 		echo "$(RED)✗ golangci-lint is required but not installed$(RESET)"; \
 		echo "$(YELLOW)  Install with: make install-tools$(RESET)"; \

@@ -613,7 +613,9 @@
 # static-analysis, build, nested-module-build) runs on every event. The full
 # tier (integration, nested-module-test, build-raft, race, tpm2-simulator)
 # runs on push to main, nightly, on workflow_dispatch and on a PR labelled
-# ci:full; its jobs carry CI_FULL_TIER's expression as `if:`. Soak is
+# ci:full or changing a FULL_TIER_PATTERN file (a Makefile, any go.mod or
+# go.sum, ci.yml; ruling 1041(4), preflight's full_paths output); its jobs
+# carry CI_FULL_TIER's expression or full_paths as `if:`. Soak is
 # nightly: the schedule and workflow_dispatch only (m751 (e)). Every job runs
 # its commands in the devcontainer images built at this commit: the five
 # stages are steps of the image job, and each CUSTOMIZE job builds the
@@ -698,6 +700,10 @@ env:
   # (push to main, schedule, workflow_dispatch), and a PR labelled ci:full.
   # Steps read it as env.CI_FULL_TIER; a job-level `if:` cannot read env, so
   # the integration job repeats this expression. Keep them equal.
+  # CUSTOMIZE (go-xkms, ruling 1041(4)): on a PR the full-tier jobs' `if:` and
+  # CI Gate's FULL_TIER also select it when preflight's full_paths is true (a
+  # changed file matches FULL_TIER_PATTERN), so a PR full tier is ci:full or
+  # a Makefile/go.mod/go.sum/ci.yml change.
   # v1.30 (fix 5): a workflow_dispatch off main is not the full tier (the
   # schedule guard refuses it and CI Gate fails).
   CI_FULL_TIER: ${{ (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')) || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
@@ -709,6 +715,11 @@ env:
   # lint-gates read (scripts, workflows, generated code, go.mod). The default
   # matches every file, so lint-gates runs on every PR.
   LINT_GATES_PATTERN: '.'
+  # CUSTOMIZE (go-xkms, Tenant Agent ruling 1041(4)): a PR whose changed files
+  # match this extended regex (a Makefile, any go.mod/go.sum, this workflow)
+  # changes build flags or dependencies, so it runs the full tier without the
+  # ci:full label (preflight's full_paths output).
+  FULL_TIER_PATTERN: '(^|/)(Makefile|go\.mod|go\.sum)$|^\.github/workflows/ci\.yml$'
   # v1.26.1 (Company Agent m1128 (9)): the repository's releasability test, which
   # a docs-only PR still runs because make coverage skips on it. CUSTOMIZE: the
   # `go test` arguments, package and -run pattern (for example
@@ -814,6 +825,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.diff.outputs.docs_only }}
       lint_gates: ${{ steps.diff.outputs.lint_gates }}   # v1.30
+      full_paths: ${{ steps.diff.outputs.full_paths }}   # CUSTOMIZE (go-xkms, ruling 1041(4))
       verdict: ${{ steps.guard.outputs.verdict }}
       proof: ${{ steps.guard.outputs.proof }}   # v1.30
       # v1.48 (ruling 1024): runs-on JSON for the two hosted-capable classes,
@@ -1156,19 +1168,31 @@ jobs:
         run: |
           # v1.30: lint_gates is false only on a PR whose changed files all
           # miss LINT_GATES_PATTERN; any doubt runs the job.
-          docs_only=false lint_gates=true
+          # CUSTOMIZE (go-xkms, ruling 1041(4)): full_paths is true on a PR
+          # with a changed file matching FULL_TIER_PATTERN; it selects the full
+          # tier. It fails closed (Codex round 2, #2322): true on an unlabelled
+          # PR until a successful diff shows no FULL_TIER_PATTERN file, so a
+          # failed diff (missing merge base, unavailable commit) runs it.
+          docs_only=false lint_gates=true full_paths=false
           if [ "$EVENT" = pull_request ] && [ "$CI_FULL_TIER" != true ]; then
+            full_paths=true
             if files=$(git diff --name-only --no-renames "$BASE...$HEAD") && [ -n "$files" ]; then
               if ! printf '%s\n' "$files" | grep -qvE "$DOCS_ONLY_PATTERN"; then
                 docs_only=true
               fi
               printf '%s\n' "$files" | grep -qE "$LINT_GATES_PATTERN" || lint_gates=false
+              if ! printf '%s\n' "$files" | grep -qE "$FULL_TIER_PATTERN"; then
+                full_paths=false
+              fi
               printf '%s\n' "$files"
             fi
           fi
-          echo "docs only: $docs_only; lint-gates: $lint_gates"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "lint_gates=$lint_gates" >> "$GITHUB_OUTPUT"
+          echo "docs only: $docs_only; lint-gates: $lint_gates; full-tier paths: $full_paths"
+          {
+            echo "docs_only=$docs_only"
+            echo "lint_gates=$lint_gates"
+            echo "full_paths=$full_paths"
+          } >> "$GITHUB_OUTPUT"
 
       - name: No direct go-objstore import outside the storage seam
         run: |
@@ -1584,7 +1608,7 @@ jobs:
       contents: read
       packages: read
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       # v1.22: the cache volumes' trust class (as in the image job).
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
@@ -1802,7 +1826,7 @@ jobs:
     # v1.26: never on a draft PR, ci:full or not. v1.29.3: on a schedule run,
     # only on the schedule guard's `run`.
     needs: preflight   # v1.34
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
+    if: ${{ (github.event_name != 'pull_request' || needs.preflight.outputs.full_paths == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
     # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing):
     # ubuntu-latest, or the bigdisk-docker pool when the preflight's
     # `runner_docker` reports the hosted pool full.
@@ -2105,7 +2129,7 @@ jobs:
       contents: read
       packages: read
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2222,7 +2246,7 @@ jobs:
       packages: read
     timeout-minutes: 35   # #1587: ~2x 17m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2377,7 +2401,7 @@ jobs:
       packages: read
     timeout-minutes: 20   # #1587: ~2x 9.4m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2485,14 +2509,14 @@ jobs:
     name: Nested Module Tests (sdk/go, xkey, web/desktop)
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner) || 'bigdisk' }}   # v1.48
     # v1.26: never on a draft PR, ci:full or not.
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
-    needs: [preflight, ci-images]   # CUSTOMIZE (go-xkms, ruling 169); v1.48: preflight's runner output for runs-on
+    if: ${{ (github.event_name != 'pull_request' || needs.preflight.outputs.full_paths == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    needs: [preflight, ci-images]   # CUSTOMIZE (go-xkms, ruling 169; preflight: ruling 1041(4)); v1.48: preflight's runner output for runs-on
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
       packages: read
     timeout-minutes: 110  # #1587: ~2x 55m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2637,11 +2661,11 @@ jobs:
     name: Build & Test (raft tag matrix, ${{ matrix.tags }})
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner) || 'bigdisk' }}   # v1.48
     # v1.26: never on a draft PR, ci:full or not.
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    if: ${{ (github.event_name != 'pull_request' || needs.preflight.outputs.full_paths == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
     # #1587: ~2x 13m, slowest green (forge API, last 60 CI runs, 2026-10-17;
     # run 55255's 169m apt hang excluded).
     timeout-minutes: 30
-    needs: [preflight, ci-images]   # CUSTOMIZE (go-xkms, ruling 169); v1.48: preflight's runner output for runs-on
+    needs: [preflight, ci-images]   # CUSTOMIZE (go-xkms, ruling 169; preflight: ruling 1041(4)); v1.48: preflight's runner output for runs-on
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
       packages: read
@@ -2650,7 +2674,7 @@ jobs:
       matrix:
         tags: ["codec_json", "raft codec_json"]
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2754,14 +2778,14 @@ jobs:
     name: Race Detector
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner) || 'bigdisk' }}   # v1.48
     # v1.26: never on a draft PR, ci:full or not.
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
-    needs: [preflight, ci-images]   # CUSTOMIZE (go-xkms, ruling 169); v1.48: preflight's runner output for runs-on
+    if: ${{ (github.event_name != 'pull_request' || needs.preflight.outputs.full_paths == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    needs: [preflight, ci-images]   # CUSTOMIZE (go-xkms, ruling 169; preflight: ruling 1041(4)); v1.48: preflight's runner output for runs-on
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
       packages: read
     timeout-minutes: 145  # #1587: ~2x 71m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -2882,14 +2906,14 @@ jobs:
     name: TPM2 Simulator Tests
     runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner) || 'bigdisk' }}   # v1.48
     # v1.26: never on a draft PR, ci:full or not.
-    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
-    needs: [preflight, ci-images]   # CUSTOMIZE (go-xkms, ruling 169); v1.48: preflight's runner output for runs-on
+    if: ${{ (github.event_name != 'pull_request' || needs.preflight.outputs.full_paths == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft }}
+    needs: [preflight, ci-images]   # CUSTOMIZE (go-xkms, ruling 169; preflight: ruling 1041(4)); v1.48: preflight's runner output for runs-on
     permissions:          # CUSTOMIZE (go-xkms, ruling 169): pull main's toolchain image
       contents: read
       packages: read
     timeout-minutes: 25   # #1587: ~2x 10.5m, slowest green (forge API, last 60 CI runs, 2026-10-17)
     env:
-      GOFLAGS: -mod=readonly   # ruling 869: modules are never rewritten on the pool
+      GOFLAGS: -mod=readonly -trimpath   # ruling 869; -trimpath #2309: modules are never rewritten on the pool
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
       CI_CACHE_CLASS: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'main' || 'pr' }}
     steps:
@@ -3011,7 +3035,9 @@ jobs:
           # The full tier is CI_FULL_TIER (v1.23): every event but a PR, and a
           # PR labelled ci:full. A job marked `full` may be skipped below only
           # when it is not selected; a `pr` job may never be skipped.
-          FULL_TIER: ${{ env.CI_FULL_TIER }}
+          # CUSTOMIZE (go-xkms, ruling 1041(4)): or a PR changing a
+          # FULL_TIER_PATTERN file, so a selected full job that skips fails.
+          FULL_TIER: ${{ env.CI_FULL_TIER == 'true' || needs.preflight.outputs.full_paths == 'true' }}
           # v1.24: a `nightly` job runs on schedule and workflow_dispatch only.
           NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           # v1.26: a draft PR runs no CI, so its gate fails rather than pass on skips.

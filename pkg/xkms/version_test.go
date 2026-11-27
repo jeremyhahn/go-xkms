@@ -14,14 +14,77 @@
 package xkms
 
 import (
-	"os"
-	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
 
+// TestLibraryVersion_FromBuildInfo: when go-xkms is imported by another
+// application, debug.BuildInfo.Main is that application, so the library
+// version must come from the go-xkms entry in Deps (Codex round 1 at
+// 043aaf2e3 on #2322).
+func TestLibraryVersion_FromBuildInfo(t *testing.T) {
+	const mod = "github.com/jeremyhahn/go-xkms"
+	app := debug.Module{Path: "example.com/app", Version: "v9.9.9"}
+	tests := []struct {
+		name string
+		info *debug.BuildInfo
+		want string
+	}{
+		{
+			name: "imported dependency",
+			info: &debug.BuildInfo{Main: app, Deps: []*debug.Module{
+				{Path: "example.com/other", Version: "v1.0.0"},
+				{Path: mod, Version: "v0.64.2-alpha"},
+			}},
+			want: "v0.64.2-alpha",
+		},
+		{
+			name: "replaced dependency",
+			info: &debug.BuildInfo{Main: app, Deps: []*debug.Module{
+				{Path: mod, Version: "v0.64.2-alpha", Replace: &debug.Module{Path: "example.com/fork", Version: "v0.64.3-alpha"}},
+			}},
+			want: "v0.64.3-alpha",
+		},
+		{
+			name: "local directory replace",
+			info: &debug.BuildInfo{Main: app, Deps: []*debug.Module{
+				{Path: mod, Version: "v0.64.2-alpha", Replace: &debug.Module{Path: "../go-xkms"}},
+			}},
+			want: "unknown",
+		},
+		{
+			name: "no go-xkms dependency",
+			info: &debug.BuildInfo{Main: app},
+			want: "unknown",
+		},
+		{
+			name: "go-xkms main module",
+			info: &debug.BuildInfo{Main: debug.Module{Path: mod, Version: "v0.65.0"}},
+			want: "v0.65.0",
+		},
+		{
+			name: "go-xkms devel build",
+			info: &debug.BuildInfo{Main: debug.Module{Path: mod, Version: "(devel)"}},
+			want: "unknown",
+		},
+		{
+			name: "nil info",
+			info: nil,
+			want: "unknown",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := libraryVersion(tt.info); got != tt.want {
+				t.Fatalf("libraryVersion() = %q; want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestVersion(t *testing.T) {
-	// The Version() function reads from the VERSION file in the project root
+	// Version() reports the linker-set buildVersion (unset under go test)
 	version := Version()
 
 	// Should not be empty
@@ -38,28 +101,6 @@ func TestVersion(t *testing.T) {
 	}
 
 	t.Logf("Library version: %s", version)
-}
-
-func TestVersion_WithVersionFile(t *testing.T) {
-	// Create a temporary VERSION file for testing
-	tempDir := t.TempDir()
-	versionFile := filepath.Join(tempDir, "VERSION")
-
-	testVersion := "v1.2.3-test"
-	err := os.WriteFile(versionFile, []byte(testVersion), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create test VERSION file: %v", err)
-	}
-
-	// Note: We can't easily test this without modifying the function
-	// to accept a path parameter, but we can verify the current behavior
-	version := Version()
-
-	// Version should be either the real version or "unknown"
-	// depending on whether VERSION file exists in the project root
-	if version == "" {
-		t.Error("Version() should never return empty string")
-	}
 }
 
 func TestVersion_Consistency(t *testing.T) {
@@ -94,9 +135,8 @@ func TestVersion_NotEmpty(t *testing.T) {
 	}
 }
 
-func TestVersion_CallerEdgeCase(t *testing.T) {
-	// The Version function uses runtime.Caller internally
-	// This test ensures it handles the path correctly
+func TestVersion_Readable(t *testing.T) {
+	// Version reports the linker-set value, the module version or "unknown"
 	version := Version()
 
 	// Version should be either a valid version string or "unknown"
@@ -152,7 +192,7 @@ func TestVersion_ValidFormat(t *testing.T) {
 
 	// Version should either be "unknown" or follow a version format
 	if version == "unknown" {
-		t.Log("VERSION file not found or empty, got 'unknown' as expected")
+		t.Log("no linker version set, got 'unknown' as expected")
 		return
 	}
 

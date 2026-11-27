@@ -130,7 +130,14 @@ func TestMakefileLDFlagsTargetsExist(t *testing.T) {
 // set to a distinct probe, and asserts each binary prints every probe in
 // its own field.
 func TestBinariesReportStampedVersion(t *testing.T) {
-	requireStampedTargetSet(t, "Makefile LDFLAGS", makefileLDFlagsTargets(t))
+	var binaryTargets []string
+	for _, target := range makefileLDFlagsTargets(t) {
+		// The library version is checked by TestMakefileLDFLAGSSetXkmsVersion.
+		if target != xkmsVersionTarget {
+			binaryTargets = append(binaryTargets, target)
+		}
+	}
+	requireStampedTargetSet(t, "Makefile LDFLAGS", binaryTargets)
 	var ldflags []string
 	for _, f := range stampedFields {
 		ldflags = append(ldflags, "-X", f.target+"="+f.probe)

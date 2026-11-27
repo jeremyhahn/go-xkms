@@ -14,37 +14,56 @@
 package xkms
 
 import (
-	"os"
-	"path/filepath"
-	"runtime"
+	"runtime/debug"
 	"strings"
 )
 
-// Version returns the library version string.
-// The version is read from the VERSION file in the project root.
-// If the VERSION file cannot be read or is empty, returns "unknown".
+// buildVersion is the library version, set at link time by the Makefile
+// LDFLAGS (-X github.com/jeremyhahn/go-xkms/pkg/xkms.buildVersion=$(VERSION)).
+// Builds run with -trimpath (#2309), so the package cannot locate the
+// VERSION file through its own source path.
+var buildVersion string
+
+// Version returns the library version string: the linker-set buildVersion,
+// else the go-xkms module version recorded in the build info, else "unknown".
 func Version() string {
-	// Get the path to this source file
-	_, filename, _, ok := runtime.Caller(0)
-	if !ok {
-		return "unknown"
+	if v := strings.TrimSpace(buildVersion); v != "" {
+		return v
 	}
+	info, _ := debug.ReadBuildInfo()
+	return libraryVersion(info)
+}
 
-	// Navigate to project root (up from pkg/xkms/)
-	projectRoot := filepath.Join(filepath.Dir(filename), "..", "..")
-	versionFile := filepath.Join(projectRoot, "VERSION")
+// modulePath is the go-xkms module path looked up in the build info.
+const modulePath = "github.com/jeremyhahn/go-xkms"
 
-	// Read the VERSION file
-	// #nosec G304 - Reading fixed VERSION file from project root
-	data, err := os.ReadFile(versionFile)
-	if err != nil {
-		return "unknown"
+// libraryVersion is the go-xkms module version recorded in info: the main
+// module version when go-xkms is the main module, else the version of the
+// go-xkms dependency (its replacement's when replaced). When another
+// application imports go-xkms, info.Main is that application, so its version
+// is never used. It returns "unknown" when no usable version is recorded.
+func libraryVersion(info *debug.BuildInfo) string {
+	const unknown = "unknown"
+	if info == nil {
+		return unknown
 	}
-
-	version := strings.TrimSpace(string(data))
-	if version == "" {
-		return "unknown"
+	usable := func(v string) string {
+		if v == "" || v == "(devel)" {
+			return unknown
+		}
+		return v
 	}
-
-	return version
+	if info.Main.Path == modulePath {
+		return usable(info.Main.Version)
+	}
+	for _, dep := range info.Deps {
+		if dep == nil || dep.Path != modulePath {
+			continue
+		}
+		if dep.Replace != nil {
+			return usable(dep.Replace.Version)
+		}
+		return usable(dep.Version)
+	}
+	return unknown
 }
