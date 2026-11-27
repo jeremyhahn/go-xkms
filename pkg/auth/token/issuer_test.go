@@ -668,3 +668,47 @@ func TestMint_AccessTokenTypeHeader(t *testing.T) {
 		})
 	}
 }
+
+// TestMint_ATJWTProfileClaims pins the RFC 9068 §2.2 claim set of an at+jwt
+// access token: iss, exp, aud, sub, client_id, iat and a unique jti.
+func TestMint_ATJWTProfileClaims(t *testing.T) {
+	tests := []struct {
+		name         string
+		clientID     string
+		wantClientID string
+	}{
+		{"explicit client", "xkms-console", "xkms-console"},
+		{"client defaults to the issuer", "", "go-xkms"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			issuer := newTestIssuer(t, func(c *Config) {
+				c.AccessTokenType = ATJWTType
+				c.ClientID = tc.clientID
+			})
+			ctx := context.Background()
+			first, err := issuer.Mint(ctx, testIdentity())
+			require.NoError(t, err)
+			second, err := issuer.Mint(ctx, testIdentity())
+			require.NoError(t, err)
+
+			claims := unverifiedClaims(t, first.AccessToken)
+			for _, name := range []string{"iss", "exp", "aud", "sub", "client_id", "iat", "jti"} {
+				assert.Contains(t, claims, name, "RFC 9068 §2.2 requires %s", name)
+			}
+			assert.Equal(t, issuer.IssuerName(), claims["iss"])
+			assert.Equal(t, "user-123", claims["sub"])
+			assert.Equal(t, tc.wantClientID, claims["client_id"])
+			jti, _ := claims["jti"].(string)
+			assert.NotEmpty(t, jti)
+			assert.NotEqual(t, jti, unverifiedClaims(t, second.AccessToken)["jti"], "each access token has its own jti")
+			assert.NotEqual(t, jti, unverifiedClaims(t, first.RefreshToken)["jti"], "the access jti differs from the refresh jti")
+
+			rotated, err := issuer.Refresh(ctx, first.RefreshToken)
+			require.NoError(t, err)
+			rc := unverifiedClaims(t, rotated.AccessToken)
+			assert.Equal(t, tc.wantClientID, rc["client_id"])
+			assert.NotEmpty(t, rc["jti"])
+		})
+	}
+}
