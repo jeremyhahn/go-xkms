@@ -182,7 +182,7 @@ func TestModule_HostMount_PreconfiguredAuthorizerIsAudited(t *testing.T) {
 	client := newHostNodeClient(t)
 	ctx := context.Background()
 	h := mountLikeHost(t, client)
-	preset := auth.NewNodeAuthorizer(client.RBAC(), nodeScopeAuthorizer{})
+	preset := auth.NewAuthorizer(nodeScopeRBAC{client.RBAC()})
 	h.svc.SetAuthorizer(preset)
 	h.svc.SetUserClients(client.Users(), client.Roles())
 	h.module.hostStores(h.svc)
@@ -211,7 +211,7 @@ func TestModule_HostMount_PreconfiguredFailingSinkStopsInvite(t *testing.T) {
 	client := newHostNodeClient(t)
 	ctx := context.Background()
 	h := mountLikeHost(t, client)
-	h.svc.SetAuthorizer(auth.NewNodeAuthorizer(client.RBAC(), nodeScopeAuthorizer{}))
+	h.svc.SetAuthorizer(auth.NewAuthorizer(nodeScopeRBAC{client.RBAC()}))
 	failing := &clientAuditSink{audit: failingAuditClient{}}
 	h.svc.SetAuditLogger(failing)
 	h.svc.SetUserClients(client.Users(), client.Roles())
@@ -266,7 +266,7 @@ func TestModule_HostMount_PreconfiguredAuthorizerNodeSinkFailureStopsInvite(t *t
 
 	ctx := context.Background()
 	h := mountLikeHost(t, client)
-	preset := auth.NewNodeAuthorizer(client.RBAC(), nodeScopeAuthorizer{})
+	preset := auth.NewAuthorizer(nodeScopeRBAC{client.RBAC()})
 	h.svc.SetAuthorizer(preset)
 	h.svc.SetUserClients(client.Users(), client.Roles())
 	h.module.hostStores(h.svc)

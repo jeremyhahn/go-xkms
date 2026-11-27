@@ -107,6 +107,14 @@ func TestModule_HostMount_NilTenantTargetKeepsAuthDisabled(t *testing.T) {
 // grants what the identity carries in ScopePermissions.
 type nodeScopeAuthorizer struct{}
 
+// nodeScopeRBAC is the host's SDK RBAC client deciding through
+// nodeScopeAuthorizer on the full identity the decision context carries.
+type nodeScopeRBAC struct{ qrdbtransport.RBACClient }
+
+func (nodeScopeRBAC) Authorize(ctx context.Context, _ *qrdbtransport.Identity, resource, action string) error {
+	return nodeScopeAuthorizer{}.Authorize(ctx, auth.GetIdentity(ctx), resource, action)
+}
+
 func (nodeScopeAuthorizer) Authorize(_ context.Context, identity *auth.Identity, resource, action string) error {
 	for _, p := range identity.ScopePermissions {
 		if p == resource+":"+action {
@@ -125,7 +133,7 @@ func (nodeScopeAuthorizer) Authorize(_ context.Context, identity *auth.Identity,
 func TestModule_HostMount_DelegatedInviteUsesNodeAuthorizer(t *testing.T) {
 	client := newHostNodeClient(t)
 	h := mountLikeHost(t, client)
-	h.svc.SetAuthorizer(auth.NewNodeAuthorizer(client.RBAC(), nodeScopeAuthorizer{}))
+	h.svc.SetAuthorizer(auth.NewAuthorizer(nodeScopeRBAC{client.RBAC()}))
 	h.svc.SetUserClients(client.Users(), client.Roles())
 	h.module.hostStores(h.svc)
 
