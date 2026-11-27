@@ -256,6 +256,57 @@ func TestSeal_PlatformPolicy_BindsRequestedPCRSelection(t *testing.T) {
 	assert.Nil(t, out)
 }
 
+// TestSeal_PlatformPolicy_RequestedPCR11BindsBeyondPlatformSet is the
+// consumer shape of #2226 (go-trusted-platform #1897): the platform set is
+// {7} only and the caller asks for SHA-256 {7, 11}. PCR 11 must bind the
+// object even though the platform policy alone does not cover it.
+func TestSeal_PlatformPolicy_RequestedPCR11BindsBeyondPlatformSet(t *testing.T) {
+	const requestedPCR = 11
+	setup := func(t *testing.T) (*simHarness, func() *types.KeyAttributes) {
+		h := newSimHarness(t, func(c *Config) {
+			platformPolicySRKConfig()(c)
+			c.PlatformPCRs = PCRSet{7}
+		})
+		createPlatformPolicySRK(t, h, mustPassword(t, []byte("srk-recovery-pin")))
+		require.NotContains(t, h.TPM.config.PlatformPCRs, uint(requestedPCR),
+			"the test needs the requested PCR outside the platform set")
+		selection := PolicyPCRSelection(tpm2.TPMAlgSHA256, 7, requestedPCR)
+		return h, func() *types.KeyAttributes {
+			attrs := sealedKeyAttrsUnder(
+				platformPolicySRKAttrs(t, h, nil), "platform-policy-pcr-11", nil)
+			attrs.TPMAttributes.PCRSelection = selection
+			return attrs
+		}
+	}
+	secret := []byte("bound-to-pcr-7-and-11")
+
+	t.Run("unchanged PCRs open the object", func(t *testing.T) {
+		h, attrsFor := setup(t)
+		sealed, err := h.TPM.Seal(context.Background(), secret,
+			&types.SealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+		require.NoError(t, err)
+
+		got, err := h.TPM.Unseal(context.Background(), sealed,
+			&types.UnsealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+		require.NoError(t, err)
+		require.Equal(t, secret, got)
+	})
+
+	t.Run("extending PCR 11 closes the object", func(t *testing.T) {
+		h, attrsFor := setup(t)
+		sealed, err := h.TPM.Seal(context.Background(), secret,
+			&types.SealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+		require.NoError(t, err)
+
+		h.extendPCR(t, requestedPCR, []byte("post-seal-measurement"))
+
+		out, err := h.TPM.Unseal(context.Background(), sealed,
+			&types.UnsealOptions{KeyAttributes: attrsFor(), Backend: h.Backend})
+		require.Error(t, err, "PCR 11 was requested, so extending it must close the object")
+		assert.Nil(t, out)
+	})
+}
+
 // A seal with a recovery PIN over a selection holding a PCR outside the
 // platform set must still open through the PCR branch without the PIN while
 // every selected PCR is unchanged, and refuse once that PCR is extended.
