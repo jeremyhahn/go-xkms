@@ -824,6 +824,9 @@ jobs:
       # (v1.54: whichever pool `Balanced runner pool (ruling 1137)` picks).
       runner: ${{ steps.runner.outputs.runner }}
       runner_docker: ${{ steps.runner.outputs.runner_docker }}
+      # Tenant order 2026-11-27 17:18Z: the integration job's runs-on,
+      # bigdisk-docker on a push to main or a same-repository pull request.
+      runner_integration: ${{ steps.runner.outputs.runner_integration }}
     steps:
       - name: Is a main push run of this workflow in flight?
         id: guard
@@ -991,6 +994,13 @@ jobs:
       # it makes no call and outputs the hosted default with a ::notice: a
       # fork never reaches a self-hosted runner. Its tests:
       # internal/buildgates/ci_sched_devcontainer_test.go (TestCIRunnerSelection*).
+      # Tenant order 2026-11-27 17:18Z (#2434): a third output,
+      # `runner_integration`, read by the integration job only. Integration
+      # always takes bigdisk-docker on a push to main or a same-repository
+      # pull request, whatever the balance picks or whether a count could be
+      # read (a hosted runner's disk is too small for the integration image
+      # build); a fork, an event the self-hosted runners refuse and off
+      # github.com keep the hosted default.
       - name: Balanced runner pool (ruling 1137)
         id: runner
         env:
@@ -1009,19 +1019,22 @@ jobs:
           set -uo pipefail
           HOSTED='"ubuntu-latest"'
           selfhosted() { printf '["self-hosted","linux","x64","%s"]' "$1"; }
+          # $3 is runner_integration (Tenant order 2026-11-27 17:18Z):
+          # bigdisk-docker past the fork and refused-event gates, whatever
+          # the balance picks; the hosted default before them.
           emit() {
-            echo "runner: $1; runner_docker: $2"
-            { echo "runner=$1"; echo "runner_docker=$2"; } >> "$GITHUB_OUTPUT"
+            echo "runner: $1; runner_docker: $2; runner_integration: $3"
+            { echo "runner=$1"; echo "runner_docker=$2"; echo "runner_integration=$3"; } >> "$GITHUB_OUTPUT"
           }
           # hosted <why>: no count, so the default, with the reason shown.
           hosted() {
-            echo "::warning::runner selection: $1; every job of this run takes the GitHub-hosted default, ubuntu-latest, and none runs on the Dells (ci-template v1.54, ruling 1137)"
-            emit "$HOSTED" "$HOSTED"
+            echo "::warning::runner selection: $1; every job of this run but Integration takes the GitHub-hosted default, ubuntu-latest; Integration keeps bigdisk-docker (Tenant order 2026-11-27 17:18Z) (ci-template v1.54, ruling 1137)"
+            emit "$HOSTED" "$HOSTED" "$(selfhosted bigdisk-docker)"
             exit 0
           }
           if [ "$SERVER" != https://github.com ]; then
             echo "not github.com: each job keeps its forge label (bigdisk, ci-gate); no selection"
-            emit "$HOSTED" "$HOSTED"
+            emit "$HOSTED" "$HOSTED" "$HOSTED"
             exit 0
           fi
           # v1.52: a fork's pull request runs every job on GitHub-hosted runners.
@@ -1029,7 +1042,7 @@ jobs:
             pull_request|pull_request_target)
               if [ "$HEAD_REPO" != "$REPO" ]; then
                 echo "::notice::runner selection: this pull request's head repository is not this repository (a fork); every job of this run takes the GitHub-hosted default, ubuntu-latest, and none reaches a self-hosted runner (ci-template v1.52)"
-                emit "$HOSTED" "$HOSTED"
+                emit "$HOSTED" "$HOSTED" "$HOSTED"
                 exit 0
               fi ;;
           esac
@@ -1038,7 +1051,7 @@ jobs:
             push:refs/heads/main | pull_request:*) ;;
             *)
               echo "::notice::runner selection: event $EVENT on $REF is not a push to main or a pull request, which the self-hosted runners refuse; every job of this run takes the GitHub-hosted default, ubuntu-latest"
-              emit "$HOSTED" "$HOSTED"
+              emit "$HOSTED" "$HOSTED" "$HOSTED"
               exit 0 ;;
           esac
           # whole <value>: a whole number above 0, at most 6 digits.
@@ -1130,10 +1143,10 @@ jobs:
           fi
           if [ "$pick" = self ]; then
             echo "::notice::runner selection: $why; this run's jobs run on the Dells (bigdisk, bigdisk-docker) (ci-template v1.54, ruling 1137)"
-            emit "$(selfhosted bigdisk)" "$(selfhosted bigdisk-docker)"
+            emit "$(selfhosted bigdisk)" "$(selfhosted bigdisk-docker)" "$(selfhosted bigdisk-docker)"
           else
-            echo "::notice::runner selection: $why; this run's jobs take the GitHub-hosted default, ubuntu-latest (ci-template v1.54, ruling 1137)"
-            emit "$HOSTED" "$HOSTED"
+            echo "::notice::runner selection: $why; this run's jobs take the GitHub-hosted default, ubuntu-latest, but Integration keeps bigdisk-docker (Tenant order 2026-11-27 17:18Z) (ci-template v1.54, ruling 1137)"
+            emit "$HOSTED" "$HOSTED" "$(selfhosted bigdisk-docker)"
           fi
 
       # v1.34: the full history on a PR run for the changed-files diff, one
@@ -1813,10 +1826,13 @@ jobs:
     # only on the schedule guard's `run`.
     needs: preflight   # v1.34
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing):
-    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
-    # `runner_docker` reports the hosted pool full.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing), Tenant
+    # order 2026-11-27 17:18Z: Integration always takes the bigdisk-docker
+    # pool on a push to main or a same-repository pull request (the
+    # preflight's `runner_integration`), whatever the balance picks: a
+    # hosted runner's disk is too small for the integration image build. A
+    # fork pull request and a refused event stay on ubuntu-latest.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_integration) || 'bigdisk' }}   # v1.48
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-

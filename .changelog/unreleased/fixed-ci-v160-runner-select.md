@@ -1,1 +1,2 @@
 CI: a workflow_dispatch, schedule or non-main push runs every job on the hosted pool; only a push to main or a same-repository pull request selects the self-hosted runners (ci-template v1.60).
+CI: Integration always runs on the self-hosted bigdisk-docker pool on a push to main or a same-repository pull request, whatever the runner balance picks, so the integration image build no longer runs out of disk on a hosted runner; a fork pull request stays hosted.
