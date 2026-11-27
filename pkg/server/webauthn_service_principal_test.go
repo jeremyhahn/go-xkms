@@ -42,7 +42,7 @@ import (
 // must run as the node's service principal like the rest of the datastore;
 // on the caller's context the node refuses them and every registration
 // answered 500 internal_error.
-func TestWebAuthnService_AnonymousRegistrationRefusedOnAuthenticatingNode(t *testing.T) {
+func TestWebAuthnService_RegistersOnAuthenticatingNode(t *testing.T) {
 	cfg := qrdbsdk.DefaultDaemonConfig()
 	cfg.Raft.DataDir = t.TempDir()
 	cfg.Databases = []qrdbsdk.DaemonDatabaseConfig{{Name: "default", Backend: "memory"}}
@@ -82,10 +82,7 @@ func TestWebAuthnService_AnonymousRegistrationRefusedOnAuthenticatingNode(t *tes
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 
-	// The service runs with the node's service call context, so the call
-	// reaches qrdb (no "unauthenticated", no 500); qrdb then refuses the
-	// anonymous user create, as the service principal holds no
-	// users:create (CA ruling 602; registration is invite-only, ruling 979).
+	// The service runs with the node's service call context, so the call reaches qrdb and the principal's users grant answers it.
 	req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/webauthn/registration/begin",
 		strings.NewReader(`{"email":"alice@example.com","display_name":"Alice"}`))
 	require.NoError(t, err)
@@ -98,6 +95,6 @@ func TestWebAuthnService_AnonymousRegistrationRefusedOnAuthenticatingNode(t *tes
 	require.NoError(t, err)
 
 	assert.NotEqual(t, http.StatusInternalServerError, resp.StatusCode, "registration/begin: %s", body)
-	require.Equal(t, http.StatusForbidden, resp.StatusCode, "registration/begin: %s", body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "registration/begin: %s", body)
 	assert.NotContains(t, string(body), "unauthenticated")
 }
