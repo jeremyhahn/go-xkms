@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -139,4 +140,31 @@ func TestNewRepositorySigner_SignsImagesWithAStrictP384Key(t *testing.T) {
 			assert.Equal(t, f.digest, verified.Digest)
 		})
 	}
+}
+
+// fixedPSSSigner is an RSA key whose backend signs RSASSA-PSS whatever
+// options it is given, like a GCP KMS RSA_SIGN_PSS_* key.
+type fixedPSSSigner struct{ key *rsa.PrivateKey }
+
+func (s *fixedPSSSigner) Public() crypto.PublicKey { return &s.key.PublicKey }
+
+func (s *fixedPSSSigner) Sign(r io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
+	return rsa.SignPSS(r, s.key, crypto.SHA256, digest, nil)
+}
+
+func (s *fixedPSSSigner) SignsPKCS1v15() bool { return false }
+
+func TestNewRepositorySigner_RefusesAFixedPSSKey(t *testing.T) {
+	f := newSignerFixture(t, registryConfig{referrers: true})
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	pss := &fixedPSSSigner{key: key}
+	source := &fakeRepositorySigners{signers: map[string]crypto.Signer{"team/app": pss}}
+
+	_, err = NewRepositorySigner(t.Context(), source, "team/app", &SignerConfig{
+		Certificate: f.pki.codeSigning(t, pss.Public()),
+		Chain:       []*x509.Certificate{f.pki.certificate},
+		Registry:    f.client,
+	})
+	require.ErrorIs(t, err, ErrUnsupportedKey, "an RSA key that cannot sign PKCS#1 v1.5 publishes no unverifiable image")
 }
