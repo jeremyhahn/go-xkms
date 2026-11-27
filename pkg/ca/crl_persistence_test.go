@@ -18,6 +18,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -290,4 +291,49 @@ func TestGenerateCRL_ForcesRegenerationEvenWhenFresh(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, crl1.Number.Int64()+1, crl3.Number.Int64())
+}
+
+func TestGenerateCRL_ConcurrentCallsYieldDistinctIncreasingNumbers(t *testing.T) {
+	ca := setupTestCAWithRevocationStore(t)
+	ctx := context.Background()
+
+	const calls = 8
+	numbers := make([]int64, calls)
+	errsOut := make([]error, calls)
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < calls; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			der, err := ca.GenerateCRL(ctx)
+			if err != nil {
+				errsOut[i] = err
+				return
+			}
+			crl, err := x509.ParseRevocationList(der)
+			if err != nil {
+				errsOut[i] = err
+				return
+			}
+			numbers[i] = crl.Number.Int64()
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	seen := make(map[int64]bool, calls)
+	for i := 0; i < calls; i++ {
+		require.NoError(t, errsOut[i])
+		assert.False(t, seen[numbers[i]], "CRL number %d issued twice", numbers[i])
+		seen[numbers[i]] = true
+	}
+	for n := int64(1); n <= calls; n++ {
+		assert.True(t, seen[n], "CRL number %d missing", n)
+	}
+
+	rec, err := ca.getCRLBlob(ctx, ca.getIssuingCertificate().SubjectKeyId)
+	require.NoError(t, err)
+	assert.Equal(t, "8", rec.Number)
 }
