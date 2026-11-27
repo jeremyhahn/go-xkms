@@ -342,6 +342,9 @@ func TestWebAuthnFactorVerifier_BeginChallenge_UsernameHint(t *testing.T) {
 	}
 	enroll(&qrdbtransport.CreateUserRequest{Username: "admin", WithoutEmailLoginKey: true}, "admin-cred")
 	enroll(&qrdbtransport.CreateUserRequest{Username: "bob", Email: "bob@example.com"}, "bob-cred")
+	enroll(&qrdbtransport.CreateUserRequest{Username: "carol", Email: "carol@example.com"}, "carol-cred")
+	// A second account whose username equals carol's email must not shadow carol's email login.
+	enroll(&qrdbtransport.CreateUserRequest{Username: "carol@example.com", WithoutEmailLoginKey: true}, "shadow-cred")
 
 	allowed := func(hint string) []string {
 		t.Helper()
@@ -367,6 +370,8 @@ func TestWebAuthnFactorVerifier_BeginChallenge_UsernameHint(t *testing.T) {
 		{hint: "admin", want: []string{"admin-cred"}},
 		{hint: "bob", want: []string{"bob-cred"}},
 		{hint: "bob@example.com", want: []string{"bob-cred"}},
+		{hint: "carol@example.com", want: []string{"carol-cred"}},
+		{hint: "carol", want: []string{"carol-cred"}},
 		{hint: "nobody", want: []string{}},
 		{hint: "nobody@example.com", want: []string{}},
 	}
