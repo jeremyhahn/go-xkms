@@ -55,3 +55,22 @@ func TestCITemplateV153MainEventGroup(t *testing.T) {
 		t.Errorf("%s: the concurrency group still names github.sha (v1.53: main-{event})", ciWorkflow)
 	}
 }
+
+// TestCodeReviewNoSupersedeCancel asserts code-review.yml has no run-cancel step, no actions: write and no preflight runner variable.
+func TestCodeReviewNoSupersedeCancel(t *testing.T) {
+	const crWorkflow = "../../.github/workflows/code-review.yml"
+	cr, err := os.ReadFile(crWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", crWorkflow, err)
+	}
+	for _, absent := range []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^\s*actions:\s*write\b`),
+		regexp.MustCompile(`actions/runs/[^\s"']*/cancel`),
+		regexp.MustCompile(`(?mi)^\s*-?\s*name:.*(supersede|cancel)`),
+		regexp.MustCompile(`vars\.CI_PREFLIGHT_RUNS_ON`),
+	} {
+		if loc := absent.FindIndex(cr); loc != nil {
+			t.Errorf("%s matches %s at byte %d", crWorkflow, absent, loc[0])
+		}
+	}
+}

@@ -28,6 +28,7 @@ env:
 
 jobs:
   coverage:
+    timeout-minutes: 60
     name: Test Coverage
     runs-on: ubuntu-latest
 
@@ -39,7 +40,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: ${{ runner.environment != 'self-hosted' }}
+          cache: true
 
       - name: Install dependencies
         run: go mod download
@@ -112,6 +113,7 @@ jobs:
             });
 
   lint:
+    timeout-minutes: 60
     name: Lint
     runs-on: ubuntu-latest
 
@@ -123,7 +125,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: ${{ runner.environment != 'self-hosted' }}
+          cache: true
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@9fae48acfc02a90574d7c304a1758ef9895495fa # v7
@@ -131,6 +133,7 @@ jobs:
           version: v2.14.0
 
   race:
+    timeout-minutes: 60
     name: Race Detector
     runs-on: ubuntu-latest
 
@@ -142,12 +145,13 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: ${{ runner.environment != 'self-hosted' }}
+          cache: true
 
       - name: Run tests with race detector
         run: make test
 
   integration:
+    timeout-minutes: 120
     name: Integration Tests
     runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}
 
@@ -159,7 +163,7 @@ jobs:
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: ${{ runner.environment != 'self-hosted' }}
+          cache: true
 
       - name: Run integration tests
         run: make compose-integration
