@@ -101,8 +101,7 @@ func (s *XKMSService) resolveRepositorySigner(ctx context.Context, repository st
 	if err != nil {
 		return nil, nil, err
 	}
-	// Each Sign resolves the repository again and refuses when it now names
-	// another key, so a retained signer stops at a rebinding or unbinding.
+	// Each Sign reauthorizes the caller and refuses a rebinding or unbinding.
 	o, ok := signer.(opaqueSigner)
 	if !ok {
 		return signer, resolution, nil
@@ -110,6 +109,9 @@ func (s *XKMSService) resolveRepositorySigner(ctx context.Context, repository st
 	signCtx := context.WithoutCancel(ctx)
 	inner := o.Sign
 	o.sign = func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+		if err := s.authorizeSigningKeys(signCtx, auth.ActionSign); err != nil {
+			return nil, err
+		}
 		now, err := appraiser.ResolveSigningKey(signCtx, tenant, req)
 		if err != nil {
 			return nil, err
