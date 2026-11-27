@@ -307,6 +307,28 @@ The FIDO2 methods are documented in the [BLE Protocol Specification](../ble/prot
 | -32039 | `ErrorCodeSyncNotApproved` |
 | -32040 | `ErrorCodeMessageTooLarge` |
 
+Phone-only codes (reserved block -32041..-32057, sent by the phone apps):
+
+| Code | Constant |
+|------|----------|
+| -32041 | `ErrorCodeBiometricNotEnrolled` |
+| -32042 | `ErrorCodeBiometricLockout` |
+| -32043 | `ErrorCodeKeyGenerationFailed` |
+| -32044 | `ErrorCodeSigningFailed` |
+| -32045 | `ErrorCodeEncryptionFailed` |
+| -32046 | `ErrorCodeStrongBoxUnavailable` |
+| -32047 | `ErrorCodeSessionExpired` |
+| -32048 | `ErrorCodeRateLimited` |
+| -32049 | `ErrorCodeExportFailed` |
+| -32050 | `ErrorCodeDeviceAttestationRequired` |
+| -32051 | `ErrorCodePairingRequired` |
+| -32052 | `ErrorCodePINRequired` |
+| -32053 | `ErrorCodePINIncorrect` |
+| -32054 | `ErrorCodePINLocked` |
+| -32055 | `ErrorCodeVaultNotInitialized` |
+| -32056 | `ErrorCodeVaultCredentialRejected` |
+| -32057 | `ErrorCodePasswordStoreLocked` |
+
 ---
 
 ## Message Flow Examples

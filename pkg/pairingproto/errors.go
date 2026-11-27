@@ -306,6 +306,54 @@ var (
 	// ErrorCodeFeatureUnavailable: the peer understood the method but its
 	// collaborator was not wired in on that host.
 	ErrFeatureNotConfigured = errors.New("pairing: feature not configured on peer")
+
+	// ErrBiometricNotEnrolled indicates the phone has no biometric enrolled.
+	ErrBiometricNotEnrolled = errors.New("pairing: no biometric enrolled on the phone")
+
+	// ErrBiometricLockout indicates the phone locked biometrics after too many failures.
+	ErrBiometricLockout = errors.New("pairing: biometric locked out on the phone")
+
+	// ErrKeyGenerationFailed indicates the phone failed to generate a key.
+	ErrKeyGenerationFailed = errors.New("pairing: key generation failed on the phone")
+
+	// ErrSigningFailed indicates the phone failed to sign.
+	ErrSigningFailed = errors.New("pairing: signing failed on the phone")
+
+	// ErrEncryptionFailed indicates the phone failed to encrypt.
+	ErrEncryptionFailed = errors.New("pairing: encryption failed on the phone")
+
+	// ErrStrongBoxUnavailable indicates the phone has no StrongBox secure element.
+	ErrStrongBoxUnavailable = errors.New("pairing: StrongBox unavailable on the phone")
+
+	// ErrRateLimited indicates the phone refused the request for exceeding its rate limit.
+	ErrRateLimited = errors.New("pairing: request rate limited by the phone")
+
+	// ErrExportFailed indicates the phone failed to export the requested data.
+	ErrExportFailed = errors.New("pairing: export failed on the phone")
+
+	// ErrDeviceAttestationRequired indicates the phone requires device attestation first.
+	ErrDeviceAttestationRequired = errors.New("pairing: device attestation required by the phone")
+
+	// ErrPairingRequired indicates the phone requires pairing before this request.
+	ErrPairingRequired = errors.New("pairing: pairing required by the phone")
+
+	// ErrPINRequired indicates the phone requires a PIN for this request.
+	ErrPINRequired = errors.New("pairing: PIN required by the phone")
+
+	// ErrPINIncorrect indicates the phone rejected the PIN.
+	ErrPINIncorrect = errors.New("pairing: PIN incorrect")
+
+	// ErrPINLocked indicates the phone locked the PIN after too many failures.
+	ErrPINLocked = errors.New("pairing: PIN locked on the phone")
+
+	// ErrVaultNotInitialized indicates the phone vault has not been initialized.
+	ErrVaultNotInitialized = errors.New("pairing: vault not initialized on the phone")
+
+	// ErrVaultCredentialRejected indicates the phone vault rejected the supplied credential.
+	ErrVaultCredentialRejected = errors.New("pairing: vault credential rejected by the phone")
+
+	// ErrPasswordStoreLocked indicates the phone password store is locked.
+	ErrPasswordStoreLocked = errors.New("pairing: password store locked on the phone")
 )
 
 // DetailError appends detail text directly after a wrapped error while

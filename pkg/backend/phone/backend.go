@@ -104,6 +104,24 @@ var rpcErrorMapping = map[int]error{
 	pairingproto.ErrorCodeOperationDenied:   ErrProtocolError,
 	pairingproto.ErrorCodeInvalidPublicKey:  ErrInvalidPublicKey,
 	pairingproto.ErrorCodeDecryptFailed:     ErrProtocolError,
+
+	pairingproto.ErrorCodeBiometricNotEnrolled:      pairingproto.ErrBiometricNotEnrolled,
+	pairingproto.ErrorCodeBiometricLockout:          pairingproto.ErrBiometricLockout,
+	pairingproto.ErrorCodeKeyGenerationFailed:       pairingproto.ErrKeyGenerationFailed,
+	pairingproto.ErrorCodeSigningFailed:             pairingproto.ErrSigningFailed,
+	pairingproto.ErrorCodeEncryptionFailed:          pairingproto.ErrEncryptionFailed,
+	pairingproto.ErrorCodeStrongBoxUnavailable:      pairingproto.ErrStrongBoxUnavailable,
+	pairingproto.ErrorCodeSessionExpired:            pairingproto.ErrSessionExpired,
+	pairingproto.ErrorCodeRateLimited:               pairingproto.ErrRateLimited,
+	pairingproto.ErrorCodeExportFailed:              pairingproto.ErrExportFailed,
+	pairingproto.ErrorCodeDeviceAttestationRequired: pairingproto.ErrDeviceAttestationRequired,
+	pairingproto.ErrorCodePairingRequired:           pairingproto.ErrPairingRequired,
+	pairingproto.ErrorCodePINRequired:               pairingproto.ErrPINRequired,
+	pairingproto.ErrorCodePINIncorrect:              pairingproto.ErrPINIncorrect,
+	pairingproto.ErrorCodePINLocked:                 pairingproto.ErrPINLocked,
+	pairingproto.ErrorCodeVaultNotInitialized:       pairingproto.ErrVaultNotInitialized,
+	pairingproto.ErrorCodeVaultCredentialRejected:   pairingproto.ErrVaultCredentialRejected,
+	pairingproto.ErrorCodePasswordStoreLocked:       pairingproto.ErrPasswordStoreLocked,
 }
 
 // Compile-time interface satisfaction checks.

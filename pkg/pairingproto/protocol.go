@@ -142,6 +142,25 @@ const (
 	// the transport's frame limit, so it was not sent. The caller asks for
 	// less data at once -- for remote.createBackup, fewer categories.
 	ErrorCodeMessageTooLarge = -32040
+
+	// Phone-only error codes, reserved for the phone apps.
+	ErrorCodeBiometricNotEnrolled      = -32041
+	ErrorCodeBiometricLockout          = -32042
+	ErrorCodeKeyGenerationFailed       = -32043
+	ErrorCodeSigningFailed             = -32044
+	ErrorCodeEncryptionFailed          = -32045
+	ErrorCodeStrongBoxUnavailable      = -32046
+	ErrorCodeSessionExpired            = -32047
+	ErrorCodeRateLimited               = -32048
+	ErrorCodeExportFailed              = -32049
+	ErrorCodeDeviceAttestationRequired = -32050
+	ErrorCodePairingRequired           = -32051
+	ErrorCodePINRequired               = -32052
+	ErrorCodePINIncorrect              = -32053
+	ErrorCodePINLocked                 = -32054
+	ErrorCodeVaultNotInitialized       = -32055
+	ErrorCodeVaultCredentialRejected   = -32056
+	ErrorCodePasswordStoreLocked       = -32057
 )
 
 // requestIDCounter provides unique request IDs.
@@ -371,6 +390,24 @@ var rpcErrorMap = map[int]error{
 	ErrorCodeSyncNotApproved:      ErrSyncNotApproved,
 	// Transport error codes.
 	ErrorCodeMessageTooLarge: ErrMessageTooLarge,
+
+	ErrorCodeBiometricNotEnrolled:      ErrBiometricNotEnrolled,
+	ErrorCodeBiometricLockout:          ErrBiometricLockout,
+	ErrorCodeKeyGenerationFailed:       ErrKeyGenerationFailed,
+	ErrorCodeSigningFailed:             ErrSigningFailed,
+	ErrorCodeEncryptionFailed:          ErrEncryptionFailed,
+	ErrorCodeStrongBoxUnavailable:      ErrStrongBoxUnavailable,
+	ErrorCodeSessionExpired:            ErrSessionExpired,
+	ErrorCodeRateLimited:               ErrRateLimited,
+	ErrorCodeExportFailed:              ErrExportFailed,
+	ErrorCodeDeviceAttestationRequired: ErrDeviceAttestationRequired,
+	ErrorCodePairingRequired:           ErrPairingRequired,
+	ErrorCodePINRequired:               ErrPINRequired,
+	ErrorCodePINIncorrect:              ErrPINIncorrect,
+	ErrorCodePINLocked:                 ErrPINLocked,
+	ErrorCodeVaultNotInitialized:       ErrVaultNotInitialized,
+	ErrorCodeVaultCredentialRejected:   ErrVaultCredentialRejected,
+	ErrorCodePasswordStoreLocked:       ErrPasswordStoreLocked,
 }
 
 // MapRPCError maps JSON-RPC error codes to package errors.

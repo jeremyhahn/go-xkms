@@ -1,0 +1,1 @@
+- **Phone-only JSON-RPC error codes (#2406)** — `pkg/pairingproto` reserves -32041..-32057 for the phone apps (`ErrorCodeBiometricNotEnrolled` through `ErrorCodePasswordStoreLocked`), each mapped by `MapRPCError` to its own sentinel and by the phone backend to the same sentinel; the block is listed in `xkey/docs/phone/protocol.md`.
