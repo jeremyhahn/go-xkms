@@ -85,6 +85,33 @@ func TestHostAuthorizer_DecidesThroughTarget(t *testing.T) {
 	assert.True(t, errors.As(a.AuthorizeTenant(ctx, delegated, "tenant-b", "users", "invite"), &denied))
 }
 
+func TestHostAuthorizer_DecidesOnTheSuppliedIdentity(t *testing.T) {
+	rec := &targetRecorder{}
+	a := NewHostAuthorizer(&fakeRBACClient{}, rec)
+	supplied := &Identity{Subject: "alice", Roles: []string{"viewer"}}
+	admin := &Identity{Subject: "root", TenantID: qrdbsdk.SystemTenantID, Roles: []string{"admin"}}
+
+	for name, ctx := range map[string]context.Context{
+		"absent":      context.Background(),
+		"conflicting": WithIdentity(context.Background(), admin),
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec.identity = nil
+			require.NoError(t, a.AuthorizeTenant(ctx, supplied, "", "users", "invite"))
+			require.NotNil(t, rec.identity)
+			assert.Equal(t, "alice", rec.identity.Subject)
+			assert.Equal(t, qrdbsdk.SystemTenantID, rec.identity.TenantID)
+			assert.Equal(t, []string{"viewer"}, rec.identity.Roles)
+
+			rec.identity = nil
+			require.NoError(t, a.Authorize(ctx, supplied, "users", "invite"))
+			require.NotNil(t, rec.identity)
+			assert.Equal(t, "alice", rec.identity.Subject)
+		})
+	}
+	assert.Empty(t, supplied.TenantID, "the supplied identity is not mutated")
+}
+
 // TestAuthorizeTenant_DisabledAllows: a nil rbac (authorization disabled)
 // admits any tenant, as Authorize does.
 func TestAuthorizeTenant_DisabledAllows(t *testing.T) {
