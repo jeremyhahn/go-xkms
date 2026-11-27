@@ -315,10 +315,9 @@ async function runAuthentication(page: Page, opts: AuthOpts): Promise<CeremonyRe
   );
 }
 
-// registerAccount creates an account with a passkey the way ruling 602
-// allows: the fixture asserts the public route refuses anonymous sign-up
-// (403 registration_refused, no user created), provisions the account as
-// admin, and redeems its invitation with the page's virtual authenticator.
+// registerAccount creates an account with a passkey: the fixture provisions
+// the account as admin and redeems its invitation with the page's virtual
+// authenticator.
 // The account then signs in with that passkey; the result carries the
 // sign-in's status and session token and the new credential's id, which is
 // what the tests' registration assertions check.

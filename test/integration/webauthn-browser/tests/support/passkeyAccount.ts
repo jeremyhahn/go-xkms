@@ -11,10 +11,8 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-// Account provisioning for the RP ceremony suite under ruling 602: an
-// enforcing node refuses anonymous sign-up (403 registration_refused, pending
-// #2202), so an account is created by the administrator and redeems its
-// one-time invitation with a passkey.
+// Account provisioning for the RP ceremony suite: an account is created by
+// the administrator and redeems its one-time invitation with a passkey.
 //
 // The administrator is the credential `xkmsd init --admin-factor mtls` wrote
 // under .runtime/storage (run-server.sh); it is presented as a Playwright
@@ -50,54 +48,6 @@ async function adminRequest(apiOrigin: string): Promise<APIRequestContext> {
     ignoreHTTPSErrors: true,
     clientCertificates: [{ origin: apiOrigin, certPath, keyPath }],
   });
-}
-
-// expectNoUser asserts the administrator's user list holds no account for
-// email.
-export async function expectNoUser(apiOrigin: string, email: string): Promise<void> {
-  const admin = await adminRequest(apiOrigin);
-  try {
-    const resp = await admin.get('/api/v1/users/');
-    expect(resp.status(), await resp.text()).toBe(200);
-    const { users } = await resp.json();
-    const emails = ((users ?? []) as Array<{ email?: string }>).map((u) => (u.email ?? '').toLowerCase());
-    expect(emails, `a refused registration created an account for ${email}`).not.toContain(email.toLowerCase());
-  } finally {
-    await admin.dispose();
-  }
-}
-
-// expectAnonymousSignUpRefused asserts that the public registration route,
-// called from the page, answers 403 registration_refused and creates no
-// account.
-export async function expectAnonymousSignUpRefused(
-  page: Page,
-  apiBase: string,
-  apiOrigin: string,
-  email: string,
-  displayName: string,
-): Promise<void> {
-  const refused = await page.evaluate(
-    async ({ apiBase, email, displayName }) => {
-      const resp = await fetch(`${apiBase}/api/v1/webauthn/registration/begin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, display_name: displayName }),
-      });
-      const text = await resp.text();
-      let body: any;
-      try {
-        body = JSON.parse(text);
-      } catch {
-        body = text;
-      }
-      return { status: resp.status, body };
-    },
-    { apiBase, email, displayName },
-  );
-  expect(refused.status, `anonymous registration was not refused: ${JSON.stringify(refused.body)}`).toBe(403);
-  expect(refused.body?.error).toBe('registration_refused');
-  await expectNoUser(apiOrigin, email);
 }
 
 // provisionInvite creates the account as the administrator and returns the
@@ -238,9 +188,8 @@ export async function redeemInvite(
   );
 }
 
-// provisionPasskeyAccount asserts anonymous sign-up is refused for email,
-// then provisions the account as admin and redeems its invitation with the
-// page's virtual authenticator. The caller signs in with that passkey.
+// provisionPasskeyAccount provisions the account for email as admin and
+// redeems its invitation with the page's virtual authenticator. The caller signs in with that passkey.
 export async function provisionPasskeyAccount(
   page: Page,
   apiBase: string,
@@ -248,7 +197,6 @@ export async function provisionPasskeyAccount(
   email: string,
   displayName: string,
 ): Promise<InviteRedemption> {
-  await expectAnonymousSignUpRefused(page, apiBase, apiOrigin, email, displayName);
   const invite = await provisionInvite(apiOrigin, email, displayName);
   const redeemed = await redeemInvite(page, apiBase, invite);
   expect(redeemed.ok, `invitation redemption failed: ${JSON.stringify(redeemed.body ?? redeemed.clientError)}`).toBeTruthy();

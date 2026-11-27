@@ -47,12 +47,11 @@ func (c *countingNodeUsers) UserService() qrdbsdk.UserServicer {
 // registrationBegin builds a self-hosted module over an authentication-
 // enforcing node with the given extra options and posts a WebAuthn
 // registration begin to it.
-func registrationBegin(t *testing.T, extra func(node ServiceModuleNodeUserSource) []ServiceModuleOption) *httptest.ResponseRecorder {
+func registrationBegin(t *testing.T, allow bool, extra func(node ServiceModuleNodeUserSource) []ServiceModuleOption) *httptest.ResponseRecorder {
 	t.Helper()
 	svc := hostdeps.NewService(t)
 	node := barriertest.NewPrincipalNode(t)
 	opts := extra(node)
-	allow := true
 	base := []ServiceModuleOption{
 		WithServiceModuleQRDBClient(func() *qrdbsdk.Client { return node.Client() }),
 		WithServiceModuleServiceContext(node.ServiceContext),
@@ -86,14 +85,14 @@ func registrationBegin(t *testing.T, extra func(node ServiceModuleNodeUserSource
 
 // TestWithServiceModuleNodeUsers_WiresNodeUserSource proves a host building
 // on the SDK can hand the embedded node's user service to the module, so the
-// public WebAuthn routes resolve users through it. Anonymous registration of
-// a nonexistent account is refused (403): the user is created through the
-// authorized client and the xkms service principal holds no users:create
-// grant; accounts are provisioned by an
-// administrator and enrolled by invitation.
+// public WebAuthn routes resolve users through it. With public registration
+// off, anonymous registration of a nonexistent account is refused (403):
+// accounts are provisioned by an administrator and enrolled by invitation.
 func TestWithServiceModuleNodeUsers_WiresNodeUserSource(t *testing.T) {
 	users := &countingNodeUsers{}
-	w := registrationBegin(t, func(node ServiceModuleNodeUserSource) []ServiceModuleOption {
+	// With public registration off, registration/begin of an unknown
+	// account is refused, and the lookup runs on the wired node source.
+	w := registrationBegin(t, false, func(node ServiceModuleNodeUserSource) []ServiceModuleOption {
 		users.inner = node
 		return []ServiceModuleOption{WithServiceModuleNodeUsers(users)}
 	})
@@ -106,7 +105,7 @@ func TestWithServiceModuleNodeUsers_WiresNodeUserSource(t *testing.T) {
 // module built without the option never consults the source.
 func TestWithServiceModuleNodeUsers_UnsetLeavesNone(t *testing.T) {
 	users := &countingNodeUsers{}
-	registrationBegin(t, func(node ServiceModuleNodeUserSource) []ServiceModuleOption {
+	registrationBegin(t, true, func(node ServiceModuleNodeUserSource) []ServiceModuleOption {
 		users.inner = node
 		return nil
 	})
