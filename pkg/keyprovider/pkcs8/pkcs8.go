@@ -302,7 +302,11 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	metaKey := metadataPath(keyID)
 	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
 		// Roll back the key blob so a failed generation does not leave an
-		// orphaned key that blocks regenerating under the same ID.
+		// orphaned key that blocks regenerating under the same ID, and drop
+		// any metadata record already stored under the ID (a stale record of
+		// a missing blob) so the next key of this ID cannot inherit it
+		// (#2231). Best effort: the metadata write just failed.
+		_ = b.deleteKeyMetadata(ctx, keyID)
 		if delErr := storage.DeleteKey(ctx, b.storage, keyID); delErr != nil {
 			return nil, &errs.Affix{Prefix: "failed to store metadata: ", Err: err, Suffix: fmt.Sprintf(" (rollback of key %s also failed: %v)", keyID, delErr)}
 		}
@@ -359,18 +363,23 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 	}
 
 	keyID := attrs.ID()
+
+	// The metadata record goes first and the blob second, so an interrupted
+	// delete leaves either both records or a blob without metadata, never a
+	// metadata record without its blob: a retry finds the blob and finishes
+	// the job, and no later key of the same identifier inherits an orphaned
+	// tenant or Exportable flag (#2231). The record is removed even when the
+	// blob is already missing, which also clears an orphan an earlier,
+	// blob-first delete left behind.
+	if err := b.deleteKeyMetadata(ctx, keyID); err != nil {
+		return err
+	}
+
 	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
 		}
 		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
-	}
-
-	// Remove the metadata record so a deleted key leaves no orphaned tenant or
-	// Exportable flag behind for a future key of the same identifier to
-	// inherit.
-	if err := b.deleteKeyMetadata(ctx, keyID); err != nil {
-		return err
 	}
 
 	return nil
