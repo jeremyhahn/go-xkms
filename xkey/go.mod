@@ -29,8 +29,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
-	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
+	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // held: v1.0.3-alpha requires go-enclave v0.11.1-alpha (enclave.ByteAccess); go-enclave stays at v0.8.0-alpha with the root module
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha // held: v0.58.5-alpha requires go-enclave v0.11.1-alpha, go-truststrap v0.7.1-alpha and go-quicraft v0.24.3-alpha, and the go-enclave replace pins v0.8.0-alpha
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/jeremyhahn/go-xkms/sdk/go v0.64.0-alpha
 	github.com/kbinani/screenshot v0.0.0-20250624051815-089614a94018
@@ -170,8 +170,8 @@ require (
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-codec v1.5.1-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha // indirect
 	github.com/jeremyhahn/go-quicraft v0.22.0-alpha // indirect

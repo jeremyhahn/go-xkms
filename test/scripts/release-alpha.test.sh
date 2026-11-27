@@ -288,6 +288,11 @@ VERSION_FILE=$(tr -d ' \t\n' <"$ROOT/VERSION")
 true_ "the VERSION file holds a well-formed alpha version" is_alpha_semver "v$VERSION_FILE"
 true_ "the repository's pins are all at the VERSION file's version" \
 	require_pins_at "$ROOT" "v$VERSION_FILE" "the checked-out tree"
+# A dependency bump must never move a reciprocal edge: the edges move only
+# together, through release-alpha, to the VERSION file's version. One distinct
+# version across the whole edge set, or the tree is inconsistent.
+PIN_VERSIONS=$(for edge in "${PIN_EDGES[@]}"; do pin_version "$ROOT/${edge%%:*}" "${edge#*:}"; echo; done | sort -u)
+eq "every reciprocal pin in the tree sits at one version" "v$VERSION_FILE" "$PIN_VERSIONS"
 
 # ---------------------------------------------------------------------------
 

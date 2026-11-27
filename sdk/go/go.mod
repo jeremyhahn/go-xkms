@@ -6,8 +6,8 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/google/go-tpm v0.9.8
 	github.com/jeremyhahn/go-enclave v0.8.0-alpha
-	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha
-	github.com/jeremyhahn/go-truststrap v0.6.0-alpha
+	github.com/jeremyhahn/go-qrdb/sdk/go v0.51.0-alpha // held: v0.58.5-alpha requires go-enclave v0.11.1-alpha, go-truststrap v0.7.1-alpha and go-quicraft v0.24.3-alpha, and the go-enclave replace pins v0.8.0-alpha
+	github.com/jeremyhahn/go-truststrap v0.6.0-alpha // held: v0.7.1-alpha requires go-enclave v0.10.0-alpha (enclave.ByteAccess, enclave.As); the root module's go-enclave replace pins v0.8.0-alpha
 	github.com/jeremyhahn/go-xkms v0.64.0-alpha
 	github.com/mark3labs/mcp-go v1.3.0
 	github.com/quic-go/quic-go v0.64.1
@@ -144,8 +144,8 @@ require (
 	github.com/hashicorp/vault/api v1.23.0 // indirect
 	github.com/jackc/pgx/v5 v5.11.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
-	github.com/jeremyhahn/go-codec v1.4.0 // indirect
-	github.com/jeremyhahn/go-frost v0.3.0-alpha // indirect
+	github.com/jeremyhahn/go-codec v1.5.1-alpha // indirect
+	github.com/jeremyhahn/go-frost v0.3.1-alpha // indirect
 	github.com/jeremyhahn/go-luks2 v1.0.0-rc.4 // indirect
 	github.com/jeremyhahn/go-objstore v0.4.0-alpha // indirect
 	github.com/jeremyhahn/go-qrdb v0.51.0-alpha // indirect
