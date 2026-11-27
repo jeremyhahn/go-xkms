@@ -146,16 +146,19 @@ def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="pus
         return p.returncode, p.stdout + p.stderr, outs, (d / "log").read_text().splitlines()
 
 
-def case(label, resp, runner, docker, want=(), not_want=(), calls=None, **kw):
+def case(label, resp, runner, docker, want=(), not_want=(), calls=None, integ=None, **kw):
+    """integ, when given, is the runner_integration output wanted (Tenant
+    order 2026-11-27 17:18Z: Integration keeps bigdisk-docker)."""
     global FAILS
     rc, out, outs, log = run(resp, **kw)
     ok = (rc == 0 and outs.get("runner") == runner and outs.get("runner_docker") == docker
+          and (integ is None or outs.get("runner_integration") == integ)
           and all(w in out for w in want) and not any(w in out for w in not_want)
           and (calls is None or len(log) == calls) and TOKEN not in out)
     print(f"{'PASS' if ok else 'FAIL'}: {label}")
     if not ok:
         FAILS += 1
-        print(f"  exit {rc}; outputs {outs}; wanted runner={runner} runner_docker={docker}; calls {len(log)}")
+        print(f"  exit {rc}; outputs {outs}; wanted runner={runner} runner_docker={docker} runner_integration={integ}; calls {len(log)}")
         print("  " + out.replace("\n", "\n  "))
 
 
@@ -330,6 +333,34 @@ case("G a tie (equal use) goes self-hosted",
      pool(h=4, s1=4), SELF, SELF_D, ["use hosted 4/10, bigdisk 4/10"])
 case("G both pools full with equal queues goes self-hosted",
      pool(h=10, hq=1, s1=10, s1q=1), SELF, SELF_D, ["both pools full: hosted 1 queued, self-hosted 1 queued"])
+
+# H. Integration keeps bigdisk-docker (Tenant order 2026-11-27 17:18Z): on a
+# push to main or a same-repository pull request runner_integration is
+# bigdisk-docker whatever the balance picks or whether a count was read; a
+# fork, a refused event and off github.com keep the hosted default.
+PR = dict(event="pull_request", head="o/r", ref="refs/pull/7/merge")
+for who, ekw in (("a push to main", {}), ("a same-repository pull request", PR)):
+    case(f"H {who}, self-hosted picked: Integration on bigdisk-docker",
+         WIN, SELF, SELF_D, ["run on the Dells"], integ=SELF_D, **ekw)
+    case(f"H {who}, hosted picked: Integration still on bigdisk-docker",
+         pool(h=2, s1=5), HOSTED, HOSTED, [], ["run on the Dells"], integ=SELF_D, **ekw)
+    case(f"H {who}, self-hosted full: Integration still on bigdisk-docker",
+         pool(h=9, s1=10, s2=10), HOSTED, HOSTED, ["the self-hosted pool is full"], integ=SELF_D, **ekw)
+    case(f"H {who}, a count cannot be read (403): Integration still on bigdisk-docker",
+         [["runs?status=queued", 403, '{"message":"no"}']], HOSTED, HOSTED, ["::warning::"], integ=SELF_D, **ekw)
+    case(f"H {who}, a self-hosted capacity unset: Integration still on bigdisk-docker",
+         pool(h=10), HOSTED, HOSTED, ["::warning::"], calls=0, integ=SELF_D, c1="", **ekw)
+case("H a fork's pull request: Integration hosted, no call",
+     WIN, HOSTED, HOSTED, ["a fork"], calls=0, integ=HOSTED, event="pull_request", head="fork/r")
+case("H a pull request whose head repository is gone: Integration hosted",
+     WIN, HOSTED, HOSTED, ["a fork"], calls=0, integ=HOSTED, event="pull_request", head="")
+for label, ev, rf in [("a workflow_dispatch on main", "workflow_dispatch", "refs/heads/main"),
+                      ("a schedule", "schedule", "refs/heads/main"),
+                      ("a push to a branch other than main", "push", "refs/heads/row/1-x")]:
+    case(f"H {label}: Integration hosted, no call",
+         WIN, HOSTED, HOSTED, ["self-hosted runners refuse"], calls=0, integ=HOSTED, event=ev, ref=rf)
+case("H off github.com: Integration hosted default, no call",
+     [], HOSTED, HOSTED, ["not github.com"], calls=0, integ=HOSTED, server="https://forge.example")
 
 print(f"{'ALL PASS' if not FAILS else f'{FAILS} FAILED'}")
 sys.exit(1 if FAILS else 0)

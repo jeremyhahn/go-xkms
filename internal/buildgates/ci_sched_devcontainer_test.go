@@ -57,6 +57,27 @@ func TestCIDevcontainerReadsRunnerDocker(t *testing.T) {
 	}
 }
 
+// integrationRunsOn is the integration job's runs-on (Tenant order
+// 2026-11-27 17:18Z): the preflight runner_integration output, which is
+// bigdisk-docker on a push to main or a same-repository pull request
+// whatever the balance picks, so the integration image build never lands on
+// a hosted runner's small disk; 'bigdisk' off github.com.
+const integrationRunsOn = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_integration) || 'bigdisk' }}`
+
+func TestCIIntegrationKeepsBigdiskDocker(t *testing.T) {
+	wf := readDigestWorkflow(t)
+	j, ok := wf.Jobs["integration"]
+	if !ok {
+		t.Fatal("ci.yml has no integration job")
+	}
+	if j.RunsOn != integrationRunsOn {
+		t.Errorf("integration runs-on = %q, want %q", j.RunsOn, integrationRunsOn)
+	}
+	if !slices.Contains(j.Needs, preflightJob) {
+		t.Errorf("integration reads needs.preflight.outputs.runner_integration but does not need %s", preflightJob)
+	}
+}
+
 func TestCIDevcontainerCoverageSkipsAfterFailedBuild(t *testing.T) {
 	wf := readDigestWorkflow(t)
 	j := wf.Jobs[devcontainerJob]
@@ -284,8 +305,8 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 			t.Skipf("%s not installed: the selector script needs it", tool)
 		}
 	}
-	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
-	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\nrunner_integration=\"ubuntu-latest\"\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\nrunner_integration=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 
 	// A same-repository run on a full hosted pool goes self-hosted: the stub
 	// reaches the self-hosted branch, so the fork case below tests the fork
@@ -325,8 +346,8 @@ func TestCIRunnerSelectionRefusedEventsStayHosted(t *testing.T) {
 			t.Skipf("%s not installed: the selector script needs it", tool)
 		}
 	}
-	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
-	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\nrunner_integration=\"ubuntu-latest\"\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\nrunner_integration=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 	for _, tc := range []struct {
 		event, ref string
 		want       string
@@ -377,7 +398,7 @@ func TestCIRunnerSelectionShortListIsALowerBound(t *testing.T) {
 			t.Skipf("%s not installed: the selector script needs it", tool)
 		}
 	}
-	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\nrunner_integration=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 	for _, tc := range []struct {
 		name   string
 		listed int
