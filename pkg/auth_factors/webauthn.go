@@ -186,7 +186,11 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 	// treated exactly like an unknown hint, so the ceremony's shape does not
 	// reveal its state; Verify refuses it regardless (go-xkms#1298).
 	var userID []byte
-	if u := v.resolveHint(ctx, hint); u != nil && xkmswebauthn.CheckAccountStanding(u) == nil {
+	u, err := v.resolveHint(ctx, hint)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	if u != nil && xkmswebauthn.CheckAccountStanding(u) == nil {
 		userID = u.WebAuthnID()
 	}
 
@@ -205,21 +209,29 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 	return []byte(options.Response.Challenge), meta, time.Time{}, nil
 }
 
-// resolveHint returns the user a login hint names, looking it up as a
-// email and then as a username. It returns nil for an empty hint or one
-// that resolves to nobody; a lookup error is treated as not found, so the
-// caller cannot tell an unknown hint from a failed one.
-func (v *WebAuthnFactorVerifier) resolveHint(ctx context.Context, hint string) xkmswebauthn.User {
+// resolveHint returns the user a login hint names, looking it up as an
+// email and then, only when no account has that email, as a username. It
+// returns nil for an empty hint or one that resolves to nobody, and the
+// lookup error for any failure other than not found.
+func (v *WebAuthnFactorVerifier) resolveHint(ctx context.Context, hint string) (xkmswebauthn.User, error) {
 	if hint == "" {
-		return nil
+		return nil, nil
 	}
-	if u, err := v.service.GetUserByEmail(ctx, hint); err == nil && u != nil {
-		return u
+	u, err := v.service.GetUserByEmail(ctx, hint)
+	if err == nil && u != nil {
+		return u, nil
 	}
-	if u, err := v.service.GetUserByUsername(ctx, hint); err == nil && u != nil {
-		return u
+	if err != nil && !errors.Is(err, xkmswebauthn.ErrUserNotFound) {
+		return nil, err
 	}
-	return nil
+	u, err = v.service.GetUserByUsername(ctx, hint)
+	if err == nil && u != nil {
+		return u, nil
+	}
+	if err != nil && !errors.Is(err, xkmswebauthn.ErrUserNotFound) {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // Compile-time interface assertion. The qrdb embedded transport's
