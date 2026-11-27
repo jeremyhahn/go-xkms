@@ -28,6 +28,10 @@ const (
 	COSEAlgES256 = -7
 	COSEAlgES384 = -35
 	COSEAlgES512 = -36
+	// ML-DSA (FIPS 204) parameter sets the phone generates (#2405).
+	COSEAlgMLDSA44 = -48
+	COSEAlgMLDSA65 = -49
+	COSEAlgMLDSA87 = -50
 )
 
 // Method names for the xKey phone protocol.
@@ -159,6 +163,24 @@ func nextRequestID() uint64 {
 // MessageRouter.SendRequest from a per-connection monotonic counter and is
 // never reused within the life of a connection. It is not a secret: its job
 // is disambiguation, and the Noise channel already authenticates the peer.
+// coseAlgorithmNames maps the COSE algorithm ids the phone uses to the
+// algorithm names of the local.* methods.
+var coseAlgorithmNames = map[int]string{
+	COSEAlgES256:   "ES256",
+	COSEAlgES384:   "ES384",
+	COSEAlgES512:   "ES512",
+	COSEAlgMLDSA44: AlgorithmMLDSA44,
+	COSEAlgMLDSA65: AlgorithmMLDSA65,
+	COSEAlgMLDSA87: AlgorithmMLDSA87,
+}
+
+// COSEAlgorithmName returns the local.* algorithm name of a COSE algorithm
+// id, and false for an id the phone protocol does not know.
+func COSEAlgorithmName(alg int) (string, bool) {
+	name, ok := coseAlgorithmNames[alg]
+	return name, ok
+}
+
 type Request struct {
 	JSONRPC    string      `json:"jsonrpc"`
 	ID         uint64      `json:"id"`

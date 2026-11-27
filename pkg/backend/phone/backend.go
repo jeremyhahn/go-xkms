@@ -18,6 +18,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/x509"
 	"fmt"
@@ -81,6 +82,12 @@ var algorithmMapping = map[x509.PublicKeyAlgorithm]map[string]string{
 	},
 	x509.Ed25519: {
 		"": "EdDSA",
+	},
+	// ML-DSA (FIPS 204), keyed by the QuantumAttributes parameter set (#2405).
+	x509.MLDSA: {
+		string(types.QuantumAlgorithmMLDSA44): pairingproto.AlgorithmMLDSA44,
+		string(types.QuantumAlgorithmMLDSA65): pairingproto.AlgorithmMLDSA65,
+		string(types.QuantumAlgorithmMLDSA87): pairingproto.AlgorithmMLDSA87,
 	},
 }
 
@@ -506,12 +513,27 @@ func (b *Backend) sendLocalRequest(ctx context.Context, method string, params in
 // mapAlgorithm converts KeyAttributes algorithm and curve information into
 // the JSON-RPC algorithm string expected by the phone protocol.
 func mapAlgorithm(attrs *types.KeyAttributes) (string, error) {
-	curves, ok := algorithmMapping[attrs.KeyAlgorithm]
+	keyAlgorithm := attrs.KeyAlgorithm
+	if attrs.QuantumAttributes != nil {
+		// A quantum key is named by its parameter set; KeyAlgorithm may be unset.
+		keyAlgorithm = x509.MLDSA
+	}
+	curves, ok := algorithmMapping[keyAlgorithm]
 	if !ok {
 		return "", ErrUnsupportedAlgorithm
 	}
 
-	switch attrs.KeyAlgorithm {
+	switch keyAlgorithm {
+	case x509.MLDSA:
+		if attrs.QuantumAttributes == nil {
+			return "", ErrUnsupportedAlgorithm
+		}
+		algo, found := curves[string(attrs.QuantumAttributes.Algorithm)]
+		if !found {
+			return "", ErrUnsupportedAlgorithm
+		}
+		return algo, nil
+
 	case x509.ECDSA:
 		if attrs.ECCAttributes == nil || attrs.ECCAttributes.Curve == nil {
 			return "", ErrUnsupportedAlgorithm
@@ -556,7 +578,14 @@ func parsePublicKey(derBytes []byte, algorithm string) (crypto.PublicKey, error)
 	}
 
 	// Validate that the parsed key type is consistent with the algorithm.
-	switch pubKey.(type) {
+	switch pk := pubKey.(type) {
+	case *mldsa.PublicKey:
+		// The SPKI parameter set must be the one the phone named (#2405).
+		params, ok := mldsaParameters(algorithm)
+		if !ok || pk.Parameters() != params {
+			return nil, ErrInvalidPublicKey
+		}
+		return pk, nil
 	case *ecdsa.PublicKey, *rsa.PublicKey:
 		return pubKey, nil
 	default:
@@ -577,6 +606,9 @@ func mapKeyInfoToAttributes(info *pairingproto.KeyInfo) *types.KeyAttributes {
 	attrs.KeyAlgorithm = keyAlgo
 	attrs.ECCAttributes = eccAttrs
 	attrs.RSAAttributes = rsaAttrs
+	if algo := algorithmAttrMapping[info.Algorithm]; algo.quantum != "" {
+		attrs.QuantumAttributes = &types.QuantumAttributes{Algorithm: algo.quantum}
+	}
 
 	// Map key type.
 	attrs.KeyType = mapKeyType(info.KeyType)
@@ -608,18 +640,37 @@ func mapKeyType(keyType string) types.KeyType {
 type algorithmInfo struct {
 	keyAlgorithm x509.PublicKeyAlgorithm
 	curve        elliptic.Curve
+	quantum      types.QuantumAlgorithm
 }
 
 // algorithmAttrMapping provides O(1) constant-time lookup for algorithm strings
 // from the phone protocol to the corresponding curve and key algorithm.
 var algorithmAttrMapping = map[string]algorithmInfo{
-	"ES256": {keyAlgorithm: x509.ECDSA, curve: elliptic.P256()},
-	"ES384": {keyAlgorithm: x509.ECDSA, curve: elliptic.P384()},
-	"ES512": {keyAlgorithm: x509.ECDSA, curve: elliptic.P521()},
-	"RS256": {keyAlgorithm: x509.RSA},
-	"RS384": {keyAlgorithm: x509.RSA},
-	"RS512": {keyAlgorithm: x509.RSA},
-	"EdDSA": {keyAlgorithm: x509.Ed25519},
+	"ES256":                       {keyAlgorithm: x509.ECDSA, curve: elliptic.P256()},
+	"ES384":                       {keyAlgorithm: x509.ECDSA, curve: elliptic.P384()},
+	"ES512":                       {keyAlgorithm: x509.ECDSA, curve: elliptic.P521()},
+	"RS256":                       {keyAlgorithm: x509.RSA},
+	"RS384":                       {keyAlgorithm: x509.RSA},
+	"RS512":                       {keyAlgorithm: x509.RSA},
+	"EdDSA":                       {keyAlgorithm: x509.Ed25519},
+	pairingproto.AlgorithmMLDSA44: {keyAlgorithm: x509.MLDSA, quantum: types.QuantumAlgorithmMLDSA44},
+	pairingproto.AlgorithmMLDSA65: {keyAlgorithm: x509.MLDSA, quantum: types.QuantumAlgorithmMLDSA65},
+	pairingproto.AlgorithmMLDSA87: {keyAlgorithm: x509.MLDSA, quantum: types.QuantumAlgorithmMLDSA87},
+}
+
+// mldsaParameters returns the crypto/mldsa parameter set of a phone ML-DSA
+// algorithm name.
+func mldsaParameters(algorithm string) (mldsa.Parameters, bool) {
+	switch algorithm {
+	case pairingproto.AlgorithmMLDSA44:
+		return mldsa.MLDSA44(), true
+	case pairingproto.AlgorithmMLDSA65:
+		return mldsa.MLDSA65(), true
+	case pairingproto.AlgorithmMLDSA87:
+		return mldsa.MLDSA87(), true
+	default:
+		return mldsa.Parameters{}, false
+	}
 }
 
 // mapAlgorithmToAttributes converts a phone algorithm string and key size into

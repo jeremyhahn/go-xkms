@@ -1,0 +1,1 @@
+- Phone protocol: the desktop accepts ML-DSA-44/65/87 keys from the phone (COSE -48/-49/-50): `local.generateKey` takes an optional `keyBacking` (`hardware` | `software`), `local.getCapabilities` adds `hardwareAlgorithms`, and the phone backend parses ML-DSA SubjectPublicKeyInfo keys and signs pure ML-DSA (#2405).
