@@ -2,6 +2,7 @@
 # v1.62 (2026-11-27, Tenant Agent order 18:13Z): `Balanced runner pool (ruling 1137)`
 # is the handbook v1.62 step; a public repository whose oldest queued self-hosted
 # job waited past WAIT_LIMIT (600 s) goes hosted when hosted has a free slot.
+# v1.60 (handbook 1bea157, #123): a selection tie goes self-hosted; preflight and the selection go self-hosted only on a push to main or a same-repository pull request.
 # v1.59 (handbook b18e6499, #113): the step `Balanced runner pool (ruling
 # 1137)` is copied from the template at v1.59. A listing short of its
 # total_count is a lower bound again, named in a ::notice, and the choice
