@@ -93,6 +93,21 @@ func getEnv(key, defaultValue string) string {
 // suite CA (KEYSTORE_TLS_CA) plus the ceremony root and the serving CA the
 // server persists under the unified-TLS data dir at unseal. Returns nil if
 // the suite CA cannot be loaded (e.g., running outside Docker).
+// clientTLSConfig trusts the test CA and presents the KEYSTORE_TLS_CERT/KEYSTORE_TLS_KEY client credential when both are set.
+func clientTLSConfig() *tls.Config {
+	cfg := &tls.Config{
+		RootCAs:    loadCACertPool(),
+		MinVersion: tls.VersionTLS12,
+	}
+	certFile, keyFile := os.Getenv("KEYSTORE_TLS_CERT"), os.Getenv("KEYSTORE_TLS_KEY")
+	if certFile != "" && keyFile != "" {
+		if cert, err := tls.LoadX509KeyPair(certFile, keyFile); err == nil {
+			cfg.Certificates = []tls.Certificate{cert}
+		}
+	}
+	return cfg
+}
+
 func loadCACertPool() *x509.CertPool {
 	pool, err := apiharness.TrustPool()
 	if err != nil {
