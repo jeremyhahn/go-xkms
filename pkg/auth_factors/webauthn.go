@@ -115,7 +115,7 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.Aut
 		return &MissingMethodMetadataError{Field: "session_id"}
 	}
 	sessionID := challenge.MethodMetadata["session_id"]
-	if sessionID == "" {
+	if sessionID == "" && len(challenge.Nonce) == 0 {
 		return &MissingMethodMetadataError{Field: "session_id"}
 	}
 
@@ -149,6 +149,9 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.Aut
 	if userID == nil && factor.UserID != 0 {
 		userID = xkmswebauthn.HandleFromUserID(factor.UserID)
 	}
+	if sessionID == "" {
+		return v.verifyNonce(ctx, factor, challenge, userID, parsed)
+	}
 
 	// FinishLogin verifies the assertion signature, RP id/origin, and sign
 	// counter against the stored credential and consumes the session. A nil
@@ -170,6 +173,41 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.Aut
 //
 // tenantID scopes per-tenant RP configuration; for a single-RP service it is
 // advisory. An empty hint drives the discoverable-credential flow.
+// verifyNonce verifies an assertion over challenge.Nonce with the factor's stored credential.
+func (v *WebAuthnFactorVerifier) verifyNonce(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge, userID []byte, parsed *protocol.ParsedCredentialAssertionData) error {
+	if !bytes.Equal(parsed.RawID, factor.Credential) {
+		return &CredentialMismatchError{}
+	}
+	if userID == nil {
+		userID = parsed.Response.UserHandle
+	}
+	creds, err := v.service.GetCredentials(ctx, userID)
+	if err != nil {
+		return err
+	}
+	var stored *xkmswebauthn.Credential
+	for _, c := range creds {
+		if bytes.Equal(c.ID, factor.Credential) {
+			stored = c
+			break
+		}
+	}
+	if stored == nil {
+		return &CredentialMismatchError{}
+	}
+	cfg := v.service.Config()
+	requireUV := challenge.MethodMetadata["user_verification"] == "required" ||
+		(cfg != nil && cfg.UserVerification == "required")
+	_, err = v.service.VerifyAssertion(ctx, &xkmswebauthn.AssertionVerification{
+		Challenge:               challenge.Nonce,
+		RequireUserPresence:     true,
+		RequireUserVerification: requireUV,
+		Credential:              stored,
+		Assertion:               parsed,
+	})
+	return err
+}
+
 func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID string, factorType qrdbtransport.FactorType, hint string) ([]byte, map[string]string, time.Time, error) {
 	if v == nil || v.service == nil {
 		return nil, nil, time.Time{}, &NilServiceError{Adapter: "webauthn"}
