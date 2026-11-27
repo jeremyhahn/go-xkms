@@ -349,6 +349,9 @@ var SigningKeySentinelClasses = []SentinelClass{
 // signer), not a missing key.
 func SigningKeyClassOf(err error) (Class, bool) {
 	// Checked first: the error also matches the key-not-found sentinel.
+	if As[*xkms.RepositorySigningKeyChangedError](err) {
+		return ClassFailedPrecondition, true
+	}
 	if As[*xkms.KeyVersionMissingError](err) {
 		return ClassFailedPrecondition, true
 	}

@@ -21,6 +21,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"time"
 
@@ -91,7 +92,8 @@ func (s *XKMSService) resolveRepositorySigner(ctx context.Context, repository st
 	if err := s.authorizeSigningKeys(ctx, auth.ActionSign); err != nil {
 		return nil, nil, err
 	}
-	resolution, err := appraiser.ResolveSigningKey(ctx, tenant, &appraisal.ResolveSigningKeyRequest{Repository: repository})
+	req := &appraisal.ResolveSigningKeyRequest{Repository: repository}
+	resolution, err := appraiser.ResolveSigningKey(ctx, tenant, req)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -99,7 +101,38 @@ func (s *XKMSService) resolveRepositorySigner(ctx context.Context, repository st
 	if err != nil {
 		return nil, nil, err
 	}
-	return signer, resolution, nil
+	// Each Sign resolves the repository again and refuses when it now names
+	// another key, so a retained signer stops at a rebinding or unbinding.
+	o, ok := signer.(opaqueSigner)
+	if !ok {
+		return signer, resolution, nil
+	}
+	signCtx := context.WithoutCancel(ctx)
+	inner := o.Sign
+	o.sign = func(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+		now, err := appraiser.ResolveSigningKey(signCtx, tenant, req)
+		if err != nil {
+			return nil, err
+		}
+		if now.KeyID != resolution.KeyID || now.Backend != resolution.Backend {
+			return nil, &RepositorySigningKeyChangedError{Repository: repository, KeyID: resolution.KeyID, Now: now.KeyID}
+		}
+		return inner(rand, digest, opts)
+	}
+	return o, resolution, nil
+}
+
+// RepositorySigningKeyChangedError reports a retained repository signer used
+// after the repository was bound to another key or unbound.
+type RepositorySigningKeyChangedError struct {
+	Repository string
+	KeyID      string
+	Now        string
+}
+
+// Error implements the error interface.
+func (e *RepositorySigningKeyChangedError) Error() string {
+	return fmt.Sprintf("keystore: repository %q now signs with key %q, not %q", e.Repository, e.Now, e.KeyID)
 }
 
 // resolutionSigner returns the backend signer of a resolved repository key,
@@ -194,6 +227,23 @@ func (o opaqueSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts
 		return o.sign(rand, digest, opts)
 	}
 	return o.signer.Sign(rand, digest, opts)
+}
+
+// SignsPKCS1v15 reports whether an RSA key signs PKCS#1 v1.5 when given bare
+// hash options: a backend that honours the options does, a fixed-padding one
+// only when its key is recorded as PKCS#1 v1.5. Non-RSA keys report true.
+func (o opaqueSigner) SignsPKCS1v15() bool {
+	if _, isRSA := o.signer.Public().(*rsa.PublicKey); !isRSA {
+		return true
+	}
+	if honoursPSSOptions(o.store) {
+		return true
+	}
+	switch o.sigAlg {
+	case x509.SHA256WithRSA, x509.SHA384WithRSA, x509.SHA512WithRSA:
+		return true
+	}
+	return false
 }
 
 // checkKeyPolicy refuses a key its policy does not admit for op, without

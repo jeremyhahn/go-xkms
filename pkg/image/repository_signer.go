@@ -3,6 +3,8 @@ package image
 import (
 	"context"
 	"crypto"
+	"crypto/rsa"
+	"fmt"
 )
 
 // RepositorySigners returns the signer of a repository's images: a tenant's
@@ -36,6 +38,13 @@ func NewRepositorySigner(ctx context.Context, signers RepositorySigners, reposit
 	}
 	if signer == nil {
 		return nil, ErrSignerRequired
+	}
+	// Image verification checks RSA envelopes as PKCS#1 v1.5, so a key whose
+	// backend fixes another padding is refused before it signs.
+	if _, isRSA := signer.Public().(*rsa.PublicKey); isRSA {
+		if p, ok := signer.(interface{ SignsPKCS1v15() bool }); ok && !p.SignsPKCS1v15() {
+			return nil, fmt.Errorf("%w: the repository's RSA key does not sign PKCS#1 v1.5", ErrUnsupportedKey)
+		}
 	}
 	resolved := *cfg
 	resolved.Signer = signer
