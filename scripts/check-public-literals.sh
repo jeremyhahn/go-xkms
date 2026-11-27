@@ -126,31 +126,35 @@ if ! git -C "$ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 	exit 2
 fi
 
-# git grep searches tracked files only. -l lists matching paths without their
-# text, -z keeps paths verbatim, -I skips binary files, -i is case-insensitive,
-# -E extended regex, -f reads the patterns from the parsed list.
-files=$(git -C "$ROOT" grep -lzIiE -f "$pf" -- "${PATHSPEC[@]}" | tr '\0' '\n')
-status=$?
-
-case "$status" in
-0)
-	echo "$NAME: internal literal(s) found (go-xkms#1030):" >&2
-	# grep on a single file prints "line:text"; cut keeps the line number and
-	# drops the text before anything reaches the log.
-	while IFS= read -r path; do
-		grep -niE -f "$pf" -- "$ROOT/$path" | cut -d: -f1 |
-			while IFS= read -r line; do
-				printf '%s:%s\n' "$path" "$line" >&2
-			done
-	done <<<"$files"
-	exit 1
-	;;
-1)
-	echo "$NAME: clean -- no internal literals found" >&2
-	exit 0
-	;;
+# git grep searches tracked files only. -n prints path:line:text, -I skips
+# binary files, -i is case-insensitive, -E extended regex, -f reads the
+# patterns from the parsed list. The text stays in memory: cut keeps path:line.
+rc=0
+out=$(git -C "$ROOT" grep -nIiE -f "$pf" -- "${PATHSPEC[@]}") || rc=$?
+case "$rc" in
+0 | 1) ;;
 *)
-	echo "$NAME: git grep failed (exit $status)" >&2
-	exit "$status"
+	echo "$NAME: git grep failed (exit $rc)" >&2
+	exit "$rc"
 	;;
 esac
+
+# The InfoSec waiver of ci.yml's Releasability step: a matched line carrying
+# `lab-string-ok: <reason>` (colon and reason required) is listed, not failed.
+waiver='lab-string-ok:[[:space:]]*[[:alnum:]]'
+waived=$(printf '%s\n' "$out" | grep -E -e "$waiver" | cut -d: -f1,2 || true)
+hits=$(printf '%s\n' "$out" | grep -v -E -e "$waiver" | grep -v '^$' | cut -d: -f1,2 || true)
+unset out
+
+if [ -n "$waived" ]; then
+	nw=$(printf '%s\n' "$waived" | wc -l)
+	echo "$NAME: $nw matched line(s) carry the lab-string-ok waiver (path:line):" >&2
+	printf '%s\n' "$waived" >&2
+fi
+if [ -n "$hits" ]; then
+	echo "$NAME: internal literal(s) found (go-xkms#1030):" >&2
+	printf '%s\n' "$hits" >&2
+	exit 1
+fi
+echo "$NAME: clean -- no internal literals found" >&2
+exit 0
