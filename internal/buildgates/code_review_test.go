@@ -16,7 +16,7 @@ func TestCITemplateV151Note(t *testing.T) {
 		t.Fatalf("read %s: %v", ciWorkflow, err)
 	}
 	for _, want := range []*regexp.Regexp{
-		regexp.MustCompile(`\A# ci-template: v1\.5[1-9] `),
+		regexp.MustCompile(`\A# ci-template: v1\.(5[1-9]|[6-9][0-9]) `),
 		regexp.MustCompile(`(?m)^# v1\.51 \(handbook c4de1f7d, #86\): `),
 	} {
 		if !want.Match(ci) {
@@ -26,8 +26,8 @@ func TestCITemplateV151Note(t *testing.T) {
 }
 
 // TestCITemplateV153MainEventGroup pins ci.yml v1.53 (handbook 88c10e76,
-// ruling 1087), under v1.59's header (its runner selection, handbook
-// 1ad68ab8 and b18e6499, ruling 1137): main runs share one concurrency group per event, so a newer
+// ruling 1087), under v1.60's header (its runner selection, handbook
+// 1ad68ab8, b18e6499 and 1bea157, ruling 1137): main runs share one concurrency group per event, so a newer
 // main push cancels the older run; a schedule run keeps its repository group
 // and every other ref keeps github.ref. CI Gate runs on !cancelled() off
 // pull_request, so a cancelled main run posts a skipped gate; a pull request
@@ -39,7 +39,8 @@ func TestCITemplateV153MainEventGroup(t *testing.T) {
 		t.Fatalf("read %s: %v", ciWorkflow, err)
 	}
 	for _, want := range []*regexp.Regexp{
-		regexp.MustCompile(`\A# ci-template: v1\.59 runner selection on v1\.34\.1 \+ v1\.42 hermetic gate \(customized\)\n`),
+		regexp.MustCompile(`\A# ci-template: v1\.60 runner selection on v1\.34\.1 \+ v1\.42 hermetic gate \(customized\)\n`),
+		regexp.MustCompile(`(?m)^# v1\.60 \(handbook 1bea157, #123\): `),
 		regexp.MustCompile(`(?m)^# v1\.59 \(handbook b18e6499, #113\): `),
 		regexp.MustCompile(`(?m)^# v1\.54 \(handbook 1ad68ab8, #104; Tenant Agent ruling 1137\): `),
 		regexp.MustCompile(`(?m)^# v1\.52 `),
