@@ -1,4 +1,7 @@
-# ci-template: v1.59 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# ci-template: v1.62 pool overflow + v1.61 main-push group on v1.59 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# v1.62 (2026-11-27, Tenant Agent order 18:13Z): `Balanced runner pool (ruling 1137)`
+# is the handbook v1.62 step; a public repository whose oldest queued self-hosted
+# job waited past WAIT_LIMIT (600 s) goes hosted when hosted has a free slot.
 # v1.59 (handbook b18e6499, #113): the step `Balanced runner pool (ruling
 # 1137)` is copied from the template at v1.59. A listing short of its
 # total_count is a lower bound again, named in a ::notice, and the choice
@@ -670,7 +673,9 @@ on:
 # workflow_dispatch run keeps `main-workflow_dispatch`, so neither shares a
 # group with a push run; every other ref keeps github.ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || github.ref == 'refs/heads/main' && format('main-{0}', github.event_name) || github.ref }}
+# v1.61 (adopted with v1.62, Tenant Agent order 2026-11-27 18:13Z): a push to
+# main is grouped by its sha, `main-push-{sha}`, and is never cancelled.
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || github.ref == 'refs/heads/main' && github.event_name == 'push' && format('main-push-{0}', github.sha) || github.ref == 'refs/heads/main' && format('main-{0}', github.event_name) || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -996,11 +1001,14 @@ jobs:
           SERVER: ${{ github.server_url }}
           EVENT: ${{ github.event_name }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REF: ${{ github.ref }}
           REPO: ${{ github.repository }}
           API: ${{ github.api_url }}/repos/${{ github.repository }}/actions
           RUN_ID: ${{ github.run_id }}
           JOB_TOKEN: ${{ github.token }}
           HS: ${{ vars.CI_HOSTED_SHARE }}
+          PRIVATE: ${{ github.event.repository.private }}
+          WAIT_LIMIT: 600
           C1: ${{ vars.CI_SELF_HOSTED_BIGDISK }}
           C2: ${{ vars.CI_SELF_HOSTED_BIGDISK_DOCKER }}
         run: |
@@ -1030,6 +1038,14 @@ jobs:
                 emit "$HOSTED" "$HOSTED"
                 exit 0
               fi ;;
+          esac
+          # The self-hosted runners refuse every event but a push to main and a pull request.
+          case "$EVENT:$REF" in
+            push:refs/heads/main | pull_request:*) ;;
+            *)
+              echo "::notice::runner selection: event $EVENT on $REF is not a push to main or a pull request, which the self-hosted runners refuse; every job of this run takes the GitHub-hosted default, ubuntu-latest"
+              emit "$HOSTED" "$HOSTED"
+              exit 0 ;;
           esac
           # whole <value>: a whole number above 0, at most 6 digits.
           whole() { [[ "$1" =~ ^[0-9]{1,6}$ ]] && [ "$((10#$1))" -gt 0 ]; }
@@ -1085,11 +1101,15 @@ jobs:
           done
           # H, S1, S2: hosted, bigdisk (not bigdisk-docker) and bigdisk-docker
           # jobs in progress plus queued; HQ, SQ: the queued hosted and
-          # self-hosted (both kinds) ones. A job of this run is not counted.
-          read -r H S1 S2 HQ SQ < <(jq -rs --argjson run "$RUN_ID" '
+          # self-hosted (both kinds) ones; W1, W2: the seconds the oldest
+          # queued bigdisk and bigdisk-docker job has waited (0 for none,
+          # v1.62). A job of this run is not counted.
+          read -r H S1 S2 HQ SQ W1 W2 < <(jq -rs --argjson run "$RUN_ID" --argjson now "$(date -u +%s)" '
               [.[] | select(.run_id != $run and (.status == "queued" or .status == "in_progress"))
                    | (.labels // []) as $l
                    | {q: (.status == "queued"),
+                      w: ((try (.created_at | sub("\\.[0-9]+"; "") | fromdateiso8601) catch $now) as $c
+                          | if $now > $c then ($now - $c | floor) else 0 end),
                       p: (if ($l | any(. == "self-hosted")) then
                             (if ($l | any(. == "bigdisk-docker")) then "s2"
                              elif ($l | any(. == "bigdisk")) then "s1" else "x" end)
@@ -1097,25 +1117,31 @@ jobs:
                           else "x" end)}] as $j
               | def n(f): $j | map(select(f)) | length;
               [n(.p == "h"), n(.p == "s1"), n(.p == "s2"), n(.p == "h" and .q),
-               n((.p == "s1" or .p == "s2") and .q)]
+               n((.p == "s1" or .p == "s2") and .q),
+               ([$j[] | select(.p == "s1" and .q) | .w] | max // 0),
+               ([$j[] | select(.p == "s2" and .q) | .w] | max // 0)]
               | map(tostring) | join(" ")' "$RUNNER_TEMP/sel-jobs.jsonl") || hosted "the job list could not be counted"
-          [ -n "${SQ:-}" ] || hosted "the job list could not be counted"
-          echo "this repository: hosted $H of CI_HOSTED_SHARE=$HS ($HQ queued); bigdisk $S1 of CI_SELF_HOSTED_BIGDISK=$C1, bigdisk-docker $S2 of CI_SELF_HOSTED_BIGDISK_DOCKER=$C2 ($SQ self-hosted queued)"
+          [ -n "${W2:-}" ] || hosted "the job list could not be counted"
+          echo "this repository: hosted $H of CI_HOSTED_SHARE=$HS ($HQ queued); bigdisk $S1 of CI_SELF_HOSTED_BIGDISK=$C1, bigdisk-docker $S2 of CI_SELF_HOSTED_BIGDISK_DOCKER=$C2 ($SQ self-hosted queued); oldest queued bigdisk ${W1}s, bigdisk-docker ${W2}s"
           # v1.59: a short listing is a lower bound; still choose.
           [ -z "$SHORT" ] || echo "::notice::runner selection: the listing returned fewer entries than its total ($SHORT); the counts are a lower bound and the choice below uses them (ci-template v1.59)"
           pick=hosted hfull=0 sfull=0
           [ "$H" -lt "$HS" ] || hfull=1
           { [ "$S1" -lt "$C1" ] && [ "$S2" -lt "$C2" ]; } || sfull=1
           if [ "$hfull" = 1 ] && [ "$sfull" = 1 ]; then
-            [ "$SQ" -lt "$HQ" ] && pick=self
+            [ "$SQ" -le "$HQ" ] && pick=self
             why="both pools full: hosted $HQ queued, self-hosted $SQ queued"
           elif [ "$hfull" = 1 ]; then
             pick=self; why="the hosted pool is full ($H of $HS)"
           elif [ "$sfull" = 1 ]; then
             why="the self-hosted pool is full (bigdisk $S1 of $C1, bigdisk-docker $S2 of $C2)"
+          elif [ "${PRIVATE:-}" = false ] && { [ "$W1" -gt "$WAIT_LIMIT" ] || [ "$W2" -gt "$WAIT_LIMIT" ]; }; then
+            # v1.62 overflow: a self-hosted wait past WAIT_LIMIT with a free
+            # hosted slot goes hosted (public repositories, no spend).
+            why="overflow: the oldest queued self-hosted job waited past ${WAIT_LIMIT}s (bigdisk ${W1}s, bigdisk-docker ${W2}s) and hosted has a free slot ($H of $HS) (ci-template v1.62)"
           else
-            # self-hosted use, max(S1/C1, S2/C2), below hosted use H/HS.
-            [ $((S1 * HS)) -lt $((H * C1)) ] && [ $((S2 * HS)) -lt $((H * C2)) ] && pick=self
+            # self-hosted use, max(S1/C1, S2/C2), at or below hosted use H/HS.
+            [ $((S1 * HS)) -le $((H * C1)) ] && [ $((S2 * HS)) -le $((H * C2)) ] && pick=self
             why="use hosted $H/$HS, bigdisk $S1/$C1, bigdisk-docker $S2/$C2"
           fi
           if [ "$pick" = self ]; then
@@ -1803,10 +1829,10 @@ jobs:
     # only on the schedule guard's `run`.
     needs: preflight   # v1.34
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing):
-    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
-    # `runner_docker` reports the hosted pool full.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    # v1.62 (Tenant Agent order 2026-11-27 18:13Z): the bigdisk-docker pool
+    # always; the job needs the large disk, so the v1.62 overflow to hosted
+    # never moves it. Before: v1.48 (ruling 1024) `runner_docker`.
+    runs-on: [self-hosted, linux, x64, bigdisk-docker]   # self-hosted: oversize: Integration needs the large disk (Tenant Agent order 2026-11-27 18:13Z)
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
