@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,6 +75,25 @@ func TestRepositorySigner_RetainedSignerRefusesARebinding(t *testing.T) {
 	require.NoError(t, appraiser.DeleteSigningKeyBinding(ctx, "tenant-a", &appraisal.DeleteSigningKeyBindingRequest{Repository: "acme/app"}))
 	_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
 	require.ErrorAs(t, err, &changed, "a retained signer refuses after the repository binding is deleted")
+}
+
+func TestRepositorySigner_RetainedSignerRefusesARevokedGrant(t *testing.T) {
+	svc, appraiser, ctx := releaseSigningService(t, "attestation_signing_keys:sign")
+	generateSigningKey(t, svc, "tenant-a", appraisal.ReleaseSigningKeyID)
+	generateSigningKey(t, svc, "tenant-a", "app-a")
+	_, err := appraiser.SetSigningKeyBinding(ctx, "tenant-a", &appraisal.SetSigningKeyBindingRequest{Repository: "acme/app", KeyID: "app-a", Backend: "software"})
+	require.NoError(t, err)
+	digest := sha256.Sum256([]byte("image"))
+
+	signer, err := svc.RepositorySigner(ctx, "acme/app")
+	require.NoError(t, err)
+	_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	require.NoError(t, err, "sign while the grant holds")
+
+	svc.SetAuthorizer(auth.NewAuthorizer(grantedRBAC{recordingRBAC: &recordingRBAC{}, grants: map[string]bool{}}))
+	_, err = signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	var denied *SigningKeyPermissionError
+	require.ErrorAs(t, err, &denied, "a retained signer refuses after the sign grant is revoked")
 }
 
 func TestOpaqueSigner_SignsPKCS1v15(t *testing.T) {
