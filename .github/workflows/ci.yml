@@ -2556,16 +2556,7 @@ jobs:
             cd xkey
             go test -race -timeout 60m -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
             go test -race -timeout 60m -v -tags codec_json ./pkg/oath/...
-            go test -race -timeout 60m -tags "codec_json tpm_simulator" -count=1 \
-              ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
-              ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
-              ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
-              ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
-              ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
-              ./pkg/oidc/aws ./pkg/oidc/handlers \
-              ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
-              ./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
-              ./pkg/tokenstore ./pkg/usb ./pkg/xhome
+            make coverage-gate
             go test -race -timeout 60m -tags "ble codec_json tpm_simulator" -count=1 ./cmd/xkey/cmd ./pkg/gui/services
             go vet -tags ble ./...
             go test -race -timeout 60m -tags ble ./pkg/phone/ -count=1
@@ -2605,16 +2596,7 @@ jobs:
           cd xkey
           go test -race -timeout 60m -v -tags "codec_json tpm_simulator" ./internal/lifecycle/... ./pkg/phone/... ./pkg/pairing/...
           go test -race -timeout 60m -v -tags codec_json ./pkg/oath/...
-          go test -race -timeout 60m -tags "codec_json tpm_simulator" -count=1 \
-            ./cmd/e2eprobe ./cmd/xkey ./cmd/xkey/cmd \
-            ./pkg/agent ./pkg/audit ./pkg/backendregistry ./pkg/backup \
-            ./pkg/ccid ./pkg/cdp ./pkg/config ./pkg/gadget \
-            ./pkg/gui ./pkg/gui/events ./pkg/ipc ./pkg/keyboard ./pkg/luks \
-            ./pkg/nativemsg ./pkg/notify ./pkg/nssdb \
-            ./pkg/oidc/aws ./pkg/oidc/handlers \
-            ./pkg/pwimport ./pkg/qrgen ./pkg/qrscan ./pkg/secretservice \
-            ./pkg/serverregistry ./pkg/shellquote ./pkg/sshlocal ./pkg/sshstore ./pkg/sync \
-            ./pkg/tokenstore ./pkg/usb ./pkg/xhome
+          make coverage-gate
           go test -race -timeout 60m -tags "ble codec_json tpm_simulator" -count=1 ./cmd/xkey/cmd ./pkg/gui/services
           go vet -tags ble ./...
           go test -race -timeout 60m -tags ble ./pkg/phone/ -count=1
