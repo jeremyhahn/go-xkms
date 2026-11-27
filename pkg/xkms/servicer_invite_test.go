@@ -961,6 +961,40 @@ func TestActivateInvitePIV_ConcurrentClaimsOneWinner(t *testing.T) {
 	assert.Len(t, f.certBindings(inviteFixtureQRDBUserID), 1, "exactly one certificate may be bound")
 }
 
+// An activation that fails after the invitation was claimed must leave the
+// invitation redeemable: a retry with the same token activates the account.
+func TestActivateInvitePIV_ActivationFailureLeavesInvitationRedeemable(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+
+	caCert, leafCert, err := generateInvitePIVChain(t)
+	require.NoError(t, err)
+	f.svc.SetCA(&mockCA{bundlePEM: pemEncodeCert(caCert)})
+
+	activate := f.users.activateWithCertBinding
+	failed := false
+	f.users.activateWithCertBinding = func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+		if !failed {
+			failed = true
+			return nil, errors.New("injected: activation not committed")
+		}
+		return activate(ctx, userID, thumbprint, notAfterUnix)
+	}
+
+	_, err = f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+	require.Error(t, err, "the injected activation failure must surface")
+	f.requirePendingUnredeemed(t, token, inviteFixtureQRDBUserID)
+
+	result, err := f.activatePIV(inviteFixtureTenant, token, pemEncodeCert(leafCert))
+	require.NoError(t, err, "a retry with the same invitation must activate")
+	assert.Equal(t, inviteFixtureQRDBUserID, result.UserID)
+	assert.Equal(t, string(qrdbsdk.LifecycleActive), f.lifecycle(t, inviteFixtureQRDBUserID))
+	assert.Len(t, f.certBindings(inviteFixtureQRDBUserID), 1, "exactly one certificate may be bound")
+
+	_, err = f.getInvite(inviteFixtureTenant, token)
+	require.ErrorIs(t, err, ErrInviteUnusable, "the activated invitation must be consumed")
+}
+
 // A request whose chain fails verification does not claim the invitation:
 // a following valid request still activates.
 func TestActivateInvitePIV_RejectedChainLeavesInvitationRedeemable(t *testing.T) {
