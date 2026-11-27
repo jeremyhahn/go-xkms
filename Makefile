@@ -1958,6 +1958,13 @@ clean-test-containers:
 		cat $(BUILD_DIR)/clean-test-containers.log; \
 		exit 1; \
 	fi
+	@# CLEAN_RUN_IMAGES=1 (CI teardown only) also removes this run's images: run-image-refs (XKMS_IMAGE_REPOS at tag XKMS_IMAGE_TAG), never IT_IMAGE.
+	@if [ "$(CLEAN_RUN_IMAGES)" = 1 ] && [ -n "$(IT_PROJECT)" ] && [ -n "$(XKMS_IMAGE_TAG)" ]; then \
+		$(call run-image-refs,r=) 2>/dev/null; \
+		keep=""; for ref in $$refs; do [ "$$ref" = '$(IT_IMAGE)' ] || keep="$$keep $$ref"; done; \
+		if [ -n "$$(echo $$keep)" ]; then docker rmi -f $$keep >/dev/null 2>&1 || true; fi; \
+		echo "$(GREEN)✓ Removed this run's images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
+	fi
 
 # ==============================================================================
 # Storage Integration Tests
