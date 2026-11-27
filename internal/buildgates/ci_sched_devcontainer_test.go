@@ -95,6 +95,7 @@ const runnerSelectStep = "runner"
 var forkEnv = map[string]string{
 	"EVENT":     "${{ github.event_name }}",
 	"HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+	"REF":       "${{ github.ref }}",
 	"REPO":      "${{ github.repository }}",
 }
 
@@ -143,8 +144,12 @@ printf 200
 // v1.52: the template's fork clause comes before the variable, so a fork's
 // pull request (under pull_request or pull_request_target, a deleted fork
 // included) takes ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds.
+// v1.60 (handbook 1bea157): the variable applies only to a push to main or
+// a same-repository pull_request; every other event (workflow_dispatch,
+// schedule, a push to another branch, pull_request_target) stays hosted.
 const preflightRunsOn = "${{ github.server_url == 'https://github.com' && " +
-	"(!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository)" +
+	"((github.event_name == 'push' && github.ref == 'refs/heads/main') || " +
+	"(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))" +
 	" && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
 
 func TestCIPreflightRunsHostedByDefault(t *testing.T) {
@@ -181,6 +186,13 @@ func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 // v1.54's repository variables: CI_HOSTED_SHARE 12, so 12 hosted jobs fill
 // the hosted pool, and 10 units of each self-hosted label, none in use.
 func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int) (output, calls, log string) {
+	t.Helper()
+	return runRunnerSelectEvent(t, script, fork, "pull_request", "refs/pull/1/merge", listed, total)
+}
+
+// runRunnerSelectEvent runs the selector for one event on one ref (v1.60
+// reads "$EVENT:$REF" under set -u, so REF is always set).
+func runRunnerSelectEvent(t *testing.T, script, fork, event, ref string, listed, total int) (output, calls, log string) {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
@@ -224,7 +236,8 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 		"HS=12",
 		"C1=10",
 		"C2=10",
-		"EVENT=pull_request",
+		"EVENT="+event,
+		"REF="+ref,
 		"REPO=o/r",
 		"HEAD_REPO="+headRepo(fork),
 		"GITHUB_OUTPUT="+out,
@@ -288,6 +301,59 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 		if calls != "" {
 			t.Errorf("fork=%q: the selector called the Actions API:\n%s", fork, calls)
 		}
+	}
+}
+
+// TestCIRunnerSelectionRefusedEventsStayHosted pins v1.60 (handbook
+// 1bea157): the self-hosted runners accept only a push to main or a pull
+// request, so every other event takes the hosted default with a notice and
+// no Actions API call, while a push to main on a full hosted pool still
+// goes self-hosted.
+func TestCIRunnerSelectionRefusedEventsStayHosted(t *testing.T) {
+	wf := readDigestWorkflow(t)
+	var script string
+	for _, s := range wf.Jobs[preflightJob].Steps {
+		if s.ID == runnerSelectStep {
+			script = s.Run
+		}
+	}
+	if script == "" {
+		t.Fatalf("%s has no step with id: %s", preflightJob, runnerSelectStep)
+	}
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not installed: the selector script needs it", tool)
+		}
+	}
+	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+	for _, tc := range []struct {
+		event, ref string
+		want       string
+		apiCall    bool
+	}{
+		{"push", "refs/heads/main", overflow, true},
+		{"pull_request", "refs/pull/1/merge", overflow, true},
+		{"workflow_dispatch", "refs/heads/main", hosted, false},
+		{"workflow_dispatch", "refs/heads/feature", hosted, false},
+		{"schedule", "refs/heads/main", hosted, false},
+		{"push", "refs/heads/feature", hosted, false},
+	} {
+		t.Run(tc.event+" "+tc.ref, func(t *testing.T) {
+			out, calls, log := runRunnerSelectEvent(t, script, "false", tc.event, tc.ref, 12, 12)
+			if out != tc.want {
+				t.Errorf("output %q, want %q\n%s", out, tc.want, log)
+			}
+			if got := calls != ""; got != tc.apiCall {
+				t.Errorf("Actions API called = %v, want %v:\n%s", got, tc.apiCall, calls)
+			}
+			if !tc.apiCall {
+				note := "::notice::runner selection: event " + tc.event + " on " + tc.ref + " is not a push to main or a pull request"
+				if !strings.Contains(log, note) {
+					t.Errorf("log lacks %q:\n%s", note, log)
+				}
+			}
+		})
 	}
 }
 
