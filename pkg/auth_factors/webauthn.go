@@ -180,8 +180,8 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 
 	// A non-empty hint (username or email) scopes the ceremony to that user's
 	// credentials; otherwise nil requests a discoverable-credential ceremony.
-	// The hint is tried as a username first and then as an email, so a user
-	// without an email (the first-boot admin) is found too (go-xkms#1759).
+	// The hint is tried as an email first and then as a username, so an email
+	// login is never shadowed and a user without an email is found too.
 	// An account that may not log in (xkmswebauthn.CheckAccountStanding) is
 	// treated exactly like an unknown hint, so the ceremony's shape does not
 	// reveal its state; Verify refuses it regardless (go-xkms#1298).
@@ -206,17 +206,17 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 }
 
 // resolveHint returns the user a login hint names, looking it up as a
-// username and then as an email. It returns nil for an empty hint or one
+// email and then as a username. It returns nil for an empty hint or one
 // that resolves to nobody; a lookup error is treated as not found, so the
 // caller cannot tell an unknown hint from a failed one.
 func (v *WebAuthnFactorVerifier) resolveHint(ctx context.Context, hint string) xkmswebauthn.User {
 	if hint == "" {
 		return nil
 	}
-	if u, err := v.service.GetUserByUsername(ctx, hint); err == nil && u != nil {
+	if u, err := v.service.GetUserByEmail(ctx, hint); err == nil && u != nil {
 		return u
 	}
-	if u, err := v.service.GetUserByEmail(ctx, hint); err == nil && u != nil {
+	if u, err := v.service.GetUserByUsername(ctx, hint); err == nil && u != nil {
 		return u
 	}
 	return nil
