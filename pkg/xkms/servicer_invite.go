@@ -56,12 +56,11 @@ import (
 // activation is confirmed (by re-reading the account on an ambiguous
 // write) before the token is spent.
 //
-// PIV runs validate, claim, bind, activate: the certificate chain and the
-// pending account are checked first (a failure leaves the invitation
-// retryable), then the invitation is claimed with the store's single-winner
-// Redeem, so of concurrent requests only one binds a certificate. A bind or
-// activation failure after the claim fails closed: the account stays
-// pending and needs a new invitation.
+// PIV runs validate, bind and activate, redeem: the certificate chain and the
+// pending account are checked first, then the binding and the activation are
+// one conditional commit on the pending account, so of concurrent requests
+// only one binds a certificate. The invitation is redeemed only after that
+// commit: a failure before it leaves the invitation redeemable for a retry.
 //
 // Every unauthenticated lookup collapses "not found", "expired" and
 // "already redeemed" into ErrInviteUnusable (classifyInviteError): telling a
@@ -373,15 +372,13 @@ func (s *XKMSService) FinishInviteRegistration(ctx context.Context, req *transpo
 }
 
 // ActivateInvitePIV completes PIV invite activation in the safe order
-// validate, claim, bind, activate: it verifies the presented certificate's
-// chain against the CA's trust roots and checks the account is still
-// pending, then claims the invitation (the store's single-winner Redeem),
-// then binds the certificate's SPKI thumbprint to the account and
-// activates it. A request that fails validation never claims, so the
-// invitation stays retryable; of concurrent requests only the one that
-// wins the claim binds. If the bind or the activation fails after the
-// claim, the request fails closed: the account stays pending and needs a
-// new invitation. Implements transport.InviteServicer.
+// validate, bind and activate, redeem: it verifies the presented
+// certificate's chain against the CA's trust roots and checks the account is
+// still pending, then binds the certificate's SPKI thumbprint to the account
+// and activates it in one conditional commit, and only then redeems the
+// invitation. Of concurrent requests only the one whose conditional commit
+// finds the account pending binds; a request that fails before that commit
+// leaves the invitation redeemable for a retry.
 func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.ActivateInvitePIVRequest) (*transport.ActivateInvitePIVResponse, error) {
 	if req == nil {
 		return nil, ErrNilRequest
@@ -473,19 +470,12 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		}
 	}
 
-	// Claim the invitation BEFORE anything is bound. Concurrent requests can
-	// all pass the lookup and the pending check above; the store's Redeem
-	// resolves them to exactly one winner (ErrAlreadyRedeemed for the
-	// rest), so only the winner binds its certificate.
-	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
-		releaseClaim()
-		return nil, ErrInviteUnusable
-	}
-
 	// The binding and the activation are one conditional commit: an
 	// account that left pending after the check above (an administrator's
-	// disable, for one) is refused with nothing bound, and stays as the
-	// administrator left it.
+	// disable, or a concurrent activation of the same invitation) is refused
+	// with nothing bound, so of concurrent requests only one binds. The
+	// invitation is redeemed only after that commit, so a failed activation
+	// leaves it redeemable.
 	thumbprint := qrdbsdk.ComputeSPKIThumbprint(cert)
 	if _, err := s.inviteUserClient().ActivateWithCertBinding(ctx, req.TenantID, userID, thumbprint, cert.NotAfter.Unix()); err != nil {
 		releaseClaim()
@@ -499,6 +489,9 @@ func (s *XKMSService) ActivateInvitePIV(ctx context.Context, req *transport.Acti
 		// WebAuthn invite finish can enrol it whatever becomes of the claim.
 		// Committing it with no credential keeps it held for good.
 		_ = claim.Commit(context.WithoutCancel(ctx), nil)
+	}
+	if _, err := s.inviteStore.Redeem(inviteStoreContext(ctx), req.TenantID, req.Token); err != nil {
+		return nil, &ErrUserOperation{Operation: "redeem invite", Err: err}
 	}
 	return &transport.ActivateInvitePIVResponse{UserID: userID}, nil
 }

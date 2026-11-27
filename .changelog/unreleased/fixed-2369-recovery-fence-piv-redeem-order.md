@@ -1,0 +1,2 @@
+- A stale TPM key-pair recovery no longer overwrites a private blob that the winning recovery rewrote with the same bytes; the private write is guarded by the recovery's own fence.
+- PIV invite activation redeems the invitation only after the certificate binding and activation commit, so a failed activation leaves the invitation redeemable.
