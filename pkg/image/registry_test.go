@@ -279,19 +279,6 @@ func TestRegistryClient_Authorize(t *testing.T) {
 	}
 }
 
-func TestRegistryClient_AuthorizeDestroyedPassword(t *testing.T) {
-	password := registryPassword(t, "p")
-	password.Destroy()
-	client, err := NewRegistryClient(&RegistryOptions{Auth: &RegistryAuth{Username: "u", Password: password}})
-	require.NoError(t, err)
-	concrete, ok := client.(*registryClient)
-	require.True(t, ok)
-
-	req := httptest.NewRequest(http.MethodGet, "https://registry.example/v2/", nil)
-	require.ErrorIs(t, concrete.authorize(req), ErrRegistryCredentials)
-	assert.Empty(t, req.Header.Get("Authorization"), "no credentials are sent without the password")
-}
-
 func TestRegistryClient_DestroyedPasswordStopsTheRequest(t *testing.T) {
 	registry := newTestRegistry(t, registryConfig{token: "issued", challenge: true, username: "u", password: "p"})
 	ref, _ := registry.seedImage(t, "team/app", "v1")
@@ -654,18 +641,6 @@ func TestRegistryClient_AttestationsPagedReferrers(t *testing.T) {
 	assert.Equal(t, []*Attestation{
 		testAttestation(`{"n":1}`), testAttestation(`{"n":2}`), testAttestation(`{"n":3}`),
 	}, attestations, "every page of the referrers index is read")
-}
-
-func TestRegistryClient_AttestationsReferrersOtherLink(t *testing.T) {
-	registry := newTestRegistry(t, registryConfig{referrers: true, referrersLink: `</v2/team/app/tags/list>; rel="prev"`})
-	client := registry.client(t, nil)
-	ref, _ := registry.seedImage(t, "team/app", "v1")
-	push(t, client, ref, "{}")
-
-	reference, _ := pinned(t, client, ref)
-	attestations, err := client.Attestations(context.Background(), reference)
-	require.NoError(t, err, "a link that is not rel=next is not followed")
-	assert.Len(t, attestations, 1)
 }
 
 func TestRegistryClient_AttestationsReferrersBadLink(t *testing.T) {

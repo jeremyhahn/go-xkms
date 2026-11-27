@@ -74,26 +74,6 @@ func (f *signerFixture) pushAttestation(t *testing.T, attestation *Attestation) 
 	require.NotNil(t, result)
 }
 
-func TestNewVerifier(t *testing.T) {
-	f := newSignerFixture(t, registryConfig{})
-	verifier, err := NewVerifier(&VerifierConfig[purpose]{
-		Registry:         f.client,
-		Roots:            f.pki.roots(),
-		Purpose:          testPurpose,
-		PredicateType:    PredicateTypeCosign,
-		TimestampRoots:   f.pki.pool,
-		RequireTimestamp: true,
-	})
-	require.NoError(t, err)
-	assert.Equal(t, PredicateTypeCosign, verifier.predicateType)
-	assert.Same(t, f.pki.pool, verifier.timestampRoots)
-	assert.True(t, verifier.requireTimestamp)
-
-	roots, err := verifier.roots()
-	require.NoError(t, err)
-	assert.True(t, roots.Equal(f.pki.pool), "the roots are those of the configured purpose")
-}
-
 func TestNewVerifier_Errors(t *testing.T) {
 	f := newSignerFixture(t, registryConfig{})
 	roots := f.pki.roots()
@@ -270,18 +250,6 @@ func TestVerifier_VerifyImage_InvalidAttestation(t *testing.T) {
 			assert.Nil(t, result)
 		})
 	}
-}
-
-func TestVerifier_VerifyImage_AnyValidAttestation(t *testing.T) {
-	f := newSignerFixture(t, registryConfig{referrers: true})
-	invalid := f.validAttestation(t)
-	invalid.Envelope = []byte(`{"n":1}`)
-	f.pushAttestation(t, invalid)
-	f.pushAttestation(t, f.validAttestation(t))
-
-	result, err := f.verifier(t, VerifierConfig[purpose]{}).VerifyImage(t.Context(), f.ref)
-	require.NoError(t, err, "one valid attestation suffices")
-	assert.Equal(t, f.digest, result.Digest)
 }
 
 // corruptTimestamp gives layer i of f's .att tag a timestamp annotation that

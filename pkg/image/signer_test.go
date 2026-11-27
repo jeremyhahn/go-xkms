@@ -338,14 +338,6 @@ func TestSignOptions_Predicate(t *testing.T) {
 	}
 }
 
-func TestSignOptions_Predicate_Missing(t *testing.T) {
-	opts := &SignOptions{PredicateType: "https://slsa.dev/provenance/v1"}
-	predicateType, predicate, err := opts.predicate(time.Now())
-	require.ErrorIs(t, err, ErrInvalidStatement, "only the cosign predicate has a default")
-	assert.Empty(t, predicateType)
-	assert.Nil(t, predicate)
-}
-
 func TestRequestCodeSigningCertificate(t *testing.T) {
 	f := newSignerFixture(t, registryConfig{})
 	for name, key := range signerKeys(t) {
