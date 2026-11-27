@@ -70,6 +70,11 @@ const guardedNightlyIf = "(" + nightlyIf + ") && " + verdictRun
 // request a changed file that matches LINT_GATES_PATTERN.
 const scopedIf = draftIf + " && " + verdictRun + " && needs.preflight.outputs.lint_gates != 'false'"
 
+// codeIf is the whole condition of a `code` job (v1.30; the #2261 split):
+// the guard's `run` and not a docs-only pull request, on which CI Gate
+// accepts its skip.
+const codeIf = verdictRun + " && needs.preflight.outputs.docs_only != 'true'"
+
 // gateLine matches one `check <job> "${{ needs.<job>.result }}" <tier>` line
 // of CI Gate's script.
 var gateLine = regexp.MustCompile(
@@ -164,8 +169,8 @@ func gateTiers(gate job) (map[string]string, []string) {
 				continue
 			}
 			name, ref, tier := m[1], m[2], m[3]
-			if tier != "pr" && tier != "scoped" && tier != "full" && tier != "nightly" {
-				problems = append(problems, fmt.Sprintf("CI Gate tags %s %q, want pr, scoped, full or nightly", name, tier))
+			if tier != "pr" && tier != "code" && tier != "scoped" && tier != "full" && tier != "nightly" {
+				problems = append(problems, fmt.Sprintf("CI Gate tags %s %q, want pr, code, scoped, full or nightly", name, tier))
 			}
 			if name != ref {
 				problems = append(problems, fmt.Sprintf("CI Gate line for %s reads needs.%s.result", name, ref))
@@ -237,6 +242,15 @@ func tierProblems(wf workflow) []string {
 			if !guarded || cond != scopedIf {
 				problems = append(problems, fmt.Sprintf("%s is tagged scoped but its if: is %q, want %q with %s in its needs", name, cond, scopedIf, scheduleGuardJob))
 			}
+		case "code":
+			if !guarded || cond != codeIf {
+				problems = append(problems, fmt.Sprintf("%s is tagged code but its if: is %q, want %q with %s in its needs", name, cond, codeIf, scheduleGuardJob))
+			}
+			for _, need := range j.Needs {
+				if t := tiers[need]; t == "full" || t == "nightly" {
+					problems = append(problems, fmt.Sprintf("code-tier %s needs %s-tier %s", name, t, need))
+				}
+			}
 		case "pr":
 			guardedPR := guarded && (cond == verdictRun || cond == draftIf+" && "+verdictRun)
 			switch {
@@ -246,7 +260,9 @@ func tierProblems(wf workflow) []string {
 				problems = append(problems, fmt.Sprintf("%s is tagged pr but its if: is %q, want %q or none", name, cond, draftIf))
 			}
 			for _, need := range j.Needs {
-				if t := tiers[need]; t == "full" || t == "nightly" {
+				// A code job skips on a docs-only PR, and a pr job that
+				// needs it would skip with it.
+				if t := tiers[need]; t == "full" || t == "nightly" || t == "code" {
 					problems = append(problems, fmt.Sprintf("pr-tier %s needs %s-tier %s", name, t, need))
 				}
 			}
@@ -410,6 +426,8 @@ func TestCIGateTiersCatchEachMismatch(t *testing.T) {
 		{"line reads another job", `build "${{ needs.build.result }}"`, `build "${{ needs.race.result }}"`, "reads needs.race.result"},
 		{"pr job needs a full job", "needs: [lint]\n", "needs: [lint, race]\n", "pr-tier build needs full-tier race"},
 		{"pr job needs a nightly job", "needs: [lint]\n", "needs: [lint, soak]\n", "pr-tier build needs nightly-tier soak"},
+		{"code job without the docs-only skip", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}" code`, "build is tagged code but its if:"},
+		{"pr job needs a code job", `"${{ needs.lint.result }}" pr`, `"${{ needs.lint.result }}" code`, "pr-tier build needs code-tier lint"},
 		{"labeled trigger", "reopened]", "reopened, labeled]", "has labeled"},
 		{"label missing from full if", " ||\n      contains(github.event.pull_request.labels.*.name, 'ci:full'))", ")", "race is tagged full but its if:"},
 		{"full job without the draft guard", ")) && !github.event.pull_request.draft }}", ")) }}", "race is tagged full but its if:"},

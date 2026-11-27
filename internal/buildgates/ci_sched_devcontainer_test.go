@@ -16,19 +16,69 @@ import (
 // The #2240 customizations of ci.yml: scheduled and dispatched main runs
 // share the bigdisk-docker pool with main's push runs, so the preflight
 // schedule guard must count main's active push runs on every server, and
-// the Devcontainer job's coverage step must not run after a failed build.
+// coverage must not run after a failed build.
+//
+// Row #2261 (rulings 833-835): the Devcontainer `image` job, which ran
+// lint, the go-xkms checks, gosec, build and coverage in one 240-minute job,
+// is split into a hosted `lint` job, a hosted `image-build` job and a
+// `coverage` job that needs image-build. Only coverage needs the 24 GB
+// container (#2063), so only coverage takes the runner_docker routing.
 const (
-	devcontainerJob = "image"
-	preflightJob    = "preflight"
+	preflightJob = "preflight"
+	// splitLintJob, splitBuildJob and splitCoverageJob are the three jobs
+	// that replace the image job (splitRemovedJob).
+	splitRemovedJob  = "image"
+	splitLintJob     = "lint"
+	splitBuildJob    = "image-build"
+	splitCoverageJob = "coverage"
 	// devcontainerRunsOn is the v1.48 Docker-job runs-on (ruling 1024):
 	// the preflight runner_docker output on github.com, so the job is
 	// hosted unless the run overflows, and never self-hosted for a fork.
 	devcontainerRunsOn = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}`
-	buildStepID        = "build"
-	coverageAfterBuild = "steps.build.outcome != 'failure'"
+	// splitHostedRunsOn is the lint and image-build runs-on: ubuntu-latest
+	// on github.com, whatever the hosted pool's load.
+	splitHostedRunsOn = `${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || 'bigdisk' }}`
+	buildStepID       = "build"
 	// scheduleBranch opens the guard's chain of branches for a schedule run.
 	scheduleBranch = `elif [ "$EVENT" != schedule ]; then`
 )
+
+// splitJob is the part of a ci.yml job the image split tests read.
+type splitJob struct {
+	RunsOn         string      `yaml:"runs-on"`
+	Needs          needsList   `yaml:"needs"`
+	If             string      `yaml:"if"`
+	TimeoutMinutes int         `yaml:"timeout-minutes"`
+	Steps          []splitStep `yaml:"steps"`
+}
+
+type splitStep struct {
+	Name string `yaml:"name"`
+	ID   string `yaml:"id"`
+	If   string `yaml:"if"`
+	Run  string `yaml:"run"`
+}
+
+func readSplitJobs(t *testing.T) map[string]splitJob {
+	t.Helper()
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	var wf struct {
+		Jobs map[string]splitJob `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatalf("parse %s: %v", ciWorkflow, err)
+	}
+	return wf.Jobs
+}
+
+// stepRunning returns the index of the first step of j whose run contains
+// s, or -1.
+func stepRunning(j splitJob, s string) int {
+	return slices.IndexFunc(j.Steps, func(st splitStep) bool { return strings.Contains(st.Run, s) })
+}
 
 func readDigestWorkflow(t *testing.T) digestWorkflow {
 	t.Helper()
@@ -43,17 +93,39 @@ func readDigestWorkflow(t *testing.T) digestWorkflow {
 	return wf
 }
 
-func TestCIDevcontainerReadsRunnerDocker(t *testing.T) {
-	wf := readDigestWorkflow(t)
-	j, ok := wf.Jobs[devcontainerJob]
-	if !ok {
-		t.Fatalf("ci.yml has no %s job", devcontainerJob)
+func TestCIImageJobSplit(t *testing.T) {
+	jobs := readSplitJobs(t)
+	if _, ok := jobs[splitRemovedJob]; ok {
+		t.Errorf("ci.yml still has the %s job: #2261 splits it into %s, %s and %s", splitRemovedJob, splitLintJob, splitBuildJob, splitCoverageJob)
 	}
-	if j.RunsOn != devcontainerRunsOn {
-		t.Errorf("%s runs-on = %q, want %q", devcontainerJob, j.RunsOn, devcontainerRunsOn)
+	for _, name := range []string{splitLintJob, splitBuildJob, splitCoverageJob} {
+		j, ok := jobs[name]
+		if !ok {
+			t.Fatalf("ci.yml has no %s job", name)
+		}
+		for _, need := range []string{preflightJob, "ci-images"} {
+			if !slices.Contains(j.Needs, need) {
+				t.Errorf("%s does not need %s", name, need)
+			}
+		}
 	}
-	if !slices.Contains(j.Needs, preflightJob) {
-		t.Errorf("%s reads needs.preflight.outputs.runner_docker but does not need %s", devcontainerJob, preflightJob)
+}
+
+func TestCIImageSplitRouting(t *testing.T) {
+	jobs := readSplitJobs(t)
+	for _, name := range []string{splitLintJob, splitBuildJob} {
+		j := jobs[name]
+		if j.RunsOn != splitHostedRunsOn {
+			t.Errorf("%s runs-on = %q, want %q", name, j.RunsOn, splitHostedRunsOn)
+		}
+		for _, label := range []string{"self-hosted", "bigdisk-docker", "runner_docker"} {
+			if strings.Contains(j.RunsOn, label) {
+				t.Errorf("%s runs-on names %q: it stays hosted on github.com", name, label)
+			}
+		}
+	}
+	if got := jobs[splitCoverageJob].RunsOn; got != devcontainerRunsOn {
+		t.Errorf("%s runs-on = %q, want %q", splitCoverageJob, got, devcontainerRunsOn)
 	}
 }
 
@@ -78,30 +150,77 @@ func TestCIIntegrationKeepsBigdiskDocker(t *testing.T) {
 	}
 }
 
+// TestCIDevcontainerCoverageSkipsAfterFailedBuild: #2240's rule, now at job
+// level. coverage needs image-build and its if: carries no status function,
+// so a failed, cancelled or skipped image-build skips coverage.
 func TestCIDevcontainerCoverageSkipsAfterFailedBuild(t *testing.T) {
-	wf := readDigestWorkflow(t)
-	j := wf.Jobs[devcontainerJob]
-	build := -1
-	for i, s := range j.Steps {
-		if s.ID == buildStepID {
-			build = i
+	jobs := readSplitJobs(t)
+	cov := jobs[splitCoverageJob]
+	if !slices.Contains(cov.Needs, splitBuildJob) {
+		t.Errorf("%s does not need %s, so it runs after a failed build", splitCoverageJob, splitBuildJob)
+	}
+	for _, f := range []string{"always()", "!cancelled()", "failure()", "cancelled()"} {
+		if strings.Contains(cov.If, f) {
+			t.Errorf("%s if: %q contains %s, so it runs after a failed %s", splitCoverageJob, cov.If, f, splitBuildJob)
 		}
 	}
-	if build < 0 {
-		t.Fatalf("%s has no step with id: %s", devcontainerJob, buildStepID)
+	if !strings.Contains(cov.If, "needs.preflight.outputs.verdict == 'run'") {
+		t.Errorf("%s if: %q does not wait for the guard's run", splitCoverageJob, cov.If)
 	}
-	found := false
-	for _, s := range j.Steps[build+1:] {
-		if !strings.Contains(s.Run, "make coverage") {
-			continue
-		}
-		found = true
-		if !strings.Contains(s.If, coverageAfterBuild) {
-			t.Errorf("%s coverage step if: %q lacks %q", devcontainerJob, s.If, coverageAfterBuild)
+	build := jobs[splitBuildJob]
+	if i := slices.IndexFunc(build.Steps, func(s splitStep) bool { return s.ID == buildStepID }); i < 0 || !strings.Contains(build.Steps[i].Run, "make build") {
+		t.Errorf("%s has no make build step with id: %s", splitBuildJob, buildStepID)
+	}
+}
+
+func TestCIImageSplitStages(t *testing.T) {
+	jobs := readSplitJobs(t)
+	want := map[string][]string{
+		splitLintJob:     {"make lint", "make test-buildgates", "make check-public-literals", "make gosec"},
+		splitBuildJob:    {"scripts/assert-build-tags.sh", "make build"},
+		splitCoverageJob: {"make coverage"},
+	}
+	for name, stages := range want {
+		for _, s := range stages {
+			if stepRunning(jobs[name], s) < 0 {
+				t.Errorf("%s has no step running %q", name, s)
+			}
 		}
 	}
-	if !found {
-		t.Fatalf("%s has no make coverage step after step %s", devcontainerJob, buildStepID)
+	// Each stage runs once among the three: only coverage runs make
+	// coverage, only lint lints, only image-build builds.
+	for name := range want {
+		j := jobs[name]
+		for owner, stages := range want {
+			if name == owner {
+				continue
+			}
+			for _, s := range stages {
+				if stepRunning(j, s) >= 0 {
+					t.Errorf("%s runs %q, which only %s runs", name, s, owner)
+				}
+			}
+		}
+	}
+	// coverage reads no step of the job it was split from.
+	for _, s := range jobs[splitCoverageJob].Steps {
+		if strings.Contains(s.If, "steps."+buildStepID+".") {
+			t.Errorf("%s step %q if: reads steps.%s, a step of %s", splitCoverageJob, s.Name, buildStepID, splitBuildJob)
+		}
+	}
+}
+
+func TestCIImageSplitTimeouts(t *testing.T) {
+	jobs := readSplitJobs(t)
+	cov := jobs[splitCoverageJob].TimeoutMinutes
+	if cov <= 0 {
+		t.Fatalf("%s has no timeout-minutes", splitCoverageJob)
+	}
+	for _, name := range []string{splitLintJob, splitBuildJob} {
+		tm := jobs[name].TimeoutMinutes
+		if tm <= 0 || tm > 120 || tm >= cov {
+			t.Errorf("%s timeout-minutes = %d, want 1-120 and below %s's %d", name, tm, splitCoverageJob, cov)
+		}
 	}
 }
 
