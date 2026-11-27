@@ -1901,7 +1901,7 @@ jobs:
       # devcontainer-clean the devcontainer project it leaves.
       - name: Tear down the integration stacks
         if: always()
-        run: make clean-test-containers IT_PROJECT="$IT_PROJECT"
+        run: make clean-test-containers IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" CLEAN_RUN_IMAGES=1
 
       - name: Tear down the devcontainer
         if: always()
@@ -2037,7 +2037,7 @@ jobs:
           [ -s "$RUNNER_TEMP/soak-project" ] || exit 0
           last=$(cat "$RUNNER_TEMP/soak-project")
           for i in $(seq 1 "${last##*-}"); do
-            make clean-test-containers IT_PROJECT="$IT_PROJECT-$i" || true
+            make clean-test-containers IT_PROJECT="$IT_PROJECT-$i" IT_IMAGE="$IT_IMAGE" CLEAN_RUN_IMAGES=1 || true
             make devcontainer-clean IT_PROJECT="$IT_PROJECT-$i" || true
           done
       # <<< CUSTOMIZE
