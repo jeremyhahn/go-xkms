@@ -23,6 +23,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 	"time"
 
@@ -672,19 +673,18 @@ func TestMint_AccessTokenTypeHeader(t *testing.T) {
 // TestMint_ATJWTProfileClaims pins the RFC 9068 §2.2 claim set of an at+jwt
 // access token: iss, exp, aud, sub, client_id, iat and a unique jti.
 func TestMint_ATJWTProfileClaims(t *testing.T) {
+	_, configurable := reflect.TypeOf(Config{}).FieldByName("ClientID")
+	require.False(t, configurable, "client_id is the issuer, not a setting")
 	tests := []struct {
 		name         string
-		clientID     string
 		wantClientID string
 	}{
-		{"explicit client", "xkms-console", "xkms-console"},
-		{"client defaults to the issuer", "", "go-xkms"},
+		{"client is the issuer", "go-xkms"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			issuer := newTestIssuer(t, func(c *Config) {
 				c.AccessTokenType = ATJWTType
-				c.ClientID = tc.clientID
 			})
 			ctx := context.Background()
 			first, err := issuer.Mint(ctx, testIdentity())
