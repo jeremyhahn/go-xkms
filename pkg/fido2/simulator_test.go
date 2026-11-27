@@ -121,6 +121,14 @@ type authenticatorSim struct {
 	// last MakeCredential request, so a test can see what the platform
 	// asked the authenticator for, such as "rk".
 	makeCredentialOptions map[interface{}]interface{}
+
+	// noResidentKeys models an authenticator without discoverable-credential
+	// support: getInfo reports rk false and an rk request is refused.
+	noResidentKeys bool
+
+	// residentStoreFull models exhausted discoverable-credential storage:
+	// an rk request fails with CTAP2_ERR_KEY_STORE_FULL.
+	residentStoreFull bool
 }
 
 // defaultSimPINRetries is the CTAP 2.1 initial PIN retry budget.
@@ -299,9 +307,18 @@ func (s *authenticatorSim) getPINToken(req map[int]interface{}) ([]byte, error) 
 // A simulator with no PIN set authorizes everything, which is what every
 // test that predates PIN support relies on.
 func (s *authenticatorSim) authorizeMakeCredential(request []byte) byte {
+	s.makeCredentialOptions = nil
 	if req, err := simDecodeRequest(request); err == nil {
 		if options, ok := req[0x07].(map[interface{}]interface{}); ok {
 			s.makeCredentialOptions = options
+		}
+	}
+	if rk, _ := s.makeCredentialOptions["rk"].(bool); rk {
+		if s.noResidentKeys {
+			return StatusUnsupportedOption
+		}
+		if s.residentStoreFull {
+			return StatusKeyStoreFull
 		}
 	}
 

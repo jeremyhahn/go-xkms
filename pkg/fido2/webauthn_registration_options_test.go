@@ -224,12 +224,13 @@ func buildSelectionOptionsJSON(selection string) []byte {
 // RequireResidentKey.
 func TestParseWebAuthnRegistrationOptions_ResidentKey(t *testing.T) {
 	tests := []struct {
-		name      string
-		selection string
-		want      bool
+		name       string
+		selection  string
+		want       bool
+		wantPrefer bool
 	}{
 		{name: "required", selection: `{"residentKey":"required"}`, want: true},
-		{name: "preferred", selection: `{"residentKey":"preferred"}`, want: true},
+		{name: "preferred", selection: `{"residentKey":"preferred"}`, want: false, wantPrefer: true},
 		{name: "discouraged", selection: `{"residentKey":"discouraged"}`, want: false},
 		{name: "absent", selection: `{}`, want: false},
 		{name: "legacy requireResidentKey true", selection: `{"requireResidentKey":true}`, want: true},
@@ -245,6 +246,9 @@ func TestParseWebAuthnRegistrationOptions_ResidentKey(t *testing.T) {
 			if opts.RequireResidentKey != tt.want {
 				t.Errorf("RequireResidentKey: got %v want %v", opts.RequireResidentKey, tt.want)
 			}
+			if opts.PreferResidentKey != tt.wantPrefer {
+				t.Errorf("PreferResidentKey: got %v want %v", opts.PreferResidentKey, tt.wantPrefer)
+			}
 		})
 	}
 }
@@ -257,16 +261,26 @@ func TestRegisterWebAuthn_ResidentKeyReachesAuthenticator(t *testing.T) {
 	tests := []struct {
 		name      string
 		selection string
+		noRK      bool
+		storeFull bool
 		wantRK    bool
+		wantErr   bool
 	}{
 		{name: "required", selection: `{"residentKey":"required","userVerification":"discouraged"}`, wantRK: true},
 		{name: "discouraged", selection: `{"residentKey":"discouraged","userVerification":"discouraged"}`, wantRK: false},
+		{name: "preferred", selection: `{"residentKey":"preferred","userVerification":"discouraged"}`, wantRK: true},
+		{name: "preferred without rk support", selection: `{"residentKey":"preferred","userVerification":"discouraged"}`, noRK: true, wantRK: false},
+		{name: "preferred with full resident storage", selection: `{"residentKey":"preferred","userVerification":"discouraged"}`, storeFull: true, wantRK: false},
+		{name: "required without rk support", selection: `{"residentKey":"required","userVerification":"discouraged"}`, noRK: true, wantErr: true},
+		{name: "required with full resident storage", selection: `{"residentKey":"required","userVerification":"discouraged"}`, storeFull: true, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockDev := NewMockHIDDevice("/dev/hidraw0")
 			enum := NewMockHIDDeviceEnumerator()
 			enum.AddDevice(mockDev)
+			mockDev.sim.noResidentKeys = tt.noRK
+			mockDev.sim.residentStoreFull = tt.storeFull
 
 			config := DefaultConfig
 			handler, err := NewHandler(&config, enum)
@@ -278,7 +292,14 @@ func TestRegisterWebAuthn_ResidentKeyReachesAuthenticator(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParseWebAuthnRegistrationOptions: %v", err)
 			}
-			if _, err := handler.RegisterWebAuthn(opts); err != nil {
+			_, err = handler.RegisterWebAuthn(opts)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("RegisterWebAuthn succeeded, want a resident-key failure")
+				}
+				return
+			}
+			if err != nil {
 				t.Fatalf("RegisterWebAuthn: %v", err)
 			}
 

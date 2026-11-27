@@ -280,7 +280,7 @@ func (m *MockHIDDevice) generateGetInfoResponse(cid uint32) {
 		0x02: []string{"hmac-secret"},        // extensions
 		0x03: make([]byte, 16),               // aaguid
 		0x04: map[string]bool{ // options
-			"rk":   true,
+			"rk":   m.sim == nil || !m.sim.noResidentKeys,
 			"up":   true,
 			"plat": false,
 		},
