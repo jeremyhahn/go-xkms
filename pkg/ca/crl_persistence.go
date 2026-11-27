@@ -157,6 +157,9 @@ func (ca *CA) nextCRLNumber(ctx context.Context, ski []byte) (*big.Int, error) {
 // Callers are responsible for the ErrNotInitialized guard; this method
 // assumes the CA is initialized and an issuing certificate is available.
 func (ca *CA) generateAndPersistCRL(ctx context.Context) ([]byte, error) {
+	ca.crlMu.Lock()
+	defer ca.crlMu.Unlock()
+
 	ca.mu.RLock()
 	issuingCert := ca.getIssuingCertificate()
 	ca.mu.RUnlock()
