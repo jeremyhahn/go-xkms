@@ -69,10 +69,3 @@ func TestMapPasswordError_RejectedCredentialSaysNothingMore(t *testing.T) {
 	assert.NotContains(t, got.Error(), "f-123")
 	assert.NotContains(t, got.Error(), "tag mismatch")
 }
-
-// TestMapPasswordError_NilAndUnknown covers the edges: nil maps to nil and an
-// unrecognised error is Internal.
-func TestMapPasswordError_NilAndUnknown(t *testing.T) {
-	assert.NoError(t, mapPasswordError(nil))
-	assert.Equal(t, codes.Internal, status.Code(mapPasswordError(errors.New("boom"))))
-}

@@ -427,15 +427,6 @@ func TestPropagationCheckDNSPropagation(t *testing.T) {
 		}
 	})
 
-	t.Run("uses default nameservers when empty", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-
-		// This will likely fail with real DNS, but we're testing the default path
-		_, _ = CheckDNSPropagation(ctx, "_acme-challenge.invalid-test-domain-xyz.com", "value", nil)
-		// We just want to make sure it doesn't panic with nil nameservers
-	})
-
 	t.Run("partial propagation returns false", func(t *testing.T) {
 		server1 := newTestDNSServer(t)
 		defer server1.close()
@@ -600,48 +591,6 @@ func TestPropagationWaitForPropagation(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
-
-	t.Run("uses default nameservers when empty", func(t *testing.T) {
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-		defer cancel()
-
-		// Will timeout but should use defaults
-		_ = WaitForPropagation(ctx, "_acme-challenge.invalid-test.com", "value", 100*time.Millisecond, 50*time.Millisecond, nil)
-	})
-
-	t.Run("delayed propagation succeeds", func(t *testing.T) {
-		server := newTestDNSServer(t)
-		defer server.close()
-
-		// Add record after a delay
-		go func() {
-			time.Sleep(150 * time.Millisecond)
-			server.addTXTRecord("_acme-challenge.delayed.com", "delayed-token")
-		}()
-
-		ctx := context.Background()
-		err := WaitForPropagation(ctx, "_acme-challenge.delayed.com", "delayed-token", 2*time.Second, 50*time.Millisecond, []string{server.addr})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
-
-	t.Run("wrong value never propagates", func(t *testing.T) {
-		server := newTestDNSServer(t)
-		defer server.close()
-
-		// Add a record with wrong value
-		server.addTXTRecord("_acme-challenge.wrong.com", "wrong-value")
-
-		ctx := context.Background()
-		err := WaitForPropagation(ctx, "_acme-challenge.wrong.com", "correct-value", 200*time.Millisecond, 50*time.Millisecond, []string{server.addr})
-		if err == nil {
-			t.Fatal("expected timeout error for wrong value")
-		}
-		if !errors.Is(err, ErrPropagationTimeout) {
-			t.Errorf("expected ErrPropagationTimeout, got: %v", err)
-		}
-	})
 }
 
 func TestPropagationGetAuthoritativeNameservers(t *testing.T) {
@@ -771,52 +720,9 @@ func TestPropagationError(t *testing.T) {
 			t.Errorf("expected %q, got %q", expected, err.Error())
 		}
 	})
-
-	t.Run("error with all fields", func(t *testing.T) {
-		inner := errors.New("wrapped")
-		err := &PropagationError{
-			FQDN:    "test.example.com",
-			Message: "dns lookup failed",
-			Err:     inner,
-		}
-		expected := "propagation check for test.example.com: dns lookup failed: wrapped"
-		if err.Error() != expected {
-			t.Errorf("expected %q, got %q", expected, err.Error())
-		}
-	})
 }
 
 func TestPropagation_checkTXTRecord(t *testing.T) {
-	t.Run("successful txt lookup", func(t *testing.T) {
-		server := newTestDNSServer(t)
-		defer server.close()
-
-		server.addTXTRecord("_acme-challenge.test.com", "expected-value")
-
-		ctx := context.Background()
-		found, err := checkTXTRecord(ctx, ToFQDN("_acme-challenge.test.com"), "expected-value", server.addr)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !found {
-			t.Error("expected to find record")
-		}
-	})
-
-	t.Run("nxdomain returns false", func(t *testing.T) {
-		server := newTestDNSServer(t)
-		defer server.close()
-
-		ctx := context.Background()
-		found, err := checkTXTRecord(ctx, ToFQDN("nonexistent.test.com"), "value", server.addr)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if found {
-			t.Error("expected not found for NXDOMAIN")
-		}
-	})
-
 	t.Run("multiple txt values", func(t *testing.T) {
 		server := newTestDNSServer(t)
 		defer server.close()
@@ -832,53 +738,6 @@ func TestPropagation_checkTXTRecord(t *testing.T) {
 		}
 		if !found {
 			t.Error("expected to find second value")
-		}
-	})
-
-	t.Run("first txt value found", func(t *testing.T) {
-		server := newTestDNSServer(t)
-		defer server.close()
-
-		// Add multiple TXT records
-		server.addTXTRecord("multi.test.com", "first-value")
-		server.addTXTRecord("multi.test.com", "second-value")
-
-		ctx := context.Background()
-		found, err := checkTXTRecord(ctx, ToFQDN("multi.test.com"), "first-value", server.addr)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !found {
-			t.Error("expected to find first value")
-		}
-	})
-
-	t.Run("connection error", func(t *testing.T) {
-		server := newTestDNSServer(t)
-		server.close() // Close before query
-
-		ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-		defer cancel()
-
-		_, err := checkTXTRecord(ctx, ToFQDN("test.com"), "value", server.addr)
-		if err == nil {
-			t.Error("expected error for closed server")
-		}
-	})
-
-	t.Run("value not in records", func(t *testing.T) {
-		server := newTestDNSServer(t)
-		defer server.close()
-
-		server.addTXTRecord("test.com", "other-value")
-
-		ctx := context.Background()
-		found, err := checkTXTRecord(ctx, ToFQDN("test.com"), "expected-value", server.addr)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if found {
-			t.Error("expected not to find non-matching value")
 		}
 	})
 

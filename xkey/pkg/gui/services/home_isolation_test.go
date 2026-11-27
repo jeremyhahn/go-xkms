@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
@@ -90,7 +91,16 @@ var processConfigDir string
 //
 // A test that legitimately needs to write home-derived state calls isolateHome
 // and gets its own writable tree.
+//
+// It also opts the suite out of the mandatory-TLS guard: the connection tests
+// dial httptest servers on loopback over plain HTTP, the one use the opt-out
+// exists for (ruling 152). TestConnectionServiceConnect_RefusesPlaintext turns
+// the guard back on by clearing the variable.
 func TestMain(m *testing.M) {
+	if err := os.Setenv(transport.EnvAllowInsecureTransport, "true"); err != nil {
+		fmt.Fprintf(os.Stderr, "gui/services: cannot set %s: %v\n", transport.EnvAllowInsecureTransport, err)
+		os.Exit(1)
+	}
 	os.Exit(runServicesSuite(m))
 }
 

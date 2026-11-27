@@ -1,6 +1,6 @@
 # Image Signing — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `image-signing` · Repo: `go-xkms` · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Feature: `image-signing` · Repo: `go-xkms` · Last verified: 2026-10-25
 
 ## Exported surface
 
@@ -41,11 +41,52 @@ func RequestCodeSigningCertificate(ctx context.Context, issuer CertificateIssuer
 	signer crypto.Signer, tenantID, commonName string) (*x509.Certificate, error)
 ```
 
-`SignerConfig` is at `:34`, `NewSigner` at `:102`, `SignImage` at `:141`,
-`CertificateIssuer` at `:96` and `RequestCodeSigningCertificate` at `:221`.
+`SignerConfig` is at `:33`, `NewSigner` at `:109`, `SignImage` at `:148`,
+`CertificateIssuer` at `:103` and `RequestCodeSigningCertificate` at `:229`.
 `*ca.CA` (`TrustedCA`) satisfies `CertificateIssuer`; `sdk/go/image_test.go`
-proves it at compile time. `SignResult` (`:79`) carries the image digest, the
+proves it at compile time. `SignResult` (`:78`) carries the image digest, the
 envelope, the timestamp and the `PushResult`.
+
+### Signing service — `pkg/xkms/servicer_signing_keys.go`
+
+```go
+func (s *XKMSService) SignImage(ctx context.Context, req *transport.SignImageRequest) (*transport.SignedImage, error)
+
+type SignImageRequest struct {
+	Reference     string                    // registry/repository[:tag][@digest]
+	PredicateType string                    // PredicateTypeCosign when empty
+	Predicate     json.RawMessage           // may be empty only for PredicateTypeCosign
+	Registry      *ImageRegistryCredentials // nil sends no credentials
+}
+
+type ImageRegistryCredentials struct {
+	Username string
+	Password types.SecretBytes
+}
+```
+
+`XKMSService.SignImage` is at `:368`. It signs with the key the reference's
+repository resolves to in the caller's tenant (owner ruling 134), opened
+through the tenant-scoped backend (the tenant's release key is generated
+there on its first use, `releaseKeySigner`, `:267`), and certified per call by the service CA
+in that tenant. The request, `ImageRegistryCredentials` and `SignedImage` are
+at `pkg/api/transport/types_signing_key.go:61`, `:81` and `:87`;
+`SignedImage` carries the resolved key, the digest, the envelope, the PEM
+certificate, the referrer digest, `ReferrerIndexed` and the `.att` tag.
+
+| Surface | Where |
+|---|---|
+| Transport interface | `transport.SigningKeyService.SignImage` (`pkg/api/transport/types_signing_key.go:56`) |
+| gRPC | `KeystoreService.SignImage` (`pkg/api/grpc/proto/xkmsv1/xkms.proto:1036`), served at `pkg/api/grpc/service_signing_key.go:147` |
+| REST | `POST /api/v1/attestation/signing-keys/sign-image` (`pkg/api/rest/routes.go:482`, `pkg/api/rest/handlers_signing_key.go:107`) |
+| MCP | `attestation.signing_key.sign_image` (`pkg/api/mcp/server.go:542`, `pkg/api/mcp/handlers_signing_key.go:87`) |
+| Client transports | embedded `:75`, gRPC `:92`, MCP `:95`, QUIC `:88`, REST `:88` and unix `:92`, each in its `pkg/api/transport/<name>/transport_signing_key.go`; USB refuses (`pkg/api/transport/usb/transport_signing_key.go:57`) |
+| `sdk/go` | `transport.SigningKeyService` (`sdk/go/transport/client.go:39`), `SignImageRequest` and `SignedImage` (`sdk/go/transport/types.go:372`, `:374`), `SignAttestationImageRequest` and `SignedAttestationImage` (`sdk/go/attestation_appraisal.go:129`, `:135`) |
+| `sdk/ts` | `signingKeys.signImage` (`sdk/ts/src/clients/signingKey.ts:74`), `SignImageRequest` (`sdk/ts/src/types/signingKey.ts:81`) |
+
+Every transport needs the `attestation_signing_keys` resource's `sign`
+action. How each one protects the registry credentials in transit is in
+[architecture.md](architecture.md#registry-credentials-on-each-transport).
 
 ### Verification — `pkg/image/verifier.go`
 
@@ -224,7 +265,22 @@ prefix.
 | `signing.ErrSignatureRequired` (`:38`) | The signature is empty |
 | `signing.ErrVerificationFailed` (`:44`) | The signature does not verify; the cause is the `SimpleVerifier` error |
 
-There is no transport mapping; the feature has no route.
+`XKMSService.SignImage` returns the image errors above wrapped in
+`ImageSignError` (`pkg/xkms/servicer_signing_keys.go:101`), which names the
+reference and the key and unwraps to the cause. A release key that cannot be
+generated on its first use is `ReleaseKeyProvisionError` (`:122`), which names
+the tenant and unwraps to the backend's error, so it takes that error's class. The gRPC, REST and MCP
+servers map its errors through `SigningKeySentinelClasses` (`pkg/api/apierrors/tables.go:334`):
+
+| Error | Class |
+|---|---|
+| `ErrSystemTenantImageSigning` (`pkg/xkms/servicer_signing_keys.go:96`): the caller is the system tenant, which never signs images; a deployment creates a data tenant to sign (owner ruling 165) | FailedPrecondition |
+| `ErrSigningKeyForbidden` | PermissionDenied |
+| `ErrNotConfigured`: the service has no CA | Unavailable |
+| `ErrInvalidReference`, `ErrInvalidDigest`, `ErrInvalidStatement`, `ErrRegistryCredentials` (also a password without a username) | InvalidArgument |
+| `ErrManifestNotFound` | NotFound |
+| `ErrRegistryUnavailable` | Unavailable |
+| `ErrRegistryRequest`, `ErrRegistryAuth`, `ErrUnsupportedKey`, `ErrKeyNotFound` (the resolved key is absent) | FailedPrecondition |
 
 ## Configuration
 
@@ -271,6 +327,13 @@ Unit tests run with `make test-image`, against `httptest` servers only:
   valid attestation found among invalid ones.
 - **SDK.** `sdk/go/image_test.go` proves the aliases are the package types,
   pins every sentinel by identity, and runs `VerifySignature` both ways.
+- **Signing service.** `pkg/xkms/servicer_signing_keys_image_test.go` signs
+  against the registry fake with the release key by default and with a bound
+  key, checks the credentials reach the registry and are wiped, and covers
+  another tenant's key, the system tenant, a missing `sign` permission and an
+  unconfigured CA. `pkg/api/{grpc,rest,mcp}/*signing_key_image_test.go` pin
+  each server's error classes, and `sdk/ts/src/signingKey.test.ts` the
+  TypeScript client.
 
 There is no integration suite against a real registry or TSA; the fakes
 above speak the OCI distribution and RFC 3161 wire protocols.

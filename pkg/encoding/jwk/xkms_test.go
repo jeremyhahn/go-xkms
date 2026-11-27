@@ -30,26 +30,6 @@ var (
 	testECKey, _  = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 )
 
-// TestXKMSGetterTypes verifies the getter function types are satisfiable by
-// ordinary closures, matching the dependency-injection pattern consumers
-// (e.g. the jwt package) rely on.
-func TestXKMSGetterTypes(t *testing.T) {
-	var getKey XKMSKeyGetter = func(keyID string) (crypto.PrivateKey, error) {
-		return testRSAKey, nil
-	}
-	var getSigner XKMSSignerGetter = func(keyID string) (crypto.Signer, error) {
-		return testRSAKey, nil
-	}
-
-	key, err := getKey("software:signing:rsa:test-key")
-	require.NoError(t, err)
-	assert.Equal(t, testRSAKey, key)
-
-	signer, err := getSigner("software:signing:rsa:test-key")
-	require.NoError(t, err)
-	assert.Equal(t, testRSAKey.Public(), signer.Public())
-}
-
 // TestJWK_NoPrivateKeyMaterial verifies that JWKs derived from key material
 // never contain private key components.
 func TestJWK_NoPrivateKeyMaterial(t *testing.T) {

@@ -1,0 +1,1 @@
+Tests: `pkg/compose` asserts each behaviour on one path (#1794): the invite store's open failure and the platform store's storage failure are asserted through `Build`, and the key-version, key-policy and trust-root builders' success paths through the full composition.

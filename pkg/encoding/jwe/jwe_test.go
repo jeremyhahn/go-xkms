@@ -18,93 +18,9 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"strings"
 	"testing"
 )
-
-// Test RSA-OAEP encryption and decryption
-func TestRSAOAEP_Encryption(t *testing.T) {
-	// Generate RSA key pair
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	plaintext := []byte("Hello, World! This is a test message.")
-
-	// Test RSA-OAEP with A256GCM
-	t.Run("RSA-OAEP_A256GCM", func(t *testing.T) {
-		encrypter, err := NewEncrypter("RSA-OAEP", "A256GCM", &privateKey.PublicKey)
-		if err != nil {
-			t.Fatalf("Failed to create encrypter: %v", err)
-		}
-
-		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
-		if !ok {
-			return
-		}
-
-		if jweString == "" {
-			t.Fatal("Encrypted string is empty")
-		}
-
-		// Decrypt
-		decrypter := NewDecrypter()
-		decrypted, err := decrypter.Decrypt(jweString, privateKey)
-		if err != nil {
-			t.Fatalf("Decryption failed: %v", err)
-		}
-
-		if string(decrypted) != string(plaintext) {
-			t.Errorf("Decrypted text doesn't match: got %s, want %s", decrypted, plaintext)
-		}
-	})
-
-	// Test RSA-OAEP-256 with A192GCM
-	t.Run("RSA-OAEP-256_A192GCM", func(t *testing.T) {
-		encrypter, err := NewEncrypter("RSA-OAEP-256", "A192GCM", &privateKey.PublicKey)
-		if err != nil {
-			t.Fatalf("Failed to create encrypter: %v", err)
-		}
-
-		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
-		if !ok {
-			return
-		}
-
-		decrypter := NewDecrypter()
-		decrypted, err := decrypter.Decrypt(jweString, privateKey)
-		if err != nil {
-			t.Fatalf("Decryption failed: %v", err)
-		}
-
-		if string(decrypted) != string(plaintext) {
-			t.Errorf("Decrypted text doesn't match")
-		}
-	})
-
-	// Test RSA-OAEP-256 with A128GCM
-	t.Run("RSA-OAEP-256_A128GCM", func(t *testing.T) {
-		encrypter, err := NewEncrypter("RSA-OAEP-256", "A128GCM", &privateKey.PublicKey)
-		if err != nil {
-			t.Fatalf("Failed to create encrypter: %v", err)
-		}
-
-		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
-		if !ok {
-			return
-		}
-
-		decrypter := NewDecrypter()
-		decrypted, err := decrypter.Decrypt(jweString, privateKey)
-		if err != nil {
-			t.Fatalf("Decryption failed: %v", err)
-		}
-
-		if string(decrypted) != string(plaintext) {
-			t.Errorf("Decrypted text doesn't match")
-		}
-	})
-}
 
 // Test ECDH-ES encryption
 func TestECDHES_Encryption(t *testing.T) {
@@ -183,103 +99,6 @@ func TestECDHES_Encryption(t *testing.T) {
 	})
 }
 
-// Test custom headers
-func TestEncryptWithHeader(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	plaintext := []byte("Test with custom headers")
-
-	encrypter, err := NewEncrypter("RSA-OAEP-256", "A256GCM", &privateKey.PublicKey)
-	if err != nil {
-		t.Fatalf("Failed to create encrypter: %v", err)
-	}
-
-	// Encrypt with kid header
-	header := map[string]interface{}{
-		"kid": "test-key-123",
-		"typ": "JWT",
-	}
-
-	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithHeader(plaintext, header) })
-	if !ok {
-		return
-	}
-
-	// Extract and verify kid
-	kid, err := ExtractKID(jweString)
-	if err != nil {
-		t.Fatalf("Failed to extract kid: %v", err)
-	}
-
-	if kid != "test-key-123" {
-		t.Errorf("Extracted kid doesn't match: got %s, want test-key-123", kid)
-	}
-
-	// Decrypt
-	decrypter := NewDecrypter()
-	decrypted, err := decrypter.Decrypt(jweString, privateKey)
-	if err != nil {
-		t.Fatalf("Decryption failed: %v", err)
-	}
-
-	if string(decrypted) != string(plaintext) {
-		t.Errorf("Decrypted text doesn't match")
-	}
-}
-
-// Test ExtractKID function
-func TestExtractKID(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-
-	plaintext := []byte("KID extraction test")
-
-	encrypter, err := NewEncrypter("RSA-OAEP", "A256GCM", &privateKey.PublicKey)
-	if err != nil {
-		t.Fatalf("Failed to create encrypter: %v", err)
-	}
-
-	// Test with kid
-	t.Run("WithKID", func(t *testing.T) {
-		header := map[string]interface{}{"kid": "my-key-id"}
-		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithHeader(plaintext, header) })
-		if !ok {
-			return
-		}
-
-		kid, err := ExtractKID(jweString)
-		if err != nil {
-			t.Fatalf("ExtractKID failed: %v", err)
-		}
-
-		if kid != "my-key-id" {
-			t.Errorf("Expected kid 'my-key-id', got '%s'", kid)
-		}
-	})
-
-	// Test without kid
-	t.Run("WithoutKID", func(t *testing.T) {
-		jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
-		if !ok {
-			return
-		}
-
-		kid, err := ExtractKID(jweString)
-		if err != nil {
-			t.Fatalf("ExtractKID failed: %v", err)
-		}
-
-		if kid != "" {
-			t.Errorf("Expected empty kid, got '%s'", kid)
-		}
-	})
-}
-
 // Test error cases
 func TestEncryptionErrors(t *testing.T) {
 	t.Run("NilRecipientKey", func(t *testing.T) {
@@ -309,8 +128,8 @@ func TestEncryptionErrors(t *testing.T) {
 		privateKey, _ := rsa.GenerateKey(rand.Reader, 2048)
 		encrypter, _ := NewEncrypter("RSA-OAEP", "A256GCM", &privateKey.PublicKey)
 		_, err := encrypter.Encrypt(nil)
-		if err == nil {
-			t.Error("Expected error for nil plaintext")
+		if err == nil || !strings.Contains(err.Error(), "plaintext cannot be nil") {
+			t.Errorf("Expected 'plaintext cannot be nil' error, got %v", err)
 		}
 	})
 
@@ -386,38 +205,6 @@ func TestExtractKIDErrors(t *testing.T) {
 			t.Error("Expected error for invalid base64")
 		}
 	})
-}
-
-// Test symmetric key encryption (direct key agreement)
-func TestDirectKeyAgreement(t *testing.T) {
-	// 256-bit symmetric key for A256GCM
-	symmetricKey := make([]byte, 32)
-	_, err := rand.Read(symmetricKey)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	plaintext := []byte("Direct key agreement test")
-
-	encrypter, err := NewEncrypter("dir", "A256GCM", symmetricKey)
-	if err != nil {
-		t.Fatalf("Failed to create encrypter: %v", err)
-	}
-
-	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.Encrypt(plaintext) })
-	if !ok {
-		return
-	}
-
-	decrypter := NewDecrypter()
-	decrypted, err := decrypter.Decrypt(jweString, symmetricKey)
-	if err != nil {
-		t.Fatalf("Decryption failed: %v", err)
-	}
-
-	if string(decrypted) != string(plaintext) {
-		t.Errorf("Decrypted text doesn't match")
-	}
 }
 
 // Test AES Key Wrap

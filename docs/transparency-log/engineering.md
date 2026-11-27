@@ -1,17 +1,304 @@
 # Transparency Log — Engineering Contract
 
-> **Status: NORMATIVE** · Feature: `transparency-log` · Repo: `go-xkms` · Last verified: 2026-10-24
+> **Status: NORMATIVE** · Feature: `transparency-log` · Repo: `go-xkms` · Last verified: 2026-10-30
 
-This page covers the checkpoint format of the `transparency-log` SPEC row
-(owner ruling 122): `pkg/ca/checkpoint`. The log itself, the append verbs and
-the `HeadSignerProvider` wait on go-qrdb's verifiable-log type (go-qrdb #722,
-#912) and are not on main.
+This page covers the `transparency-log` SPEC row in two packages:
+
+- `pkg/ca/tlog`, the CA's transparency log. It runs over go-qrdb's
+  verifiable log (vlog), and the CA key signs its heads.
+- `pkg/ca/checkpoint`, the checkpoint and signed-note format that the log's
+  heads use.
+
+## Log service (`pkg/ca/tlog`)
+
+```go
+type Config struct {
+	Name              string // the log's name in its database
+	Origin            string // first line of every checkpoint
+	AllowExpireBodies bool   // fixed when the log is created
+}
+
+func Create(ctx context.Context, client transport.VlogClient, cfg Config, signers *HeadSignerProvider) (*Log, error)
+func Open(client transport.VlogClient, cfg Config, verifier *checkpoint.Verifier) (*Log, error)
+
+func (l *Log) AppendCertIssued(ctx context.Context, e CertIssued) (uint64, error)
+func (l *Log) AppendImageSigned(ctx context.Context, e ImageSigned) (uint64, error)
+func (l *Log) AppendRevoked(ctx context.Context, e Revoked) (uint64, error)
+func (l *Log) Entry(ctx context.Context, index uint64) (Entry, []byte, error)
+func (l *Log) SignedTreeHead(ctx context.Context) (*TreeHead, error)
+func (l *Log) VerifyCheckpoint(note []byte) (*checkpoint.Checkpoint, error)
+func (l *Log) InclusionProof(ctx context.Context, index, size uint64) ([][]byte, error)
+func (l *Log) ConsistencyProof(ctx context.Context, size1, size2 uint64) ([][]byte, error)
+```
+
+All of these are in `pkg/ca/tlog/log.go`: `Config` at `:40`, `TreeHead` at
+`:57`, `Create` at `:68`, `Open` at `:93`, `AppendCertIssued` at `:107`,
+`Entry` at `:135`, `SignedTreeHead` at `:158`, `VerifyCheckpoint` at `:205`,
+`InclusionProof` at `:218` and `ConsistencyProof` at `:228`.
+
+The log, its Merkle tree and its proofs belong to go-qrdb. `Log` encodes the
+entries and checks every tree head under the CA key before it answers.
+
+- `Create` checks the CA key first, then creates the go-qrdb log with the
+  signing-key type of the CA key. `Open` binds an existing log to a verifier
+  from `HeadSignerProvider.Verifier`, and makes no request.
+- An append returns the entry's leaf index. The leaf is the entry's
+  encoding, hashed as RFC 6962 §2.1 describes, so `InclusionProof` and
+  `ConsistencyProof` verify against a checkpoint root with any RFC 6962
+  verifier.
+- `Entry` returns the decoded entry and its encoded bytes.
+- `SignedTreeHead` is idempotent. go-qrdb keeps one checkpoint per tree
+  size, so the method returns the latest checkpoint when it covers the
+  current head. Otherwise it asks go-qrdb to sign the head. If that fails
+  because a concurrent caller signed the same size first, it returns that
+  caller's checkpoint.
+- Every head is opened under the CA key, and its origin, size and root must
+  match the head go-qrdb reported (`treeHead`, `log.go:192`).
+- `VerifyCheckpoint` opens a note under the CA key and checks its origin.
+- `OpenOrCreate` (`log.go:111`) opens the log if it exists and creates it
+  otherwise. A reopened log is checked at startup (`checkExisting`,
+  `log.go:140`): its latest checkpoint must verify under the configured
+  origin and CA key, or, when it has none, a newly signed head must. If
+  either fails, startup fails with `ErrExistingLogMismatch`.
+
+### Errors
+
+Every refusal is typed, in `pkg/ca/tlog/errors.go`:
+
+| Error | Meaning |
+|-------|---------|
+| `ErrNoClient`, `ErrNoVerifier`, `ErrInvalidConfig` | `Open` or `Create` lacks a client, a verifier, a name or an origin |
+| `ErrLogRequest` | a go-qrdb request failed; the cause is joined |
+| `ErrEntryExpired` | the entry's body was expired; its leaf hash and proofs remain |
+| `ErrCheckpointMismatch` | a note fails under the CA key, or names another origin or tree |
+| `ErrInvalidEntry` | `Marshal` refused an entry |
+| `ErrMalformedEntry`, `ErrUnsupportedVersion`, `ErrUnknownKind` | `Unmarshal` refused bytes |
+| `ErrNoKeyProvider`, `ErrCAKeyUnavailable`, `ErrUnsupportedCAKey` | the CA key is missing, not initialized, or neither Ed25519 nor P-256 |
+| `ErrKeyTypeMismatch`, `ErrKeyRefMismatch` | go-qrdb asked for another key type or key ref |
+| `ErrLogOutOfScope` | go-qrdb asked the head signer for a log other than the CA log |
+| `ErrExistingLogMismatch` | a reopened log does not verify under the configured origin and CA key |
+
+### Expiring bodies
+
+When `AllowExpireBodies` is set at creation, an operator who holds go-qrdb's
+`vlog:expire` can expire the bodies of old entries. The leaf hashes stay, so
+every head and proof still verifies. The service principal does not hold
+`vlog:expire`.
+
+## Entry encoding, version 1
+
+`Marshal` (`entry.go:201`) and `Unmarshal` (`entry.go:236`) use one
+canonical encoding:
+
+    version (1 byte, = 1) || kind (1 byte) || field...
+    field = uint16 big-endian length || bytes
+
+| Kind | Value | Fields, in order |
+|------|-------|------------------|
+| `KindCertIssued` | 1 | SHA-256 of the certificate DER (32 bytes), serial, profile, tenant |
+| `KindImageSigned` | 2 | image digest, envelope digest, signer |
+| `KindRevoked` | 3 | serial, reason (1 byte) |
+| `KindExternal` | 4 | the appending caller's SPIFFE ID, payload (1 to 65535 bytes) |
+
+The rules:
+
+- A serial is its minimal big-endian magnitude, and it must be positive.
+- Strings must be non-empty UTF-8.
+- A reason is an RFC 5280 §5.3.1 CRLReason: at most 10, and never 7.
+- A field holds at most 65535 bytes.
+
+`Unmarshal` refuses trailing bytes, a missing field, a serial with a leading
+zero, and any other non-canonical form, so each entry has exactly one
+encoding.
+
+## Head signer
+
+`HeadSignerProvider` (`headsigner.go:47`) is go-qrdb's head-signer seam over
+the CA key, installed with `WithHeadSignerProvider`. It is built with
+`NewHeadSignerProvider(keys, keyName, scope)` (`:78`).
+
+- The provider serves only the CA log. `scope` is its tenant, database and
+  log name (`LogScope`, `:57`); `ServiceLogScope` (`:66`) gives the service
+  principal's `system` tenant and database. `CreateKey` and `HeadSigner`
+  check the request's scope first (`checkScope`, `:92`) and refuse any other
+  log with `ErrLogOutOfScope`, so no other log on the node can have its
+  heads signed by the CA key.
+
+- `CreateKey` (`:118`) returns the CA key as the log's key. Its ref is the
+  hex SHA-256 of the key's DER SPKI. A request for another signature type
+  fails with `ErrKeyTypeMismatch`.
+- `HeadSigner` (`:138`) refuses any other ref with `ErrKeyRefMismatch`. The
+  signer's key hash is go-qrdb's `HeadKeyHash`, which is the signed-note key
+  ID. `Sign` (`:213`) signs the checkpoint body through `checkpoint.Sign`,
+  verifies the result, and returns the signature without its 4-byte key ID,
+  because go-qrdb writes that ID into the signature line itself.
+- `Verifier` (`:106`) returns the CA key's checkpoint verifier.
+- Only Ed25519 (signed-note type `0x01`) and ECDSA P-256 (type `0x02`) CA
+  keys are supported. Any other key fails with `ErrUnsupportedCAKey`.
+
+## CA wiring
+
+The CA appends to the log through `ca.TransparencyLog`
+(`pkg/ca/transparency_log.go`), an interface holding `AppendCertIssued`
+and `AppendRevoked`. `*tlog.Log` satisfies it. `pkg/ca/tlog` does not import
+`pkg/ca`, so the interface names tlog's entry types and no cycle forms.
+
+- `(*CA).SetTransparencyLog` sets the log; `nil` removes it. It is a setter,
+  not a `Params` field, because the log's heads are signed with the CA's own
+  key, so the CA exists before the log can be opened. The CA holds the log in
+  an `atomic.Pointer`, never a global.
+- With no log set, issuance and revocation behave exactly as before.
+- The context the CA is called with is the context of the append, so it
+  must carry a principal holding `vlog:append`.
+
+### cert-issued: fail closed
+
+Every issued certificate is appended once, after signing and before it is
+stored or returned. There are three issuance funnels, and each appends:
+
+| Funnel | Hook | Verbs |
+|---|---|---|
+| `issueSignedSpec` | `pkg/ca/ca.go:2127` | `IssueCertificate`, `IssueCertificateWithProfile`, `IssueCertificateForKey`, `IssueCertificateRaw`, `SignCSR` and every CSR-signing verb |
+| `issueTCGCertificate` | `pkg/ca/tcg.go:621` | EK, AK, IAK, IDevID and LAK issuance, including `IssueEKCertificateRaw` |
+| `IssueSubordinateCA` | `pkg/ca/subordinate.go:228` | subordinate CAs |
+
+The entry carries the certificate's SHA-256, serial, profile name and
+tenant. A certificate issued in the system scope (no tenant) is logged under
+go-qrdb's `SystemTenantID`. A precertificate (RFC 6962 §3.1) is not
+appended; its final certificate is.
+
+If the append fails, the call returns `ErrTransparencyLogAppend` wrapping the
+cause, and the certificate is neither stored nor returned.
+
+The CA's own root and intermediate certificates, created by `Init`, are not
+appended: they exist before the log does.
+
+### revoked: never undone
+
+`Revoke` and `RevokeCert` share `recordRevocation`, which appends one
+`revoked` entry after the revocation is recorded
+(`pkg/ca/ca_extensions.go:804`). An already-revoked serial appends nothing.
+
+If the append fails, the revocation stands, and the call returns
+`ErrTransparencyLogEntryMissing` wrapping the cause. `RevokeCert` still runs
+its key and certificate cleanup and joins that error with the cleanup's. A
+reason outside 0–255 cannot be encoded and is reported the same way.
+
+### image-signed
+
+`image.SignerConfig.TransparencyLog` (`pkg/image/signer.go:55`) takes an
+`image.TransparencyLog` (`pkg/image/transparency_log.go:26`), which holds
+`AppendImageSigned`; `*tlog.Log` satisfies it. When it is set, every
+signature is appended as an `image-signed` entry (image digest, envelope
+digest, signer) before it is pushed. If the append fails, the signer pushes
+nothing and returns `ErrTransparencyLogAppend`, so it fails closed.
+`tlog.OpenOrCreate` opens the log, creating it on first use. xkmsd composes
+no image signer, so an SDK caller (`xkms.ImageSignerConfig`) sets the log.
+
+### external: under the caller's SPIFFE ID
+
+A caller appends its own opaque payload as an `external` entry.
+`XKMSService.AppendTransparencyLogExternal` (`pkg/xkms/servicer_tlog.go:211`)
+names the entry by the caller, never by anything the request carries:
+`callerSPIFFEID` (`:238`) takes the one SPIFFE ID among the URI SANs of the
+leaf of the connection's verified client certificate chain. No verified
+client certificate, a certificate with no SPIFFE ID, or one with two, is
+refused with `ErrTransparencyLogNoCallerSPIFFEID`. So the embedded and unix
+transports, which carry no TLS, are refused, and a request one node forwards
+to another is checked against the forwarding node's certificate, the TLS
+state of the connection the request arrived on.
+
+| Transport | Verb | Success |
+|---|---|---|
+| gRPC | rpc `AppendTransparencyLogExternal` (`pkg/api/grpc/service_tlog.go:108`) | the leaf index |
+| REST | `POST /api/v1/ca/transparency-log/entries`, body `{"payload": <base64>}` (`pkg/api/rest/handlers_tlog.go:101`) | 201, `{"index": n}` |
+| MCP | `xkms.ca.transparency-log.append`, params `{"payload": <base64>}` (`pkg/api/mcp/server.go:388`) | `{"index": n}` |
+
+The permission is `vlog:append`. go-qrdb's seeded roles place it on Admin,
+Operator and User; Auditor does not hold it. The errors, shared by every
+transport through `apierrors.TransparencyLogSentinelClasses`:
+
+| Cause | gRPC | REST | MCP |
+|---|---|---|---|
+| no log configured | `Unavailable` | 503 | `ServiceUnavailable` |
+| no caller SPIFFE ID | `Unauthenticated` | 401 | `InvalidParams` (JSON-RPC has no unauthenticated member) |
+| empty or oversized payload, malformed body | `InvalidArgument` | 400 | `InvalidParams` |
+| caller without `vlog:append` | `PermissionDenied` | 403 | `Forbidden` |
+
+## xkmsd wiring
+
+xkmsd attaches the CA's log in two places:
+
+1. `initEmbeddedQRDBNode` (`pkg/server/qrdb_node.go`) adds
+   `WithHeadSignerProvider` to the embedded node's options, via
+   `transparencyLogNodeOptions` (`pkg/server/transparency_log.go:47`). The
+   provider sits over a `clusterca.KeyProvider` that has no binding yet,
+   because the CA does not exist when the node starts.
+2. `initializeCA` (`pkg/server/server.go`) composes the CA, then calls
+   `openTransparencyLog` (`transparency_log.go:66`) before the TLS server
+   certificate is issued, so that certificate is logged as well. That call:
+   - binds the key provider to the TrustedCA;
+   - runs `tlog.OpenOrCreate` on the node, with not-leader retries;
+   - checks that the CA is a `*ca.CA` and calls `SetTransparencyLog`.
+
+The log is named `ca`. A CA request's context carries the caller's identity,
+or none, so `serviceTransparencyLog` (`transparency_log.go:104`) runs every
+append under the node's `ServiceContext`.
+
+### Configuration
+
+```yaml
+transparency_log:
+  enabled: true                 # unset: on with qrdb_vlog, off without it
+  origin: ca.example.com/tlog   # unset: <CA common name, spaces as "-">/tlog
+```
+
+`Config.TransparencyLogEnabled` (`pkg/config/config.go`) resolves an unset
+switch to the build default, `transparencyLogDefault`. That default is
+`pkg/config/transparency_log_vlog.go` when the binary is built with the tag,
+and `transparency_log_novlog.go` when it is not.
+
+Without the tag, xkmsd builds and starts with the log off, and issuance is
+unchanged. When the log is on, start-up fails in `initializeCA` with
+`*server.ErrTransparencyLog` instead of falling back to an unlogged CA.
+`openTransparencyLog` returns it when:
+
+| Cause | Wrapped error |
+|---|---|
+| no embedded node, or a node without the head signer | `ErrTransparencyLogUnavailable` |
+| a composed CA that is not `*ca.CA` | `ErrTransparencyLogCAUnsupported` |
+| a failed bind, service context or `OpenOrCreate`, including `enabled: true` in a build without the tag, where every vlog request fails | the cause |
+
+## Service-principal grant
+
+The embedded node's service principal gets only the vlog actions the log
+calls: `vlog:create`, `vlog:append`, `vlog:get`, `vlog:head`,
+`vlog:sign_head` and `vlog:proof`. The grant is the `grant` list in
+`pkg/embeddednode/serviceprincipal/serviceprincipal.go:63`. The log never
+lists logs or expires bodies, so `vlog:list` and `vlog:expire` are not
+granted.
+
+## Build tag
+
+go-qrdb serves verifiable logs only when it is built with its `qrdb_vlog`
+tag. Without the tag, every vlog request to an embedded node fails. The
+node-backed tests in `pkg/ca/tlog` (`node_test.go`, `log_test.go`) and
+`pkg/ca/transparency_log_test.go` carry the tag.
+
+The Makefile's `TEST_TAGS` and `BUILD_TAGS` include `qrdb_vlog`, so
+`make test` and the vet and lint gates (which use `TEST_TAGS`) build with
+it. `coverage-ca` adds it to `BUILD_TAGS`. `SERVER_BUILD_TAGS`
+(`Makefile:87`) includes the tag too, so every xkmsd that `make` builds
+(`build-server` and the release cross-builds) has the log on by default.
+An xkmsd built without the tag has it off; setting
+`transparency_log.enabled: true` in such a build fails start-up with
+`server.ErrTransparencyLog` wrapping `server.ErrTransparencyLogUnavailable`.
 
 Specifications, both pinned at C2SP commit `e5746a0b`:
 [c2sp-tlog-checkpoint.md](../references/c2sp-tlog-checkpoint.md) and
 [c2sp-signed-note.md](../references/c2sp-signed-note.md).
 
-## Exported surface
+## Checkpoint format (`pkg/ca/checkpoint`)
 
 `sdk/go/checkpoint` re-exports every name below unchanged, with type aliases
 and `var` assignments, so `errors.Is` matches across the boundary.
@@ -199,3 +486,44 @@ The tests check:
 - malformed verifier keys and malformed checkpoints;
 - registry refusals, a concurrent `Register` under `-race`, and a custom
   Ed25519ph algorithm round trip.
+
+`pkg/ca/tlog` has 95.2% statement coverage with the `qrdb_vlog` tag. Its
+node-backed tests run each entry kind against an in-memory go-qrdb node with
+the production service-principal grant. They check:
+
+- the append, the read-back, and the inclusion and consistency proofs;
+- checkpoint verification under Ed25519 and P-256 CA keys;
+- repeated and concurrent `SignedTreeHead` calls;
+- a checkpoint for another origin;
+- failed requests;
+- `ErrEntryExpired` on an expired body whose proof still verifies.
+
+`pkg/ca/transparency_log_test.go` runs a real CA against a log on an
+in-memory node, its heads signed with the CA key. It checks:
+
+- each issuance funnel appends exactly one `cert-issued` entry whose
+  inclusion proof verifies;
+- `Revoke` and `RevokeCert` each append one `revoked` entry, and an
+  already-revoked serial appends none;
+- with no log set, nothing is appended;
+- against a log the node never created, issuance fails with no certificate
+  stored, and a revocation stands with `ErrTransparencyLogEntryMissing`.
+
+`pkg/server/transparency_log_vlog_test.go` starts xkmsd's CA on an in-memory
+node that has the production service principal and the head-signer option.
+It checks:
+
+- an issuance on a bare context leaves one `cert-issued` entry whose
+  inclusion proof verifies, while a direct append on that context is
+  refused, which shows the append carries the service principal;
+- a second open finds the existing log;
+- a node without the head signer fails start-up with
+  `ErrTransparencyLogUnavailable`.
+
+`pkg/server/transparency_log_test.go` covers the origin, the node option,
+the switch off (issuance unchanged), and the switch on with no node (start-up
+fails with `*ErrTransparencyLog`).
+
+The tests without the tag cover the entry encoding and its refusals, and the
+head signer: its key hash equals `HeadKeyHash`, its signature verifies as the
+signature line go-qrdb renders, and it refuses keys and refs it does not hold.

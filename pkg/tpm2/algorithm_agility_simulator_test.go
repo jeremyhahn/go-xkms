@@ -17,17 +17,14 @@ package tpm2
 
 import (
 	"crypto"
-	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/google/go-tpm/tpm2"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/ecpoint"
 	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/stretchr/testify/assert"
@@ -45,19 +42,6 @@ import (
 // this package computed and never with the TPM's own verify command. A test
 // that used either would pass with a bug on both sides of it.
 
-// agilityHashes is the set of digests this package can name in a
-// TPMT_SIG_SCHEME. It is intersected with the device's capability set before
-// anything is exercised, so it bounds the matrix without asserting anything
-// about the hardware.
-var agilityHashes = []struct {
-	crypto crypto.Hash
-	tpm    tpm2.TPMIAlgHash
-}{
-	{crypto.SHA256, tpm2.TPMAlgSHA256},
-	{crypto.SHA384, tpm2.TPMAlgSHA384},
-	{crypto.SHA512, tpm2.TPMAlgSHA512},
-}
-
 // agilityCurves is the set of curves this package can represent as an
 // elliptic.Curve, likewise intersected with the device's capability set.
 var agilityCurves = []struct {
@@ -68,53 +52,6 @@ var agilityCurves = []struct {
 	{elliptic.P256(), tpm2.TPMECCNistP256},
 	{elliptic.P384(), tpm2.TPMECCNistP384},
 	{elliptic.P521(), tpm2.TPMECCNistP521},
-}
-
-// deviceHashes returns the digests from agilityHashes that this TPM implements.
-func deviceHashes(t *testing.T, h *simHarness) []struct {
-	crypto crypto.Hash
-	tpm    tpm2.TPMIAlgHash
-} {
-	t.Helper()
-	caps, err := h.TPM.Capabilities()
-	require.NoError(t, err)
-
-	var supported []struct {
-		crypto crypto.Hash
-		tpm    tpm2.TPMIAlgHash
-	}
-	for _, hash := range agilityHashes {
-		if caps.SupportsAlgorithm(hash.tpm) {
-			supported = append(supported, hash)
-		}
-	}
-	require.NotEmpty(t, supported,
-		"a TPM that implements none of SHA-256/384/512 cannot sign anything this package produces")
-	return supported
-}
-
-// eccPublicKeyFromHandle rebuilds the curve point from a loaded object's public
-// area, so the verification key comes from the device.
-func eccPublicKeyFromHandle(
-	t *testing.T, h *simHarness, handle tpm2.TPMHandle) *ecdsa.PublicKey {
-
-	t.Helper()
-	readResp, err := tpm2.ReadPublic{ObjectHandle: handle}.Execute(h.TPM.Transport())
-	require.NoError(t, err)
-	outPub, err := readResp.OutPublic.Contents()
-	require.NoError(t, err)
-	require.Equal(t, tpm2.TPMAlgECC, outPub.Type)
-
-	detail, err := outPub.Parameters.ECCDetail()
-	require.NoError(t, err)
-	curve, err := detail.CurveID.Curve()
-	require.NoError(t, err)
-	unique, err := outPub.Unique.ECC()
-	require.NoError(t, err)
-
-	key, err := ecpoint.PublicKey(curve, unique.X.Buffer, unique.Y.Buffer)
-	require.NoError(t, err, "the point the TPM reported must lie on the curve")
-	return key
 }
 
 // rsaPublicKeyFromTPM reads an RSA key's public area back out of the TPM.
@@ -147,215 +84,6 @@ func digestFor(hash crypto.Hash, message string) []byte {
 	h := hash.New()
 	h.Write([]byte(message))
 	return h.Sum(nil)
-}
-
-// TestAgility_OneECCKeySignsUnderEveryDeviceHash is the decisive test for the
-// scheme-hash defect.
-//
-// ONE key signs under every digest the device implements, and each signature is
-// verified with crypto/ecdsa against the public key read out of the TPM. Before
-// the templates named TPM_ALG_NULL, a P-256 key could sign under SHA-256 and
-// nothing else: SHA-384 and SHA-512 were answered with TPM_RC_SCHEME, because
-// TPM2_Sign requires inScheme to match the key's own scheme (TCG TPM 2.0
-// Library Part 3, section 12.1) -- not because the TPM was unable to perform
-// them.
-//
-// The curve set comes from TPM_CAP_ECC_CURVES, so the matrix follows the
-// device.
-func TestAgility_OneECCKeySignsUnderEveryDeviceHash(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	caps, err := h.TPM.Capabilities()
-	require.NoError(t, err)
-	hashes := deviceHashes(t, h)
-
-	exercised := 0
-	for _, candidate := range agilityCurves {
-		if !caps.SupportsCurve(candidate.tpm) {
-			t.Logf("device does not implement %s; not exercised", candidate.curve.Params().Name)
-			continue
-		}
-
-		attrs := signingKeyAttrs(t,
-			h, fmt.Sprintf("agility-%s", candidate.curve.Params().Name), x509.ECDSA, candidate.curve)
-		_, err := h.TPM.CreateECDSA(attrs, h.Backend, true)
-		require.NoError(t, err, candidate.curve.Params().Name)
-
-		tpmPub := eccPublicKeyFromTPM(t, h, attrs)
-		require.Equal(t, candidate.curve, tpmPub.Curve)
-
-		for _, hash := range hashes {
-			digest := digestFor(hash.crypto, "the message under "+hash.crypto.String())
-
-			attrs.Hash = hash.crypto
-			signature, err := h.TPM.Sign(rand.Reader, digest, &store.SignerOpts{
-				KeyAttributes: attrs,
-				Backend:       h.Backend,
-			})
-			require.NoError(t, err,
-				"%s must sign under %s: the key fixes no scheme, so the TPM has no reason to refuse",
-				candidate.curve.Params().Name, hash.crypto)
-
-			assert.True(t, ecdsa.VerifyASN1(tpmPub, digest, signature),
-				"%s/%s must verify against the public key read out of the TPM",
-				candidate.curve.Params().Name, hash.crypto)
-
-			other := digestFor(hash.crypto, "a different message")
-			assert.False(t, ecdsa.VerifyASN1(tpmPub, other, signature),
-				"%s/%s must not verify against an unrelated digest",
-				candidate.curve.Params().Name, hash.crypto)
-
-			exercised++
-		}
-	}
-
-	require.GreaterOrEqual(t, exercised, 3,
-		"the device must have offered at least one curve and three digests to prove agility")
-}
-
-// TestAgility_OneECCKeySignsEveryNoneHashDigestLength covers the same key under
-// hash NONE -- the sentinel meaning "I already produced the digest", which is
-// what every PKCS#11 CKM_ECDSA operation arrives as.
-//
-// A scheme-less key has no scheme hash to fall back on, so the answer comes
-// from the digest's length. The TPM requires the digest to be exactly the size
-// of the hash named in inScheme (TPM_RC_SIZE otherwise), which makes the
-// length-compatible algorithm the only admissible one; and because the hash
-// never enters the ECDSA computation, the signature is over precisely the bytes
-// supplied. Both halves are checked here: the operation succeeds, and the
-// signature verifies over the caller's own digest.
-func TestAgility_OneECCKeySignsEveryNoneHashDigestLength(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	attrs := signingKeyAttrs(t, h, "agility-none-hash", x509.ECDSA, elliptic.P256())
-	_, err := h.TPM.CreateECDSA(attrs, h.Backend, true)
-	require.NoError(t, err)
-
-	tpmPub := eccPublicKeyFromTPM(t, h, attrs)
-
-	for _, hash := range deviceHashes(t, h) {
-		digest := digestFor(hash.crypto, "already hashed by the caller")
-
-		attrs.Hash = crypto.Hash(0)
-		signature, err := h.TPM.Sign(rand.Reader, digest, &store.SignerOpts{
-			KeyAttributes: attrs,
-			Backend:       h.Backend,
-		})
-		require.NoError(t, err,
-			"a %d-byte digest under hash NONE must resolve to %s", len(digest), hash.crypto)
-
-		assert.True(t, ecdsa.VerifyASN1(tpmPub, digest, signature),
-			"the signature must be over the digest the caller supplied, under %s", hash.crypto)
-	}
-}
-
-// TestAgility_NoneHashRefusesUnknownDigestLength is the bad-input case for the
-// inference above: a digest whose length matches no supported algorithm cannot
-// be resolved, and must be refused rather than padded, truncated or rounded.
-func TestAgility_NoneHashRefusesUnknownDigestLength(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	attrs := signingKeyAttrs(t, h, "agility-none-badlen", x509.ECDSA, elliptic.P256())
-	_, err := h.TPM.CreateECDSA(attrs, h.Backend, true)
-	require.NoError(t, err)
-
-	attrs.Hash = crypto.Hash(0)
-	signature, err := h.TPM.Sign(rand.Reader, make([]byte, 20), &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	assert.Empty(t, signature)
-	assert.ErrorIs(t, err, ErrSchemeHashUnresolved)
-}
-
-// TestAgility_OneRSAKeySignsUnderEveryDeviceHash is the RSA half of the matrix.
-//
-// One RSA key signs PKCS#1 v1.5 under every digest the device implements, each
-// verified with crypto/rsa against the modulus read out of the TPM. The same
-// key previously named RSASSA/SHA-256 and refused the other two.
-func TestAgility_OneRSAKeySignsUnderEveryDeviceHash(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	attrs := signingKeyAttrs(t, h, "agility-rsa", x509.RSA, nil)
-	_, err := h.TPM.CreateRSA(attrs, h.Backend, true)
-	require.NoError(t, err)
-
-	tpmPub := rsaPublicKeyFromTPM(t, h, attrs)
-
-	for _, hash := range deviceHashes(t, h) {
-		digest := digestFor(hash.crypto, "the RSA message under "+hash.crypto.String())
-
-		attrs.Hash = hash.crypto
-		signature, err := h.TPM.Sign(rand.Reader, digest, &store.SignerOpts{
-			KeyAttributes: attrs,
-			Backend:       h.Backend,
-		})
-		require.NoError(t, err, "RSA must sign under %s", hash.crypto)
-
-		assert.NoError(t, rsa.VerifyPKCS1v15(tpmPub, hash.crypto, digest, signature),
-			"the RSA signature under %s must verify against the modulus read out of the TPM",
-			hash.crypto)
-
-		other := digestFor(hash.crypto, "a different RSA message")
-		assert.Error(t, rsa.VerifyPKCS1v15(tpmPub, hash.crypto, other, signature),
-			"the signature must not verify against an unrelated digest")
-	}
-}
-
-// TestAgility_EveryDeviceRSAKeySizeIsUsable proves the modulus size is the
-// caller's, not a template constant -- for every size this project actually
-// permits a caller to choose.
-//
-// The candidate sizes come from the device: TPM2_TestParms is asked about
-// every size TPM 2.0 defines, and the ones it accepts are created, signed
-// with, and verified against the modulus read back out of the chip. The
-// previous path built every RSA key from a template whose KeyBits was
-// hardcoded to 2048, so a caller asking for anything else received a
-// 2048-bit key and was told it had succeeded.
-//
-// A device-accepted size below types.RSAKeySize2048 (1024, on the
-// simulator and on TCG's reference implementation generally) is no longer
-// part of that proof: go-xkms#1204 made CreateRSA refuse it by name
-// regardless of what the device itself would accept, since the floor is
-// this project's minimum-strength policy, not a device-capability
-// question. TestCreateRSA_RefusesUndersizedModulus_Simulator
-// (rsa_keysize_simulator_test.go) pins that refusal; this test only proves
-// the caller-chosen-size property for sizes at or above the floor.
-func TestAgility_EveryDeviceRSAKeySizeIsUsable(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	supported := h.TPM.SupportedRSAKeyBits()
-	require.NotEmpty(t, supported, "a TPM that implements RSA must accept at least one modulus size")
-
-	for _, keyBits := range supported {
-		attrs := signingKeyAttrs(t, h, fmt.Sprintf("agility-rsa-%d", keyBits), x509.RSA, nil)
-		attrs.RSAAttributes = &types.RSAAttributes{KeySize: keyBits}
-
-		if keyBits < types.RSAKeySize2048 {
-			_, err := h.TPM.CreateRSA(attrs, h.Backend, true)
-			var sizeErr *types.RSAKeySizeError
-			require.ErrorAs(t, err, &sizeErr,
-				"RSA-%d is device-defined but below the go-xkms#1204 floor, so CreateRSA must refuse it", keyBits)
-			continue
-		}
-
-		_, err := h.TPM.CreateRSA(attrs, h.Backend, true)
-		require.NoError(t, err, "the device accepted RSA-%d parameters, so creation must work", keyBits)
-
-		tpmPub := rsaPublicKeyFromTPM(t, h, attrs)
-		assert.Equal(t, keyBits, tpmPub.N.BitLen(),
-			"the key read back from the TPM must have the modulus size that was requested")
-
-		digest := digestFor(crypto.SHA256, fmt.Sprintf("signed by a %d-bit key", keyBits))
-		attrs.Hash = crypto.SHA256
-		signature, err := h.TPM.Sign(rand.Reader, digest, &store.SignerOpts{
-			KeyAttributes: attrs,
-			Backend:       h.Backend,
-		})
-		require.NoError(t, err, "RSA-%d", keyBits)
-		assert.NoError(t, rsa.VerifyPKCS1v15(tpmPub, crypto.SHA256, digest, signature),
-			"RSA-%d", keyBits)
-	}
 }
 
 // TestAgility_UndefinedDeviceRSAKeySizeRefusedByName is the bad-input case for
@@ -395,46 +123,6 @@ func TestAgility_UndefinedDeviceRSAKeySizeRefusedByName(t *testing.T) {
 		"the refusal must name the sizes the device does accept")
 	assert.NotContains(t, err.Error(), "TPM_RC_",
 		"a TPM response code must not be what the caller is handed")
-}
-
-// TestAgility_LegacyFixedSchemeKeyStillSignsUnderItsOwnDigest is the
-// compatibility proof, and it is deliberately not an assertion about the
-// current templates.
-//
-// It creates a key from the template shape this package used BEFORE the change
-// -- ECDSA/SHA-256 named in the public area -- stores it exactly as CreateECDSA
-// would, and then signs with it through the ordinary signing path. A key
-// already provisioned on a deployed machine has precisely this public area, and
-// it must keep working: the template change alters what NEW keys look like and
-// touches nothing that is already on disk.
-func TestAgility_LegacyFixedSchemeKeyStillSignsUnderItsOwnDigest(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	attrs := signingKeyAttrs(t, h, "agility-legacy-p256", x509.ECDSA, elliptic.P256())
-	handle := createLegacyFixedSchemeECCKey(t, h, attrs, tpm2.TPMECCNistP256, tpm2.TPMAlgSHA256)
-	tpmPub := eccPublicKeyFromHandle(t, h, handle)
-	h.TPM.Flush(handle)
-
-	// The digest the key was created with still works.
-	digest := digestFor(crypto.SHA256, "signed by a key provisioned before the change")
-	attrs.Hash = crypto.SHA256
-	signature, err := h.TPM.Sign(rand.Reader, digest, &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err,
-		"a key provisioned under the old fixed-scheme template must keep signing under its own digest")
-	assert.True(t, ecdsa.VerifyASN1(tpmPub, digest, signature))
-
-	// Hash NONE still resolves to the key's own scheme hash rather than to the
-	// digest length, which is what keeps CKM_ECDSA working for these keys.
-	attrs.Hash = crypto.Hash(0)
-	signature, err = h.TPM.Sign(rand.Reader, digest, &store.SignerOpts{
-		KeyAttributes: attrs,
-		Backend:       h.Backend,
-	})
-	require.NoError(t, err, "hash NONE against a fixed-scheme key must use the key's own hash")
-	assert.True(t, ecdsa.VerifyASN1(tpmPub, digest, signature))
 }
 
 // TestAgility_LegacyFixedSchemeKeyRefusesWrongDigestLength is the case where

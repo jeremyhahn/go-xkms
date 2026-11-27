@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -318,7 +319,9 @@ type Params struct {
 }
 
 type TPM2 struct {
-	algID tpm2.TPMAlgID
+	// sealMu serializes Seal and Unseal: their command sequences share one transport.
+	sealMu sync.Mutex
+	algID  tpm2.TPMAlgID
 	// storageCloser is Params.StorageCloser: Close closes it last.
 	storageCloser io.Closer
 	backend       store.KeyBackend

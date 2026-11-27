@@ -90,6 +90,24 @@ func TestBackend_saveKeyMetadata(t *testing.T) {
 	})
 }
 
+// TestBackend_SaveKeyMetadata proves the exported seam an importer outside
+// this package uses records the attributes the backend reads back, and
+// refuses a record it could never find again.
+func TestBackend_SaveKeyMetadata(t *testing.T) {
+	tb := createTestBackend(t)
+	defer func() { _ = tb.Close() }()
+	ctx := context.Background()
+
+	attrs := &types.KeyAttributes{CN: "imported", Exportable: true, Sensitive: true}
+	require.NoError(t, tb.SaveKeyMetadata(ctx, "imported-id", attrs))
+	meta, err := tb.loadKeyMetadata(ctx, "imported-id")
+	require.NoError(t, err)
+	assert.True(t, meta.Exportable)
+	assert.True(t, meta.Sensitive)
+
+	assert.ErrorIs(t, tb.SaveKeyMetadata(ctx, "", attrs), storage.ErrInvalidID)
+}
+
 // TestBackend_loadKeyMetadata tests the success and bad-input paths of
 // loadKeyMetadata directly.
 func TestBackend_loadKeyMetadata(t *testing.T) {

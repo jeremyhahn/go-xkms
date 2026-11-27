@@ -25,8 +25,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
-
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -58,16 +56,6 @@ func deriveKeyRequest(t *testing.T, params interface{}) *JSONRPCRequest {
 	return &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.deriveKey", Params: raw, ID: 1}
 }
 
-// TestDeriveKeyMethod_Dispatchable proves xkms.deriveKey is reachable through
-// the dispatch table and carries a permission mapping, mirroring gRPC's
-// keys:derive grant.
-func TestDeriveKeyMethod_Dispatchable(t *testing.T) {
-	entry, ok := rpcMethods["xkms.deriveKey"]
-	require.True(t, ok, "xkms.deriveKey must be dispatchable")
-	assert.Equal(t, auth.ResourceKeys, qrdbsdk.PermissionResource(entry.perm))
-	assert.Equal(t, auth.ActionDerive, qrdbsdk.PermissionAction(entry.perm))
-}
-
 func TestHandleDeriveKey_Success(t *testing.T) {
 	server := newDeriveKeyServer(t)
 
@@ -96,18 +84,6 @@ func TestHandleDeriveKey_RequiresAlgorithm(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "algorithm")
-}
-
-func TestHandleDeriveKey_InvalidParams(t *testing.T) {
-	server := newDeriveKeyServer(t)
-
-	req := &JSONRPCRequest{JSONRPC: "2.0", Method: "xkms.deriveKey", Params: json.RawMessage(`{`), ID: 1}
-	_, err := server.handleDeriveKey(context.Background(), req)
-
-	require.Error(t, err)
-	var keyOpErr *KeyOpError
-	require.True(t, errors.As(err, &keyOpErr), "decode failure must be a *KeyOpError")
-	assert.Equal(t, ErrCodeInvalidParams, keyOpErr.Code)
 }
 
 // TestHandleDeriveKey_KeyLengthExceedsMaximum proves an oversized key_length

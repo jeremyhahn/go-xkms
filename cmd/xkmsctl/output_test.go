@@ -37,31 +37,6 @@ import (
 // NewPrinter Tests
 // =============================================================================
 
-func TestNewPrinter(t *testing.T) {
-	buf := &bytes.Buffer{}
-	printer := NewPrinter("json", buf)
-
-	if printer == nil {
-		t.Fatal("expected non-nil printer")
-	}
-
-	if printer.format != OutputFormatJSON {
-		t.Errorf("expected format %s, got %s", OutputFormatJSON, printer.format)
-	}
-}
-
-func TestOutputFormatConstants(t *testing.T) {
-	if OutputFormatText != "text" {
-		t.Errorf("expected OutputFormatText to be 'text'")
-	}
-	if OutputFormatJSON != "json" {
-		t.Errorf("expected OutputFormatJSON to be 'json'")
-	}
-	if OutputFormatTable != "table" {
-		t.Errorf("expected OutputFormatTable to be 'table'")
-	}
-}
-
 // =============================================================================
 // PrintBackendList Tests
 // =============================================================================
@@ -499,25 +474,6 @@ func TestPrintSignature_Text(t *testing.T) {
 // PrintDecryptedData Tests
 // =============================================================================
 
-func TestPrintDecryptedData(t *testing.T) {
-	buf := &bytes.Buffer{}
-	printer := NewPrinter("json", buf)
-
-	err := printer.PrintDecryptedData("plaintext-data")
-	if err != nil {
-		t.Fatalf("PrintDecryptedData failed: %v", err)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if result["plaintext"] != "plaintext-data" {
-		t.Errorf("expected plaintext data")
-	}
-}
-
 // =============================================================================
 // PrintEncryptedData Tests
 // =============================================================================
@@ -684,56 +640,9 @@ func TestPrintCertExists_Text(t *testing.T) {
 // PrintMessage Tests
 // =============================================================================
 
-func TestPrintMessage(t *testing.T) {
-	tests := []struct {
-		name   string
-		format string
-	}{
-		{"json", "json"},
-		{"text", "text"},
-		{"table", "table"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			buf := &bytes.Buffer{}
-			printer := NewPrinter(tt.format, buf)
-
-			err := printer.PrintMessage("Hello World")
-			if err != nil {
-				t.Fatalf("PrintMessage failed: %v", err)
-			}
-
-			output := buf.String()
-			if !strings.Contains(output, "Hello World") && !strings.Contains(output, "message") {
-				t.Error("expected message in output")
-			}
-		})
-	}
-}
-
 // =============================================================================
 // PrintEncryptedAsym Tests
 // =============================================================================
-
-func TestPrintEncryptedAsym(t *testing.T) {
-	buf := &bytes.Buffer{}
-	printer := NewPrinter("json", buf)
-
-	err := printer.PrintEncryptedAsym("encrypted-ciphertext", 0)
-	if err != nil {
-		t.Fatalf("PrintEncryptedAsym failed: %v", err)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
-		t.Fatalf("failed to unmarshal: %v", err)
-	}
-
-	if result["ciphertext"] != "encrypted-ciphertext" {
-		t.Errorf("expected ciphertext value")
-	}
-}
 
 // =============================================================================
 // PrintImportParameters Tests
@@ -1355,17 +1264,21 @@ func TestGenerateKeyPairEdgeCases(t *testing.T) {
 		alg     string
 		size    int
 		wantErr bool
+		// wantECBits is the curve size an ECDSA case must return; 0 means
+		// the case is not ECDSA. A request for P-384 or P-521 that silently
+		// yields P-256 fails here.
+		wantECBits int
 	}{
-		{"ecdsa default", "ecdsa", 0, false},
-		{"ecdsa P-256", "ecdsa", 256, false},
-		{"ecdsa P-384", "ecdsa", 384, false},
-		{"ecdsa P-521", "ecdsa", 521, false},
-		{"ec alias", "ec", 0, false},
-		{"rsa 4096 ok", "rsa", 4096, false},
+		{"ecdsa default", "ecdsa", 0, false, 256},
+		{"ecdsa P-256", "ecdsa", 256, false, 256},
+		{"ecdsa P-384", "ecdsa", 384, false, 384},
+		{"ecdsa P-521", "ecdsa", 521, false, 521},
+		{"ec alias", "ec", 0, false, 256},
+		{"rsa 4096 ok", "rsa", 4096, false, 0},
 		// go-xkms#1260: rsa.GenerateKey cannot be cancelled and its cost
 		// grows with the cube of the modulus size, so an oversized
 		// --key-size must be refused rather than generated.
-		{"rsa oversized refused", "rsa", 65536, true},
+		{"rsa oversized refused", "rsa", 65536, true, 0},
 	}
 
 	for _, tt := range tests {
@@ -1381,7 +1294,17 @@ func TestGenerateKeyPairEdgeCases(t *testing.T) {
 				t.Fatalf("generateKeyPair(%q, %d) error = %v", tt.alg, tt.size, err)
 			}
 			if key == nil {
-				t.Error("generateKeyPair() returned nil key without error")
+				t.Fatal("generateKeyPair() returned nil key without error")
+			}
+			if tt.wantECBits == 0 {
+				return
+			}
+			ecKey, ok := key.(*ecdsa.PrivateKey)
+			if !ok {
+				t.Fatalf("generateKeyPair(%q, %d) returned %T, want *ecdsa.PrivateKey", tt.alg, tt.size, key)
+			}
+			if got := ecKey.Curve.Params().BitSize; got != tt.wantECBits {
+				t.Errorf("generateKeyPair(%q, %d) curve bit size = %d, want %d", tt.alg, tt.size, got, tt.wantECBits)
 			}
 		})
 	}

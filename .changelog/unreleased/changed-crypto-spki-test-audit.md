@@ -1,0 +1,1 @@
+- `pkg/crypto/spki`: the test audit (#1794) removes the tests that repeat a path another kept test covers (determinism, hex encoding, byte uniqueness, the fetch-and-verify round trip, the direct `VerifyPin` and `VerifyConnection` success cases) and the sentinel-message tautology; every pin refusal stays.

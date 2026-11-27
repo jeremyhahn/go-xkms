@@ -1,6 +1,6 @@
 # Image Signing — Architecture
 
-> **Status: NORMATIVE** · Feature: `image-signing` · Repo: `go-xkms` · Last verified: 2026-10-15
+> **Status: NORMATIVE** · Feature: `image-signing` · Repo: `go-xkms` · Last verified: 2026-10-25
 
 ## The problem
 
@@ -41,7 +41,7 @@ passes every check wins; when none passes, the error joins every failure.
 
 | Alternative | Why rejected |
 |---|---|
-| Sign with a key file (PEM on disk, as cosign's default does) | A file can be copied. Only a KMS `crypto.Signer` is accepted (`pkg/image/signer.go:34`). |
+| Sign with a key file (PEM on disk, as cosign's default does) | A file can be copied. Only a KMS `crypto.Signer` is accepted (`pkg/image/signer.go:33`). |
 | Push only the `.att` tag | Registries that support OCI 1.1 index referrers; tags are the fallback for those that do not. Writing both serves both kinds of registry. |
 | Push only the OCI 1.1 referrer | cosign and registries without the referrers API read the tag. |
 | Trust the certificate chain stored in the attestation | Anyone who can push can write the annotation. The chain is used only as intermediates; trust comes from the root store alone (`pkg/image/verifier.go:224`, `:164`). |
@@ -54,10 +54,88 @@ passes every check wins; when none passes, the error joins every failure.
 |---|---|---|
 | Reference parsing, registry referrer push, RFC 3161 client | `pkg/image` | Came from go-trusted-platform's `pkg/image`, rewritten onto go-xkms packages |
 | DSSE, in-toto, OCI manifests, signer, verifier | `pkg/image` | Standard library and go-xkms packages only; no build tag |
-| Code-signing certificate | `pkg/ca` `TrustedCA.SignCSR` (`pkg/ca/ca.go:1660`) | Reached through `pkg/image.CertificateIssuer` (`pkg/image/signer.go:96`) |
+| Code-signing certificate | `pkg/ca` `TrustedCA.SignCSR` (`pkg/ca/ca.go:1660`) | Reached through `pkg/image.CertificateIssuer` (`pkg/image/signer.go:103`) |
 | Trusted image-signer roots | The caller's root store | `pkg/image.RootStore[P]` (`pkg/image/verifier.go:29`) asks for certificates by purpose; any store with `CertificatesByPurpose` fits |
 | RSA PKCS#1 v1.5 verify | `pkg/signing.Verify` (`pkg/signing/verify.go:37`) | SHA-256, SHA-384 or SHA-512 over RSA keys only |
 | SDK edge | `sdk/go/image.go`, `sdk/go/crypto.go:60` | go-quicbaas consumes `VerifyImage` and `VerifySignature` here |
+| Signing service | `XKMSService.SignImage` (`pkg/xkms/servicer_signing_keys.go:368`) | Signs with the repository's resolved key (owner ruling 134), on every transport through `transport.SigningKeyService.SignImage` (`pkg/api/transport/types_signing_key.go:56`) |
+
+## The signing service
+
+`XKMSService.SignImage` signs an image with the key the repository resolves
+to in the caller's tenant: the key bound to the repository, or else the
+tenant's release key, `release-signing` (see the `release-signing-key` row of
+[SPEC.md](../SPEC.md)). Per call it:
+
+1. checks the `attestation_signing_keys` `sign` permission and refuses the
+   system tenant (`:383`);
+2. parses the reference and validates its repository, then seals the
+   registry credentials (`registryAuth`, `:486`) before anything is issued;
+3. resolves the key (`Appraiser.ResolveSigningKey`) and opens it through the
+   tenant-scoped backend (`repositorySigner`, `:233`), so it never leaves
+   the backend. A tenant that holds no release key gets one here, on its
+   first unbound signature (`releaseKeySigner`, `:267`; see below);
+4. has the service CA issue that key a code-signing certificate in the
+   tenant (`image.RequestCodeSigningCertificate`);
+5. drives `pkg/image`'s `Signer`, which pushes the attestation to the
+   image's registry with the caller's credentials.
+
+It returns the resolved key, the digest, the envelope, the PEM certificate
+and the push result (`SignedImage`, `pkg/api/transport/types_signing_key.go:86`).
+
+### The tenant's release key
+
+A tenant needs no step to get its release key. The first `SignImage` or
+`SignCoRIM` of an unbound repository, for a tenant that holds no
+`release-signing` key, generates one through the tenant-scoped backend
+(`provisionReleaseKey`, `pkg/xkms/servicer_signing_keys.go:282`) and signs
+with it. It is ECDSA P-256, the algorithm of the service's other use-named
+signing key (`CreateOTAImageKey`, `pkg/xkms/ota_image_keys.go:66`); COSE
+signs with it as ES256 and DSSE over SHA-256.
+
+- An existing key is kept, never replaced. Every backend refuses to generate
+  over a key with `ErrKeyAlreadyExists`, so of two concurrent first uses one
+  generates the key and the other signs with it.
+- Only the default resolution provisions. A repository bound to a key the
+  tenant does not hold fails with `ErrKeyNotFound`.
+- The system tenant is never provisioned: it never signs images (owner
+  ruling 165).
+- A generate failure is `ReleaseKeyProvisionError` (`:122`), which names the
+  tenant and unwraps to the backend's error.
+
+Verification never provisions: a tenant with no key has signed nothing.
+
+### Registry credentials on each transport
+
+The request carries the registry username and password
+(`ImageRegistryCredentials`, `pkg/api/transport/types_signing_key.go:80`).
+The service uses them for that call only, wipes the password on every path
+(`pkg/xkms/servicer_signing_keys.go:372`) and names neither in an error. In
+transit they are as safe as the transport:
+
+| Transport | Carries the credentials over |
+|---|---|
+| Embedded | No wire: an in-process call (`pkg/api/transport/embedded/transport_signing_key.go:75`) |
+| MCP | mTLS only; the client has no plaintext mode (`pkg/api/transport/mcp/transport.go:17`) |
+| QUIC | TLS 1.3 always (`pkg/api/transport/quic/transport.go:193`) |
+| Unix socket | A local socket (`pkg/api/unix/grpc_server.go:261`), TLS 1.3 on top when `TLSEnabled` (`pkg/api/transport/unix/transport.go:101`) |
+| gRPC | TLS 1.3 (`pkg/api/transport/grpc/transport.go:115`, `:122`); a TLS-disabled TCP endpoint is refused (`:95`) |
+| REST | TLS 1.3 over `https://` (`pkg/api/transport/rest/transport.go:129`, `:135`); any other base URL is refused (`:121`) |
+| USB | Refused: `SignImage` returns `ErrNotSupported` (`pkg/api/transport/usb/transport_signing_key.go:57`) |
+| TypeScript SDK | `https://` only, redirects refused (`sdk/ts/src/clients/signingKey.ts:79`, `sdk/ts/src/http.ts:113`, `:138`); any other URL throws `XkmsInsecureTransportError` before a request is sent, unless `allowInsecureTransport` is set |
+
+No client sends the password in clear (ruling 152). The gRPC and REST
+constructors refuse a TLS-disabled TCP endpoint with
+`transport.ErrInsecureTransport`. `SignImage` checks again before it sends
+`Registry` credentials, because the caller can change the `transport.Config`
+after construction (`pkg/api/transport/grpc/transport_signing_key.go:96`,
+`pkg/api/transport/rest/transport_signing_key.go:92`). The one opt-out,
+`AllowInsecureTransport` or `XKMS_TRANSPORT_ALLOW_INSECURE_TRANSPORT`, is for
+loopback tests and dev only; see
+[Client Transport Security](../configuration/README.md#client-transport-security).
+`types.SecretBytes` prints as `[REDACTED]` for every `fmt` verb
+(`Format`, `pkg/types/types_secretbytes.go:250`), so a logged request never shows the
+password.
 
 go-quicbaas replaces its Tier 0 `ImageSignature` with `ImageVerifier.VerifyImage`
 through the SDK. go-trusted-platform keeps its manifest format and its AK-key
@@ -82,10 +160,10 @@ HTTP(S) by `pkg/image`; nothing is persisted locally.
 ## Trust boundaries
 
 - **The private key** stays in the KMS. Only the CSR leaves it
-  (`pkg/image/signer.go:221`). `NewSigner` refuses a certificate that does
+  (`pkg/image/signer.go:229`). `NewSigner` refuses a certificate that does
   not match the signer's public key, lacks the codeSigning EKU or
   digitalSignature usage, or is outside its validity period
-  (`pkg/image/signer.go:252`).
+  (`pkg/image/signer.go:263`).
 - **The registry is untrusted.** Every attestation read from it is checked
   in full: the envelope signature, the statement subject against the digest
   the registry resolved, and the certificate chain against the root store
@@ -103,8 +181,12 @@ HTTP(S) by `pkg/image`; nothing is persisted locally.
 - **No transparency-log append.** Appending each signature to the
   transparency log waits on the transparency-log rows (#1549); nothing here
   stubs it.
-- **No transport route.** Image signing is an embedded Go and SDK call; it
-  has no REST, gRPC, QUIC, MCP or Unix-socket route.
+- **No signing for the system tenant.** The system tenant never signs
+  images; only a data tenant does (owner ruling 165). `SignImage` refuses it
+  with `ErrSystemTenantImageSigning` (`pkg/xkms/servicer_signing_keys.go:96`,
+  `:383`), and no release key is provisioned for it. A deployment that must
+  sign its first image creates a data tenant for it and signs as that tenant,
+  whose release key is provisioned on that first use.
 - **No non-SHA-256 digests.** A `sha512-<hex>.att` tag would exceed the
   128-character OCI tag limit, so `AttestationTag` refuses any other
   algorithm (`pkg/image/reference.go:185`), and signing or verifying an image

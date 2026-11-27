@@ -115,7 +115,7 @@ func runBarrierUnseal(cmd *cobra.Command, args []string) (err error) {
 			Err:       credErr,
 		}
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, xkms.DestroyCredentials(creds)) }()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		return &BarrierError{

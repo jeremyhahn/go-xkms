@@ -1,0 +1,1 @@
+Tests: `pkg/factor/mtls` tests each behaviour by one path (#1794): the tampered-nonce refusal is a case of the challenge-message binding test and the name check joins the defaults test; the direct `parseCertPEM`, `verifyECDSA` and `validatePublicKeyType` tests, and the RSA garbage-signature test, that repeated the `Enroll`/`Verify` branch another kept test drives, are removed.

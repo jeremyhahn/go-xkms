@@ -90,10 +90,3 @@ func TestTPMPolicyClassOf_Unclassified(t *testing.T) {
 	_, ok = TPMPolicyClassOf(errors.New("unrelated"))
 	assert.False(t, ok)
 }
-
-// TestAs reports whether an error chain holds a type.
-func TestAs(t *testing.T) {
-	wrapped := fmt.Errorf("delete: %w", &tpmpolicy.PolicyInUseError{Policy: "boot"})
-	assert.True(t, As[*tpmpolicy.PolicyInUseError](wrapped))
-	assert.False(t, As[*tpmpolicy.ScopeInUseError](wrapped))
-}

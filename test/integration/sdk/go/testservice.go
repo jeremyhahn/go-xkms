@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 
 	xkmssvc "github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -46,6 +47,10 @@ var ErrNotImplemented = errors.New("not implemented in test service")
 // TestXKMSService is a real implementation of XKMSServicer for integration tests.
 // It uses in-memory storage to avoid external dependencies.
 type TestXKMSService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	mu           sync.RWMutex
 	keys         map[string]*testKey
 	certificates map[string][]byte
@@ -980,6 +985,31 @@ func (s *TestXKMSService) GetCABundle(ctx context.Context, req *xkms.GetCABundle
 	return &xkms.GetCABundleResponse{}, nil
 }
 
+// GetTransparencyLogHead retrieves the transparency log's signed head.
+func (s *TestXKMSService) GetTransparencyLogHead(ctx context.Context, req *xkms.GetTransparencyLogHeadRequest) (*xkms.GetTransparencyLogHeadResponse, error) {
+	return &xkms.GetTransparencyLogHeadResponse{}, nil
+}
+
+// GetTransparencyLogEntry retrieves one transparency log entry by index.
+func (s *TestXKMSService) GetTransparencyLogEntry(ctx context.Context, req *xkms.GetTransparencyLogEntryRequest) (*xkms.GetTransparencyLogEntryResponse, error) {
+	return &xkms.GetTransparencyLogEntryResponse{}, nil
+}
+
+// GetTransparencyLogInclusionProof retrieves an inclusion proof for one entry.
+func (s *TestXKMSService) GetTransparencyLogInclusionProof(ctx context.Context, req *xkms.GetTransparencyLogInclusionProofRequest) (*xkms.GetTransparencyLogInclusionProofResponse, error) {
+	return &xkms.GetTransparencyLogInclusionProofResponse{}, nil
+}
+
+// GetTransparencyLogConsistencyProof retrieves a consistency proof between two tree sizes.
+func (s *TestXKMSService) GetTransparencyLogConsistencyProof(ctx context.Context, req *xkms.GetTransparencyLogConsistencyProofRequest) (*xkms.GetTransparencyLogConsistencyProofResponse, error) {
+	return &xkms.GetTransparencyLogConsistencyProofResponse{}, nil
+}
+
+// AppendTransparencyLogExternal appends an external entry to the transparency log.
+func (s *TestXKMSService) AppendTransparencyLogExternal(ctx context.Context, req *xkms.AppendTransparencyLogExternalRequest) (*xkms.AppendTransparencyLogExternalResponse, error) {
+	return &xkms.AppendTransparencyLogExternalResponse{}, nil
+}
+
 // GetCACertificate retrieves the CA certificate.
 func (s *TestXKMSService) GetCACertificate(ctx context.Context, req *xkms.GetCACertificateRequest) (*xkms.GetCACertificateResponse, error) {
 	return &xkms.GetCACertificateResponse{}, nil
@@ -1432,5 +1462,12 @@ func (*TestXKMSService) DeleteSigningKeyBinding(context.Context, *xkms.DeleteAtt
 	return nil
 }
 func (*TestXKMSService) ResolveSigningKey(context.Context, *xkms.ResolveAttestationSigningKeyRequest) (*xkms.AttestationSigningKeyResolution, error) {
+	return nil, nil
+}
+func (*TestXKMSService) SignCoRIM(context.Context, *xkms.SignAttestationCoRIMRequest) (*xkms.SignedAttestationCoRIM, error) {
+	return nil, nil
+}
+
+func (*TestXKMSService) SignImage(context.Context, *xkms.SignAttestationImageRequest) (*xkms.SignedAttestationImage, error) {
 	return nil, nil
 }

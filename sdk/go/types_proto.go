@@ -186,6 +186,36 @@ type ProtoGetCABundleRequest = xkmspb.GetCABundleRequest
 // ProtoGetCABundleResponse is the gRPC CA bundle response.
 type ProtoGetCABundleResponse = xkmspb.GetCABundleResponse
 
+// ProtoGetTransparencyLogHeadRequest is the gRPC transparency log head request.
+type ProtoGetTransparencyLogHeadRequest = xkmspb.GetTransparencyLogHeadRequest
+
+// ProtoGetTransparencyLogHeadResponse is the gRPC transparency log head response.
+type ProtoGetTransparencyLogHeadResponse = xkmspb.GetTransparencyLogHeadResponse
+
+// ProtoGetTransparencyLogEntryRequest is the gRPC transparency log entry request.
+type ProtoGetTransparencyLogEntryRequest = xkmspb.GetTransparencyLogEntryRequest
+
+// ProtoGetTransparencyLogEntryResponse is the gRPC transparency log entry response.
+type ProtoGetTransparencyLogEntryResponse = xkmspb.GetTransparencyLogEntryResponse
+
+// ProtoGetTransparencyLogInclusionProofRequest is the gRPC inclusion proof request.
+type ProtoGetTransparencyLogInclusionProofRequest = xkmspb.GetTransparencyLogInclusionProofRequest
+
+// ProtoGetTransparencyLogInclusionProofResponse is the gRPC inclusion proof response.
+type ProtoGetTransparencyLogInclusionProofResponse = xkmspb.GetTransparencyLogInclusionProofResponse
+
+// ProtoGetTransparencyLogConsistencyProofRequest is the gRPC consistency proof request.
+type ProtoGetTransparencyLogConsistencyProofRequest = xkmspb.GetTransparencyLogConsistencyProofRequest
+
+// ProtoGetTransparencyLogConsistencyProofResponse is the gRPC consistency proof response.
+type ProtoGetTransparencyLogConsistencyProofResponse = xkmspb.GetTransparencyLogConsistencyProofResponse
+
+// ProtoAppendTransparencyLogExternalRequest is the gRPC external append request.
+type ProtoAppendTransparencyLogExternalRequest = xkmspb.AppendTransparencyLogExternalRequest
+
+// ProtoAppendTransparencyLogExternalResponse is the gRPC external append response.
+type ProtoAppendTransparencyLogExternalResponse = xkmspb.AppendTransparencyLogExternalResponse
+
 // ==========================================================================
 // PIN Management
 // ==========================================================================

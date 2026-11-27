@@ -26,7 +26,7 @@ import (
 // USB.
 func TestSigningKey_NotSupported(t *testing.T) {
 	calls := signingkeytest.Calls(context.Background(), &Transport{})
-	assert.Len(t, calls, 5, "every method of transport.SigningKeyService")
+	assert.Len(t, calls, 7, "every method of transport.SigningKeyService")
 	for name, call := range calls {
 		t.Run(name, func(t *testing.T) { assert.ErrorIs(t, call(), ErrNotSupported) })
 	}

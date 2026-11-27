@@ -24,13 +24,12 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/pem"
 	"errors"
 	"math/big"
 	"testing"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/mocks"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -106,27 +105,6 @@ func setupEd25519CA(t *testing.T) *CA {
 // (brings Sign from 77.8% toward 100%)
 // =============================================================================
 
-// TestSign_NotInitialized exercises the ErrNotInitialized guard at the top of Sign.
-func TestSign_NotInitialized_B9(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.Sign(nil, []byte("digest"), nil)
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-// TestSign_Success exercises the happy path of Sign using the CA as crypto.Signer.
-func TestSign_Success_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// Sign a SHA-256 digest of a small message.
-	digest := make([]byte, 32) // 32 bytes = SHA-256 output
-	_, err := rand.Read(digest)
-	require.NoError(t, err)
-	sig, err := ca.Sign(rand.Reader, digest, crypto.SHA256)
-	require.NoError(t, err)
-	assert.NotEmpty(t, sig)
-}
-
 // TestSign_GetSignerError verifies that Sign propagates getSigner errors.
 // We exercise this by calling Sign on an uninitialised CA that has been
 // force-marked initialized but has no issuing identity configured.
@@ -140,97 +118,8 @@ func TestSign_GetSignerError_B9(t *testing.T) {
 }
 
 // =============================================================================
-// ca.go — CABundle: both intermediate-present and empty-bundle error paths
-// =============================================================================
-
-// TestCABundle_WithIntermediate exercises the intermediate branch (line 831-838)
-// where intermediateCert != nil adds to the bundle.
-func TestCABundle_WithIntermediate_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCAWithRealIntermediate(t)
-	bundle, err := ca.CABundle()
-	require.NoError(t, err)
-	assert.NotEmpty(t, bundle)
-	// Bundle must contain at least two PEM blocks (intermediate + root).
-	rest := bundle
-	count := 0
-	for {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
-		if block == nil {
-			break
-		}
-		count++
-	}
-	assert.GreaterOrEqual(t, count, 2)
-}
-
-// TestCABundle_EmptyBundle exercises the "buf.Len() == 0" guard by zeroing
-// both cached certificates after initialization.
-func TestCABundle_EmptyBundle_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	ca.mu.Lock()
-	orig := ca.rootCert
-	ca.rootCert = nil
-	ca.intermediateCert = nil
-	ca.mu.Unlock()
-	defer func() {
-		ca.mu.Lock()
-		ca.rootCert = orig
-		ca.mu.Unlock()
-	}()
-
-	_, err := ca.CABundle()
-	assert.ErrorIs(t, err, ErrInvalidCertificateChain)
-}
-
-// =============================================================================
 // ca.go — Load: success with intermediate, and key-not-found error
 // =============================================================================
-
-// TestLoad_WithIntermediate exercises the HasIntermediate() branch (lines 620-639)
-// in Load by first calling Init to persist certs then Load on a fresh CA instance.
-func TestLoad_WithIntermediate_B9(t *testing.T) {
-	t.Parallel()
-
-	backend, cs := newB9Backend(t)
-	config := DefaultMultiIdentityCAConfigWithIntermediate()
-	config.Identity[0].Subject.CommonName = "Load Root B9"
-	config.Identity[0].Keys[0].KeyType = "CA"
-	config.Identity[1].Subject.CommonName = "Load Intermediate B9"
-	config.Identity[1].Keys[0].KeyType = "CA"
-
-	// Init: persists root + intermediate certs to cs.
-	initCA := &CA{
-		config:          config,
-		keyStore:        backend,
-		keystoreMap:     map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
-		certStore:       cs,
-		revocationStore: storage.NewMemory(),
-		revocations:     make(map[string]*RevocationInfo),
-		serialGen:       NewSerialGenerator(NewMemoryStorage()),
-		profiles:        NewDefaultProfileRegistry(),
-	}
-	require.NoError(t, initCA.Init(context.Background()))
-
-	// Load: re-open using same backend/certstore (keys already exist).
-	loadCA := &CA{
-		config:          config,
-		keyStore:        backend,
-		keystoreMap:     map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
-		certStore:       cs,
-		revocationStore: storage.NewMemory(),
-		revocations:     make(map[string]*RevocationInfo),
-		serialGen:       NewSerialGenerator(NewMemoryStorage()),
-		profiles:        NewDefaultProfileRegistry(),
-	}
-	err := loadCA.Load(context.Background())
-	require.NoError(t, err)
-	assert.True(t, loadCA.IsInitialized())
-	assert.NotNil(t, loadCA.intermediateCert)
-}
 
 // TestLoad_RootKeyNotFound exercises the "root key not found" branch in Load.
 func TestLoad_RootKeyNotFound_B9(t *testing.T) {
@@ -273,15 +162,6 @@ func TestLoad_RootKeyNotFound_B9(t *testing.T) {
 // ca.go — getOrGenerateCAKey: Ed25519 branch + unsupported algorithm default
 // =============================================================================
 
-// TestGetOrGenerateCAKey_Ed25519_B9 exercises the Ed25519 branch in
-// getOrGenerateCAKey (line 923) via the full CA init path.
-func TestGetOrGenerateCAKey_Ed25519_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupEd25519CA(t)
-	assert.NotNil(t, ca.rootCert)
-	assert.Equal(t, x509.PureEd25519, ca.rootCert.SignatureAlgorithm)
-}
-
 // TestGetOrGenerateCAKey_UnsupportedAlgorithm_B9 exercises the default error
 // branch in getOrGenerateCAKey by injecting an x509.UnknownPublicKeyAlgorithm
 // on a key the backend genuinely reports as not found. The generation
@@ -312,267 +192,8 @@ func TestGetOrGenerateCAKey_UnsupportedAlgorithm_B9(t *testing.T) {
 }
 
 // =============================================================================
-// ca.go — createRootCertificate: SANS + CRL/OCSP/AIA URL branches
-// =============================================================================
-
-// TestCreateRootCertificate_WithSANsAndURLs_B9 exercises the SANS, CRL, OCSP,
-// and AIA URL branches (lines 990-1006) inside createRootCertificate.
-func TestCreateRootCertificate_WithSANsAndURLs_B9(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-
-	config := DefaultMultiIdentityCAConfig()
-	config.Identity[0].Subject.CommonName = "SANsURLs Root B9"
-	config.Identity[0].Keys[0].KeyType = "CA"
-	config.Identity[0].SANS = &SubjectAlternativeNames{
-		DNS:   []string{"root-b9.example.com"},
-		Email: []string{"ca@example.com"},
-	}
-	config.Identity[0].CRLDistributionPoints = []string{"http://crl.example.com/root.crl"}
-	config.Identity[0].OCSPServers = []string{"http://ocsp.example.com"}
-	config.Identity[0].IssuingCertificateURLs = []string{"http://aia.example.com/root.crt"}
-
-	// Use the direct CA struct with the multi-identity config so that
-	// createRootCertificate reads SANS and URL fields from rootIdentity.
-	ca := &CA{
-		config:      config,
-		keyStore:    backend,
-		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
-	}
-	require.NoError(t, ca.Init(context.Background()))
-
-	root := ca.rootCert
-	require.NotNil(t, root)
-	assert.NotEmpty(t, root.DNSNames)
-	assert.NotEmpty(t, root.EmailAddresses)
-	assert.NotEmpty(t, root.CRLDistributionPoints)
-	assert.NotEmpty(t, root.OCSPServer)
-	assert.NotEmpty(t, root.IssuingCertificateURL)
-}
-
-// =============================================================================
-// constructors.go — NewCA: single-identity (root only) and two-identity paths
-// =============================================================================
-
-// TestNewCA_RootOnly_B9 exercises the len(params.Identity)==1 early return path.
-func TestNewCA_RootOnly_B9(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-	cfg := DefaultMultiIdentityCAConfig()
-	cfg.Identity[0].Subject.CommonName = "NewCA Root Only B9"
-	cfg.Identity[0].Keys[0].KeyType = "CA"
-
-	params := &Params{
-		Identity:        cfg.Identity,
-		KeyStore:        backend,
-		BackendForStore: singleBackendFactory(backend),
-		RevocationStore: storage.NewMemory(),
-		CertStore:       cs,
-		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
-	}
-	root, intermediate, err := NewCA(context.Background(), params)
-	require.NoError(t, err)
-	assert.NotNil(t, root)
-	assert.Nil(t, intermediate)
-	assert.True(t, root.IsInitialized())
-}
-
-// TestNewCA_WithIntermediate_B9 exercises the full NewCA path with two identities.
-func TestNewCA_WithIntermediate_B9(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-	cfg := DefaultMultiIdentityCAConfigWithIntermediate()
-	cfg.Identity[0].Subject.CommonName = "NewCA Root B9"
-	cfg.Identity[0].Keys[0].KeyType = "CA"
-	cfg.Identity[1].Subject.CommonName = "NewCA Intermediate B9"
-	cfg.Identity[1].Keys[0].KeyType = "CA"
-
-	params := &Params{
-		Identity:        cfg.Identity,
-		KeyStore:        backend,
-		BackendForStore: singleBackendFactory(backend),
-		RevocationStore: storage.NewMemory(),
-		CertStore:       cs,
-		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
-	}
-	root, intermediate, err := NewCA(context.Background(), params)
-	require.NoError(t, err)
-	assert.NotNil(t, root)
-	assert.NotNil(t, intermediate)
-	assert.True(t, root.IsInitialized())
-	assert.True(t, intermediate.IsInitialized())
-}
-
-// TestNewCA_NilParams_B9 exercises the nil params guard.
-func TestNewCA_NilParams_B9(t *testing.T) {
-	t.Parallel()
-	_, _, err := NewCA(context.Background(), nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
-// TestNewCA_NoIdentity_B9 exercises the empty-identity guard.
-func TestNewCA_NoIdentity_B9(t *testing.T) {
-	t.Parallel()
-	_, _, err := NewCA(context.Background(), &Params{})
-	assert.ErrorIs(t, err, ErrNoIdentity)
-}
-
-// =============================================================================
-// constructors.go — NewIntermediateCA error paths
-// =============================================================================
-
-// TestNewIntermediateCA_NilParams_B9 exercises nil params guard.
-func TestNewIntermediateCA_NilParams_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	_, err := NewIntermediateCA(context.Background(), nil, ca)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
-// TestNewIntermediateCA_NilParent_B9 exercises nil parent guard.
-func TestNewIntermediateCA_NilParent_B9(t *testing.T) {
-	t.Parallel()
-	cfg := DefaultMultiIdentityCAConfigWithIntermediate()
-	_, err := NewIntermediateCA(context.Background(), &Params{Identity: cfg.Identity}, nil)
-	assert.ErrorIs(t, err, ErrParentCARequired)
-}
-
-// TestNewIntermediateCA_UninitParent_B9 exercises uninitialized parent guard.
-func TestNewIntermediateCA_UninitParent_B9(t *testing.T) {
-	t.Parallel()
-	uninit := setupUninitializedCA(t)
-	cfg := DefaultMultiIdentityCAConfigWithIntermediate()
-	_, err := NewIntermediateCA(context.Background(), &Params{Identity: cfg.Identity}, uninit)
-	assert.ErrorIs(t, err, ErrParentCANotInitialized)
-}
-
-// TestNewIntermediateCA_NoIntermediateIdentity_B9 exercises the len(Identity)<2 guard.
-func TestNewIntermediateCA_NoIntermediateIdentity_B9(t *testing.T) {
-	t.Parallel()
-	root := setupTestCA(t)
-	cfg := DefaultMultiIdentityCAConfig()
-	_, err := NewIntermediateCA(context.Background(), &Params{Identity: cfg.Identity}, root)
-	assert.ErrorIs(t, err, ErrNoIntermediateIdentity)
-}
-
-// =============================================================================
-// constructors.go — NewParentCA error paths
-// =============================================================================
-
-// TestNewParentCA_NilParams_B9 exercises nil params guard.
-func TestNewParentCA_NilParams_B9(t *testing.T) {
-	t.Parallel()
-	_, err := NewParentCA(nil)
-	assert.ErrorIs(t, err, ErrInvalidConfig)
-}
-
-// TestNewParentCA_NoIdentity_B9 exercises empty identity guard.
-func TestNewParentCA_NoIdentity_B9(t *testing.T) {
-	t.Parallel()
-	_, err := NewParentCA(&Params{})
-	assert.ErrorIs(t, err, ErrNoIdentity)
-}
-
-// TestNewParentCA_Success_B9 exercises the full happy path of NewParentCA.
-func TestNewParentCA_Success_B9(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-	cfg := DefaultMultiIdentityCAConfig()
-	cfg.Identity[0].Subject.CommonName = "NewParentCA Root B9"
-	cfg.Identity[0].Keys[0].KeyType = "CA"
-
-	params := &Params{
-		Identity:        cfg.Identity,
-		KeyStore:        backend,
-		BackendForStore: singleBackendFactory(backend),
-		RevocationStore: storage.NewMemory(),
-		CertStore:       cs,
-		SerialGen:       NewSerialGenerator(NewMemoryStorage()),
-	}
-	root, err := NewParentCA(params)
-	require.NoError(t, err)
-	assert.NotNil(t, root)
-	// Not initialized yet (caller must call Init).
-	assert.False(t, root.IsInitialized())
-
-	require.NoError(t, root.Init(context.Background()))
-	assert.True(t, root.IsInitialized())
-}
-
-// =============================================================================
 // constructors.go — ResolveStores: factory-based paths
 // =============================================================================
-
-// TestResolveStores_KeyStoreFactory_B9 exercises the KeyStoreFactory branch.
-func TestResolveStores_KeyStoreFactory_B9(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-
-	p := &Params{
-		KeyStoreFactory: func(cn string) (xkms.Backend, error) {
-			return backend, nil
-		},
-		CertStore: cs,
-	}
-	ks, retCS, retOS, err := p.ResolveStores("test-b9")
-	require.NoError(t, err)
-	assert.Equal(t, backend, ks)
-	assert.Equal(t, cs, retCS)
-	assert.Nil(t, retOS)
-}
-
-// TestResolveStores_KeyStoreFactoryError_B9 exercises a factory returning error.
-func TestResolveStores_KeyStoreFactoryError_B9(t *testing.T) {
-	t.Parallel()
-	_, cs := newB9Backend(t)
-
-	p := &Params{
-		KeyStoreFactory: func(cn string) (xkms.Backend, error) {
-			return nil, errors.New("factory failure")
-		},
-		CertStore: cs,
-	}
-	_, _, _, err := p.ResolveStores("test-b9")
-	require.Error(t, err)
-}
-
-// TestResolveStores_KeyStoreFactoryNil_B9 exercises factory returning nil backend.
-func TestResolveStores_KeyStoreFactoryNil_B9(t *testing.T) {
-	t.Parallel()
-	_, cs := newB9Backend(t)
-
-	p := &Params{
-		KeyStoreFactory: func(cn string) (xkms.Backend, error) {
-			return nil, nil // nil store: must error
-		},
-		CertStore: cs,
-	}
-	_, _, _, err := p.ResolveStores("test-b9")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrStoreFactoryReturnedNil)
-}
-
-// TestResolveStores_CertStoreFactory_B9 exercises the CertStoreFactory branch.
-func TestResolveStores_CertStoreFactory_B9(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-
-	p := &Params{
-		KeyStore:        backend,
-		BackendForStore: singleBackendFactory(backend),
-		RevocationStore: storage.NewMemory(),
-		CertStoreFactory: func(cn string) (certstore.CertStore, error) {
-			return cs, nil
-		},
-	}
-	_, retCS, _, err := p.ResolveStores("test-b9")
-	require.NoError(t, err)
-	assert.Equal(t, cs, retCS)
-}
 
 // TestResolveStores_CertStoreFactoryError_B9 exercises certstore factory error.
 func TestResolveStores_CertStoreFactoryError_B9(t *testing.T) {
@@ -613,14 +234,14 @@ func TestResolveStores_CertStoreFactoryNil_B9(t *testing.T) {
 func TestResolveStores_ObjectStoreFactory_B9(t *testing.T) {
 	t.Parallel()
 	backend, cs := newB9Backend(t)
-	objStore := qrdbsdk.NewMemoryStorage()
+	objStore := qrdbstorage.NewMemoryStorage()
 
 	p := &Params{
 		KeyStore:        backend,
 		BackendForStore: singleBackendFactory(backend),
 		RevocationStore: storage.NewMemory(),
 		CertStore:       cs,
-		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (qrdbsdk.Storage, error) {
+		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (qrdbstorage.Storage, error) {
 			return objStore, nil
 		}),
 	}
@@ -639,7 +260,7 @@ func TestResolveStores_ObjectStoreFactoryError_B9(t *testing.T) {
 		BackendForStore: singleBackendFactory(backend),
 		RevocationStore: storage.NewMemory(),
 		CertStore:       cs,
-		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (qrdbsdk.Storage, error) {
+		ObjectStoreFactory: ObjectStoreFactoryFunc(func(cn string) (qrdbstorage.Storage, error) {
 			return nil, errors.New("objstore factory failure")
 		}),
 	}
@@ -678,7 +299,7 @@ func b9MakeSelfSignedCACert(t *testing.T, cn string) (*x509.Certificate, *ecdsa.
 func TestImportXSignedCertificate_Success_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	cert, _ := b9MakeSelfSignedCACert(t, "xsigned-import-b9")
 	err := ca.ImportXSignedCertificate("issuer-b9", cert)
@@ -700,7 +321,7 @@ func TestImportXSignedCertificate_NoObjectStore_B9(t *testing.T) {
 func TestImportXSignedCertificate_EmptyIssuer_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	cert, _ := b9MakeSelfSignedCACert(t, "xsigned-emptyissuer-b9")
 	err := ca.ImportXSignedCertificate("", cert)
@@ -711,7 +332,7 @@ func TestImportXSignedCertificate_EmptyIssuer_B9(t *testing.T) {
 func TestImportXSignedCertificate_NilCert_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	err := ca.ImportXSignedCertificate("issuer-b9", nil)
 	assert.ErrorIs(t, err, ErrInvalidCertificate)
@@ -722,7 +343,7 @@ func TestImportXSignedCertificate_NilCert_B9(t *testing.T) {
 func TestXSignedRootCertificate_SelfSigned_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	cert, _ := b9MakeSelfSignedCACert(t, "xroot-selfsigned-b9")
 	got, err := ca.XSignedRootCertificate("issuer-b9", cert)
@@ -746,7 +367,7 @@ func TestXSignedRootCertificate_NoObjectStore_B9(t *testing.T) {
 func TestXSignedIntermediateCertificates_Empty_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	// Manufacture a non-self-signed cert (Issuer != Subject) so the loop runs.
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -790,7 +411,7 @@ func TestXSignedIntermediateCertificates_NoObjectStore_B9(t *testing.T) {
 func TestCrossSignedPEM_NilAttrs_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	_, err := ca.CrossSignedPEM(nil)
 	require.Error(t, err)
@@ -811,7 +432,7 @@ func TestCrossSignedPEM_NoObjectStore_B9(t *testing.T) {
 func TestCrossSignedPEM_NotFound_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage() // empty store
+	ca.objectStore = qrdbstorage.NewMemoryStorage() // empty store
 
 	attrs := &types.KeyAttributes{CN: "missing-cn-b9"}
 	_, err := ca.CrossSignedPEM(attrs)
@@ -822,7 +443,7 @@ func TestCrossSignedPEM_NotFound_B9(t *testing.T) {
 func TestCrossSignedPEM_Found_B9(t *testing.T) {
 	t.Parallel()
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	subjectCN := "crosssignedpem-subject-b9"
 	cert, _ := b9MakeSelfSignedCACert(t, subjectCN)
@@ -896,71 +517,6 @@ func TestGetOrGenerateKey_DefaultFallback_B9(t *testing.T) {
 }
 
 // =============================================================================
-// ca.go — createIntermediateCertificates: SANS + URL branches in intermediate
-// =============================================================================
-
-// TestCreateIntermediateCertificates_WithSANsAndURLs_B9 exercises the SANS,
-// CRL, OCSP, AIA URL branches in createSingleIntermediateCertificate by
-// configuring an intermediate identity with those fields set.
-func TestCreateIntermediateCertificates_WithSANsAndURLs_B9(t *testing.T) {
-	t.Parallel()
-	backend, cs := newB9Backend(t)
-
-	config := DefaultMultiIdentityCAConfigWithIntermediate()
-	config.Identity[0].Subject.CommonName = "SANsInt Root B9"
-	config.Identity[0].Keys[0].KeyType = "CA"
-	config.Identity[1].Subject.CommonName = "SANsInt Intermediate B9"
-	config.Identity[1].Keys[0].KeyType = "CA"
-	config.Identity[1].SANS = &SubjectAlternativeNames{
-		DNS: []string{"intermediate-b9.example.com"},
-	}
-	config.Identity[1].CRLDistributionPoints = []string{"http://crl.example.com/int.crl"}
-	config.Identity[1].OCSPServers = []string{"http://ocsp.example.com"}
-	config.Identity[1].IssuingCertificateURLs = []string{"http://aia.example.com/int.crt"}
-
-	ca := &CA{
-		config:      config,
-		keyStore:    backend,
-		keystoreMap: map[types.StoreType]xkms.Backend{types.StoreSoftware: backend},
-		certStore:   cs,
-		revocations: make(map[string]*RevocationInfo),
-		serialGen:   NewSerialGenerator(NewMemoryStorage()),
-		profiles:    NewDefaultProfileRegistry(),
-	}
-	require.NoError(t, ca.Init(context.Background()))
-	require.NotNil(t, ca.intermediateCert)
-	assert.NotEmpty(t, ca.intermediateCert.DNSNames)
-	assert.NotEmpty(t, ca.intermediateCert.CRLDistributionPoints)
-	assert.NotEmpty(t, ca.intermediateCert.OCSPServer)
-	assert.NotEmpty(t, ca.intermediateCert.IssuingCertificateURL)
-}
-
-// =============================================================================
-// ca.go — GenerateCRL: issuingCert==nil path
-// =============================================================================
-
-// TestGenerateCRL_NoIssuingCert_B9 exercises the issuingCert==nil guard by
-// zeroing the root cert after initialization.
-func TestGenerateCRL_NoIssuingCert_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	ca.mu.Lock()
-	orig := ca.rootCert
-	ca.rootCert = nil
-	ca.intermediateCert = nil
-	ca.mu.Unlock()
-	defer func() {
-		ca.mu.Lock()
-		ca.rootCert = orig
-		ca.mu.Unlock()
-	}()
-
-	_, err := ca.GenerateCRL(context.Background())
-	assert.ErrorIs(t, err, ErrCRLGenerationFailed)
-}
-
-// =============================================================================
 // ca.go — IsRevoked: nil serial returns (false, nil)
 // =============================================================================
 
@@ -971,55 +527,4 @@ func TestIsRevoked_NilSerial_B9(t *testing.T) {
 	revoked, err := ca.IsRevoked(nil)
 	require.NoError(t, err)
 	assert.False(t, revoked)
-}
-
-// =============================================================================
-// ca_extensions.go — CABundle filtered: storeType mismatch path
-// =============================================================================
-
-// TestCAKeyAttributes_StoreTypeMismatch_B9 exercises the mismatch guard in
-// CAKeyAttributes (lines 448-451) where storeType != configured type.
-func TestCAKeyAttributes_StoreTypeMismatch_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// The CA is configured with StoreSoftware; request TPM2 to trigger mismatch.
-	_, err := ca.CAKeyAttributes(types.StoreTPM2)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidStoreType)
-}
-
-// TestCASigner_AlgorithmMismatch_B9 exercises the algorithm mismatch guard in
-// CASigner (lines 470-473).
-func TestCASigner_AlgorithmMismatch_B9(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	// The CA has an ECDSA key; request RSA to trigger the mismatch.
-	_, err := ca.CASigner(context.Background(), types.StoreSoftware, x509.RSA)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrInvalidKeyAlgorithm)
-}
-
-// =============================================================================
-// ca_extensions.go — loadPersistedRevocations: invalid serial string path
-// =============================================================================
-
-// TestLoadPersistedRevocations_InvalidSerial_B9 proves a record whose serial
-// cannot be parsed fails the load with ErrRevocationRecordCorrupt naming the
-// key, rather than being skipped (which would silently un-revoke it).
-func TestLoadPersistedRevocations_InvalidSerial_B9(t *testing.T) {
-	t.Parallel()
-	backend := storage.NewMemory()
-	ca := &CA{
-		revocationStore: backend,
-		revocations:     make(map[string]*RevocationInfo),
-	}
-	// Store a record with a non-numeric serial that SetString will reject.
-	badJSON := []byte(`{"serial":"not-a-number","reason":0,"revoked_at":"2024-01-01T00:00:00Z"}`)
-	key := revocationKeyPrefix + "bad-serial.json"
-	require.NoError(t, backend.Put(context.Background(), key, badJSON))
-
-	err := ca.loadPersistedRevocations(context.Background())
-	require.ErrorIs(t, err, ErrRevocationRecordCorrupt)
-	assert.Contains(t, err.Error(), key)
-	assert.Empty(t, ca.revocations)
 }

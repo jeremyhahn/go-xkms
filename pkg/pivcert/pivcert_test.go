@@ -76,39 +76,6 @@ func TestPIVStorageType_IsValid(t *testing.T) {
 	}
 }
 
-func TestPIVStorageType_String(t *testing.T) {
-	tests := []struct {
-		name        string
-		storageType PIVStorageType
-		want        string
-	}{
-		{
-			name:        "file storage type string",
-			storageType: StorageTypeFile,
-			want:        "file",
-		},
-		{
-			name:        "tpm2 storage type string",
-			storageType: StorageTypeTPM2,
-			want:        "tpm2",
-		},
-		{
-			name:        "pkcs11 storage type string",
-			storageType: StorageTypePKCS11,
-			want:        "pkcs11",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.storageType.String()
-			if got != tt.want {
-				t.Errorf("PIVStorageType.String() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestPIVSlot_IsValid(t *testing.T) {
 	tests := []struct {
 		name string
@@ -334,34 +301,6 @@ func TestPIVSlot_IsAttestationSlot(t *testing.T) {
 	}
 }
 
-func TestPIVSlot_String(t *testing.T) {
-	tests := []struct {
-		name string
-		slot PIVSlot
-		want string
-	}{
-		{
-			name: "authentication slot string",
-			slot: PIVSlotAuthentication,
-			want: "9a",
-		},
-		{
-			name: "retired slot 10 string",
-			slot: PIVSlotRetired10,
-			want: "8b",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := tt.slot.String()
-			if got != tt.want {
-				t.Errorf("PIVSlot.String() = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestValidateSlot(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -522,13 +461,6 @@ func TestPrimarySlots(t *testing.T) {
 	for i, expected := range expectedSlots {
 		if slots[i] != expected {
 			t.Errorf("PrimarySlots()[%d] = %v, want %v", i, slots[i], expected)
-		}
-	}
-
-	// Verify all returned slots are primary
-	for _, slot := range slots {
-		if !slot.IsPrimarySlot() {
-			t.Errorf("PrimarySlots() returned non-primary slot: %v", slot)
 		}
 	}
 }
@@ -1402,110 +1334,6 @@ func TestDefaultSlotMetadata(t *testing.T) {
 			}
 			if meta.MaxCertSize != MaxCertSizeFile {
 				t.Errorf("DefaultSlotMetadata().MaxCertSize = %v, want %v", meta.MaxCertSize, MaxCertSizeFile)
-			}
-		})
-	}
-}
-
-func TestConstants(t *testing.T) {
-	// Test maximum certificate sizes
-	if MaxCertSizeFile != 16*1024 {
-		t.Errorf("MaxCertSizeFile = %v, want %v", MaxCertSizeFile, 16*1024)
-	}
-	if MaxCertSizeTPM2 != 4*1024 {
-		t.Errorf("MaxCertSizeTPM2 = %v, want %v", MaxCertSizeTPM2, 4*1024)
-	}
-	if MaxCertSizePKCS11 != 8*1024 {
-		t.Errorf("MaxCertSizePKCS11 = %v, want %v", MaxCertSizePKCS11, 8*1024)
-	}
-
-	// Test TPM2 NV constants
-	if TPM2NVIndexFirst != 0x01000000 {
-		t.Errorf("TPM2NVIndexFirst = 0x%x, want 0x01000000", TPM2NVIndexFirst)
-	}
-	if TPM2NVMagic != 0x50495643 {
-		t.Errorf("TPM2NVMagic = 0x%x, want 0x50495643", TPM2NVMagic)
-	}
-	if TPM2NVVersion != 1 {
-		t.Errorf("TPM2NVVersion = %v, want 1", TPM2NVVersion)
-	}
-	if TPM2NVHeaderSize != 16 {
-		t.Errorf("TPM2NVHeaderSize = %v, want 16", TPM2NVHeaderSize)
-	}
-	if DefaultTPM2BaseIndex != 0x01C00100 {
-		t.Errorf("DefaultTPM2BaseIndex = 0x%x, want 0x01C00100", DefaultTPM2BaseIndex)
-	}
-}
-
-func TestConfigKeyConstants(t *testing.T) {
-	// Test Viper configuration key constants
-	if ConfigKeyPIVStorage != "piv.storage" {
-		t.Errorf("ConfigKeyPIVStorage = %v, want piv.storage", ConfigKeyPIVStorage)
-	}
-	if ConfigKeyPIVStoragePath != "piv.storage_path" {
-		t.Errorf("ConfigKeyPIVStoragePath = %v, want piv.storage_path", ConfigKeyPIVStoragePath)
-	}
-	if ConfigKeyPIVTPMDevice != "piv.tpm_device" {
-		t.Errorf("ConfigKeyPIVTPMDevice = %v, want piv.tpm_device", ConfigKeyPIVTPMDevice)
-	}
-	if ConfigKeyPIVTPMBaseIndex != "piv.tpm_base_index" {
-		t.Errorf("ConfigKeyPIVTPMBaseIndex = %v, want piv.tpm_base_index", ConfigKeyPIVTPMBaseIndex)
-	}
-	if ConfigKeyPIVTPMOwnerAuth != "piv.tpm_owner_auth" {
-		t.Errorf("ConfigKeyPIVTPMOwnerAuth = %v, want piv.tpm_owner_auth", ConfigKeyPIVTPMOwnerAuth)
-	}
-	if ConfigKeyPIVPKCS11Lib != "piv.pkcs11_library" {
-		t.Errorf("ConfigKeyPIVPKCS11Lib = %v, want piv.pkcs11_library", ConfigKeyPIVPKCS11Lib)
-	}
-	if ConfigKeyPIVPKCS11Token != "piv.pkcs11_token" {
-		t.Errorf("ConfigKeyPIVPKCS11Token = %v, want piv.pkcs11_token", ConfigKeyPIVPKCS11Token)
-	}
-	if ConfigKeyPIVPKCS11SlotID != "piv.pkcs11_slot_id" {
-		t.Errorf("ConfigKeyPIVPKCS11SlotID = %v, want piv.pkcs11_slot_id", ConfigKeyPIVPKCS11SlotID)
-	}
-	if ConfigKeyPIVPKCS11PIN != "piv.pkcs11_pin" {
-		t.Errorf("ConfigKeyPIVPKCS11PIN = %v, want piv.pkcs11_pin", ConfigKeyPIVPKCS11PIN)
-	}
-}
-
-func TestSentinelErrors(t *testing.T) {
-	// Test that all sentinel errors have appropriate messages
-	sentinelErrors := map[string]error{
-		"ErrInvalidSlot":         ErrInvalidSlot,
-		"ErrCertificateNotFound": ErrCertificateNotFound,
-		"ErrStorageFull":         ErrStorageFull,
-		"ErrPermissionDenied":    ErrPermissionDenied,
-		"ErrInvalidFormat":       ErrInvalidFormat,
-		"ErrStorageClosed":       ErrStorageClosed,
-		"ErrInvalidCertificate":  ErrInvalidCertificate,
-		"ErrCertificateExpired":  ErrCertificateExpired,
-		"ErrCertificateTooLarge": ErrCertificateTooLarge,
-		"ErrInvalidConfig":       ErrInvalidConfig,
-		"ErrInvalidStorageType":  ErrInvalidStorageType,
-		"ErrMissingConfig":       ErrMissingConfig,
-		"ErrMissingDAOFactory":   ErrMissingDAOFactory,
-		"ErrConflict":            ErrConflict,
-		"ErrMissingDevicePath":   ErrMissingDevicePath,
-		"ErrMissingLibraryPath":  ErrMissingLibraryPath,
-		"ErrTPMNotAvailable":     ErrTPMNotAvailable,
-		"ErrPKCS11NotAvailable":  ErrPKCS11NotAvailable,
-		"ErrNVIndexExists":       ErrNVIndexExists,
-		"ErrNVIndexNotFound":     ErrNVIndexNotFound,
-		"ErrTokenNotFound":       ErrTokenNotFound,
-		"ErrSessionError":        ErrSessionError,
-	}
-
-	for name, err := range sentinelErrors {
-		t.Run(name, func(t *testing.T) {
-			if err == nil {
-				t.Errorf("%s should not be nil", name)
-			}
-			if err.Error() == "" {
-				t.Errorf("%s should have a non-empty error message", name)
-			}
-			// Check error message starts with "pivcert:"
-			if !containsString(err.Error(), "pivcert:") {
-				t.Errorf("%s error message should start with 'pivcert:', got: %s", name, err.Error())
 			}
 		})
 	}

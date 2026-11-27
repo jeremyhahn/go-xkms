@@ -43,7 +43,7 @@ func (e *errSigningKeyStatus) Error() string { return "status " + strconv.Itoa(e
 
 // signingKeyRouter serves the signing-key routes of the route table over svc
 // as a caller of tenant acme.
-func signingKeyRouter(svc *xkms.XKMSService) http.Handler {
+func signingKeyRouter(svc transport.SigningKeyServicer) http.Handler {
 	server := &Server{signingKeyHandlers: NewSigningKeyHandlers(svc)}
 	r := chi.NewRouter()
 	identity := &auth.Identity{Subject: "release-manager", TenantID: "acme", Roles: []string{"admin"}}

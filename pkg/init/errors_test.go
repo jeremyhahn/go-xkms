@@ -22,7 +22,8 @@ var errCause = errors.New("cause")
 
 // TestRandomSourceError_WrapsCauseAndMatchesSentinel pins that a random-source
 // failure reports both the sentinel and the underlying cause, so callers can
-// branch on ErrRandomSource and still log what the entropy source said.
+// branch on ErrRandomSource and still log what the entropy source said, and
+// that its Is does not answer true for another sentinel.
 func TestRandomSourceError_WrapsCauseAndMatchesSentinel(t *testing.T) {
 	err := error(&RandomSourceError{Err: errCause})
 
@@ -32,23 +33,17 @@ func TestRandomSourceError_WrapsCauseAndMatchesSentinel(t *testing.T) {
 	if !errors.Is(err, errCause) {
 		t.Error("RandomSourceError must unwrap to its cause")
 	}
+	if errors.Is(err, ErrAdminKeyGeneration) {
+		t.Error("RandomSourceError must not match ErrAdminKeyGeneration")
+	}
 	if want := ErrRandomSource.Error() + ": cause"; err.Error() != want {
 		t.Errorf("Error() = %q, want %q", err.Error(), want)
 	}
 }
 
-// TestRandomSourceError_DoesNotMatchOtherSentinels guards against an Is that
-// answers true for any target.
-func TestRandomSourceError_DoesNotMatchOtherSentinels(t *testing.T) {
-	err := error(&RandomSourceError{Err: errCause})
-
-	if errors.Is(err, ErrAdminKeyGeneration) {
-		t.Error("RandomSourceError must not match ErrAdminKeyGeneration")
-	}
-}
-
 // TestAdminKeyGenerationError_WrapsCauseAndMatchesSentinel pins the same
-// contract for the first-boot administrator key failure.
+// contract for the first-boot administrator key failure, including that its
+// Is does not answer true for another sentinel.
 func TestAdminKeyGenerationError_WrapsCauseAndMatchesSentinel(t *testing.T) {
 	err := error(&AdminKeyGenerationError{Err: errCause})
 
@@ -58,17 +53,10 @@ func TestAdminKeyGenerationError_WrapsCauseAndMatchesSentinel(t *testing.T) {
 	if !errors.Is(err, errCause) {
 		t.Error("AdminKeyGenerationError must unwrap to its cause")
 	}
-	if want := ErrAdminKeyGeneration.Error() + ": cause"; err.Error() != want {
-		t.Errorf("Error() = %q, want %q", err.Error(), want)
-	}
-}
-
-// TestAdminKeyGenerationError_DoesNotMatchOtherSentinels guards against an Is
-// that answers true for any target.
-func TestAdminKeyGenerationError_DoesNotMatchOtherSentinels(t *testing.T) {
-	err := error(&AdminKeyGenerationError{Err: errCause})
-
 	if errors.Is(err, ErrRandomSource) {
 		t.Error("AdminKeyGenerationError must not match ErrRandomSource")
+	}
+	if want := ErrAdminKeyGeneration.Error() + ": cause"; err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err.Error(), want)
 	}
 }

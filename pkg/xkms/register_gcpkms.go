@@ -67,5 +67,5 @@ func newGCPKMSKeyProvider(config map[string]interface{}) (types.KeyProvider, err
 		gcpConfig.Insecure = insecureConn
 	}
 
-	return gcpkms.NewBackend(context.Background(), gcpConfig)
+	return keyProvider(gcpkms.NewBackend(context.Background(), gcpConfig))
 }

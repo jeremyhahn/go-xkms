@@ -153,6 +153,24 @@ func TestNativeVirtualDeviceEnumerator_Enumerate(t *testing.T) {
 	if len(devices) != 0 {
 		t.Errorf("expected 0 devices with non-matching product ID, got %d", len(devices))
 	}
+
+	// Enumerate with both matching IDs
+	devices, err = enumerator.Enumerate(NativeVirtualDeviceVendorID, NativeVirtualDeviceProductID)
+	if err != nil {
+		t.Fatalf("Enumerate failed: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Errorf("expected 1 device with matching IDs, got %d", len(devices))
+	}
+
+	// Enumerate with matching vendor but non-matching product
+	devices, err = enumerator.Enumerate(NativeVirtualDeviceVendorID, 0xFFFF)
+	if err != nil {
+		t.Fatalf("Enumerate failed: %v", err)
+	}
+	if len(devices) != 0 {
+		t.Errorf("expected 0 devices with matching vendor and non-matching product ID, got %d", len(devices))
+	}
 }
 
 // TestNativeVirtualDeviceEnumerator_Open tests device opening.
@@ -258,11 +276,6 @@ func TestNativeVirtualDeviceEnumerator_Close(t *testing.T) {
 	}
 }
 
-// TestNativeVirtualDeviceEnumerator_ImplementsInterface tests interface compliance.
-func TestNativeVirtualDeviceEnumerator_ImplementsInterface(t *testing.T) {
-	var _ xkms.FIDO2HIDDeviceEnumerator = (*NativeVirtualDeviceEnumerator)(nil)
-}
-
 // TestNativeVirtualDeviceEnumerator_WrapperMethods tests wrapper HIDDevice methods.
 func TestNativeVirtualDeviceEnumerator_WrapperMethods(t *testing.T) {
 	enumerator := NewNativeVirtualDeviceEnumerator()
@@ -343,41 +356,5 @@ func TestNativeVirtualDeviceEnumerator_WrapperMethods(t *testing.T) {
 	// Verify it's a valid INIT response
 	if response[4] != xkms.FIDO2CTAPHIDInit {
 		t.Errorf("expected INIT response, got 0x%02X", response[4])
-	}
-}
-
-// TestNativeVirtualDeviceEnumerator_EnumerateWithBothIDs tests enumeration with both vendor and product IDs.
-func TestNativeVirtualDeviceEnumerator_EnumerateWithBothIDs(t *testing.T) {
-	enumerator := NewNativeVirtualDeviceEnumerator()
-
-	device, err := NewNativeVirtualDevice(&NativeVirtualDeviceConfig{
-		SerialNumber: "TEST008",
-	})
-	if err != nil {
-		t.Fatalf("failed to create device: %v", err)
-	}
-	defer func() { _ = device.Close() }()
-
-	err = enumerator.RegisterDevice(device)
-	if err != nil {
-		t.Fatalf("RegisterDevice failed: %v", err)
-	}
-
-	// Enumerate with both matching IDs
-	devices, err := enumerator.Enumerate(NativeVirtualDeviceVendorID, NativeVirtualDeviceProductID)
-	if err != nil {
-		t.Fatalf("Enumerate failed: %v", err)
-	}
-	if len(devices) != 1 {
-		t.Errorf("expected 1 device with matching IDs, got %d", len(devices))
-	}
-
-	// Enumerate with matching vendor but non-matching product
-	devices, err = enumerator.Enumerate(NativeVirtualDeviceVendorID, 0xFFFF)
-	if err != nil {
-		t.Fatalf("Enumerate failed: %v", err)
-	}
-	if len(devices) != 0 {
-		t.Errorf("expected 0 devices with non-matching product ID, got %d", len(devices))
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/appraisaltest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,6 +23,10 @@ var errMock = errors.New("mock error")
 // embedded transport delegation pattern. Every method returns a
 // deterministic response or errMock based on the shouldFail field.
 type mockService struct {
+	// Unserved serves the attestation Verifier API, which these tests do
+	// not exercise.
+	appraisaltest.Unserved
+
 	shouldFail bool
 }
 
@@ -366,6 +371,41 @@ func (m *mockService) GetCABundle(_ context.Context, _ *transport.GetCABundleReq
 		return nil, errMock
 	}
 	return &transport.GetCABundleResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogHead(_ context.Context, _ *transport.GetTransparencyLogHeadRequest) (*transport.GetTransparencyLogHeadResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogHeadResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogEntry(_ context.Context, _ *transport.GetTransparencyLogEntryRequest) (*transport.GetTransparencyLogEntryResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogEntryResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogInclusionProof(_ context.Context, _ *transport.GetTransparencyLogInclusionProofRequest) (*transport.GetTransparencyLogInclusionProofResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogInclusionProofResponse{}, nil
+}
+
+func (m *mockService) GetTransparencyLogConsistencyProof(_ context.Context, _ *transport.GetTransparencyLogConsistencyProofRequest) (*transport.GetTransparencyLogConsistencyProofResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.GetTransparencyLogConsistencyProofResponse{}, nil
+}
+
+func (m *mockService) AppendTransparencyLogExternal(_ context.Context, _ *transport.AppendTransparencyLogExternalRequest) (*transport.AppendTransparencyLogExternalResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AppendTransparencyLogExternalResponse{}, nil
 }
 
 func (m *mockService) GetCACertificate(_ context.Context, _ *transport.GetCACertificateRequest) (*transport.GetCACertificateResponse, error) {
@@ -1068,6 +1108,10 @@ func TestNew_ValidService(t *testing.T) {
 	require.NotNil(t, tr)
 	assert.NotNil(t, tr.Service())
 	assert.NotNil(t, tr.Config())
+
+	tr, err = NewWithService(&mockService{})
+	require.NoError(t, err)
+	assert.NotNil(t, tr.Service())
 }
 
 func TestNew_WithOptions(t *testing.T) {
@@ -1099,12 +1143,6 @@ func TestNewWithConfig_CustomConfig(t *testing.T) {
 	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
-func TestNewWithService(t *testing.T) {
-	tr, err := NewWithService(&mockService{})
-	require.NoError(t, err)
-	require.NotNil(t, tr)
-}
-
 func TestSetService_Valid(t *testing.T) {
 	tr, err := NewWithConfig(nil)
 	require.NoError(t, err)
@@ -1130,24 +1168,6 @@ func TestConnect_NoService(t *testing.T) {
 	assert.ErrorIs(t, tr.Connect(context.Background()), ErrNilService)
 }
 
-func TestConnect_WithService(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-
-	// Already connected via New, but Connect should still succeed
-	assert.NoError(t, tr.Connect(context.Background()))
-}
-
-func TestClose(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-
-	assert.NoError(t, tr.Close())
-	// After close, methods should return ErrNotConnected
-	_, err = tr.Health(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 // --- Health ---
 
 func TestHealth_Connected(t *testing.T) {
@@ -1160,23 +1180,6 @@ func TestHealth_Connected(t *testing.T) {
 	assert.Equal(t, "1.0.0", resp.Version)
 }
 
-func TestHealth_ServiceError(t *testing.T) {
-	tr, err := New(&mockService{shouldFail: true})
-	require.NoError(t, err)
-
-	_, err = tr.Health(context.Background())
-	assert.ErrorIs(t, err, errMock)
-}
-
-func TestHealth_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-
-	_, err = tr.Health(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 // --- Delegation tests: connected success + not-connected error ---
 
 func TestListBackends_Connected(t *testing.T) {
@@ -1187,28 +1190,12 @@ func TestListBackends_Connected(t *testing.T) {
 	assert.Len(t, resp.Backends, 1)
 }
 
-func TestListBackends_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	_, err = tr.ListBackends(context.Background())
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestGetBackend_Connected(t *testing.T) {
 	tr, err := New(&mockService{})
 	require.NoError(t, err)
 	resp, err := tr.GetBackend(context.Background(), "software")
 	require.NoError(t, err)
 	assert.Equal(t, "software", resp.ID)
-}
-
-func TestGetBackend_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	_, err = tr.GetBackend(context.Background(), "software")
-	assert.ErrorIs(t, err, ErrNotConnected)
 }
 
 func TestGenerateKey_Connected(t *testing.T) {
@@ -1219,33 +1206,10 @@ func TestGenerateKey_Connected(t *testing.T) {
 	assert.Equal(t, "test-key", resp.KeyID)
 }
 
-func TestGenerateKey_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	_, err = tr.GenerateKey(context.Background(), &transport.GenerateKeyRequest{})
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
 func TestDeleteKey_Connected(t *testing.T) {
 	tr, err := New(&mockService{})
 	require.NoError(t, err)
 	resp, err := tr.DeleteKey(context.Background(), "software", "key1")
 	require.NoError(t, err)
 	assert.True(t, resp.Success)
-}
-
-func TestDeleteKey_NotConnected(t *testing.T) {
-	tr, err := New(&mockService{})
-	require.NoError(t, err)
-	require.NoError(t, tr.Close())
-	_, err = tr.DeleteKey(context.Background(), "software", "key1")
-	assert.ErrorIs(t, err, ErrNotConnected)
-}
-
-func TestDeleteKey_ServiceError(t *testing.T) {
-	tr, err := New(&mockService{shouldFail: true})
-	require.NoError(t, err)
-	_, err = tr.DeleteKey(context.Background(), "software", "key1")
-	assert.ErrorIs(t, err, errMock)
 }

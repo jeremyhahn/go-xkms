@@ -1,0 +1,1 @@
+pkcs11/manager: tests under the `pkcs11` tag pin that a file that is not a shared library, a module whose `C_Initialize` fails, a token re-initialization with the wrong SO PIN and a module finalized beneath the manager are each refused with the package's typed error, never reported as a module, token or slot (#1794).

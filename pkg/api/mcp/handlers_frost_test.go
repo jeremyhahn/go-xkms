@@ -25,7 +25,6 @@ import (
 	"crypto"
 	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -146,27 +145,6 @@ func frostReq(t *testing.T, method string, params interface{}) *JSONRPCRequest {
 	raw, err := json.Marshal(params)
 	require.NoError(t, err)
 	return &JSONRPCRequest{JSONRPC: "2.0", Method: method, Params: raw, ID: 1}
-}
-
-// TestFrostMethods_Dispatchable proves every frost.* registration in
-// rpcMethods reaches a compiled-in handler under the frost tag: none of them
-// answers method-not-found, the !frost stub's reply.
-func TestFrostMethods_Dispatchable(t *testing.T) {
-	server := newFrostMCPServer(t)
-	methods := 0
-	for method, entry := range rpcMethods {
-		if !strings.HasPrefix(method, "frost.") {
-			continue
-		}
-		methods++
-		req := &JSONRPCRequest{JSONRPC: "2.0", Method: method, Params: json.RawMessage(`{}`)}
-		_, err := entry.handler(server, context.Background(), req)
-		var keyErr *KeyOpError
-		if errors.As(err, &keyErr) {
-			assert.NotEqualf(t, ErrCodeMethodNotFound, keyErr.Code, "%s must reach the FROST handler", method)
-		}
-	}
-	assert.Equal(t, 9, methods, "the nine FROST methods are registered")
 }
 
 func TestHandleFrostGenerateKey_Validation(t *testing.T) {

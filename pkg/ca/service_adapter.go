@@ -50,6 +50,16 @@ func (ca *CA) SignCSRRaw(ctx context.Context, csrPEM []byte, profile string, val
 	})
 }
 
+// SignCSRUnstored signs csrPEM as SignCSRRaw does but does not store the
+// certificate in the certificate store, which is keyed by common name alone:
+// it is for a certificate whose common name the caller chooses, such as the
+// image signer's code-signing certificate named after a repository, which
+// travels with the signature instead. The issuing tenant is still recorded
+// by serial, so the certificate stays revocable.
+func (ca *CA) SignCSRUnstored(ctx context.Context, csrPEM []byte, profile string, validityDays int, tenantID string) (*x509.Certificate, error) {
+	return ca.SignCSRRaw(withUnstoredIssuance(ctx), csrPEM, profile, validityDays, tenantID)
+}
+
 // SignCSRWithSPIFFE signs a CSR and optionally stamps a tenant-scoped SPIFFE
 // URI SAN onto the issued certificate. When trustDomain and tenantID are both
 // non-empty, the SAN spiffe://<tenantID>/<kind>/<name> is

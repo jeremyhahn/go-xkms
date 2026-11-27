@@ -34,10 +34,15 @@ type (
 	FIDO2KeyBackend      = keybackend.FIDO2KeyBackend
 	FIDO2KeyCapabilities = keybackend.FIDO2KeyCapabilities
 	KeyHandle            = keybackend.KeyHandle
+	SentinelCauseError   = keybackend.SentinelCauseError
 	TPM2AttestingBackend = keybackend.TPM2AttestingBackend
+	UserVerifier         = keybackend.UserVerifier
 )
 
 var (
+	ErrUserVerificationUnavailable = keybackend.ErrUserVerificationUnavailable
+	ErrUserVerificationCancelled   = keybackend.ErrUserVerificationCancelled
+
 	EncodeCOSEPublicKey            = keybackend.EncodeCOSEPublicKey
 	NewBackendAdapter              = keybackend.NewBackendAdapter
 	NewCompositeBackend            = keybackend.NewCompositeBackend

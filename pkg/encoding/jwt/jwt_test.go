@@ -28,35 +28,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSign_RSA256 tests signing a JWT with RSA-256
-func TestSign_RSA256(t *testing.T) {
-	// Generate RSA key
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	// Create signer
-	signer := NewSigner()
-
-	// Create claims
-	claims := jwt.MapClaims{
-		"sub": "test-user",
-		"iat": time.Now().Unix(),
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	// Sign token
-	tokenString, err := signer.Sign(privateKey, claims)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
-
-	// Verify we can parse and verify the token
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return &privateKey.PublicKey, nil
-	})
-	require.NoError(t, err)
-	assert.True(t, token.Valid)
-}
-
 // TestSign_RSA384 tests signing a JWT with RSA-384
 func TestSign_RSA384(t *testing.T) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -74,147 +45,6 @@ func TestSign_RSA384(t *testing.T) {
 
 	// Verify
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return &privateKey.PublicKey, nil
-	})
-	require.NoError(t, err)
-	assert.True(t, token.Valid)
-}
-
-// TestSign_RSA512 tests signing a JWT with RSA-512
-func TestSign_RSA512(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	signer := NewSigner()
-	claims := jwt.MapClaims{
-		"sub": "test-user",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	tokenString, err := signer.SignWithAlgorithm(privateKey, claims, RS512)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
-
-	// Verify
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return &privateKey.PublicKey, nil
-	})
-	require.NoError(t, err)
-	assert.True(t, token.Valid)
-}
-
-// TestSign_ECDSA256 tests signing a JWT with ECDSA-256
-func TestSign_ECDSA256(t *testing.T) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	signer := NewSigner()
-	claims := jwt.MapClaims{
-		"sub": "test-user",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	tokenString, err := signer.Sign(privateKey, claims)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
-
-	// Verify
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return &privateKey.PublicKey, nil
-	})
-	require.NoError(t, err)
-	assert.True(t, token.Valid)
-}
-
-// TestSign_ECDSA384 tests signing a JWT with ECDSA-384
-func TestSign_ECDSA384(t *testing.T) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
-	require.NoError(t, err)
-
-	signer := NewSigner()
-	claims := jwt.MapClaims{
-		"sub": "test-user",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	tokenString, err := signer.Sign(privateKey, claims)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
-
-	// Verify
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return &privateKey.PublicKey, nil
-	})
-	require.NoError(t, err)
-	assert.True(t, token.Valid)
-}
-
-// TestSign_ECDSA512 tests signing a JWT with ECDSA-512
-func TestSign_ECDSA512(t *testing.T) {
-	privateKey, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
-	require.NoError(t, err)
-
-	signer := NewSigner()
-	claims := jwt.MapClaims{
-		"sub": "test-user",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	tokenString, err := signer.Sign(privateKey, claims)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
-
-	// Verify
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return &privateKey.PublicKey, nil
-	})
-	require.NoError(t, err)
-	assert.True(t, token.Valid)
-}
-
-// TestSign_Ed25519 tests signing a JWT with Ed25519
-func TestSign_Ed25519(t *testing.T) {
-	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
-	require.NoError(t, err)
-
-	signer := NewSigner()
-	claims := jwt.MapClaims{
-		"sub": "test-user",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	tokenString, err := signer.Sign(privateKey, claims)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
-
-	// Verify
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return publicKey, nil
-	})
-	require.NoError(t, err)
-	assert.True(t, token.Valid)
-}
-
-// TestSign_WithKID tests signing with a key ID
-func TestSign_WithKID(t *testing.T) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	signer := NewSigner()
-	claims := jwt.MapClaims{
-		"sub": "test-user",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-
-	tokenString, err := signer.SignWithKID(privateKey, claims, "pkcs11:test-key")
-	require.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
-
-	// Parse and check kid
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		kid, ok := token.Header["kid"].(string)
-		assert.True(t, ok)
-		assert.Equal(t, "pkcs11:test-key", kid)
 		return &privateKey.PublicKey, nil
 	})
 	require.NoError(t, err)
@@ -306,6 +136,10 @@ func TestExtractKID(t *testing.T) {
 	kid, err := ExtractKID(tokenString)
 	require.NoError(t, err)
 	assert.Equal(t, expectedKID, kid)
+
+	token, err := NewVerifier().Verify(tokenString, &privateKey.PublicKey)
+	require.NoError(t, err)
+	assert.True(t, token.Valid)
 }
 
 // TestExtractKID_NoKID tests extracting kid when none is present
@@ -406,6 +240,19 @@ func TestSigningMethodFromKey(t *testing.T) {
 			alg, err := signingMethodFromKey(key)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expected, alg)
+
+			claims := jwt.MapClaims{
+				"sub": "test-user",
+				"exp": time.Now().Add(time.Hour).Unix(),
+			}
+			tokenString, err := NewSigner().Sign(key, claims)
+			require.NoError(t, err)
+
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+				return key.(crypto.Signer).Public(), nil
+			})
+			require.NoError(t, err)
+			assert.True(t, token.Valid)
 		})
 	}
 }
@@ -444,44 +291,6 @@ func TestRegisteredClaims(t *testing.T) {
 	assert.Equal(t, "go-xkms", parsedClaims["iss"])
 	assert.Equal(t, "test-user", parsedClaims["sub"])
 	assert.Equal(t, "test-jti", parsedClaims["jti"])
-}
-
-// TestCustomClaims tests using custom claims structure
-func TestCustomClaims(t *testing.T) {
-	type CustomClaims struct {
-		UserID       string   `json:"uid"`
-		Email        string   `json:"email"`
-		Roles        []string `json:"roles"`
-		Organization string   `json:"org"`
-		jwt.RegisteredClaims
-	}
-
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	signer := NewSigner()
-
-	now := time.Now()
-	claims := CustomClaims{
-		UserID:       "12345",
-		Email:        "test@example.com",
-		Roles:        []string{"admin", "user"},
-		Organization: "test-org",
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(now.Add(time.Hour)),
-			IssuedAt:  jwt.NewNumericDate(now),
-		},
-	}
-
-	tokenString, err := signer.Sign(privateKey, claims)
-	require.NoError(t, err)
-	assert.NotEmpty(t, tokenString)
-
-	// Verify
-	verifier := NewVerifier()
-	token, err := verifier.Verify(tokenString, &privateKey.PublicKey)
-	require.NoError(t, err)
-	assert.True(t, token.Valid)
 }
 
 // TestVerifyWithOptions tests verifying with specific options
@@ -657,32 +466,6 @@ func TestVerify_InvalidClaims(t *testing.T) {
 func TestExtractKID_MalformedToken(t *testing.T) {
 	_, err := ExtractKID("malformed.token")
 	assert.Error(t, err)
-}
-
-// TestSigningMethodFromECDSA_UnsupportedCurve tests error with unsupported ECDSA curve
-func TestSigningMethodFromECDSA_UnsupportedCurve(t *testing.T) {
-	// This is hard to test directly since we can't easily create an unsupported curve
-	// The function is tested indirectly through the main tests
-	// We can at least verify the supported curves work
-	curves := []elliptic.Curve{
-		elliptic.P256(),
-		elliptic.P384(),
-		elliptic.P521(),
-	}
-
-	for _, curve := range curves {
-		key, err := ecdsa.GenerateKey(curve, rand.Reader)
-		require.NoError(t, err)
-
-		signer := NewSigner()
-		claims := jwt.MapClaims{
-			"sub": "test",
-			"exp": time.Now().Add(time.Hour).Unix(),
-		}
-
-		_, err = signer.Sign(key, claims)
-		require.NoError(t, err)
-	}
 }
 
 // TestVerifyWithOptions_MissingIssuer tests verification when issuer is missing

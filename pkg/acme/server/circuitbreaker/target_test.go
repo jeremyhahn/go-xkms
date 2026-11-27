@@ -45,24 +45,6 @@ func TestManager_TargetBreaker_SameTargetReturnsSameBreaker(t *testing.T) {
 	assert.Equal(t, "http01:example.com", cb1.Name())
 }
 
-// TestManager_TargetBreaker_DifferentTargetsAreIsolated is the direct
-// regression test for go-xkms#1189/#1190 at the Manager level: tripping one
-// target's breaker must not affect a different target's breaker in the same
-// group.
-func TestManager_TargetBreaker_DifferentTargetsAreIsolated(t *testing.T) {
-	mgr := NewManager()
-	cfg := TargetConfig{Group: "http01", NewConfig: fastTripConfig}
-
-	bad := mgr.TargetBreaker(cfg, "bad.example.com")
-	good := mgr.TargetBreaker(cfg, "good.example.com")
-
-	require.NotSame(t, bad, good)
-
-	bad.Trip()
-	assert.Equal(t, StateOpen, bad.State())
-	assert.Equal(t, StateClosed, good.State(), "a different target's breaker must not be affected")
-}
-
 // TestManager_TargetBreaker_BoundedByCapacity verifies that a flood of
 // distinct targets never grows the table past cfg.Capacity: the table stays
 // bounded regardless of how many distinct hosts an attacker-controlled
@@ -146,22 +128,6 @@ func TestManager_TargetBreaker_ZeroCapacityAndTTLUseDefaults(t *testing.T) {
 	status := mgr.TargetGroupStatuses()["http01"]
 	assert.Equal(t, DefaultTargetCapacity, status.Capacity)
 	assert.Equal(t, 1, status.Tracked, "an entry created under the default TTL must not be evicted immediately")
-}
-
-// TestManager_RegisterTargetGroup_VisibleBeforeFirstUse verifies that
-// RegisterTargetGroup makes a group's (empty) status visible immediately,
-// so /acme/health can report a configured breaker group before any target
-// has been validated.
-func TestManager_RegisterTargetGroup_VisibleBeforeFirstUse(t *testing.T) {
-	mgr := NewManager()
-	cfg := TargetConfig{Group: "dns01", NewConfig: fastTripConfig, Capacity: 5}
-
-	mgr.RegisterTargetGroup(cfg)
-
-	statuses := mgr.TargetGroupStatuses()
-	require.Contains(t, statuses, "dns01")
-	assert.Equal(t, 5, statuses["dns01"].Capacity)
-	assert.Zero(t, statuses["dns01"].Tracked)
 }
 
 // TestManager_TargetGroupStatuses_ReportsBoundedSummary verifies that

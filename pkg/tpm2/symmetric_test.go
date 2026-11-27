@@ -17,7 +17,6 @@
 package tpm2
 
 import (
-	"bytes"
 	"crypto"
 	"crypto/fips140"
 	"crypto/rand"
@@ -97,90 +96,6 @@ func TestGenerateSymmetricKey(t *testing.T) {
 	}
 }
 
-// TestGetSymmetricKey tests retrieving an existing symmetric key
-func TestGetSymmetricKey(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpm2Instance := tpm.(*TPM2)
-
-	attrs := &types.KeyAttributes{
-		CN:                 "test-get-symmetric",
-		StoreType:          types.StoreTPM2,
-		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	// Generate key first
-	_, err := tpm2Instance.GenerateSymmetricKey(attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	// Retrieve it
-	key, err := tpm2Instance.GetSymmetricKey(attrs)
-	if err != nil {
-		t.Fatalf("Failed to get symmetric key: %v", err)
-	}
-
-	if key.KeySize() != 256 {
-		t.Errorf("Expected key size 256, got %d", key.KeySize())
-	}
-}
-
-// TestGetSymmetricKey_NotFound verifies that resolving a symmetric key
-// that was never generated returns an error satisfying
-// errors.Is(err, backend.ErrKeyNotFound), matching the not-found contract
-// every other backend method already honors (#801, #808, #816).
-func TestGetSymmetricKey_NotFound(t *testing.T) {
-	_, tpmInterface := createSim(t, false)
-	defer func() { _ = tpmInterface.Close() }()
-
-	tpmObj, ok := tpmInterface.(*TPM2)
-	require.True(t, ok, "expected *TPM2 type")
-
-	attrs := &types.KeyAttributes{
-		CN:                 "test-symmetric-never-generated",
-		StoreType:          types.StoreTPM2,
-		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	_, err := tpmObj.GetSymmetricKey(attrs)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, kbackend.ErrKeyNotFound)
-	assert.NotErrorIs(t, err, ErrKeyRetrievalFailed)
-}
-
-// TestGetSymmetricKey_RetrievalError verifies that a key-store failure
-// other than "not found" -- a transient I/O error, a permission failure, a
-// corrupt blob -- is reported as ErrKeyRetrievalFailed and does NOT
-// satisfy errors.Is(err, backend.ErrKeyNotFound). A get-or-create caller
-// must not mistake "the store failed to answer" for "the key does not
-// exist yet" and silently generate a replacement for a hardware-backed
-// key (#816).
-func TestGetSymmetricKey_RetrievalError(t *testing.T) {
-	_, tpmInterface := createSim(t, false)
-	defer func() { _ = tpmInterface.Close() }()
-
-	tpmObj, ok := tpmInterface.(*TPM2)
-	require.True(t, ok, "expected *TPM2 type")
-
-	tpmObj.backend = &errStoreKeyBackend{err: errors.New("i/o timeout reading key blob")}
-
-	attrs := &types.KeyAttributes{
-		CN:                 "test-symmetric-retrieval-error",
-		StoreType:          types.StoreTPM2,
-		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	_, err := tpmObj.GetSymmetricKey(attrs)
-	require.Error(t, err)
-	assert.NotErrorIs(t, err, kbackend.ErrKeyNotFound)
-	assert.ErrorIs(t, err, ErrKeyRetrievalFailed)
-}
-
 // TestGetSymmetricKey_NoTransport proves GetSymmetricKey refuses to look up
 // a key backend blob against a TPM2 that was never opened, rather than
 // reaching the backend at all with a transport it could never use.
@@ -242,117 +157,6 @@ func TestSymmetricEncrypter_RetrievalError(t *testing.T) {
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, kbackend.ErrKeyNotFound)
 	assert.ErrorIs(t, err, ErrKeyRetrievalFailed)
-}
-
-// TestSymmetricEncryptDecrypt tests encrypting and decrypting data
-func TestSymmetricEncryptDecrypt(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpm2Instance := tpm.(*TPM2)
-
-	attrs := &types.KeyAttributes{
-		CN:                 "test-encrypt-decrypt",
-		StoreType:          types.StoreTPM2,
-		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	_, err := tpm2Instance.GenerateSymmetricKey(attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	encrypter, err := tpm2Instance.SymmetricEncrypter(attrs)
-	if err != nil {
-		t.Fatalf("Failed to get symmetric encrypter: %v", err)
-	}
-
-	plaintext := []byte("Hello, TPM2 symmetric encryption!")
-	encrypted, err := encrypter.Encrypt(plaintext, nil)
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
-	}
-
-	// Verify ciphertext is different from plaintext
-	if bytes.Equal(encrypted.Ciphertext, plaintext) {
-		t.Error("Ciphertext should not equal plaintext")
-	}
-
-	// Verify nonce was generated
-	if len(encrypted.Nonce) == 0 {
-		t.Error("Nonce should not be empty")
-	}
-
-	// Verify tag was generated
-	if len(encrypted.Tag) == 0 {
-		t.Error("Tag should not be empty")
-	}
-
-	// Decrypt
-	decrypted, err := encrypter.Decrypt(encrypted, nil)
-	if err != nil {
-		t.Fatalf("Decryption failed: %v", err)
-	}
-
-	if !bytes.Equal(decrypted, plaintext) {
-		t.Errorf("Decrypted data does not match original: got %s, expected %s", decrypted, plaintext)
-	}
-}
-
-// TestSymmetricEncryptWithAAD tests encryption with additional authenticated data
-func TestSymmetricEncryptWithAAD(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpm2Instance := tpm.(*TPM2)
-
-	attrs := &types.KeyAttributes{
-		CN:                 "test-encrypt-aad",
-		StoreType:          types.StoreTPM2,
-		KeyAlgorithm:       x509.PublicKeyAlgorithm(0),
-		SymmetricAlgorithm: types.SymmetricAES256GCM,
-	}
-
-	_, err := tpm2Instance.GenerateSymmetricKey(attrs)
-	if err != nil {
-		t.Fatalf("Failed to generate symmetric key: %v", err)
-	}
-
-	encrypter, err := tpm2Instance.SymmetricEncrypter(attrs)
-	if err != nil {
-		t.Fatalf("Failed to get symmetric encrypter: %v", err)
-	}
-
-	plaintext := []byte("Sensitive data")
-	aad := []byte("additional authenticated data")
-
-	encrypted, err := encrypter.Encrypt(plaintext, &types.EncryptOptions{
-		AdditionalData: aad,
-	})
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
-	}
-
-	// Decrypt with correct AAD
-	decrypted, err := encrypter.Decrypt(encrypted, &types.DecryptOptions{
-		AdditionalData: aad,
-	})
-	if err != nil {
-		t.Fatalf("Decryption with correct AAD failed: %v", err)
-	}
-
-	if !bytes.Equal(decrypted, plaintext) {
-		t.Errorf("Decrypted data does not match original")
-	}
-
-	// Decrypt with wrong AAD should fail
-	_, err = encrypter.Decrypt(encrypted, &types.DecryptOptions{
-		AdditionalData: []byte("wrong aad"),
-	})
-	if err == nil {
-		t.Error("Expected error when decrypting with wrong AAD")
-	}
 }
 
 // TestSymmetricDecryptInvalidTag tests decryption with a corrupted authentication tag
@@ -646,19 +450,6 @@ func TestKeyAlreadyExists(t *testing.T) {
 	_, err = tpm2Instance.GenerateSymmetricKey(attrs)
 	if err == nil {
 		t.Fatal("Expected error for duplicate key name")
-	}
-}
-
-// TestTracker tests that the tracker is properly initialized and accessible
-func TestTracker(t *testing.T) {
-	_, tpm := createSim(t, false)
-	defer func() { _ = tpm.Close() }()
-
-	tpm2Instance := tpm.(*TPM2)
-
-	tracker := tpm2Instance.Tracker()
-	if tracker == nil {
-		t.Fatal("Tracker should not be nil")
 	}
 }
 

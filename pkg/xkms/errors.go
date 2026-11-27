@@ -406,6 +406,23 @@ var (
 )
 
 // Servicer request validation errors
+// Transparency log errors: the read verbs over the CA's transparency log.
+var (
+	// ErrTransparencyLogNotConfigured indicates a transparency-log read on a
+	// service with no log set: the server has no CA, or the log is off.
+	ErrTransparencyLogNotConfigured = errors.New("keystore: transparency log not configured")
+
+	// ErrTransparencyLogRange indicates an entry index or tree size the
+	// log's current signed tree head does not cover, or a consistency proof
+	// whose first size is zero or exceeds its second.
+	ErrTransparencyLogRange = errors.New("keystore: transparency log index or size out of range")
+
+	// ErrTransparencyLogNoCallerSPIFFEID indicates an external append from
+	// a caller the request carries no SPIFFE ID for: no verified mTLS client
+	// certificate, or one whose URI SANs name no SPIFFE ID, or more than one.
+	ErrTransparencyLogNoCallerSPIFFEID = errors.New("keystore: transparency log append needs the caller's SPIFFE ID")
+)
+
 var (
 	// ErrNilRequest indicates a nil request was provided to a servicer method.
 	ErrNilRequest = errors.New("keystore: request cannot be nil")

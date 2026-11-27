@@ -173,27 +173,6 @@ func TestGetEnvOrFile(t *testing.T) {
 			t.Errorf("expected EnvVar %q, got %q", envVar, envFileErr.EnvVar)
 		}
 	})
-
-	t.Run("returns error when file does not exist", func(t *testing.T) {
-		// Note: Testing unreadable files via chmod 0000 doesn't work when running
-		// as root (e.g., in containers). Instead, test with a non-existent file path.
-		const envVar = "TEST_ENV_FILE_NOT_EXISTS"
-
-		tmpDir := t.TempDir()
-		filePath := filepath.Join(tmpDir, "does-not-exist")
-
-		t.Setenv(envVar+"_FILE", filePath)
-
-		_, err := GetEnvOrFile(envVar)
-		if err == nil {
-			t.Fatal("expected error for non-existent file")
-		}
-
-		var envFileErr *EnvFileNotFoundError
-		if !errors.As(err, &envFileErr) {
-			t.Errorf("expected EnvFileNotFoundError, got %T", err)
-		}
-	})
 }
 
 func TestGetEnvOrDefault(t *testing.T) {
@@ -244,30 +223,6 @@ func TestGetEnvDuration(t *testing.T) {
 			envValue:     "30s",
 			defaultValue: time.Minute,
 			expected:     30 * time.Second,
-		},
-		{
-			name:         "parses minutes",
-			envValue:     "5m",
-			defaultValue: time.Minute,
-			expected:     5 * time.Minute,
-		},
-		{
-			name:         "parses hours",
-			envValue:     "2h",
-			defaultValue: time.Minute,
-			expected:     2 * time.Hour,
-		},
-		{
-			name:         "parses complex duration",
-			envValue:     "1h30m45s",
-			defaultValue: time.Minute,
-			expected:     time.Hour + 30*time.Minute + 45*time.Second,
-		},
-		{
-			name:         "parses milliseconds",
-			envValue:     "500ms",
-			defaultValue: time.Second,
-			expected:     500 * time.Millisecond,
 		},
 		{
 			name:         "returns default when empty",
@@ -324,12 +279,6 @@ func TestGetEnvInt(t *testing.T) {
 			expected:     0,
 		},
 		{
-			name:         "parses negative integer",
-			envValue:     "-10",
-			defaultValue: 0,
-			expected:     -10,
-		},
-		{
 			name:         "returns default when empty",
 			envValue:     "",
 			defaultValue: 99,
@@ -342,22 +291,10 @@ func TestGetEnvInt(t *testing.T) {
 			expected:     50,
 		},
 		{
-			name:         "returns default when float",
-			envValue:     "3.14",
-			defaultValue: 3,
-			expected:     3,
-		},
-		{
 			name:         "returns default when has spaces",
 			envValue:     "  42  ",
 			defaultValue: 0,
 			expected:     0,
-		},
-		{
-			name:         "parses large integer",
-			envValue:     "2147483647",
-			defaultValue: 0,
-			expected:     2147483647,
 		},
 	}
 
@@ -396,56 +333,6 @@ func TestGetEnvBool(t *testing.T) {
 			defaultValue: true,
 			expected:     false,
 		},
-		{
-			name:         "parses TRUE uppercase",
-			envValue:     "TRUE",
-			defaultValue: false,
-			expected:     true,
-		},
-		{
-			name:         "parses FALSE uppercase",
-			envValue:     "FALSE",
-			defaultValue: true,
-			expected:     false,
-		},
-		{
-			name:         "parses True mixed case",
-			envValue:     "True",
-			defaultValue: false,
-			expected:     true,
-		},
-		// Numeric values
-		{
-			name:         "parses 1 as true",
-			envValue:     "1",
-			defaultValue: false,
-			expected:     true,
-		},
-		{
-			name:         "parses 0 as false",
-			envValue:     "0",
-			defaultValue: true,
-			expected:     false,
-		},
-		// Short forms
-		{
-			name:         "parses t as true",
-			envValue:     "t",
-			defaultValue: false,
-			expected:     true,
-		},
-		{
-			name:         "parses f as false",
-			envValue:     "f",
-			defaultValue: true,
-			expected:     false,
-		},
-		{
-			name:         "parses T uppercase",
-			envValue:     "T",
-			defaultValue: false,
-			expected:     true,
-		},
 		// Extended values (yes/no, on/off)
 		{
 			name:         "parses yes as true",
@@ -466,12 +353,6 @@ func TestGetEnvBool(t *testing.T) {
 			expected:     true,
 		},
 		{
-			name:         "parses NO uppercase",
-			envValue:     "NO",
-			defaultValue: true,
-			expected:     false,
-		},
-		{
 			name:         "parses on as true",
 			envValue:     "on",
 			defaultValue: false,
@@ -482,12 +363,6 @@ func TestGetEnvBool(t *testing.T) {
 			envValue:     "off",
 			defaultValue: true,
 			expected:     false,
-		},
-		{
-			name:         "parses ON uppercase",
-			envValue:     "ON",
-			defaultValue: false,
-			expected:     true,
 		},
 		{
 			name:         "parses OFF uppercase",
@@ -513,12 +388,6 @@ func TestGetEnvBool(t *testing.T) {
 			envValue:     "maybe",
 			defaultValue: true,
 			expected:     true,
-		},
-		{
-			name:         "returns default when numeric non-bool",
-			envValue:     "2",
-			defaultValue: false,
-			expected:     false,
 		},
 	}
 

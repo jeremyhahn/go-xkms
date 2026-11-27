@@ -11,7 +11,7 @@ For a developer embedding go-xkms in a daemon that hosts a go-qrdb node.
 2. Build the module with `xkmssdk.NewServiceModule`, passing a resolver for
    that service and one option per dependency you have (see
    [`api.md`](api.md) §"Go SDK").
-3. Register it on your node with `qrdbsdk.WithModule`.
+3. Register it on your node with `qrdbserver.WithModule`.
 
 Supply only what you have. Each missing dependency turns off exactly the
 features that need it, and the module logs one line per feature:

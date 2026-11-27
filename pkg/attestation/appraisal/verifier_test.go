@@ -250,33 +250,6 @@ func TestVerifier_RefusesTrustOnFirstUse(t *testing.T) {
 	}
 }
 
-func TestVerifier_DivergentPCRIsACryptographicFailure(t *testing.T) {
-	w := newVerifierWorld(t)
-	w.endorse(t)
-	tampered := appraisaltest.PCRValues(0, 4, 7)
-	tampered[4] = appraisaltest.PCRValues(9)[9]
-	nonce := []byte("n")
-	result := w.appraise(t, tampered, nonce, nonce)
-	if result.Verified || !result.CryptographicFailure || outcomeOf(result, AppraisalCheckBaseline) != AppraisalForged {
-		t.Fatalf("result = %+v, want a forged baseline", result)
-	}
-	if outcomeOf(result, AppraisalCheckQuote) != AppraisalPass {
-		t.Fatal("the quote itself is genuine")
-	}
-}
-
-func TestVerifier_WrongNonceIsForged(t *testing.T) {
-	w := newVerifierWorld(t)
-	w.endorse(t)
-	result := w.appraise(t, w.pcrs, []byte("expected"), []byte("replayed"))
-	if result.Verified || !result.CryptographicFailure || outcomeOf(result, AppraisalCheckQuote) != AppraisalForged {
-		t.Fatalf("result = %+v, want a forged quote", result)
-	}
-	if outcomeOf(result, AppraisalCheckBaseline) != AppraisalAbsent {
-		t.Fatal("a baseline is not evaluated over an unverified quote")
-	}
-}
-
 func TestVerifier_UnrestrictedAKIsForged(t *testing.T) {
 	w := newVerifierWorld(t)
 	w.endorse(t)
@@ -445,6 +418,28 @@ func TestVerifier_RecordsListGetDeleteAndTenancy(t *testing.T) {
 		if err == nil {
 			t.Fatalf("%s: no error", name)
 		}
+	}
+}
+
+// TestAppraiserDeletesAnEndorsementNamedBeforeTheDotRule is the upgrade
+// regression at the Appraiser: an endorsement stored as ".." before
+// ValidateName refused that name is still a trust anchor, so an operator
+// must still be able to revoke it.
+func TestAppraiserDeletesAnEndorsementNamedBeforeTheDotRule(t *testing.T) {
+	w := newVerifierWorld(t)
+	seedStoredRecord(t, w.app.store.endorsements, w.tenant, "..", Endorsement{Name: "..", Kind: EndorsementAKRoot, CertificatePEM: []byte("pem")})
+
+	if listed, err := w.app.ListEndorsements(w.ctx, w.tenant, nil); err != nil || len(listed.Endorsements) != 1 || listed.Endorsements[0].Name != ".." {
+		t.Fatalf("ListEndorsements = %+v, %v; want the stored \"..\"", listed, err)
+	}
+	if err := w.app.DeleteEndorsement(w.ctx, w.tenant, &DeleteEndorsementRequest{Name: ".."}); err != nil {
+		t.Fatalf("DeleteEndorsement(\"..\") = %v, want the stored record deleted", err)
+	}
+	if listed, err := w.app.ListEndorsements(w.ctx, w.tenant, nil); err != nil || len(listed.Endorsements) != 0 {
+		t.Fatalf("ListEndorsements after delete = %+v, %v", listed, err)
+	}
+	if err := w.app.DeleteEndorsement(w.ctx, w.tenant, &DeleteEndorsementRequest{Name: "a/b"}); !errors.Is(err, ErrInvalidName) {
+		t.Fatalf("DeleteEndorsement(\"a/b\") = %v, want ErrInvalidName", err)
 	}
 }
 

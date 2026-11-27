@@ -17,7 +17,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -71,14 +70,4 @@ func withSecretStdin(t *testing.T, content string) {
 	original := secretStdin
 	secretStdin = strings.NewReader(content)
 	t.Cleanup(func() { secretStdin = original })
-}
-
-// runVerbJSON runs cmd, requires it to succeed, and decodes its JSON output.
-func runVerbJSON(t *testing.T, cfg *Config, cmd *cobra.Command, args []string, flags ...verbFlag) map[string]any {
-	t.Helper()
-	stdout, code, stderr := runVerb(t, cfg, cmd, args, flags...)
-	require.Equal(t, -1, code, "%s failed: %s", cmd.Use, stderr)
-	var got map[string]any
-	require.NoError(t, json.Unmarshal([]byte(stdout), &got), stdout)
-	return got
 }

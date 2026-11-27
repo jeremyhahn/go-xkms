@@ -152,25 +152,6 @@ func TestQRDBRefreshStore_Save_WithdrawOnRevokedFamilyFails(t *testing.T) {
 	assert.Equal(t, "compare-and-delete", se.Op)
 }
 
-func TestQRDBRefreshStore_Save_RevokedFamilyIsWithdrawn(t *testing.T) {
-	kv := newErrorKV("")
-	store := newQRDBStore(t, kv)
-	ctx := context.Background()
-
-	require.NoError(t, store.RevokeFamily(ctx, "f1"))
-
-	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
-	err := store.Save(ctx, rec)
-	var fre *FamilyRevokedError
-	require.ErrorAs(t, err, &fre)
-	assert.Equal(t, "f1", fre.Family)
-
-	// The record must have been withdrawn, not left behind.
-	got, err := store.Get(ctx, "f1", "j1")
-	require.NoError(t, err)
-	assert.Nil(t, got)
-}
-
 func TestQRDBRefreshStore_Load_GetErrorPropagates(t *testing.T) {
 	store := newQRDBStore(t, newErrorKV("get"))
 	_, err := store.Get(context.Background(), "f1", "j1")

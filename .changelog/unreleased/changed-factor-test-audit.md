@@ -1,0 +1,1 @@
+factor: the `pkg/factor` tests test each behaviour once. Seven tests that repeated another test's path and assertions are gone: the registration, order and name checks stay in `TestNewDefaultRegistry_RegistersAllFactors` and `TestDefaultFactors_ReturnsExactlyFour`, and the config checks stay in `TestNewDefaultRegistry_ConfigReachesTheFactorInstances` (#1794).

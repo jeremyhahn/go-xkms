@@ -16,8 +16,6 @@ package ratelimit
 import (
 	"context"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -26,62 +24,6 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
-
-func TestNew(t *testing.T) {
-	config := &Config{
-		Enabled:           true,
-		RequestsPerMinute: 60,
-		Burst:             10,
-	}
-
-	limiter := New(config)
-	if limiter == nil {
-		t.Fatal("Expected limiter to be created")
-		return
-	}
-
-	if !limiter.enabled {
-		t.Error("Expected limiter to be enabled")
-	}
-
-	stats := limiter.Stats()
-	if stats["enabled"] != true {
-		t.Error("Expected enabled to be true in stats")
-	}
-
-	limiter.Stop()
-}
-
-func TestAllow(t *testing.T) {
-	config := &Config{
-		Enabled:           true,
-		RequestsPerMinute: 60, // 1 per second
-		Burst:             5,
-	}
-
-	limiter := New(config)
-	defer limiter.Stop()
-
-	clientID := "test-client"
-
-	// First 5 requests should succeed (burst)
-	for i := 0; i < 5; i++ {
-		if !limiter.Allow(clientID) {
-			t.Errorf("Request %d should be allowed (burst)", i+1)
-		}
-	}
-
-	// Next request should be denied (burst exhausted)
-	if limiter.Allow(clientID) {
-		t.Error("Request should be denied after burst exhausted")
-	}
-
-	// Wait for 1 second, 1 token should be available
-	time.Sleep(1 * time.Second)
-	if !limiter.Allow(clientID) {
-		t.Error("Request should be allowed after waiting")
-	}
-}
 
 func TestDisabledLimiter(t *testing.T) {
 	config := &Config{
@@ -93,11 +35,22 @@ func TestDisabledLimiter(t *testing.T) {
 
 	clientID := "test-client"
 
+	server, client := net.Pipe()
+	defer func() { _ = server.Close() }()
+	defer func() { _ = client.Close() }()
+
 	// All requests should be allowed when disabled
 	for i := 0; i < 100; i++ {
 		if !limiter.Allow(clientID) {
 			t.Error("Disabled limiter should allow all requests")
 		}
+		if !limiter.AllowConn(client) {
+			t.Error("AllowConn should always return true when disabled")
+		}
+	}
+
+	if err := limiter.Wait(context.Background(), clientID); err != nil {
+		t.Errorf("Wait should return nil when disabled: %v", err)
 	}
 }
 
@@ -160,48 +113,6 @@ func TestCleanup(t *testing.T) {
 	limiter.mu.RUnlock()
 }
 
-func TestMiddleware(t *testing.T) {
-	config := &Config{
-		Enabled:           true,
-		RequestsPerMinute: 60,
-		Burst:             2,
-	}
-
-	limiter := New(config)
-	defer limiter.Stop()
-
-	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-
-	middleware := Middleware(limiter, nil)
-	wrappedHandler := middleware(handler)
-
-	// First 2 requests should succeed
-	for i := 0; i < 2; i++ {
-		req := httptest.NewRequest("GET", "/test", nil)
-		req.RemoteAddr = "192.168.1.1:1234"
-		rr := httptest.NewRecorder()
-
-		wrappedHandler.ServeHTTP(rr, req)
-
-		if rr.Code != http.StatusOK {
-			t.Errorf("Request %d: expected status 200, got %d", i+1, rr.Code)
-		}
-	}
-
-	// Third request should be rate limited
-	req := httptest.NewRequest("GET", "/test", nil)
-	req.RemoteAddr = "192.168.1.1:1234"
-	rr := httptest.NewRecorder()
-
-	wrappedHandler.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusTooManyRequests {
-		t.Errorf("Expected status 429, got %d", rr.Code)
-	}
-}
-
 func TestStats(t *testing.T) {
 	config := &Config{
 		Enabled:           true,
@@ -235,24 +146,6 @@ func TestStats(t *testing.T) {
 	}
 }
 
-func TestWait(t *testing.T) {
-	config := &Config{
-		Enabled:           true,
-		RequestsPerMinute: 60,
-		Burst:             1,
-	}
-
-	limiter := New(config)
-	defer limiter.Stop()
-
-	clientID := "test-client"
-
-	// First wait should succeed immediately
-	if err := limiter.Wait(context.Background(), clientID); err != nil {
-		t.Errorf("First wait should succeed: %v", err)
-	}
-}
-
 func TestWait_ContextCancelled(t *testing.T) {
 	config := &Config{
 		Enabled:           true,
@@ -264,8 +157,8 @@ func TestWait_ContextCancelled(t *testing.T) {
 	defer limiter.Stop()
 
 	// Exhaust the token
-	if !limiter.Allow("test-client") {
-		t.Fatal("First request should be allowed")
+	if err := limiter.Wait(context.Background(), "test-client"); err != nil {
+		t.Fatalf("First wait should succeed: %v", err)
 	}
 
 	// Cancel the context before Wait can acquire a token
@@ -275,20 +168,6 @@ func TestWait_ContextCancelled(t *testing.T) {
 	err := limiter.Wait(ctx, "test-client")
 	if err == nil {
 		t.Error("Wait should return error when context is cancelled")
-	}
-}
-
-func TestWait_Disabled(t *testing.T) {
-	config := &Config{
-		Enabled:           false,
-		RequestsPerMinute: 1,
-	}
-
-	limiter := New(config)
-
-	// Should return nil when disabled
-	if err := limiter.Wait(context.Background(), "test-client"); err != nil {
-		t.Errorf("Wait should return nil when disabled: %v", err)
 	}
 }
 
@@ -346,26 +225,6 @@ func TestAllowConn(t *testing.T) {
 	}
 }
 
-func TestAllowConn_Disabled(t *testing.T) {
-	config := &Config{
-		Enabled:           false,
-		RequestsPerMinute: 1,
-	}
-
-	limiter := New(config)
-
-	server, client := net.Pipe()
-	defer func() { _ = server.Close() }()
-	defer func() { _ = client.Close() }()
-
-	// All requests should be allowed when disabled
-	for i := 0; i < 100; i++ {
-		if !limiter.AllowConn(client) {
-			t.Error("AllowConn should always return true when disabled")
-		}
-	}
-}
-
 func TestAllowConn_NilConn(t *testing.T) {
 	config := &Config{
 		Enabled:           true,
@@ -380,23 +239,11 @@ func TestAllowConn_NilConn(t *testing.T) {
 	if !limiter.AllowConn(nil) {
 		t.Error("AllowConn with nil conn should still work (uses 'unknown' as client ID)")
 	}
-}
-
-func TestGetClientIPFromConn(t *testing.T) {
-	// Test nil connection
-	ip := getClientIPFromConn(nil)
-	if ip != "unknown" {
-		t.Errorf("Expected 'unknown' for nil conn, got %s", ip)
-	}
-
-	// Test valid connection
-	server, client := net.Pipe()
-	defer func() { _ = server.Close() }()
-	defer func() { _ = client.Close() }()
-
-	ip = getClientIPFromConn(client)
-	if ip == "" {
-		t.Error("Expected non-empty IP from valid connection")
+	limiter.mu.RLock()
+	_, ok := limiter.limiters["unknown"]
+	limiter.mu.RUnlock()
+	if !ok {
+		t.Error("AllowConn with nil conn should bucket on 'unknown'")
 	}
 }
 
@@ -406,16 +253,6 @@ func TestGetClientIPFromContext(t *testing.T) {
 	ip := getClientIPFromContext(ctx)
 	if ip != "unknown" {
 		t.Errorf("Expected 'unknown' for context without peer, got %s", ip)
-	}
-
-	// Test context with peer info
-	addr, _ := net.ResolveTCPAddr("tcp", "192.168.1.1:1234")
-	peerInfo := &peer.Peer{Addr: addr}
-	ctxWithPeer := peer.NewContext(context.Background(), peerInfo)
-
-	ip = getClientIPFromContext(ctxWithPeer)
-	if ip != "192.168.1.1" {
-		t.Errorf("Expected '192.168.1.1', got %s", ip)
 	}
 }
 

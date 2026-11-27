@@ -280,6 +280,16 @@ func withStdinLine(t *testing.T, line string) {
 	})
 }
 
+// runVerbJSON runs cmd, requires it to succeed, and decodes its JSON output.
+func runVerbJSON(t *testing.T, cfg *Config, cmd *cobra.Command, args []string, flags ...verbFlag) map[string]any {
+	t.Helper()
+	stdout, code, stderr := runVerb(t, cfg, cmd, args, flags...)
+	require.Equal(t, -1, code, "%s failed: %s", cmd.Use, stderr)
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(stdout), &got), stdout)
+	return got
+}
+
 func TestFrostKeygen_ParticipantModeStoresOneShare(t *testing.T) {
 	setFrostPassphraseEnv(t, frostCeremonyPassphrase)
 	cfg := newFrostTestConfig(t)

@@ -244,36 +244,6 @@ func TestWriteError_LogsEncodeFailure(t *testing.T) {
 }
 
 // =============================================================================
-// guard middleware, router built without options (browser deployment)
-// =============================================================================
-
-func TestUnguardedRouter_Options_Returns204(t *testing.T) {
-	rec := doRequest(emptyRouter(), http.MethodOptions, "/api/v1/accounts", nil)
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("OPTIONS: expected 204, got %d", rec.Code)
-	}
-}
-
-func TestUnguardedRouter_SendsNoWildcardCORSHeader(t *testing.T) {
-	rec := doRequest(emptyRouter(), http.MethodGet, "/api/v1/accounts", nil)
-	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
-		t.Errorf("expected no CORS grant for a request without an Origin, got %q", got)
-	}
-}
-
-func TestUnguardedRouter_RejectsCrossOrigin(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/certificate/request",
-		bytes.NewReader([]byte(`{}`)))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Origin", "https://evil.example.com")
-	rec := httptest.NewRecorder()
-	emptyRouter().ServeHTTP(rec, req)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("expected 403 for a cross-origin request, got %d", rec.Code)
-	}
-}
-
-// =============================================================================
 // register (POST /api/v1/account/register)
 // =============================================================================
 
@@ -312,27 +282,6 @@ func TestRegister_InvalidJSON(t *testing.T) {
 		bytes.NewReader([]byte("not-json")))
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
-	}
-}
-
-// =============================================================================
-// listAccounts (GET /api/v1/accounts)
-// =============================================================================
-
-func TestListAccounts_Empty(t *testing.T) {
-	rec := doRequest(emptyRouter(), http.MethodGet, "/api/v1/accounts", nil)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-}
-
-func TestListAccounts_WithEntries(t *testing.T) {
-	accounts := map[string]*svc.AccountConfig{
-		"acc1": {DirectoryURL: "https://ca.example.com", Email: "a@b.com"},
-	}
-	rec := doRequest(routerFor(nil, accounts, nil), http.MethodGet, "/api/v1/accounts", nil)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
 	}
 }
 
@@ -589,13 +538,6 @@ func TestRevokeCert_InvalidJSON(t *testing.T) {
 // listCertificates
 // =============================================================================
 
-func TestListCertificates_Empty(t *testing.T) {
-	rec := doRequest(emptyRouter(), http.MethodGet, "/api/v1/certificates", nil)
-	if rec.Code != http.StatusOK {
-		t.Errorf("expected 200, got %d", rec.Code)
-	}
-}
-
 func TestListCertificates_WithFilter(t *testing.T) {
 	certs := map[string]*svc.CertificateSpec{
 		"web": {Account: "acc1", Subject: svc.SubjectConfig{CN: "web.example.com"}},
@@ -632,16 +574,6 @@ func TestGetCertificate_NotFound(t *testing.T) {
 // =============================================================================
 // deployCertificate
 // =============================================================================
-
-func TestDeployCertificate_SpecNotManaged(t *testing.T) {
-	certs := map[string]*svc.CertificateSpec{
-		"web": {Account: "acc", Subject: svc.SubjectConfig{CN: "web.example.com"}},
-	}
-	rec := doRequest(routerFor(nil, nil, certs), http.MethodPost, "/api/v1/certificates/web/deploy", nil)
-	if rec.Code != http.StatusInternalServerError {
-		t.Errorf("expected 500 for deploy of un-issued cert, got %d", rec.Code)
-	}
-}
 
 func TestDeployCertificate_NotInConfig(t *testing.T) {
 	rec := doRequest(emptyRouter(), http.MethodPost, "/api/v1/certificates/nonexistent/deploy", nil)

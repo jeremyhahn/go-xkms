@@ -15,6 +15,10 @@ import type { HttpCore } from '../http.js';
 import type {
   ListSigningKeyBindingsResponse,
   SetSigningKeyBindingRequest,
+  SignCoRIMRequest,
+  SignedCoRIM,
+  SignImageRequest,
+  SignedImage,
   SigningKeyBinding,
   SigningKeyResolution,
 } from '../types/signingKey.js';
@@ -52,5 +56,28 @@ export class SigningKeyClient {
   /** GET /api/v1/attestation/signing-keys/resolve?repository= — the key that signs a repository. */
   resolve(repository: string): Promise<SigningKeyResolution> {
     return this.http.request('GET', `${BASE}/resolve`, { query: { repository } });
+  }
+
+  /**
+   * POST /api/v1/attestation/signing-keys/sign-corim — signs a repository's
+   * CoRIM with the key it resolves to, draft-ietf-rats-corim-11 §4.2.
+   */
+  signCoRIM(req: SignCoRIMRequest): Promise<SignedCoRIM> {
+    return this.http.request('POST', `${BASE}/sign-corim`, { body: req });
+  }
+
+  /**
+   * POST /api/v1/attestation/signing-keys/sign-image — signs an image with
+   * the key its repository resolves to and pushes the attestation to the
+   * image's registry with the request's credentials. A request carrying
+   * registry credentials goes only to an https:// base URL, without
+   * following redirects, unless allowInsecureTransport is set (ruling 152):
+   * otherwise it throws XkmsInsecureTransportError before anything is sent.
+   */
+  signImage(req: SignImageRequest): Promise<SignedImage> {
+    return this.http.request('POST', `${BASE}/sign-image`, {
+      body: req,
+      secureChannel: req.registry !== undefined,
+    });
   }
 }

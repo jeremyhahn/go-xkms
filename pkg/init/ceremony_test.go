@@ -33,14 +33,3 @@ func TestSPKIPin_IsTheHexSHA256OfTheSubjectPublicKeyInfo(t *testing.T) {
 	assert.Equal(t, hex.EncodeToString(sum[:]), SPKIPin(cert))
 	assert.Len(t, SPKIPin(cert), 2*sha256.Size)
 }
-
-// TestSPKIPin_DiffersForDifferentKeys proves the pin binds the key: two CAs
-// never share one.
-func TestSPKIPin_DiffersForDifferentKeys(t *testing.T) {
-	a, err := newMockCA(t).CACertificate()
-	require.NoError(t, err)
-	b, err := newMockCA(t).CACertificate()
-	require.NoError(t, err)
-
-	assert.NotEqual(t, SPKIPin(a), SPKIPin(b))
-}

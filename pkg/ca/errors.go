@@ -93,6 +93,16 @@ var (
 	// form.
 	ErrAlreadyRevoked = errors.New("ca: certificate already revoked")
 
+	// ErrTransparencyLogAppend indicates an issued certificate's cert-issued
+	// entry could not be appended to the CA's transparency log. Issuance
+	// fails closed: the certificate is neither stored nor returned.
+	ErrTransparencyLogAppend = errors.New("ca: transparency log append failed")
+
+	// ErrTransparencyLogEntryMissing indicates a revocation was recorded
+	// but its revoked entry could not be appended to the CA's transparency
+	// log. The revocation stands; only its log entry is missing.
+	ErrTransparencyLogEntryMissing = errors.New("ca: revocation recorded, transparency log entry missing")
+
 	// ErrRevocationRecordCorrupt indicates a persisted revocation record
 	// could not be decoded, or decoded to a serial that does not match the
 	// key it is stored under. Every reader of revocation state fails closed

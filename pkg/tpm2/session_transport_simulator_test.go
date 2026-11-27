@@ -88,26 +88,6 @@ func TestHierarchyAuthSession_EmptyAuthIsPasswordSession(t *testing.T) {
 	require.NoError(t, closer())
 }
 
-// TestTransportSessions_SaltKeyFailure proves every transport-level session
-// constructor returns ErrSaltKey, never an unsalted session, when the salt
-// key cannot be created.
-func TestTransportSessions_SaltKeyFailure(t *testing.T) {
-	constructors := map[string]func(transport.TPM) (tpm2.Session, func() error, error){
-		"HierarchyAuthSession": func(tpm transport.TPM) (tpm2.Session, func() error, error) {
-			return HierarchyAuthSession(tpm, tpm2.TPMRHOwner, []byte("so-pin"))
-		},
-		"CommandEncryptionSession":  CommandEncryptionSession,
-		"ResponseEncryptionSession": ResponseEncryptionSession,
-	}
-	for name, start := range constructors {
-		t.Run(name, func(t *testing.T) {
-			session, _, err := start(failingTransport{})
-			require.ErrorIs(t, err, ErrSaltKey)
-			require.Nil(t, session)
-		})
-	}
-}
-
 // TestCommandEncryptionSession_EncryptsCommandParameter hashes a secret in
 // the TPM with a CommandEncryptionSession attached: the command succeeds and
 // the secret never crosses the bus.

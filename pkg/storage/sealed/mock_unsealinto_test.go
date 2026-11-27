@@ -43,6 +43,9 @@ func (m *mockSealer) UnsealInto(_ context.Context, dst []byte, sealed *types.Sea
 	if m.unsealErr != nil {
 		return nil, m.unsealErr
 	}
+	if m.unsealIntoErr != nil {
+		return nil, m.unsealIntoErr
+	}
 	for _, b := range sealed.Ciphertext {
 		dst = append(dst, b^0xFF)
 	}

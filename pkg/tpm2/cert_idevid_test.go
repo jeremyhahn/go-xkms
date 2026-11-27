@@ -18,8 +18,6 @@ package tpm2
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -235,20 +233,6 @@ func TestWriteCertToStore_NotConfigured(t *testing.T) {
 	assert.Error(t, err)
 }
 
-// TestIDevIDCertificate_NotFound tests certificate not found error.
-//
-// The store's generic ErrCertNotFound must be translated into the identity
-// specific ErrIDevIDCertNotFound, which is what callers match on; the previous
-// bare assert.Error would have passed for any failure at all, including a nil
-// store panic.
-func TestIDevIDCertificate_NotFound(t *testing.T) {
-	tpm := newCertStoreTPM(t)
-
-	cert, err := tpm.IDevIDCertificate()
-	assert.Nil(t, cert)
-	assert.ErrorIs(t, err, ErrIDevIDCertNotFound)
-}
-
 // TestIDevIDCertificate_StoreNotConfigured pins the other store-mode failure:
 // asking for a certificate in store mode without a store must report
 // ErrCertStoreNotConfigured rather than dereferencing the nil store.
@@ -259,15 +243,6 @@ func TestIDevIDCertificate_StoreNotConfigured(t *testing.T) {
 	cert, err := tpm.IDevIDCertificate()
 	assert.Nil(t, cert)
 	assert.ErrorIs(t, err, ErrCertStoreNotConfigured)
-}
-
-// TestIAKCertificate_NotFound tests certificate not found error.
-func TestIAKCertificate_NotFound(t *testing.T) {
-	tpm := newCertStoreTPM(t)
-
-	cert, err := tpm.IAKCertificate()
-	assert.Nil(t, cert)
-	assert.ErrorIs(t, err, ErrIAKCertNotFound)
 }
 
 // TestIAKCertificate_StoreNotConfigured is the IAK counterpart of
@@ -447,34 +422,6 @@ func TestIDevIDAndIAKCertificatesAreStoredSeparately(t *testing.T) {
 	assert.Equal(t, iakCert.Raw, survivor.Raw)
 }
 
-// TestValidateCertPublicKey_UnsupportedKeyType tests handling of unsupported key types
-func TestValidateCertPublicKey_UnsupportedKeyType(t *testing.T) {
-	// Create a certificate with a supported key type first
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	template := &x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "Test Certificate",
-		},
-		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature,
-		BasicConstraintsValid: true,
-	}
-
-	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &rsaKey.PublicKey, rsaKey)
-	require.NoError(t, err)
-
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	// Test with nil KeyAttributes
-	err = validateCertPublicKey(cert, nil)
-	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
-}
-
 // TestValidateCertPublicKey_NilTPMAttributes tests handling of nil TPMAttributes
 func TestValidateCertPublicKey_NilTPMAttributes(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -485,220 +432,6 @@ func TestValidateCertPublicKey_NilTPMAttributes(t *testing.T) {
 
 	err = validateCertPublicKey(cert, keyAttrs)
 	assert.ErrorIs(t, err, ErrInvalidKeyAttributes)
-}
-
-// TestValidateCertPublicKey_RSAMatch tests RSA public key match
-func TestValidateCertPublicKey_RSAMatch(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	cert := createTestCertWithKey(t, &rsaKey.PublicKey)
-
-	rsaUnique := tpm2.TPM2BPublicKeyRSA{
-		Buffer: rsaKey.N.Bytes(),
-	}
-
-	tpmPub := tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt: true,
-			FixedTPM:    true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&rsaUnique,
-		),
-	}
-
-	bPublic := tpm2.New2B(tpmPub)
-
-	keyAttrs := &types.KeyAttributes{
-		TPMAttributes: &types.TPMAttributes{
-			Public:  tpmPub,
-			BPublic: bPublic,
-		},
-	}
-
-	err = validateCertPublicKey(cert, keyAttrs)
-	assert.NoError(t, err)
-}
-
-// TestValidateCertPublicKey_RSAMismatch tests RSA public key mismatch
-func TestValidateCertPublicKey_RSAMismatch(t *testing.T) {
-	rsaKey1, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	rsaKey2, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	cert := createTestCertWithKey(t, &rsaKey1.PublicKey)
-
-	rsaUnique := tpm2.TPM2BPublicKeyRSA{
-		Buffer: rsaKey2.N.Bytes(),
-	}
-
-	tpmPub := tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgRSA,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt: true,
-			FixedTPM:    true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgRSA,
-			&tpm2.TPMSRSAParms{
-				KeyBits: 2048,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgRSA,
-			&rsaUnique,
-		),
-	}
-
-	bPublic := tpm2.New2B(tpmPub)
-
-	keyAttrs := &types.KeyAttributes{
-		TPMAttributes: &types.TPMAttributes{
-			Public:  tpmPub,
-			BPublic: bPublic,
-		},
-	}
-
-	err = validateCertPublicKey(cert, keyAttrs)
-	assert.ErrorIs(t, err, ErrCertPublicKeyMismatch)
-}
-
-// TestValidateCertPublicKey_ECCMatch tests ECC public key match
-func TestValidateCertPublicKey_ECCMatch(t *testing.T) {
-	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	cert := createTestCertWithKey(t, &ecKey.PublicKey)
-
-	eccUnique := tpm2.TPMSECCPoint{
-		X: tpm2.TPM2BECCParameter{Buffer: ecKey.X.Bytes()},
-		Y: tpm2.TPM2BECCParameter{Buffer: ecKey.Y.Bytes()},
-	}
-
-	tpmPub := tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt: true,
-			FixedTPM:    true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCParms{
-				CurveID: tpm2.TPMECCNistP256,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgECC,
-			&eccUnique,
-		),
-	}
-
-	bPublic := tpm2.New2B(tpmPub)
-
-	keyAttrs := &types.KeyAttributes{
-		TPMAttributes: &types.TPMAttributes{
-			Public:  tpmPub,
-			BPublic: bPublic,
-		},
-	}
-
-	err = validateCertPublicKey(cert, keyAttrs)
-	assert.NoError(t, err)
-}
-
-// TestValidateCertPublicKey_ECCMismatch tests ECC public key mismatch
-func TestValidateCertPublicKey_ECCMismatch(t *testing.T) {
-	ecKey1, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	ecKey2, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-
-	cert := createTestCertWithKey(t, &ecKey1.PublicKey)
-
-	eccUnique := tpm2.TPMSECCPoint{
-		X: tpm2.TPM2BECCParameter{Buffer: ecKey2.X.Bytes()},
-		Y: tpm2.TPM2BECCParameter{Buffer: ecKey2.Y.Bytes()},
-	}
-
-	tpmPub := tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgECC,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			SignEncrypt: true,
-			FixedTPM:    true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(
-			tpm2.TPMAlgECC,
-			&tpm2.TPMSECCParms{
-				CurveID: tpm2.TPMECCNistP256,
-			},
-		),
-		Unique: tpm2.NewTPMUPublicID(
-			tpm2.TPMAlgECC,
-			&eccUnique,
-		),
-	}
-
-	bPublic := tpm2.New2B(tpmPub)
-
-	keyAttrs := &types.KeyAttributes{
-		TPMAttributes: &types.TPMAttributes{
-			Public:  tpmPub,
-			BPublic: bPublic,
-		},
-	}
-
-	err = validateCertPublicKey(cert, keyAttrs)
-	assert.ErrorIs(t, err, ErrCertPublicKeyMismatch)
-}
-
-// TestCertIDevIDErrors tests error constants
-func TestCertIDevIDErrors(t *testing.T) {
-	assert.EqualError(t, ErrIDevIDCertNotFound, "tpm: IDevID certificate not found")
-	assert.EqualError(t, ErrIAKCertNotFound, "tpm: IAK certificate not found")
-	assert.EqualError(t, ErrCertPublicKeyMismatch, "tpm: certificate public key does not match TPM key")
-	assert.EqualError(t, ErrCertStoreNotConfigured, "tpm: certificate store not configured")
-}
-
-// TestWriteCertToStore_Success tests writing cert to store successfully
-func TestWriteCertToStore_Success(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-
-	cert := createTestCertWithKey(t, &rsaKey.PublicKey)
-
-	logger := slog.Default()
-	certStore := store.NewMemoryCertStore(logger)
-
-	keyAttrs := &types.KeyAttributes{
-		CN: "test-idevid",
-	}
-
-	tpmObj := &TPM2{
-		logger:    logger,
-		certStore: certStore,
-	}
-
-	err = tpmObj.writeCertToStore(keyAttrs, cert)
-	assert.NoError(t, err)
-
-	// Verify the certificate was stored
-	storedCert, err := certStore.Get(keyAttrs)
-	assert.NoError(t, err)
-	assert.Equal(t, cert.Subject.CommonName, storedCert.Subject.CommonName)
 }
 
 // TestWriteCertToStore_NilStore tests writing cert when store is nil

@@ -36,6 +36,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/ca/provider"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
+	"github.com/jeremyhahn/go-xkms/pkg/image"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
@@ -166,6 +167,11 @@ type XKMSService struct {
 	// provider.TCGCA for TCG operations).
 	ca subsystem[provider.CA]
 
+	// transparencyLog is the CA's transparency log, read and appended to
+	// external entries, set by
+	// SetTransparencyLog once the server has opened the log.
+	transparencyLog subsystem[TransparencyLog]
+
 	// attestationVerifiers holds the hardware-attestation verifiers keyed by
 	// normalized attestation format ("tpm2", "yubikey-piv", ...). Each verifier
 	// carries the trust anchors for that format's device vendor, so a YubiKey
@@ -182,6 +188,12 @@ type XKMSService struct {
 	// unexported is what stops the injection reaching a deployment: no
 	// configuration path can pin a CA's clock and quietly accept dead evidence.
 	attestationClock func() time.Time
+
+	// imageRegistry builds the registry client SignImage pushes through. It
+	// is nil everywhere a server is built, which leaves SignImage on
+	// image.NewRegistryClient; only tests set it, to sign against an
+	// in-memory registry. Unexported for the same reason as attestationClock.
+	imageRegistry func(*image.RegistryOptions) (image.RegistryClient, error)
 
 	// androidEnrollmentPolicy gates CSRs presenting Android key attestation.
 	// Nil makes every such CSR fail closed: chain provenance alone does not

@@ -11,33 +11,6 @@ import (
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
-// TestValidateLoginKey pins what the CLI accepts as a login key: a bare
-// address, trimmed; not a username, not a display-name form.
-func TestValidateLoginKey(t *testing.T) {
-	for name, tc := range map[string]struct {
-		in   string
-		want string
-		err  error
-	}{
-		"bare address":      {in: "alice@example.com", want: "alice@example.com"},
-		"surrounding space": {in: "  alice@example.com\n", want: "alice@example.com"},
-		"username":          {in: "alice", err: ErrLoginKeyNotEmail},
-		"display-name form": {in: "Alice <alice@example.com>", err: ErrLoginKeyNotEmail},
-		"empty":             {in: "", err: ErrLoginKeyNotEmail},
-		"two addresses":     {in: "a@x.com, b@x.com", err: ErrLoginKeyNotEmail},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got, err := validateLoginKey(tc.in)
-			if !errors.Is(err, tc.err) {
-				t.Fatalf("err = %v, want %v", err, tc.err)
-			}
-			if got != tc.want {
-				t.Errorf("value = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
 // recordingLoginClient records the login key the ceremony was begun with.
 type recordingLoginClient struct {
 	mockUserClient

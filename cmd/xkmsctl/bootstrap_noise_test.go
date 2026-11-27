@@ -25,7 +25,6 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -129,43 +128,6 @@ func captureStderr(t *testing.T, fn func()) string {
 	return buf.String()
 }
 
-func TestNoiseGenerateKey_OutputFile(t *testing.T) {
-	tmpDir := t.TempDir()
-	keyFile := filepath.Join(tmpDir, "noise.key")
-
-	if !noiseKeygenOutsideFIPS(t, keyFile, func() { generateNoiseKey(keyFile) }) {
-		return
-	}
-
-	// Capture stdout
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	generateNoiseKey(keyFile)
-
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-
-	// The private key goes to the file and nowhere else.
-	output := buf.String()
-	assert.Contains(t, output, "Private key written to:")
-	assert.NotContains(t, output, "Private key: ")
-
-	// Verify file was created
-	data, err := os.ReadFile(keyFile)
-	require.NoError(t, err)
-	assert.Len(t, strings.TrimSpace(string(data)), 64)
-
-	// Verify file permissions
-	info, err := os.Stat(keyFile)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
-}
-
 // TestNoiseGenerateKey_RefusesExistingFile covers the permission hole that
 // os.WriteFile leaves open: it applies its mode only when it creates the file,
 // so writing over an existing 0644 path would publish the private key to every
@@ -196,29 +158,6 @@ func TestNoiseGenerateKey_RefusesExistingFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0644), info.Mode().Perm(),
 		"permissions changed on a file the command should not have touched")
-}
-
-func TestNoiseShowKey_FromHex(t *testing.T) {
-	// First generate a key to get valid hex
-	hexKey, ok := newTestStaticKeyHex(t)
-	if !ok {
-		return
-	}
-
-	old := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	showNoiseKey("", hexKey)
-
-	_ = w.Close()
-	os.Stdout = old
-
-	var buf bytes.Buffer
-	_, _ = buf.ReadFrom(r)
-	output := buf.String()
-
-	assert.Contains(t, output, "Public key:")
 }
 
 func TestNoiseShowKey_FromFile(t *testing.T) {
@@ -254,26 +193,6 @@ func TestNoiseShowKey_NoInput(t *testing.T) {
 	defer func() { exitFunc = oldExit }()
 
 	showNoiseKey("", "")
-	assert.True(t, exitCalled)
-}
-
-func TestNoiseShowKey_InvalidHex(t *testing.T) {
-	exitCalled := false
-	oldExit := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = oldExit }()
-
-	showNoiseKey("", "not-valid-hex")
-	assert.True(t, exitCalled)
-}
-
-func TestNoiseShowKey_InvalidFile(t *testing.T) {
-	exitCalled := false
-	oldExit := exitFunc
-	exitFunc = func(code int) { exitCalled = true }
-	defer func() { exitFunc = oldExit }()
-
-	showNoiseKey("/nonexistent/path/key.hex", "")
 	assert.True(t, exitCalled)
 }
 

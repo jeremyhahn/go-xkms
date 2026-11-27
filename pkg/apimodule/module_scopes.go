@@ -153,6 +153,31 @@ func selfScopedPermissions() []qrdbsdk.Permission {
 		// is ScopeSelf; xkms owns these names too.
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionGet),
 		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionList),
+
+		// attestation_signing_keys:sign signs CoRIM reference values of one
+		// of a tenant's repositories with the key that signs it (pkg/xkms
+		// SignCoRIM, owner ruling 134). The service binds it to the caller's
+		// own tenant and signs only with that tenant's keys, which is
+		// ScopeSelf; xkms owns this name too.
+		qrdbsdk.Permission(auth.ResourceAttestationSigningKeys + ":" + auth.ActionSign),
+		// attestation_endorsements:*, attestation_reference_values:* and
+		// attestation_verifier:verify are the attestation Verifier
+		// (pkg/attestation/appraisal, go-xkms#1608): a tenant's trust
+		// anchors, its signed reference values and the appraisal of quotes
+		// against them. The service binds every call to the caller's own
+		// tenant, as it binds the signing-key verbs above -- the store is
+		// tenant-scoped -- so a tenant identity reaches only its own records
+		// and a system-tenant identity any tenant's, which is ScopeSelf like
+		// attestation_signing_keys:bind. qrdb does not declare these names;
+		// xkms owns them.
+		qrdbsdk.Permission(auth.ResourceAttestationEndorsements + ":" + auth.ActionCreate),
+		qrdbsdk.Permission(auth.ResourceAttestationEndorsements + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceAttestationEndorsements + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceAttestationReferenceValues + ":" + auth.ActionCreate),
+		qrdbsdk.Permission(auth.ResourceAttestationReferenceValues + ":" + auth.ActionGet),
+		qrdbsdk.Permission(auth.ResourceAttestationReferenceValues + ":" + auth.ActionList),
+		qrdbsdk.Permission(auth.ResourceAttestationReferenceValues + ":" + auth.ActionDelete),
+		qrdbsdk.Permission(auth.ResourceAttestationVerifier + ":" + auth.ActionVerify),
 	}
 }
 

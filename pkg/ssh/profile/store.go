@@ -15,6 +15,7 @@ package profile
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"strings"
@@ -306,6 +307,12 @@ func (s *DAOStore) MoveToFolder(idOrName, folderPath string) error {
 // CreateFolder records an explicit folder, so it survives holding no
 // profile. Creating an existing folder is a no-op.
 func (s *DAOStore) CreateFolder(path string) error {
+	return s.createFolder(context.Background(), path)
+}
+
+// createFolder records the folder at path; saving an existing folder again
+// is a no-op.
+func (s *DAOStore) createFolder(ctx context.Context, path string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -314,7 +321,7 @@ func (s *DAOStore) CreateFolder(path string) error {
 	if path == "" {
 		return ErrFolderEmpty
 	}
-	if err := s.folders.Save(context.Background(), &folder{Path: path}); err != nil {
+	if err := s.folders.Save(ctx, &folder{Path: path}); err != nil {
 		return &errs.Joined{Lead: ErrStorage, Detail: "create folder " + path, Cause: err}
 	}
 	return nil
@@ -409,6 +416,41 @@ func (s *DAOStore) DeleteFolder(path string) error {
 		}
 	}
 	return nil
+}
+
+// ImportLegacy upserts a profile the pre-DAO sealed-KV store wrote under
+// ssh/profiles/<id>.json: data is its JSON. Unlike Add, the profile keeps
+// its ID and timestamps, so importing it twice is harmless. It is the
+// per-record step of the SSH store migrator (pkg/ssh/migrate). A record
+// that does not decode, names another ID or fails validation is an
+// ErrLegacyRecord.
+func (s *DAOStore) ImportLegacy(ctx context.Context, id string, data []byte) error {
+	var p Profile
+	if err := json.Unmarshal(data, &p); err != nil {
+		return &errs.Joined{Lead: ErrLegacyRecord, Detail: id, Cause: err}
+	}
+	if p.ID != id {
+		return &errs.Detail{Err: ErrLegacyRecord, Detail: id + " holds profile " + p.ID}
+	}
+	if err := p.Validate(); err != nil {
+		return &errs.Joined{Lead: ErrLegacyRecord, Detail: id, Cause: err}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return ErrStoreClosed
+	}
+	if err := s.profiles.Save(ctx, &record{Key: id, Profile: p}); err != nil {
+		return &errs.Joined{Lead: ErrStorage, Detail: "import " + id, Cause: err}
+	}
+	return nil
+}
+
+// ImportLegacyFolder records a folder the pre-DAO sealed-KV store marked
+// under ssh/profiles/__folders__/<path>. It is CreateFolder with the
+// migrator's context.
+func (s *DAOStore) ImportLegacyFolder(ctx context.Context, path string) error {
+	return s.createFolder(ctx, path)
 }
 
 // Search returns the profiles whose name, host, user or folder contains

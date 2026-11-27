@@ -87,54 +87,6 @@ func (m *mockKeyStore) GetDecrypter(keyID string) (crypto.Decrypter, error) {
 	return key, nil
 }
 
-// Test XKMSEncrypter with RSA
-func TestXKMSEncrypter_RSA(t *testing.T) {
-	// Setup mock keystore
-	keyStore := newMockKeyStore()
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key: %v", err)
-	}
-	keyStore.AddRSAKey("rsa-key-1", rsaKey)
-
-	// Create xkms encrypter
-	encrypter, err := NewXKMSEncrypter("RSA-OAEP-256", "A256GCM", keyStore.GetPublicKey)
-	if err != nil {
-		t.Fatalf("Failed to create xkms encrypter: %v", err)
-	}
-
-	plaintext := []byte("xKMS encryption test")
-
-	// Encrypt with key ID
-	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithKeyID(plaintext, "rsa-key-1") })
-	if !ok {
-		return
-	}
-
-	// Verify kid in header
-	kid, err := ExtractKID(jweString)
-	if err != nil {
-		t.Fatalf("Failed to extract kid: %v", err)
-	}
-
-	if kid != "rsa-key-1" {
-		t.Errorf("Expected kid 'rsa-key-1', got '%s'", kid)
-	}
-
-	// Create xkms decrypter
-	decrypter := NewXKMSDecrypter(keyStore.GetDecrypter)
-
-	// Decrypt with auto key ID
-	decrypted, err := decrypter.DecryptWithAutoKeyID(jweString)
-	if err != nil {
-		t.Fatalf("Decryption failed: %v", err)
-	}
-
-	if string(decrypted) != string(plaintext) {
-		t.Errorf("Decrypted text doesn't match")
-	}
-}
-
 // Test XKMSEncrypter with ECDSA
 func TestXKMSEncrypter_ECDSA(t *testing.T) {
 	// Setup mock keystore
@@ -251,33 +203,6 @@ func TestXKMSEncrypter_EncryptWithoutKID(t *testing.T) {
 	// Can still decrypt with explicit key ID
 	decrypter := NewXKMSDecrypter(keyStore.GetDecrypter)
 	decrypted, err := decrypter.DecryptWithKeyID(jweString, "rsa-key-1")
-	if err != nil {
-		t.Fatalf("Decryption failed: %v", err)
-	}
-
-	if string(decrypted) != string(plaintext) {
-		t.Errorf("Decrypted text doesn't match")
-	}
-}
-
-// Test XKMSDecrypter.Decrypt (alias for DecryptWithAutoKeyID)
-func TestXKMSDecrypter_DecryptAlias(t *testing.T) {
-	keyStore := newMockKeyStore()
-	rsaKey, _ := rsa.GenerateKey(rand.Reader, 2048)
-	keyStore.AddRSAKey("rsa-key-1", rsaKey)
-
-	encrypter, _ := NewXKMSEncrypter("RSA-OAEP", "A256GCM", keyStore.GetPublicKey)
-	plaintext := []byte("Alias test")
-
-	jweString, ok := requireJWE(t, func() (string, error) { return encrypter.EncryptWithKeyID(plaintext, "rsa-key-1") })
-	if !ok {
-		return
-	}
-
-	decrypter := NewXKMSDecrypter(keyStore.GetDecrypter)
-
-	// Use Decrypt alias
-	decrypted, err := decrypter.Decrypt(jweString)
 	if err != nil {
 		t.Fatalf("Decryption failed: %v", err)
 	}

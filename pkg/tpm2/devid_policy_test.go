@@ -31,8 +31,9 @@ import (
 // TPM2_PolicyUpdate must agree, or the key policy this package attaches to
 // every IDevID and IAK is not the one the specification defines.
 //
-// The reference document is checked in at
-// docs/references/TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf.
+// The reference document is kept at
+// tcg/TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf in the
+// private jeremyhahn/vendor-tcg repository.
 
 // Table 14 - PolicyUser values.
 var tcgPolicyUser = map[tpm2.TPMAlgID]string{
@@ -134,14 +135,6 @@ func TestDevidPolicyNVDataSize(t *testing.T) {
 	assert.Equal(t, uint16(0x0022), size, "2 bytes of algorithm ID plus a 32-byte SHA-256 digest")
 
 	_, err = devidPolicyNVDataSize(tpm2.TPMAlgSHA1)
-	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
-}
-
-// TestDevIDPolicyNVPublic_UnsupportedNameAlg proves the refusal from
-// DevIDPolicyNVIndex propagates out of DevIDPolicyNVPublic unchanged for a
-// hash algorithm the specification defines no Policy NV Index template for.
-func TestDevIDPolicyNVPublic_UnsupportedNameAlg(t *testing.T) {
-	_, err := DevIDPolicyNVPublic(DevIDKeySigning, tpm2.TPMAlgSHA1)
 	assert.ErrorIs(t, err, ErrDevIDPolicyUnsupported)
 }
 

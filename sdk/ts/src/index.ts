@@ -32,6 +32,7 @@ export {
 export {
   XkmsApiError,
   XkmsNetworkError,
+  XkmsInsecureTransportError,
   parseErrorEnvelope,
   type ErrorEnvelope,
 } from './errors.js';
@@ -126,6 +127,7 @@ export {
   type WaitForDeviceLoginOptions,
 } from './clients/oidcCredential.js';
 export { SigningKeyClient } from './clients/signingKey.js';
+export { AttestationAppraisalClient } from './clients/attestationAppraisal.js';
 export { PlatformClient } from './clients/platform.js';
 export { TpmPolicyClient, pcrBranch } from './clients/tpmPolicy.js';
 export { CredentialsClient } from './clients/credentials.js';
@@ -151,6 +153,7 @@ export type * from './types/tenants.js';
 export type * from './types/passwords.js';
 export type * from './types/oidcCredential.js';
 export type * from './types/signingKey.js';
+export type * from './types/attestationAppraisal.js';
 export type * from './types/platform.js';
 export type * from './types/tpmPolicy.js';
 export type * from './types/credentials.js';

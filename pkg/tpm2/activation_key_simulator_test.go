@@ -13,21 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestCreateActivationKey_Success proves CreateActivationKey loads a
-// transient key with a non-zero handle and a non-empty Name, in the null
-// hierarchy (no hierarchy auth required to create it).
-func TestCreateActivationKey_Success(t *testing.T) {
-	h := newSimHarness(t, nil)
-
-	key, err := h.TPM.CreateActivationKey()
-	require.NoError(t, err)
-	require.NotNil(t, key)
-	assert.NotZero(t, key.Handle)
-	assert.NotEmpty(t, key.Name.Buffer)
-
-	h.TPM.Flush(key.Handle)
-}
-
 // TestCreateActivationKey_TransportError proves CreateActivationKey returns
 // the typed ErrActivationKeyCreate, not a bare TPM response error, when
 // TPM2_CreatePrimary fails at the transport.

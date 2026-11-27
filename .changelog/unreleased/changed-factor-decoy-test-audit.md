@@ -1,0 +1,1 @@
+factor/decoy: the `pkg/factor/internal/decoy` tests drop `TestRSASizeSupported`, whose bounds `TestRSAKeyRejectsUnsupportedSizes` and `TestShapeOfKey` (now with the 8192-bit upper bound) already assert (#1794).

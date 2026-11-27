@@ -84,13 +84,13 @@ endif
 # CLI doesn't include pkcs11 (requires CGO) for easier distribution
 CLI_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault frost codec_cbor codec_json codec_msgpack gms_pure_go
 # Server includes all tags including pkcs11 and the object-storage cloud backends
-SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
+SERVER_BUILD_TAGS := pkcs8 awskms gcpkms azurekv vault pkcs11 frost awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack qrdb_vlog
 # All tags for integration testing (includes all possible build tags)
-ALL_TAGS := integration frost pkcs8 pkcs11 awskms gcpkms azurekv vault nitrokey fido2 webauthn awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack
+ALL_TAGS := integration frost pkcs8 pkcs11 awskms gcpkms azurekv vault nitrokey fido2 webauthn awss3 minio gcpstorage azureblob glacier azurearchive codec_cbor codec_json codec_msgpack qrdb_vlog
 
 # Build tags based on backend flags (for development/testing)
 # Codec tags are always required for go-qrdb DAO layer serialization
-BUILD_TAGS := codec_cbor codec_json codec_msgpack
+BUILD_TAGS := codec_cbor codec_json codec_msgpack qrdb_vlog
 ifeq ($(WITH_PKCS8),1)
 	BUILD_TAGS += pkcs8
 endif
@@ -464,7 +464,7 @@ XKMS_PKCS11_BACKENDS ?= software
 
 # Test configuration - include codec build tags for go-codec support
 # Include frost tag for threshold signature scheme unit tests (issue #703)
-TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost
+TEST_TAGS := codec_cbor codec_json codec_msgpack tpm_simulator frost qrdb_vlog
 # Per-binary go test bound for the unit lanes CI's Unit Tests job runs through
 # `make coverage` (#1587): above that job's slowest green run, 70m, and below
 # its 140m timeout-minutes, so a hung test fails with a goroutine dump first.
@@ -1200,12 +1200,20 @@ race: agsim
 
 .PHONY: coverage
 ## coverage: Run the unit suite and fail when total coverage is below COVERAGE_THRESHOLD (CI's test stage)
-# GOMEMLIMIT and -p=2 bound the suite's memory: under -race the Argon2-heavy
-# REST/MCP packages exhaust a runner's memory without them. Under CI the suite
-# must leave the tree as it found it (#454). The per-package report is
-# advisory (#704).
-coverage: export GOMEMLIMIT := 10GiB
-coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=2)
+# GOMEMLIMIT and -p=1 bound the suite's memory: under -race the Argon2-heavy
+# REST/MCP packages exhaust a runner's memory without them. GOMEMLIMIT is per
+# test process, and the race detector's shadow memory is outside it. CI runs
+# this target in scripts/in-toolchain-image.sh's sibling container, capped at
+# 8g with swap off on a hosted runner, so it was measured in a 4-CPU, 8g,
+# swap-off cgroup: with -p=2 the pkg/fido2/authenticator test binary was
+# OOM-killed (cgroup oom_kill 1, 23 min); with -p=1 the suite passed in 19 min,
+# with a 4.9 GiB peak RSS (getrusage, that binary) and no OOM kill, the cgroup
+# reaching its 8 GiB limit only through reclaimable page cache. That cgroup
+# also held about 1.7 GiB of other processes, so CI has more headroom. Under CI
+# the suite must leave the tree as it found it (#454). The per-package report
+# is advisory (#704).
+coverage: export GOMEMLIMIT := 5GiB
+coverage: export GOFLAGS := $(strip $(GOFLAGS) -p=1)
 coverage: test
 	@total=$$($(GO) tool cover -func=$(COVERAGE_FILE) | awk '/^total:/ {print $$3}' | tr -d %); \
 	echo "Total coverage: $${total}%"; \
@@ -1417,6 +1425,23 @@ coverage-dice:
 	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/dice.txt | awk '{print $$NF}'); \
 	echo "$(CYAN)dice coverage: $${TOTAL}$(RESET)"
 
+.PHONY: test-securityevent
+## test-securityevent: Run device security-event appraisal package unit tests
+test-securityevent:
+	@echo "$(CYAN)→ Testing security-event appraisal package...$(RESET)"
+	@$(GOTEST) $(TEST_FLAGS) ./pkg/attestation/securityevent/...
+
+.PHONY: coverage-securityevent
+## coverage-securityevent: Generate coverage report for the device security-event appraisal package
+coverage-securityevent:
+	@echo "$(CYAN)→ Generating security-event appraisal coverage...$(RESET)"
+	@mkdir -p $(COVERAGE_DIR)
+	@$(GO) test $(TAG_FLAGS) ./pkg/attestation/securityevent/... -coverprofile=$(COVERAGE_DIR)/securityevent.out -covermode=atomic
+	@$(GO) tool cover -html=$(COVERAGE_DIR)/securityevent.out -o $(COVERAGE_DIR)/securityevent-coverage.html
+	@$(GO) tool cover -func=$(COVERAGE_DIR)/securityevent.out > $(COVERAGE_DIR)/securityevent.txt
+	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/securityevent.txt | awk '{print $$NF}'); \
+	echo "$(CYAN)securityevent coverage: $${TOTAL}$(RESET)"
+
 .PHONY: coverage-attestation
 ## coverage-attestation: Generate coverage report for the attestation packages
 coverage-attestation:
@@ -1594,7 +1619,7 @@ coverage-quantum:
 coverage-ca:
 	@echo "$(CYAN)→ Generating CA coverage...$(RESET)"
 	@mkdir -p $(COVERAGE_DIR)
-	@$(GO) test $(TAG_FLAGS) ./pkg/ca/... -coverprofile=$(COVERAGE_DIR)/ca.out -covermode=atomic
+	@$(GO) test -tags "$(call go_tags,$(BUILD_TAGS) qrdb_vlog)" ./pkg/ca/... -coverprofile=$(COVERAGE_DIR)/ca.out -covermode=atomic
 	@$(GO) tool cover -html=$(COVERAGE_DIR)/ca.out -o $(COVERAGE_DIR)/ca-coverage.html
 	@$(GO) tool cover -func=$(COVERAGE_DIR)/ca.out > $(COVERAGE_DIR)/ca.txt
 	@TOTAL=$$(grep '^total:' $(COVERAGE_DIR)/ca.txt | awk '{print $$NF}'); \
@@ -2523,6 +2548,11 @@ integration-test-peergate:
 integration-test-acme-tpm:
 	@echo "$(CYAN)$(BOLD)→ Running ACME+TPM integration tests...$(RESET)"
 	@cd test/integration/acme-tpm && $(call compose,acme-tpm) down -v >/dev/null 2>&1 || true
+	@echo "$(CYAN)  Generating the swtpm EK root CA (certgen -ca)...$(RESET)"
+	@cd test/integration/acme-tpm && rm -rf testdata/ek-root && \
+		$(GO) run ./certgen -ca -cn "swtpm Test EK CA" \
+		-cert testdata/ek-root/ek-root.crt \
+		-key testdata/ek-root/ek-root.key
 	@cd test/integration/acme-tpm && $(call compose,acme-tpm) up -d --build tpm-simulator acme-server
 	@echo "$(CYAN)  Waiting for swtpm and the ACME server to be ready...$(RESET)"
 	@cd test/integration/acme-tpm && trap '$(call compose,acme-tpm) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
@@ -2984,7 +3014,7 @@ devcontainer-server-wait:
 # seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
 # binary (make build / make release-*) never carries those tags. See #807.
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration fido2 gms_pure_go codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration fido2 $(BUILD_TAGS))' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration fido2 gms_pure_go codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration fido2 $(BUILD_TAGS))' ./test/integration/fido2/... -timeout 10m && $(GO) test -c -tags='$(call go_tags,linux)' -o build/bin/fido2-uhid.test ./pkg/fido2/ && sudo XKMS_REQUIRE_UHID=1 build/bin/fido2-uhid.test -test.v -test.count=1 -test.run TestLinuxHIDDevice_UHIDRoundTrip,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
@@ -5450,9 +5480,12 @@ playwright-test-piv:
 	@$(MAKE) -C xkey playwright-test-piv
 
 # test_dir resolves a test-%/coverage-% stem to its directory: a library
-# package under pkg/ or a binary under cmd/ (make test-xkmsd). A stem naming
-# neither is an error, never a silent "matched no packages" pass.
-test_dir = $(or $(wildcard ./pkg/$(1)),$(wildcard ./cmd/$(1)),$(error neither ./pkg/$(1) nor ./cmd/$(1) exists))
+# package under pkg/ or a binary under cmd/ (make test-xkmsd), else a nested
+# package under pkg/ whose path separators the stem spells as dashes
+# (make test-factor-mtls runs ./pkg/factor/mtls). Literal matches come first,
+# so dashed directories such as cmd/acme-client keep resolving as before. A
+# stem naming none is an error, never a silent "matched no packages" pass.
+test_dir = $(or $(wildcard ./pkg/$(1)),$(wildcard ./cmd/$(1)),$(wildcard ./pkg/$(subst -,/,$(1))),$(error none of ./pkg/$(1)$(if $(findstring -,$(1)),$(comma) ./cmd/$(1) or ./pkg/$(subst -,/,$(1)), or ./cmd/$(1)) exists))
 
 # integration_dir does the same for integration-test-%: test/integration/$*.
 integration_dir = $(or $(wildcard ./test/integration/$(1)),$(error ./test/integration/$(1) does not exist))

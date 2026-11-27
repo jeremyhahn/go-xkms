@@ -98,6 +98,7 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
 // Params contains the parameters for creating a new CA instance.
@@ -146,7 +147,7 @@ type Params struct {
 	// and tpm_enrollment.go. If nil, features that require an object store
 	// return ErrObjectStoreRequired when invoked.
 	// Optional.
-	ObjectStore qrdbsdk.Storage
+	ObjectStore qrdbstorage.Storage
 
 	// RevocationStore durably persists certificate revocations and the
 	// derived CRL artifact in the datastore so both survive restarts and
@@ -272,7 +273,7 @@ type CA struct {
 	// objectStore is the optional blob store for cross-signed certs, AIA
 	// trust-chain cache, and attestation evidence. May be nil; features that
 	// require it return ErrObjectStoreRequired in that case.
-	objectStore qrdbsdk.Storage
+	objectStore qrdbstorage.Storage
 
 	// revocationStore durably persists revocation records and the derived CRL
 	// artifact in the datastore so both survive restarts (and replicate under
@@ -315,6 +316,10 @@ type CA struct {
 	// auditLogger records CA lifecycle events (see Params.AuditLogger and
 	// pkg/ca/audit.go). nil disables audit logging for this CA instance.
 	auditLogger qrdbsdk.NodeAuditLogger
+
+	// transparencyLog is the log issuance and revocation append to (see
+	// SetTransparencyLog in transparency_log.go). nil records nothing.
+	transparencyLog atomic.Pointer[transparencyLogRef]
 
 	// secondaryKeyErr records the error from the most recent
 	// initSecondaryKeys call during Init, or nil if every secondary key
@@ -609,7 +614,7 @@ type MultiIdentityParams struct {
 	// ObjectStore provides blob storage for cross-signed certificates, AIA
 	// trust-chain cache, and attestation evidence.
 	// Optional. If nil, features that require it return ErrObjectStoreRequired.
-	ObjectStore qrdbsdk.Storage
+	ObjectStore qrdbstorage.Storage
 
 	// RevocationStore durably persists certificate revocations and the
 	// derived CRL artifact in the datastore so both survive restarts.
@@ -768,7 +773,7 @@ func NewHierarchicalCA(mp *MultiIdentityParams) (TrustedCA, error) {
 // Used by CA-adjacent features (cross-signing, AIA cache, attestation
 // evidence, CRL snapshots) that need blob storage beyond the CN-keyed
 // CertStore. Callers should check for nil and surface ErrObjectStoreRequired.
-func (ca *CA) ObjectStore() qrdbsdk.Storage {
+func (ca *CA) ObjectStore() qrdbstorage.Storage {
 	return ca.objectStore
 }
 
@@ -2175,6 +2180,19 @@ func (ca *CA) signingSerial(ctx context.Context, opts *SignOptions) (*big.Int, e
 // certificate and records its tenant. signCSR and signCallerNamedCSR both end
 // here, so the two name-sourcing rules share one signing, storage and tenant
 // path.
+// unstoredIssuanceKey marks a context whose issuance issueSignedSpec does not
+// store in the certificate store. Only SignCSRUnstored sets it.
+type unstoredIssuanceKey struct{}
+
+func withUnstoredIssuance(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unstoredIssuanceKey{}, true)
+}
+
+func isUnstoredIssuance(ctx context.Context) bool {
+	unstored, _ := ctx.Value(unstoredIssuanceKey{}).(bool)
+	return unstored
+}
+
 func (ca *CA) issueSignedSpec(
 	ctx context.Context,
 	spec *CertificateSpec,
@@ -2256,12 +2274,21 @@ func (ca *CA) issueSignedSpec(
 		return cert, nil
 	}
 
+	// Every CSR-signed certificate, whichever verb issued it, is recorded
+	// here once, before it is stored or returned (fail closed).
+	if err := ca.appendCertIssued(ctx, cert, spec.Profile, tenantID); err != nil {
+		return nil, err
+	}
+
 	// Store the certificate. The store is keyed by Common Name, so a
 	// certificate with none cannot be stored there. Only a caller-named
 	// profile issues such a certificate — an X.509-SVID needs no subject —
 	// and it stays revocable: RevokeCert takes the certificate itself, and
 	// its tenant is recorded below by serial.
-	if cert.Subject.CommonName != "" || !isCallerSANProfile(spec.Profile) {
+	// An unstored issuance (SignCSRUnstored) returns the certificate to its
+	// caller only: its common name is the caller's to choose, so storing it
+	// would replace whatever certificate of any tenant carries that name.
+	if !isUnstoredIssuance(ctx) && (cert.Subject.CommonName != "" || !isCallerSANProfile(spec.Profile)) {
 		if err := ca.certStore.StoreCertificate(cert); err != nil {
 			return nil, &errs.Wrapped{Msg: "failed to store certificate", Err: err}
 		}

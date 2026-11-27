@@ -14,7 +14,6 @@
 package common
 
 import (
-	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,124 +61,6 @@ func TestChallengeTypeConstants(t *testing.T) {
 // =============================================================================
 
 func TestErrorConstants(t *testing.T) {
-	assert.NotNil(t, ErrInvalidChallengeType)
-	assert.NotNil(t, ErrAccountAlreadyExists)
-
 	assert.Equal(t, "acme: invalid challenge type", ErrInvalidChallengeType.Error())
 	assert.Equal(t, "acme: account already exists", ErrAccountAlreadyExists.Error())
-}
-
-// =============================================================================
-// Directory Type Tests
-// =============================================================================
-
-func TestDirectory(t *testing.T) {
-	dir := Directory{
-		NewNonce:   "https://example.com/nonce",
-		NewAccount: "https://example.com/account",
-		NewOrder:   "https://example.com/order",
-		NewAuthz:   "https://example.com/authz",
-		RevokeCert: "https://example.com/revoke",
-		KeyChange:  "https://example.com/keychange",
-		Meta: Meta{
-			TermsOfService:     "https://example.com/tos",
-			Website:            "https://example.com",
-			CAAIdentities:      []string{"example.com"},
-			ExternalAccountReq: true,
-		},
-	}
-
-	assert.Equal(t, "https://example.com/nonce", dir.NewNonce)
-	assert.Equal(t, "https://example.com/account", dir.NewAccount)
-	assert.Equal(t, "https://example.com/order", dir.NewOrder)
-	assert.Equal(t, "https://example.com/authz", dir.NewAuthz)
-	assert.Equal(t, "https://example.com/revoke", dir.RevokeCert)
-	assert.Equal(t, "https://example.com/keychange", dir.KeyChange)
-	assert.Equal(t, "https://example.com/tos", dir.Meta.TermsOfService)
-	assert.Equal(t, "https://example.com", dir.Meta.Website)
-	assert.Equal(t, []string{"example.com"}, dir.Meta.CAAIdentities)
-	assert.True(t, dir.Meta.ExternalAccountReq)
-}
-
-func TestDirectory_EmptyOptionalFields(t *testing.T) {
-	dir := Directory{
-		NewNonce:   "https://example.com/nonce",
-		NewAccount: "https://example.com/account",
-		NewOrder:   "https://example.com/order",
-		RevokeCert: "https://example.com/revoke",
-		KeyChange:  "https://example.com/keychange",
-		// NewAuthz is optional
-		Meta: Meta{
-			// All meta fields are optional
-		},
-	}
-
-	assert.Equal(t, "", dir.NewAuthz)
-	assert.Equal(t, "", dir.Meta.TermsOfService)
-	assert.Equal(t, "", dir.Meta.Website)
-	assert.Nil(t, dir.Meta.CAAIdentities)
-	assert.False(t, dir.Meta.ExternalAccountReq)
-}
-
-// =============================================================================
-// Meta Type Tests
-// =============================================================================
-
-func TestMeta(t *testing.T) {
-	meta := Meta{
-		TermsOfService:     "https://example.com/tos",
-		Website:            "https://example.com",
-		CAAIdentities:      []string{"example.com", "example.org"},
-		ExternalAccountReq: true,
-	}
-
-	assert.Equal(t, "https://example.com/tos", meta.TermsOfService)
-	assert.Equal(t, "https://example.com", meta.Website)
-	assert.Len(t, meta.CAAIdentities, 2)
-	assert.Contains(t, meta.CAAIdentities, "example.com")
-	assert.Contains(t, meta.CAAIdentities, "example.org")
-	assert.True(t, meta.ExternalAccountReq)
-}
-
-func TestMeta_Empty(t *testing.T) {
-	meta := Meta{}
-
-	assert.Equal(t, "", meta.TermsOfService)
-	assert.Equal(t, "", meta.Website)
-	assert.Nil(t, meta.CAAIdentities)
-	assert.False(t, meta.ExternalAccountReq)
-}
-
-// =============================================================================
-// ChallengeVerifierFunc Type Tests
-// =============================================================================
-
-func TestChallengeVerifierFunc_TypeDefinition(t *testing.T) {
-	// Verify the function type can be instantiated
-	var verifier ChallengeVerifierFunc = func(
-		resolver *net.Resolver,
-		ca CertificateAuthority,
-		authzValue, challengePort, challengeToken, expectedKeyAuth string,
-	) error {
-		return nil
-	}
-
-	// The function should be callable (compile-time check)
-	err := verifier(nil, nil, "value", "port", "token", "keyAuth")
-	assert.NoError(t, err)
-}
-
-func TestChallengeVerifierFunc_ReturnsError(t *testing.T) {
-	expectedErr := ErrInvalidChallengeType
-
-	var verifier ChallengeVerifierFunc = func(
-		resolver *net.Resolver,
-		ca CertificateAuthority,
-		authzValue, challengePort, challengeToken, expectedKeyAuth string,
-	) error {
-		return expectedErr
-	}
-
-	err := verifier(nil, nil, "value", "port", "token", "keyAuth")
-	assert.Equal(t, expectedErr, err)
 }

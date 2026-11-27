@@ -51,6 +51,50 @@ func TestAdmitPassphraseCopy_CopiesAndFreezes(t *testing.T) {
 	}
 }
 
+func TestFreezePassphrase_FreezesMemoryEnclave(t *testing.T) {
+	pass, err := enclave.NewMemorySized(8)
+	if err != nil {
+		t.Fatalf("NewMemorySized: %v", err)
+	}
+	defer func() {
+		if err := pass.Destroy(); err != nil {
+			t.Errorf("Destroy: %v", err)
+		}
+	}()
+
+	if err := freezePassphrase(pass); err != nil {
+		t.Fatalf("freezePassphrase: %v", err)
+	}
+	if err := pass.Destroy(); err != nil {
+		t.Fatalf("Destroy: %v", err)
+	}
+	if err := freezePassphrase(pass); !errors.Is(err, enclave.ErrEnclaveDestroyed) {
+		t.Fatalf("freezePassphrase on a destroyed enclave = %v, want ErrEnclaveDestroyed", err)
+	}
+}
+
+// unfreezable is a ByteAccess that hides the Freezer capability of the
+// enclave it wraps.
+type unfreezable struct {
+	enclave.ByteAccess
+}
+
+func TestFreezePassphrase_RefusesHandleWithoutFreezer(t *testing.T) {
+	inner, err := enclave.NewMemorySized(8)
+	if err != nil {
+		t.Fatalf("NewMemorySized: %v", err)
+	}
+	defer func() {
+		if err := inner.Destroy(); err != nil {
+			t.Errorf("Destroy: %v", err)
+		}
+	}()
+
+	if err := freezePassphrase(unfreezable{inner}); !errors.Is(err, ErrPassphraseNotFreezable) {
+		t.Fatalf("freezePassphrase = %v, want ErrPassphraseNotFreezable", err)
+	}
+}
+
 // With the process budget filled by the source buffer, the copy must be
 // refused with the budget's typed error: it is admitted, never made outside
 // the budget.

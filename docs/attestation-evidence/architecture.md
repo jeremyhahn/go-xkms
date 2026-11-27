@@ -127,7 +127,25 @@ A CMW (RFC 9999 §3.1 record, §3.3 collection) could label the record next to
 the DICE evidence. It protects nothing by itself (§8.1), so it does not
 answer the binding question.
 
-**Binding options, and what the Verifier may conclude.**
+**Binding: detached digest in signed evidence** (owner ruling 7dbbb72 item
+181, #1765). The device signs EAT evidence that carries a Detached Submodule
+Digest of the record (RFC 9711 §4.2.18.2) and the Verifier's `eat_nonce`
+(RFC 9711 §4.1). The record travels beside the envelope. The alias
+certificate is issued at boot, before the record is written, so it cannot
+carry the digest; the evidence must be signed after the record's last entry.
+The Verifier recomputes the record's digest, compares it with the Detached
+Submodule Digest in the signed evidence, checks the signature through the
+DICE chain and checks the `eat_nonce`. It may then conclude that the
+device's key vouched for this exact record, and that the record is fresh
+(RFC 9334 §10).
+
+The seam has two sides. go-xkms's side is the capability interface below and
+that appraisal. trusted-firmware's side (trusted-firmware#283, theirs) is the
+adapter and firmware change that produces the signed evidence after the
+record's last entry, with the digest and the nonce, and hands the record
+beside it.
+
+Rejected:
 
 - **(a) Channel only.** The record arrives unsigned, as a UCCS. RFC 9781 §4
   accepts that only when the receiver authenticated the sender and the

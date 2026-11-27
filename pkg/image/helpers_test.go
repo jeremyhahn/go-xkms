@@ -40,8 +40,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"github.com/jeremyhahn/go-xkms/pkg/ca"
 )
 
 // testPurpose is the trust-roots purpose the tests verify images under.
@@ -172,10 +170,11 @@ func (p *testPKI) timestamping(t *testing.T, key crypto.PublicKey) *x509.Certifi
 		NotBefore:    time.Now().Add(-24 * time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
 		SubjectKeyId: []byte("image tsa key"),
+		// The usages TrustedCA's timestamping profile sets.
+		KeyUsage:        x509.KeyUsageDigitalSignature | x509.KeyUsageContentCommitment,
+		ExtKeyUsage:     []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
+		ExtraExtensions: []pkix.Extension{extKeyUsageExtension(t, true, oidKPTimeStamping)},
 	}
-	// The CA's own timestamping profile sets the usages, so the verifier is
-	// tested against the certificates the CA actually issues.
-	require.NoError(t, ca.NewTimestampingProfile().Apply(template, nil))
 	return p.issue(t, key, template)
 }
 
@@ -219,7 +218,7 @@ type testIssuer struct {
 	err     error
 }
 
-func (i *testIssuer) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOptions) (*x509.Certificate, error) {
+func (i *testIssuer) SignCSRUnstored(_ context.Context, csrPEM []byte, profile string, _ int, tenantID string) (*x509.Certificate, error) {
 	if i.err != nil {
 		return nil, i.err
 	}
@@ -230,17 +229,19 @@ func (i *testIssuer) SignCSR(_ context.Context, csrPEM []byte, opts *ca.SignOpti
 	require.NoError(i.t, err)
 	require.NoError(i.t, csr.CheckSignature())
 
-	profile := ca.NewCodeSigningProfile()
-	validator, ok := profile.(interface {
-		ValidateCSR(csr *x509.CertificateRequest) error
-	})
-	require.True(i.t, ok)
-	require.NoError(i.t, validator.ValidateCSR(csr))
-	i.profile = opts.Profile
-	i.tenant = opts.TenantID
+	// TrustedCA's code-signing profile accepts a subject of one common name.
+	require.NotEmpty(i.t, csr.Subject.CommonName)
+	require.Equal(i.t, "CN="+csr.Subject.CommonName, csr.Subject.String())
+	i.profile = profile
+	i.tenant = tenantID
 
-	template := &x509.Certificate{Subject: csr.Subject}
-	require.NoError(i.t, profile.Apply(template, nil))
+	// The usages TrustedCA's code-signing profile sets.
+	template := &x509.Certificate{
+		Subject:               csr.Subject,
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageCodeSigning},
+		BasicConstraintsValid: true,
+	}
 	if i.edit != nil {
 		i.edit(template)
 	}

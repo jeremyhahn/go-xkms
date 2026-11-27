@@ -46,6 +46,11 @@ var (
 	// ErrCommonNameRequired indicates an empty certificate common name.
 	ErrCommonNameRequired = errors.New("image: common name is required")
 
+	// ErrTenantRequired indicates a code-signing certificate request that
+	// names no tenant: TrustedCA refuses one, as it stamps the tenant as the
+	// certificate's first OU.
+	ErrTenantRequired = errors.New("image: certificate request names no tenant")
+
 	// ErrKeyMismatch indicates a certificate whose public key is not the
 	// signer's.
 	ErrKeyMismatch = errors.New("image: certificate public key does not match the signer")
@@ -229,4 +234,9 @@ var (
 	// ErrUnsupportedAlgorithm indicates a digest or signature algorithm
 	// outside the supported set.
 	ErrUnsupportedAlgorithm = errors.New("image: unsupported algorithm")
+
+	// ErrTransparencyLogAppend is returned when the transparency log did not
+	// record an image signature; the signature is neither pushed nor
+	// returned.
+	ErrTransparencyLogAppend = errors.New("image: transparency log append failed")
 )

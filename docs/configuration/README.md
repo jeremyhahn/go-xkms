@@ -96,6 +96,32 @@ baseline, gated permissions, maximum evidence age) is not configuration: the
 embedder passes it with `server.WithAttestedCallerPolicy`. See
 [Attested Peer](../attested-peer/api.md#installing-the-gate).
 
+### Client Transport Security
+
+A gRPC or REST client never sends a credential over a TLS-disabled TCP
+channel (ruling 152). The constructors refuse a gRPC address with `TLSEnabled`
+off that is not `unix:`, and any REST base URL that is not `https://`, with
+`transport.ErrInsecureTransport` (`pkg/api/transport/errors.go:68`,
+`pkg/api/transport/grpc/transport.go:95`, `pkg/api/transport/rest/transport.go:121`).
+`SignImage` checks again before it sends registry credentials, because the
+caller can change the config after construction
+(`pkg/api/transport/grpc/transport_signing_key.go:96`,
+`pkg/api/transport/rest/transport_signing_key.go:92`). The guard covers every
+credential these clients carry: the JWT bearer token, the `Headers` (API
+keys), the PINs and passwords in request bodies, and the registry username and
+password.
+
+| Setting | Where | Default |
+|---------|-------|---------|
+| `AllowInsecureTransport` | `transport.Config` (`pkg/api/transport/transport.go:105`), option `transport.WithAllowInsecureTransport`, SDK `BackendConfig` (`sdk/go/xkms.go:140`) | `false` |
+| `XKMS_TRANSPORT_ALLOW_INSECURE_TRANSPORT` | environment (`pkg/api/transport/secure_channel.go:28`); when set it overrides the field, and an unparsable value keeps the guard on | unset |
+
+The opt-out is for loopback tests and dev setups only, never production. It
+mirrors the PKCS#11 module's `XKMS_PKCS11_ALLOW_INSECURE_TRANSPORT`, which the
+module passes on to the transport (`pkg/pkcs11/module/module.go:1036`). QUIC
+and MCP always use TLS, and unix sockets never leave the host, so neither
+needs the opt-out.
+
 ### Backend-Specific Configuration
 - [TPM2 Session Encryption](../tpm2/engineering.md#bus-protection) - TPM 2.0 session encryption (always on, not configurable)
 

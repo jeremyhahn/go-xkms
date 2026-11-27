@@ -1,0 +1,1 @@
+- **fido2**: `TestPINProtocolV1_Decapsulate_InvalidPadding` no longer fails at random. It corrupted the last ciphertext block, which under a fresh random key left valid PKCS#7 padding about 1 run in 256. It now flips the pad-length bit through the previous block, so the padding is invalid every time (DS-3769).

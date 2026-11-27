@@ -1140,6 +1140,66 @@ func TestCTAPHIDHandler_KeepalivesDuringMakeCredential(t *testing.T) {
 	}
 }
 
+// TestCTAPHIDHandler_KeepalivesDuringUVToken pins that the built-in user
+// verification of getPinUvAuthTokenUsingUvWithPermissions, which waits for
+// the user on another device, keeps the HID transaction alive as
+// makeCredential and getAssertion do: the verifier answers only once the
+// host has seen a periodic keepalive, after the initial one.
+func TestCTAPHIDHandler_KeepalivesDuringUVToken(t *testing.T) {
+	keepalivesSeen := make(chan struct{})
+	var (
+		mu         sync.Mutex
+		responses  [][]byte
+		keepalives int
+	)
+	backend := &verifyingKeyBackend{mockUVKeyBackend: mockUVKeyBackend{handlesUV: true}}
+	backend.wait = func(ctx context.Context) {
+		failsafe := time.NewTimer(5 * time.Second)
+		defer failsafe.Stop()
+		select {
+		case <-keepalivesSeen:
+		case <-ctx.Done():
+		case <-failsafe.C:
+		}
+	}
+	auth := newVerifyingAuthenticator(t, backend)
+
+	handler := NewCTAPHIDHandler(auth)
+	defer func() { _ = handler.Close() }()
+	handler.SetResponseHandler(func(packet []byte) {
+		mu.Lock()
+		defer mu.Unlock()
+		responses = append(responses, append([]byte(nil), packet...))
+		if packet[4] == CTAPHIDKeepalive {
+			keepalives++
+			if keepalives == 2 {
+				close(keepalivesSeen)
+			}
+		}
+	})
+
+	handler.HandleMessage(createInitPacket(CIDBroadcast, []byte{1, 2, 3, 4, 5, 6, 7, 8}))
+	mu.Lock()
+	_, cid := parseInitResponse(t, responses[0])
+	responses = nil
+	mu.Unlock()
+
+	reqBytes, _ := uvTokenRequest(t, auth, PINProtocol2, PINPermissionGetAssertion, "example.com")
+	sendMultiPacketCBOR(handler, cid, append([]byte{CmdClientPIN}, reqBytes...))
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.GreaterOrEqual(t, keepalives, 2, "the host sees keepalives while the user is asked")
+	last := responses[len(responses)-1]
+	require.Equal(t, byte(CTAPHIDCBOR), last[4], "the token answer comes after every keepalive")
+	require.Equal(t, byte(StatusOK), last[7])
+	for _, resp := range responses[:len(responses)-1] {
+		if resp[4] == CTAPHIDKeepalive {
+			require.Equal(t, cid, binary.BigEndian.Uint32(resp[0:4]))
+		}
+	}
+}
+
 // TestCTAPHIDHandler_NoKeepalivesForGetInfo verifies that CTAPHID_KEEPALIVE
 // messages are NOT sent for quick commands like GetInfo that don't require
 // user interaction.

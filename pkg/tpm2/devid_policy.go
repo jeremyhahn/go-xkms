@@ -23,8 +23,9 @@ import (
 // This file implements the IDevID/IAK key authorization model specified by
 // TCG "TPM 2.0 Keys for Device Identity and Attestation", Version 1.00,
 // Revision 12 (2021-10-08), section 7.3 "Recoverable IDevID/IAK Keys". The
-// specification is checked in at
-// docs/references/TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf
+// specification is kept at
+// tcg/TCG-TPM-2.0-Keys-for-Device-Identity-and-Attestation-v1.00-r12.pdf in the
+// private jeremyhahn/vendor-tcg repository,
 // and every digest below is pinned against the values the specification
 // publishes in Tables 14 through 19 (devid_policy_test.go).
 //

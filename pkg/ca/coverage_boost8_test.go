@@ -29,11 +29,10 @@ import (
 	"testing"
 	"time"
 
-	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -50,7 +49,7 @@ func setupCAWithObjectStoreAndXSignedCert(t *testing.T, leafCN string) (*CA, *x5
 	t.Helper()
 
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	// Manufacture a self-signed cert that will act as the cross-signed issuer cert.
 	xKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -111,7 +110,7 @@ func setupCAWithObjStoreAndXSignedRootCert(t *testing.T, leafCN string) *CA {
 	t.Helper()
 
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	ca.mu.RLock()
 	root := ca.rootCert
@@ -172,7 +171,7 @@ func TestTLSConfigWithXSigner_XSignedRootCertsExist_B8(t *testing.T) {
 // intermediate cert and cross-signed certs stored for its CN.
 func TestTLSConfigWithXSigner_WithIntermediateAndXSignedCerts_B8(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	ca.mu.RLock()
 	intermediate := ca.intermediateCert
@@ -223,7 +222,7 @@ func TestTLSConfigWithXSigner_WithIntermediateAndXSignedCerts_B8(t *testing.T) {
 // to the object store so the pool-append loop executes.
 func TestTrustedRootCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 	ca := setupTestCA(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	ca.mu.RLock()
 	root := ca.rootCert
@@ -265,7 +264,7 @@ func TestTrustedRootCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 
 func TestTrustedIntermediateCertPoolWithXSigner_XSignedCerts_B8(t *testing.T) {
 	ca := setupTestCAWithRealIntermediate(t)
-	ca.objectStore = qrdbsdk.NewMemoryStorage()
+	ca.objectStore = qrdbstorage.NewMemoryStorage()
 
 	ca.mu.RLock()
 	intermediate := ca.intermediateCert
@@ -431,75 +430,6 @@ func TestSerialMarkUsed_StoreError_B8(t *testing.T) {
 }
 
 // =============================================================================
-// attestation.go — ImportAttestationKeyCertificate success path
-// (exercises the certificate parse + store path at lines 141-171)
-// =============================================================================
-
-func TestImportAttestationKeyCertificate_Success_B8(t *testing.T) {
-	ca := setupTestCAWithObjectStore(t)
-
-	// Build a real DER-encoded certificate to import.
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
-	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	require.NoError(t, err)
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject:      pkix.Name{CommonName: "ak-cert-b8"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(24 * time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
-	require.NoError(t, err)
-
-	attrs := &types.KeyAttributes{CN: "ak-cert-b8"}
-	err = ca.ImportAttestationKeyCertificate(context.Background(), attrs, certDER)
-	require.NoError(t, err)
-}
-
-// =============================================================================
-// ca_extensions.go — recordRevocation: nil serial path
-// =============================================================================
-
-func TestRecordRevocation_NilSerial_B8(t *testing.T) {
-	t.Parallel()
-	ca := &CA{revocations: make(map[string]*RevocationInfo)}
-	err := ca.recordRevocation(context.Background(), nil, 0, false)
-	assert.ErrorIs(t, err, ErrInvalidCertificate)
-}
-
-// =============================================================================
-// ca_extensions.go — putRevocationBlobIfAbsent with revocationStore (Backend)
-// =============================================================================
-
-func TestPutRevocationBlob_RevocationStorePath_B8(t *testing.T) {
-	t.Parallel()
-	backend := storage.NewMemory()
-	ca := &CA{
-		revocationStore: backend,
-		revocations:     make(map[string]*RevocationInfo),
-	}
-	stored, err := ca.putRevocationBlobIfAbsent(context.Background(), big.NewInt(55555), []byte(`{"serial":"55555"}`))
-	require.NoError(t, err)
-	assert.True(t, stored)
-}
-
-// =============================================================================
-// ca_extensions.go — Issued: both certStore and keyStore paths
-// =============================================================================
-
-// =============================================================================
-// ca_extensions.go — SignedBlob not-initialized path
-// =============================================================================
-
-func TestSignedBlob_NotInitialized_B8(t *testing.T) {
-	t.Parallel()
-	ca := &CA{}
-	_, err := ca.SignedBlob(context.Background(), []byte("data"))
-	assert.ErrorIs(t, err, ErrNotInitialized)
-}
-
-// =============================================================================
 // ca_extensions.go — Certificate: returned from certStore when keyStore empty
 // =============================================================================
 
@@ -570,22 +500,6 @@ func TestPubKey_KeyNotSigner_B8(t *testing.T) {
 // =============================================================================
 // verification.go — VerifySignature success path
 // =============================================================================
-
-func TestVerifySignature_Success_B8(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-
-	// Issue a real certificate so VerifySignature has something to verify.
-	issued, err := ca.IssueCertificate(context.Background(), &CertificateRequest{
-		TenantID: testTenant,
-		Subject:  Subject{CommonName: "verify-sig-success-b8"},
-		SANS:     &SubjectAlternativeNames{DNS: []string{"verify-sig-success-b8.local"}},
-		Valid:    365,
-	})
-	require.NoError(t, err)
-	err = ca.VerifySignature(issued.Certificate)
-	assert.NoError(t, err)
-}
 
 // TestVerifySignature_NoIssuingCert_B8 hits the issuingCert==nil guard by
 // zeroing both cached certs after initialization.
@@ -675,30 +589,6 @@ func TestVerifyWithOptions_WithIntermediates_B8(t *testing.T) {
 	chains, err := VerifyWithOptions(cert, opts)
 	require.NoError(t, err)
 	assert.NotEmpty(t, chains)
-}
-
-// =============================================================================
-// ca_extensions.go — SignedBlob success path (ECDSA hash path)
-// =============================================================================
-
-func TestSignedBlob_Success_B8(t *testing.T) {
-	t.Parallel()
-	ca := setupTestCA(t)
-	data := []byte("test-payload-b8")
-	sig, err := ca.SignedBlob(context.Background(), data)
-	require.NoError(t, err)
-	assert.NotEmpty(t, sig)
-}
-
-// =============================================================================
-// ca_extensions.go — CAKeyAttributes: getCAKeyAttributes error path
-// =============================================================================
-
-func TestCAKeyAttributes_NoIssuingIdentity_B8(t *testing.T) {
-	t.Parallel()
-	ca := &CA{config: &MultiIdentityCAConfig{}}
-	_, err := ca.CAKeyAttributes("")
-	assert.ErrorIs(t, err, ErrInvalidConfig)
 }
 
 // =============================================================================

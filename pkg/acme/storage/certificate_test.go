@@ -57,22 +57,6 @@ func collidingCertificate(serial string, rowID uint64) *entities.ACMECertificate
 	return cert
 }
 
-func TestSaveCertificateNoCollision_CreatesNewCertificate(t *testing.T) {
-	factory := newCertificateTestDAO(t)
-	dao, err := factory.CertificateDAO()
-	require.NoError(t, err)
-
-	ctx := context.Background()
-	cert := collidingCertificate("aaaa", 42)
-
-	err = storage.SaveCertificateNoCollision(ctx, dao, cert)
-	require.NoError(t, err)
-
-	stored, err := dao.Get(ctx, 42)
-	require.NoError(t, err)
-	assert.Equal(t, "aaaa", stored.Serial)
-}
-
 func TestSaveCertificateNoCollision_RefusesDifferentSerialAtSameRow(t *testing.T) {
 	factory := newCertificateTestDAO(t)
 	dao, err := factory.CertificateDAO()

@@ -439,6 +439,32 @@ func TestXKMSdEndpoint_Client_SchemeDispatch(t *testing.T) {
 	}
 }
 
+// TestXKMSdEndpoint_Client_RefusesPlaintextWithoutOptOut proves the CLI
+// never builds a client that would send its token over a TLS-disabled TCP
+// endpoint (ruling 152): http:// and grpc:// are refused with the SDK's
+// ErrInsecureTransport unless the opt-out is set, and a unix socket is not.
+func TestXKMSdEndpoint_Client_RefusesPlaintextWithoutOptOut(t *testing.T) {
+	t.Setenv(transport.EnvAllowInsecureTransport, "")
+
+	for _, rawURL := range []string{
+		"http://xkmsd.example.com:8443",
+		"grpc://xkmsd.example.com:9443",
+	} {
+		t.Run(rawURL, func(t *testing.T) {
+			client, err := XKMSdEndpoint{URL: rawURL, Token: "session-token"}.Client()
+			require.ErrorIs(t, err, ErrXKMSdClientCreateFailed)
+			require.ErrorIs(t, err, transport.ErrInsecureTransport)
+			assert.Nil(t, client)
+		})
+	}
+
+	t.Run("unix socket is allowed", func(t *testing.T) {
+		client, err := XKMSdEndpoint{URL: "unix:///run/xkms/xkms.sock"}.Client()
+		require.NoError(t, err)
+		require.NoError(t, client.Close())
+	})
+}
+
 func TestXKMSdEndpoint_Client_ThreadsTokenAndCABundle(t *testing.T) {
 	caFile := writeTestCABundle(t)
 
@@ -530,6 +556,10 @@ func writeTestClientCredential(t *testing.T) (certFile, keyFile string) {
 	require.NoError(t, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
 	return certFile, keyFile
 }
+
+// TestXKMSdEndpoint_Client_TokenOnPlaintextTransport holds only under the
+// package's insecure-transport opt-out (TestMain); without it the client is
+// refused, see TestXKMSdEndpoint_Client_RefusesPlaintextWithoutOptOut.
 
 func TestXKMSdEndpoint_Client_TokenOnPlaintextTransport(t *testing.T) {
 	client, err := XKMSdEndpoint{
