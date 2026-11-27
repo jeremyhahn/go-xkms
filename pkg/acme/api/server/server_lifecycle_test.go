@@ -38,6 +38,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // generateTestTLSConfig creates a self-signed certificate for testing.
@@ -105,8 +107,7 @@ func TestLifecycle_ShutdownWithGRPCUnixServer(t *testing.T) {
 	mockAdmin := &mockAdminService{}
 
 	// Create temp directory for Unix socket
-	tmpDir := t.TempDir()
-	unixSocketPath := filepath.Join(tmpDir, "test.sock")
+	unixSocketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	config := &ServerConfig{
 		RESTAddr:        "",
@@ -148,8 +149,7 @@ func TestLifecycle_ShutdownWithAllServers(t *testing.T) {
 	mockAdmin := &mockAdminService{}
 
 	// Create temp directory for Unix socket
-	tmpDir := t.TempDir()
-	unixSocketPath := filepath.Join(tmpDir, "test.sock")
+	unixSocketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	config := &ServerConfig{
 		RESTAddr:        "",

@@ -20,6 +20,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -51,6 +52,11 @@ func (e *HostBuildError) Error() string {
 // Unwrap exposes the underlying construction error for errors.As/errors.Is.
 func (e *HostBuildError) Unwrap() error { return e.Err }
 
+// newHostServer builds the module's self-built REST surface. It is
+// rest.NewHostServer; a test replaces it (before any concurrent call) to
+// count the builds restServer runs.
+var newHostServer = rest.NewHostServer
+
 // restServer resolves the REST surface backing the module's HTTP routes and
 // its AuthenticateHTTP fallback.
 //
@@ -81,11 +87,36 @@ func (m *Module) restServer() (*rest.Server, error) {
 		return srv, nil
 	}
 
+	// Build and publish under one lock: a second first caller waits and
+	// then finds the winner's server. A failed or not-yet-composed build
+	// publishes nothing, so the next call retries.
+	m.selfRESTMu.Lock()
+	defer m.selfRESTMu.Unlock()
+	if srv := m.selfREST.Load(); srv != nil {
+		return srv, nil
+	}
+
 	x := m.resolve()
 	if x == nil {
 		return nil, nil
 	}
 
+	hc, err := m.hostConfig(x)
+	if err != nil {
+		return nil, err
+	}
+
+	srv, err := newHostServer(context.Background(), hc)
+	if err != nil {
+		return nil, &HostBuildError{Err: err}
+	}
+	m.selfREST.Store(srv)
+	return srv, nil
+}
+
+// hostConfig assembles the HostConfig restServer builds the module's own
+// REST host from.
+func (m *Module) hostConfig(x *xkms.XKMSService) (*rest.HostConfig, error) {
 	stores := m.hostStores(x)
 	hc := &rest.HostConfig{
 		XKMSService:   x,
@@ -93,6 +124,7 @@ func (m *Module) restServer() (*rest.Server, error) {
 		PIVLogin:      m.pivLogin,
 		PasswordStore: stores.PasswordStore,
 		SSHClient:     stores.SSH,
+		NodeUsers:     m.nodeUsers,
 	}
 	if m.resolveQRDBClient != nil {
 		hc.QRDBClient = m.resolveQRDBClient()
@@ -113,15 +145,50 @@ func (m *Module) restServer() (*rest.Server, error) {
 		hc.WebAuthn = rest.WebAuthnConfigFromXKMS(m.webauthnConfig)
 		hc.WebAuthnCredentialStoreDecorator = m.webauthnCredentialStoreDecorator
 	}
+	return hc, nil
+}
 
-	srv, err := rest.NewHostServer(context.Background(), hc)
-	if err != nil {
-		return nil, &HostBuildError{Err: err}
+// DaemonCORS maps a go-xkms REST CORS policy onto the go-qrdb node's
+// DaemonConfig.CORS. go-qrdb wraps its unified REST handler in that policy
+// OUTSIDE its auth middleware, so the 401/403 the auth chain answers for a
+// module route still carries Access-Control-Allow-Origin; the per-route
+// wrapper RegisterHTTP applies only reaches requests auth admitted. A nil
+// policy (CORS off) maps to the zero config, which turns qrdb's CORS off.
+// Allow-Credentials has no go-qrdb field; the per-route wrapper keeps
+// sending it on the responses auth admits.
+func DaemonCORS(o *rest.CORSOptions) qrdbsdk.DaemonCORSConfig {
+	if o == nil || len(o.AllowedOrigins) == 0 {
+		return qrdbsdk.DaemonCORSConfig{}
 	}
-	if !m.selfREST.CompareAndSwap(nil, srv) {
-		srv = m.selfREST.Load()
+	return qrdbsdk.DaemonCORSConfig{
+		AllowedOrigins:   append([]string(nil), o.AllowedOrigins...),
+		AllowedHeaders:   rest.CORSAllowedHeaders(),
+		AllowCredentials: o.AllowCredentials,
+		MaxAge:           o.MaxAgeSeconds,
 	}
-	return srv, nil
+}
+
+// NodeCORS returns the module's REST CORS policy as the embedding node's
+// DaemonConfig.CORS. The host that builds the node sets cfg.CORS from it
+// before NewStandaloneNode / NewClusterNode, so the node's outer CORS layer
+// and the module's routes answer with one policy.
+//
+// It reads configuration only. A host-supplied server reports its own policy;
+// a self-built surface carries no CORS policy, so the zero config is returned
+// without building the surface. Building it here, before the node client is
+// published, would cache stores without persistence and a server without
+// WebAuthn or the session store.
+func (m *Module) NodeCORS() (qrdbsdk.DaemonCORSConfig, error) {
+	// Without a host REST server the module's own WithCORS policy (the SDK's
+	// WithServiceModuleCORS) is the policy; it needs no lazy REST surface.
+	if m.resolveREST == nil {
+		return DaemonCORS(m.cors), nil
+	}
+	srv := m.resolveREST()
+	if srv == nil {
+		return DaemonCORS(m.cors), nil
+	}
+	return DaemonCORS(srv.CORSOptions()), nil
 }
 
 // selfBuilds reports whether the module composes its own surfaces from host
@@ -191,6 +258,20 @@ func (m *Module) hostStores(x *xkms.XKMSService) *compose.Stores {
 		st = &compose.Stores{Disabled: []error{err}}
 	}
 	st.Wire(x)
+	// The invite routes read and activate the invited account through the
+	// embedded node's user source (WithNodeUsers). Wired here, once under
+	// composeMu where the module composes the service, not by each REST
+	// host build (pkg/server does the same where xkmsd builds its service).
+	if m.nodeUsers != nil {
+		x.SetInviteUserClient(auth.NewNodeUserClient(m.nodeUsers))
+	}
+	// PIV invitation activation reads the certificate's tenant under the
+	// service's trust domain and PIV login under WithPIVLogin's pin; a host
+	// that set no service trust domain gets the login pin, so an activation
+	// binds only certificates the login will find (go-xkms#2296).
+	if m.pivLogin != nil && m.pivLogin.TrustDomain != "" && x.SPIFFETrustDomain() == "" {
+		x.SetSPIFFETrustDomain(m.pivLogin.TrustDomain)
+	}
 	m.stores.Store(st)
 	return st
 }

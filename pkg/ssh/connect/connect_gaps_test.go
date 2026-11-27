@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	"github.com/jeremyhahn/go-xkms/pkg/dao"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/known_hosts"
 	"github.com/jeremyhahn/go-xkms/pkg/ssh/scope"
@@ -65,7 +66,7 @@ func pinStoreOver(backend storage.Backend) (*known_hosts.DAOStore, error) {
 // hazard in its own right.
 func privateDir(t *testing.T) string {
 	t.Helper()
-	dir := t.TempDir()
+	dir := testsupport.SocketDir(t)
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatalf("chmod: %v", err)
 	}

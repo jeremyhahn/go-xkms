@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/acme/errors"
+	"github.com/jeremyhahn/go-xkms/sdk/go/internal/testsupport"
 )
 
 // ----------------------------------------------------------------------------
@@ -43,7 +44,7 @@ import (
 // project. TransportGRPC is covered separately by
 // TestNewClient_GRPCRefusedAtConstruction: it is not a constructible arm.
 func TestNewClient_TransportSelection(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "acme.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "acme.sock")
 
 	tests := []struct {
 		name    string

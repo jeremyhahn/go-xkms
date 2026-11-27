@@ -16,13 +16,14 @@ package xkms
 import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/apimodule"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
 
 // go-xkms's qrdb ServiceModule surface, re-exported so downstream hosts
 // (go-quicbaas, go-trusted-platform) that embed a qrdb node can register the
-// xkms hardware crypto + identity plane via qrdbsdk.WithModule without
+// xkms hardware crypto + identity plane via qrdbserver.WithModule without
 // importing go-xkms/pkg. The stack-wide convention is one module per provider
 // project, named after the project; xkms's registers as ModuleName ("xkms").
 
@@ -52,6 +53,17 @@ var NewServiceModule = apimodule.NewModule
 // WithServiceModuleSSHClient wires the SSH SDK client resolver used by the
 // module's SSH RPC handlers.
 var WithServiceModuleSSHClient = apimodule.WithSSHClient
+
+// ServiceModuleCORSOptions is the module's cross-origin policy: the allowed
+// origins, whether credentials are allowed, and the preflight max age.
+type ServiceModuleCORSOptions = rest.CORSOptions
+
+// WithServiceModuleCORS sets the module's cross-origin policy: every route
+// carries the CORS headers for an allowed origin, and each pattern gets a
+// public OPTIONS route that answers the browser's preflight before the auth
+// chain. Nil or an empty AllowedOrigins list emits no CORS headers and
+// registers no OPTIONS routes.
+var WithServiceModuleCORS = apimodule.WithCORS
 
 // ---------------------------------------------------------------------------
 // Host self-build surface
@@ -89,6 +101,16 @@ var WithServiceModuleQRDBClient = apimodule.WithQRDBClient
 // derives. Pass an embedded node's Node.ServiceContext; a node that enforces
 // authentication refuses the module's storage without it.
 var WithServiceModuleServiceContext = apimodule.WithServiceContext
+
+// ServiceModuleNodeUserSource is the embedded qrdb node's user service
+// accessor WithServiceModuleNodeUsers takes (an embedded node satisfies it).
+type ServiceModuleNodeUserSource = auth.NodeUserSource
+
+// WithServiceModuleNodeUsers wires the embedded node's user service. The
+// public WebAuthn ceremony, invite redemption and refresh re-check routes
+// carry no qrdb credentials, so without it their user lookups reach go-qrdb
+// unauthenticated and fail closed. Pass the embedded node.
+var WithServiceModuleNodeUsers = apimodule.WithNodeUsers
 
 // ServiceModuleWebAuthnConfig is the operator-facing WebAuthn configuration
 // shape (rp_id, rp_origins, rp_display_name, ...) -- the same section

@@ -16,166 +16,62 @@
 package integration
 
 import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
+	"context"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/mcptool"
 )
 
-// MCPClient wraps TCP connection for MCP JSON-RPC testing
+// mcpCallTimeout bounds one MCP tool call.
+const mcpCallTimeout = 30 * time.Second
+
+// MCPClient drives the server's MCP listener the way xkmsctl does: one
+// streamable HTTP session over TLS (pkg/mcptool), authenticated with the
+// init-ceremony admin client certificate. The line-framed JSON-RPC plane over
+// a raw net.Conn is retired (pkg/api/mcp package doc); every xkms method is an
+// MCP tool on the unified server.
 type MCPClient struct {
-	url     string
-	http    *http.Client
-	session string
-	nextID  int
+	addr string
+	core *mcptool.Client
 }
 
-// NewMCPClient opens an MCP session on the streamable HTTP endpoint at addr over TLS with the suite's client certificate.
-func NewMCPClient(addr string) (*MCPClient, error) {
-	c := &MCPClient{
-		url:  "https://" + addr + "/mcp",
-		http: &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: clientTLSConfig()}},
-	}
-	resp, err := c.post(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      c.id(),
-		"method":  "initialize",
-		"params": map[string]interface{}{
-			"protocolVersion": "2025-06-18",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "xkms-integration-tests", "version": "1"},
-		},
-	})
-	if err != nil {
+// NewMCPClient opens an MCP session to addr (host:port).
+func NewMCPClient(t testing.TB, addr string) (*MCPClient, error) {
+	t.Helper()
+	cfg := transport.DefaultConfig()
+	cfg.Address = addr
+	cfg.TLSEnabled = true
+	cfg.TLSConfig = adminTLSConfig(t)
+	core := mcptool.NewClient(cfg)
+
+	ctx, cancel := context.WithTimeout(context.Background(), mcpCallTimeout)
+	defer cancel()
+	if err := core.Connect(ctx); err != nil {
 		return nil, &errs.Wrapped{Msg: "failed to connect", Err: err}
 	}
-	if errObj, ok := resp["error"]; ok {
-		return nil, &errs.Message{Msg: fmt.Sprintf("initialize: JSON-RPC error: %v", errObj)}
-	}
-	return c, nil
+	return &MCPClient{addr: addr, core: core}, nil
 }
 
-// Close ends the MCP session.
+// Close closes the MCP session.
 func (c *MCPClient) Close() error {
-	if c.session == "" {
-		return nil
-	}
-	req, err := http.NewRequest(http.MethodDelete, c.url, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Mcp-Session-Id", c.session)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	return resp.Body.Close()
+	return c.core.Close()
 }
 
-func (c *MCPClient) id() int {
-	c.nextID++
-	return c.nextID
-}
-
-// postRaw sends body on the session and returns the HTTP status and the JSON-RPC payload.
-func (c *MCPClient) postRaw(body []byte) (int, []byte, error) {
-	req, err := http.NewRequest(http.MethodPost, c.url, bytes.NewReader(body))
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	if c.session != "" {
-		req.Header.Set("Mcp-Session-Id", c.session)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	if s := resp.Header.Get("Mcp-Session-Id"); s != "" {
-		c.session = s
-	}
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, nil, err
-	}
-	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
-		for _, line := range strings.Split(string(data), "\n") {
-			if strings.HasPrefix(line, "data:") {
-				data = []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
-			}
-		}
-	}
-	return resp.StatusCode, data, nil
-}
-
-func (c *MCPClient) post(request map[string]interface{}) (map[string]interface{}, error) {
-	body, err := json.Marshal(request)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal request", Err: err}
-	}
-	code, data, err := c.postRaw(body)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to send request", Err: err}
-	}
-	var response map[string]interface{}
-	if err := json.Unmarshal(data, &response); err != nil {
-		return nil, &errs.Message{Msg: fmt.Sprintf("failed to decode response (HTTP %d): %s", code, data)}
-	}
-	return response, nil
-}
-
-// Call invokes the xkms tool named by method ("health" or "xkms.<op>") and returns {"result": <tool result>}.
+// Call invokes method as an MCP tool and returns a JSON-RPC style response
+// map whose "result" holds the tool's decoded JSON result. A tool-level or
+// transport failure is returned as the error.
 func (c *MCPClient) Call(method string, params interface{}) (map[string]interface{}, error) {
-	if params == nil {
-		params = map[string]interface{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), mcpCallTimeout)
+	defer cancel()
+	var result interface{}
+	if err := c.core.Call(ctx, method, params, &result); err != nil {
+		return nil, &errs.Wrapped{Msg: "MCP call " + method, Err: err}
 	}
-	if m, ok := params.(map[string]interface{}); ok && method == "xkms.generateKey" {
-		if _, has := m["algorithm"]; !has && m["key_type"] != nil && m["key_type"] != "symmetric" {
-			m["algorithm"] = m["key_type"]
-		}
-	}
-	paramsJSON, err := json.Marshal(params)
-	if err != nil {
-		return nil, &errs.Wrapped{Msg: "failed to marshal params", Err: err}
-	}
-	response, err := c.post(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      c.id(),
-		"method":  "tools/call",
-		"params": map[string]interface{}{
-			"name":      "xkms_" + strings.TrimPrefix(method, "xkms."),
-			"arguments": map[string]interface{}{"params_json": string(paramsJSON)},
-		},
-	})
-	if err != nil {
-		return nil, err
-	}
-	if errObj, ok := response["error"]; ok {
-		return nil, &errs.Message{Msg: fmt.Sprintf("JSON-RPC error: %v", errObj)}
-	}
-	result, _ := response["result"].(map[string]interface{})
-	var text string
-	if content, ok := result["content"].([]interface{}); ok && len(content) > 0 {
-		if first, ok := content[0].(map[string]interface{}); ok {
-			text, _ = first["text"].(string)
-		}
-	}
-	if isErr, _ := result["isError"].(bool); isErr {
-		return nil, &errs.Message{Msg: fmt.Sprintf("JSON-RPC error: %s", text)}
-	}
-	var decoded interface{}
-	if err := json.Unmarshal([]byte(text), &decoded); err != nil {
-		decoded = text
-	}
-	return map[string]interface{}{"jsonrpc": "2.0", "result": decoded}, nil
+	return map[string]interface{}{"jsonrpc": "2.0", "id": 1, "result": result}, nil
 }
 
 // TestMCPHealth tests the MCP health check (placeholder)
@@ -187,7 +83,7 @@ func TestMCPHealth(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -220,7 +116,7 @@ func TestMCPListBackends(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -253,17 +149,18 @@ func TestMCPGenerateKey(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
 	keyID := generateUniqueID("mcp-key")
 
 	params := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "signing",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	resp, err := client.Call("xkms.generateKey", params)
@@ -297,17 +194,18 @@ func TestMCPListKeys(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
 	// Generate a test key first
 	keyID := generateUniqueID("mcp-list-test")
 	params := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "signing",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	}
 
 	_, err = client.Call("xkms.generateKey", params)
@@ -365,7 +263,7 @@ func TestMCPSignVerify(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
@@ -373,10 +271,11 @@ func TestMCPSignVerify(t *testing.T) {
 
 	// Generate key
 	_, err = client.Call("xkms.generateKey", map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "signing",
+		"algorithm": "rsa",
+		"key_size":  2048,
 	})
 	assertNoError(t, err, "Failed to generate key")
 
@@ -437,96 +336,75 @@ func TestMCPSignVerify(t *testing.T) {
 
 // TestMCPBatchRequests tests batch JSON-RPC requests (placeholder)
 func TestMCPBatchRequests(t *testing.T) {
-	// MCP 2025-06-18 removed JSON-RPC batching: a batch body is answered with a JSON-RPC error.
-
+	// Streamable HTTP MCP has no JSON-RPC batch array (the line-framed plane
+	// that accepted one is retired, pkg/api/mcp package doc). The batch is
+	// two requests in flight at once on one session; both must be answered.
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
-	batchRequest := []map[string]interface{}{
-		{"jsonrpc": "2.0", "method": "tools/call", "id": 1, "params": map[string]interface{}{"name": "xkms_health", "arguments": map[string]interface{}{"params_json": "{}"}}},
-		{"jsonrpc": "2.0", "method": "tools/call", "id": 2, "params": map[string]interface{}{"name": "xkms_listBackends", "arguments": map[string]interface{}{"params_json": "{}"}}},
+	methods := []string{"health", "xkms.listBackends"}
+	responses := make([]map[string]interface{}, len(methods))
+	callErrs := make([]error, len(methods))
+	var wg sync.WaitGroup
+	for i, method := range methods {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			responses[i], callErrs[i] = client.Call(method, nil)
+		}()
+	}
+	wg.Wait()
+
+	for i, method := range methods {
+		assertNoError(t, callErrs[i], "batched "+method+" failed")
+		if responses[i]["result"] == nil {
+			t.Fatalf("batched %s returned no result", method)
+		}
 	}
 
-	requestBytes, err := json.Marshal(batchRequest)
-	assertNoError(t, err, "Failed to marshal batch request")
-
-	code, data, err := client.postRaw(requestBytes)
-	assertNoError(t, err, "Failed to send batch request")
-	if code != http.StatusBadRequest {
-		t.Fatalf("Expected HTTP 400 for a batch body, got %d: %s", code, data)
-	}
-
-	var response map[string]interface{}
-	assertNoError(t, json.NewDecoder(bytes.NewReader(data)).Decode(&response), "Failed to decode batch response")
-	if _, ok := response["error"]; !ok {
-		t.Fatalf("Expected a JSON-RPC error for a batch body, got %s", data)
-	}
-
-	t.Logf("Batch body refused with JSON-RPC error: %v", response["error"])
+	t.Logf("Batch of %d concurrent requests answered on one session", len(methods))
 }
 
 // TestMCPStreamingNotifications tests MCP streaming notifications (placeholder)
 func TestMCPStreamingNotifications(t *testing.T) {
-	// Notifications arrive asynchronously on the session's GET stream, so their delivery is checked best-effort.
-
+	// The connection-bound xkms.subscribe event stream left with the
+	// line-framed JSON-RPC plane (pkg/api/mcp package doc; module_support.go
+	// excludes it because MCP tools are request/response). The server must
+	// refuse it, and the key operations it used to announce still work.
 	cfg := LoadTestConfig()
 	if !isMCPServerAvailable(t, cfg) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 
-	req, err := http.NewRequest(http.MethodGet, client.url, nil)
-	assertNoError(t, err, "Failed to build stream request")
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Mcp-Session-Id", client.session)
-	streamClient := &http.Client{Transport: client.http.Transport}
-	stream, err := streamClient.Do(req)
-	assertNoError(t, err, "Failed to open notification stream")
-	defer stream.Body.Close()
-	if stream.StatusCode != http.StatusOK {
-		t.Fatalf("Expected HTTP 200 for the notification stream, got %d", stream.StatusCode)
-	}
-	if ct := stream.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
-		t.Fatalf("Expected text/event-stream, got %q", ct)
-	}
+	_, err = client.Call("xkms.subscribe", map[string]interface{}{
+		"events": []string{"key.created", "key.deleted"},
+	})
+	assertError(t, err, "xkms.subscribe is retired and must be refused")
 
-	// Create a key (may trigger a notification)
 	keyID := generateUniqueID("mcp-notify-key")
 	_, err = client.Call("xkms.generateKey", map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
+		"key_id":    keyID,
+		"backend":   "software",
+		"key_type":  "signing",
+		"algorithm": "rsa",
 	})
 	assertNoError(t, err, "Failed to generate key")
 
-	defer func() {
-		_, _ = client.Call("xkms.deleteKey", map[string]interface{}{
-			"key_id":  keyID,
-			"backend": "software",
-		})
-	}()
-
-	lines := make(chan string, 1)
-	go func() {
-		buf := make([]byte, 8192)
-		n, _ := stream.Body.Read(buf)
-		lines <- string(buf[:n])
-	}()
-	select {
-	case event := <-lines:
-		t.Logf("Stream event: %q", event)
-	case <-time.After(500 * time.Millisecond):
-		t.Log("Notification not received (expected for async events); stream verified")
-	}
+	_, err = client.Call("xkms.deleteKey", map[string]interface{}{
+		"key_id":  keyID,
+		"backend": "software",
+	})
+	assertNoError(t, err, "Failed to delete key")
 }
 
 // TestMCPErrorHandling tests error handling in MCP (placeholder)
@@ -538,7 +416,7 @@ func TestMCPErrorHandling(t *testing.T) {
 		t.Fatal("MCP server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client, err := NewMCPClient(cfg.MCPAddr)
+	client, err := NewMCPClient(t, cfg.MCPAddr)
 	assertNoError(t, err, "Failed to create MCP client")
 	defer client.Close()
 

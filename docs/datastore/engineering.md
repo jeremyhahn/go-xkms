@@ -364,7 +364,7 @@ fenced create.
 func OpenEngine(cfg EngineConfig) (Backend, error)
 ```
 
-(`pkg/storage/engine.go:397-436`.) Opens one go-qrdb storage engine directly,
+(`pkg/storage/engine.go:414-460`.) Opens one go-qrdb storage engine directly,
 with no node, barrier or Raft above it. This is a library seam (the file
 engine below wraps it); `xkmsd` never selects an engine through it.
 `EngineConfig.Kind` (`pkg/storage/engine.go:354-369`) is one of:
@@ -374,7 +374,7 @@ engine below wraps it); `xkmsd` never selects an engine through it.
 | `file` (also the empty kind) | `qrdbsdk.NewFileStorage(Path)` | `Path` |
 | `pebble` | `qrdbsdk.NewPebbleStorage(DefaultPebbleConfig(Path))` | `Path` |
 | `memory` | `qrdbsdk.NewMemoryStorage()` | nothing |
-| `objstore` | `qrdbsdk.NewObjStoreStorage(Provider, Options)` | `Provider` (empty = `"local"`); `Options` go verbatim to go-objstore (`pkg/storage/engine.go:375-388`) |
+| `objstore` | `qrdbsdk.NewObjStoreStorage(Provider, Options, opts...)` | `Provider` (empty = `"local"`); `Options` go verbatim to go-objstore and never hold a credential (go-qrdb refuses one inline); `CredentialFiles` (`KeyFile`, `SecretFile`), when set, is passed as `WithObjStoreCredentialFiles` (`pkg/storage/engine.go:374-406`). The ACME client's state backend sets them from `storage.key_file` and `storage.secret_file` |
 
 A missing `Path` is `ErrEnginePathRequired`, an unknown kind wraps
 `ErrUnknownEngine` (`pkg/storage/errors.go:49-54`), and an open failure is
@@ -386,8 +386,11 @@ A missing `Path` is `ErrEnginePathRequired`, an unknown kind wraps
 `pkg/ca` keeps its non-certificate blobs in a go-qrdb storage engine, the
 `qrdbsdk.Storage` the embedder passes as `ca.Params.ObjectStore` or builds
 per CA with `ca.Params.ObjectStoreFactory` (`pkg/ca/ca.go:144,172`,
-`pkg/ca/constructors.go:82`). go-xkms imports go-objstore nowhere: the
-backend is chosen by configuration through go-qrdb. `sdk/go` exposes the
+`pkg/ca/constructors.go:82`). go-xkms production code imports go-objstore nowhere: the
+backend is chosen by configuration through go-qrdb. Only the credential-file
+tests (`pkg/storage/engine_objstore_credentials_test.go`,
+`pkg/acme/client/service/state_backend_credentials_test.go`) import it, to
+register a test provider with `RegisterObjStoreProvider`. `sdk/go` exposes the
 engine as `ObjectStorage`, opened by `NewObjectStorage(provider, settings)`
 (`qrdbsdk.NewObjStoreStorage`; `"local"` needs no build tag, cloud providers
 need go-objstore's tag) or `NewObjectStorageMemory()`

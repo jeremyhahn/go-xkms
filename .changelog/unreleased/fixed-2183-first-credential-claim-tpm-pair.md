@@ -1,0 +1,3 @@
+- Invite PIV activation takes the account's first-credential claim before it binds a certificate, so it is refused while a WebAuthn invite finish holds the claim or after one committed it.
+- A WebAuthn first-credential Commit that resumes after lease recovery already rolled its claim forward keeps its passkey instead of deleting it.
+- Recovering an incomplete TPM key pair creates the public blob first, as a per-key fence, so a live writer's private blob is never left beside another writer's public blob.

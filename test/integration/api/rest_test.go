@@ -34,13 +34,16 @@ type RESTClient struct {
 }
 
 // NewRESTClient creates a new REST API client with proper CA certificate verification
-func NewRESTClient(baseURL string) *RESTClient {
+func NewRESTClient(t testing.TB, baseURL string) *RESTClient {
+	t.Helper()
 	return &RESTClient{
 		baseURL: baseURL,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: clientTLSConfig(),
+				// The REST listener requires a client certificate: present
+				// the init-ceremony admin credential (apiharness).
+				TLSClientConfig: adminTLSConfig(t),
 			},
 		},
 	}
@@ -76,7 +79,7 @@ func TestRESTHealth(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 
 	resp, err := client.doRequest("GET", "/health", nil)
 	assertNoError(t, err, "Health check request failed")
@@ -107,7 +110,7 @@ func TestRESTListBackends(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 
 	resp, err := client.doRequest("GET", "/api/v1/backends", nil)
 	assertNoError(t, err, "List backends request failed")
@@ -138,7 +141,7 @@ func TestRESTGenerateKey(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	keyID := generateUniqueID("rest-key")
 
 	tests := []struct {
@@ -172,9 +175,11 @@ func TestRESTGenerateKey(t *testing.T) {
 			testKeyID := fmt.Sprintf("%s-%s", keyID, tt.keyType)
 
 			reqBody := map[string]interface{}{
-				"key_id":    testKeyID,
-				"backend":   "software",
-				"key_type":  tt.keyType,
+				"key_id":  testKeyID,
+				"backend": "software",
+				// key_type is a purpose; the algorithm names the key kind
+				// (pkg/api/rest/handlers.go handleGenerateKey requires both).
+				"key_type":  "signing",
 				"algorithm": tt.keyType,
 			}
 
@@ -231,14 +236,14 @@ func TestRESTListKeys(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	keyID := generateUniqueID("rest-list-key")
 
 	// Create a test key first
 	reqBody := map[string]interface{}{
 		"key_id":    keyID,
 		"backend":   "software",
-		"key_type":  "rsa",
+		"key_type":  "signing",
 		"algorithm": "rsa",
 		"key_size":  2048,
 	}
@@ -298,14 +303,14 @@ func TestRESTSignVerify(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	keyID := generateUniqueID("rest-sign-key")
 
 	// Create a test key
 	reqBody := map[string]interface{}{
 		"key_id":    keyID,
 		"backend":   "software",
-		"key_type":  "rsa",
+		"key_type":  "signing",
 		"algorithm": "rsa",
 		"key_size":  2048,
 	}
@@ -382,14 +387,14 @@ func TestRESTDeleteKey(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 	keyID := generateUniqueID("rest-delete-key")
 
 	// Create a test key
 	reqBody := map[string]interface{}{
 		"key_id":    keyID,
 		"backend":   "software",
-		"key_type":  "rsa",
+		"key_type":  "signing",
 		"algorithm": "rsa",
 		"key_size":  2048,
 	}
@@ -437,7 +442,7 @@ func TestRESTErrorHandling(t *testing.T) {
 		t.Fatal("Server required for integration tests. Run: make integration-test (uses Docker)")
 	}
 
-	client := NewRESTClient(cfg.RESTBaseURL)
+	client := NewRESTClient(t, cfg.RESTBaseURL)
 
 	tests := []struct {
 		name     string

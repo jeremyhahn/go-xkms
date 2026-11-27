@@ -18,7 +18,7 @@ services:
     # scoped to the project -- so two runs can serve :8443 side by side.
     expose:
       - "8443/tcp"   # REST API (HTTP/2 over TCP)
-      - "8443/udp"   # QUIC/HTTP3 on the unified REST port (Alt-Svc h3)
+      - "8443/udp"   # QUIC/HTTP3 on the unified REST port (Alt-Svc h3); the quic tests dial it (KEYSTORE_QUIC_URL)
       - "9443"       # gRPC
       - "9444"       # MCP
       - "9090"       # Metrics
@@ -48,11 +48,21 @@ services:
       - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
       # Certificate directory
       - CERT_DIR=/etc/xkms/certs
+      # First boot runs `xkmsd init --admin-factor mtls`, which writes the
+      # administrator credential into the datastore (/data/xkms) and
+      # initializes the passphrase barrier under XKMS_SO_PIN. The suite's
+      # TestMain unseals with the same value (apiharness.BarrierPassphrase).
+      - XKMS_SO_PIN=xkms-api-harness-barrier-passphrase
+      # Trust the ceremony root so the admin certificate authenticates over
+      # mTLS (config.test.yaml: client_auth verify).
+      - XKMS_TLS_CLIENT_CAS=/data/xkms/ca-bundle.pem
     depends_on:
       swtpm:
         condition: service_healthy
       softhsm:
         condition: service_healthy
+    # The barrier boots sealed, so /health answers only after the suite's
+    # TestMain unseals it; integration-tests waits for service_started.
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
@@ -63,8 +73,41 @@ services:
       - xkms-integration
     # Run as root for integration tests (allows cert generation and UDP buffer config)
     user: root
-    # Inits a fresh volume with `xkmsd init`, starts xkmsd and unseals it with the SO PIN.
-    entrypoint: ["/workspace/test/integration/api/scripts/start-xkms-server.sh"]
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        # Fail loudly: any failed step stops the container with its name in the log.
+        set -e
+        # Set UDP buffer sizes for QUIC
+        echo "Configuring UDP buffers for QUIC..."
+        echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo "Warning: Could not set rmem_max"
+        echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo "Warning: Could not set wmem_max"
+        cat /proc/sys/net/core/rmem_max || true
+        # Ensure directories exist
+        mkdir -p /etc/xkms/certs /var/run/xkms /data
+        # Generate TLS certificates for QUIC
+        echo "Generating TLS certificates..."
+        /workspace/test/integration/api/scripts/generate-test-certs.sh
+        # Verify certificates were created
+        ls -la /etc/xkms/certs/
+        # Initialize the in-process SoftHSM2 token (idempotent) — the pkcs11
+        # backend loads libsofthsm2.so in THIS container, not the sidecar.
+        mkdir -p /var/lib/softhsm/tokens
+        softhsm2-util --show-slots | grep -q "test-token" || \
+          softhsm2-util --init-token --free --label test-token --so-pin 123456 --pin 123456
+        # Bootstrap the node once per volume: the admin credential and the
+        # barrier survive restarts, so a second boot skips init.
+        if [ -f /data/xkms/admin-cert.pem ] && [ -f /data/xkms/admin-key.pem ]; then
+          echo "Node already initialized; skipping xkmsd init"
+        else
+          echo "Running xkmsd init..."
+          /app/xkmsd init --config "$$XKMS_CONFIG" --hostname xkms-server --admin-factor mtls || { rc=$$?; echo "FATAL: xkmsd init failed (exit $$rc)"; exit $$rc; }
+          ls -la /data/xkms/
+        fi
+        echo "Starting xkms server..."
+        # The barrier passphrase is init-only; the daemon never sees it.
+        exec env -u XKMS_SO_PIN /app/xkmsd
 
   # SWTPM TPM 2.0 Simulator
   swtpm:
@@ -126,14 +169,16 @@ services:
     # Required for QUIC UDP buffer settings
     privileged: true
     user: root
+    # Started, not healthy: the server stays sealed (and unhealthy) until the
+    # suite's TestMain unseals its barrier, as the cluster stack does.
     depends_on:
       xkms-server:
-        condition: service_healthy
+        condition: service_started
     # Runs from the source tree baked into the image's /workspace (DS-4181).
     volumes:
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
-      # The init admin's mTLS credential, which every suite authenticates with.
+      # The init-ceremony admin credential, read-only.
       - xkms-data:/xkms-data:ro
       - cli-build:/app/build
       - go-cache:/root/go
@@ -154,8 +199,15 @@ services:
       - KEYSTORE_CLI_BIN=/app/build/bin/xkmsctl
       # TLS configuration - use CA certificate for proper verification
       - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
-      - KEYSTORE_TLS_CERT=/xkms-data/storage/admin-cert.pem
-      - KEYSTORE_TLS_KEY=/xkms-data/storage/admin-key.pem
+      # Admin mTLS credential `xkmsd init` wrote (provisions test accounts).
+      - XKMS_ADMIN_CERT=/xkms-data/xkms/admin-cert.pem
+      - XKMS_ADMIN_KEY=/xkms-data/xkms/admin-key.pem
+      # Every CLI invocation presents the admin credential above on unix,
+      # rest, grpc and quic, and verifies the server against one bundle of
+      # KEYSTORE_TLS_CA, the ceremony root and, once the server has unsealed,
+      # the unified listener's persisted CA bundle (apiharness.ClientTLSArgs).
+      - XKMS_CEREMONY_CA=/xkms-data/xkms/ca-bundle.pem
+      - XKMS_UNIFIED_CA=/xkms-data/xkms/unified-tls/ca-bundle.pem
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
       - GO_TEST_FLAGS=-v -tags=integration,frost

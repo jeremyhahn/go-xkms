@@ -249,5 +249,9 @@ func createUserErrorCode(err error) codes.Code {
 	if errors.Is(err, xkms.ErrEmailRequired) {
 		return codes.InvalidArgument
 	}
+	// An invited account outside the system tenant is refused by policy.
+	if errors.Is(err, xkms.ErrInviteUnusable) {
+		return codes.PermissionDenied
+	}
 	return codes.Internal
 }

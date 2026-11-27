@@ -14,14 +14,17 @@
 package server
 
 import (
+	"context"
 	"crypto/tls"
 	"os"
 	"path/filepath"
 	"testing"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	escrowpkg "github.com/jeremyhahn/go-xkms/pkg/escrow"
@@ -47,7 +50,7 @@ func TestInitializeCA_TLSEnabledAutoIssuesServerCert(t *testing.T) {
 	cfg := reproCA793Config(t, dataDir)
 	cfg.TLS = config.TLSConfig{Enabled: true, ServerCN: "xkms-i705-tls-test"}
 
-	s, err := New(cfg)
+	s, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = s.Shutdown() }()
 
@@ -234,12 +237,26 @@ func TestInitializeWebAuthnService_QRDBBacked(t *testing.T) {
 		RPOrigins:     []string{"https://localhost"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
 	require.NotNil(t, server.qrdbClient, "fixture setup: this deployment must host the embedded qrdb node")
 	assert.NotNil(t, server.webauthnService)
+
+	// Building WebAuthn grants the service principal no user permission:
+	// the user store reaches users through the node's user service.
+	ctx, err := server.qrdbNode.ServiceContext(context.Background())
+	require.NoError(t, err)
+	_, err = server.qrdbClient.Users().GetUserByEmail(ctx, "system", "nobody@example.com")
+	var denied *qrdbsdk.PermissionDeniedError
+	assert.ErrorAs(t, err, &denied, "building WebAuthn lets the service principal read users")
+
+	// #2541 third layer: a WebAuthn login is anonymous, so the issuer's qrdb
+	// refresh store persists the pair as the node's service principal.
+	require.NotNil(t, server.tokenIssuer, "fixture setup: the token issuer is built")
+	_, err = server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "user-2541", TenantID: "system"})
+	require.NoError(t, err, "an anonymous request's login mints a token pair")
 }
 
 // ============================================================================
@@ -343,7 +360,7 @@ func TestInitializeAuthorization_RBACEnabledWithQRDBClient(t *testing.T) {
 	cfg := qrdbBarrierConfig(t)
 	cfg.Auth.EnableRBAC = true
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -375,7 +392,7 @@ func TestNew_EscrowInitFailureAbortsCleanly(t *testing.T) {
 		Agents:  []escrowpkg.AgentConfig{{Type: "not-a-real-agent-type", Endpoint: "https://escrow.example.com"}},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 
@@ -405,7 +422,7 @@ func TestNew_CAInitFailureAbortsCleanly(t *testing.T) {
 		}},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 
@@ -429,7 +446,7 @@ func TestNew_WebAuthnInitFailureAbortsCleanly(t *testing.T) {
 		// RPID deliberately empty: webauthn.Config.Validate refuses it.
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 

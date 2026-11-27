@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package rest_test
 
 import (
 	"bytes"
@@ -28,6 +28,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
@@ -58,6 +59,16 @@ func newAuthNode(t *testing.T) *qrdbnode.Node {
 	return node
 }
 
+// openWebAuthnConfig is the example.com relying party with public registration on.
+func openWebAuthnConfig() *webauthn.Config {
+	allow := true
+	return rest.WebAuthnConfigFromXKMS(&config.WebAuthnConfig{
+		RPID:                    "example.com",
+		RPOrigins:               []string{"https://example.com"},
+		AllowPublicRegistration: &allow,
+	})
+}
+
 // buildXKMSDWebAuthnService builds the WebAuthn service the way xkmsd does
 // (pkg/server initializeWebAuthnService) over an auth-enabled node.
 func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) (*webauthn.Service, *token.Issuer, *atomic.Int32) {
@@ -65,7 +76,7 @@ func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) (*webauthn.Ser
 	ds, err := datastore.New(node.Client(), config.DatastoreConfig{}, datastore.WithCallContext(node.ServiceContext))
 	require.NoError(t, err)
 	var binds atomic.Int32
-	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
+	issuer, err := rest.BuildTokenIssuer(context.Background(), rest.TokenIssuerParams{
 		Backend:     xkmsmocks.NewMockKeyStore(),
 		BackendName: "test",
 		QRDBClient:  ds.Client(),
@@ -75,11 +86,11 @@ func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) (*webauthn.Ser
 		},
 	})
 	require.NoError(t, err)
-	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
-		Config:      qrdbWebAuthnConfig(),
+	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
+		Config:      openWebAuthnConfig(),
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),
-		TenantID:    DefaultWebAuthnTenant,
+		TenantID:    rest.DefaultWebAuthnTenant,
 		CallContext: node.ServiceContext,
 		TokenIssuer: issuer,
 	})

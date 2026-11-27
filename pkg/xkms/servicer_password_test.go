@@ -2,9 +2,18 @@ package xkms
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
@@ -1087,6 +1096,63 @@ func TestPasswordAdd_SharedPersonalIsolation(t *testing.T) {
 	got, err := svc.PasswordGet(aliceCtx, &transport.PasswordGetRequest{ID: private.ID})
 	require.NoError(t, err)
 	assert.Equal(t, "alice-secret", got.Password)
+}
+
+// TestPasswordStore_PasskeyEntriesSurviveAccountBinding is the upgrade
+// regression for the JWT authenticator's BindUser: before binding, a passkey
+// session's subject was the account's base64 WebAuthn handle, and the password
+// store keyed the personal vault, its entries and a shared entry's OwnerID by
+// it. Binding sets the account id beside the subject and keeps the handle as
+// Subject; the same account's token after the upgrade must still reach every
+// entry written under the handle.
+func TestPasswordStore_PasskeyEntriesSurviveAccountBinding(t *testing.T) {
+	svc, _ := setupServiceWithPasswordManager(t)
+
+	raw := make([]byte, 8)
+	binary.BigEndian.PutUint64(raw, 42)
+	handle := base64.RawURLEncoding.EncodeToString(raw)
+
+	// Written before the upgrade: the identity named the account by handle.
+	legacyCtx := auth.WithIdentity(context.Background(), &auth.Identity{Subject: handle, TenantID: "tenant-1"})
+	require.NoError(t, openPersonalVault(svc, legacyCtx))
+	_, err := svc.PasswordAdd(legacyCtx, &transport.PasswordAddRequest{Name: "Carol Private", Password: "carol-secret"})
+	require.NoError(t, err)
+	_, err = svc.PasswordAdd(legacyCtx, &transport.PasswordAddRequest{Name: "Carol Wiki", Password: "wiki-secret", Shared: true})
+	require.NoError(t, err)
+
+	// After the upgrade: the same account's passkey token binds to account 42.
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	authn, err := auth.NewJWTAuthenticator(&auth.JWTConfig{PublicKey: &key.PublicKey})
+	require.NoError(t, err)
+	token, err := jwt.NewWithClaims(jwt.SigningMethodES256, jwt.MapClaims{
+		"sub":                       handle,
+		auth.SubjectKindMetadataKey: auth.SubjectKindUserHandle,
+		"username":                  "carol",
+		"tenant_id":                 "tenant-1",
+		"exp":                       time.Now().Add(time.Hour).Unix(),
+	}).SignedString(key)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	bound, err := authn.AuthenticateHTTP(req)
+	require.NoError(t, err)
+	require.Equal(t, uint64(42), bound.UserID, "the passkey token binds to its account")
+	require.Equal(t, handle, bound.Subject, "binding keeps the handle as the subject")
+	boundCtx := auth.WithIdentity(context.Background(), bound)
+
+	personal, err := svc.PasswordList(boundCtx, &transport.PasswordListRequest{Scope: "personal"})
+	require.NoError(t, err)
+	require.Equal(t, 1, personal.Total, "the personal entry written under the handle is still the account's")
+	assert.Equal(t, "Carol Private", personal.Passwords[0].Name)
+
+	shared, err := svc.PasswordList(boundCtx, &transport.PasswordListRequest{Scope: "shared"})
+	require.NoError(t, err)
+	require.Equal(t, 1, shared.Total)
+	assert.NoError(t, svc.checkSharedPasswordOwnership(boundCtx, &staticpw.StaticPassword{
+		Shared:  true,
+		OwnerID: shared.Passwords[0].OwnerID,
+	}), "the account still owns the shared entry it created under the handle")
 }
 
 // TestPasswordStoreSessions_ArePerUser proves one user's unlock or lock never

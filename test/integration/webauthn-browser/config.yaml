@@ -30,9 +30,15 @@ logging:
 tls:
   enabled: true
   server_cn: "localhost"
+  # Request but do not require a client certificate: the suite's fixture
+  # (tests/support/passkeyAccount.ts) presents the init-ceremony admin
+  # credential (.runtime/storage/admin-cert.pem) to provision its accounts,
+  # while the browser connects without one.
+  client_auth: verify
 
-# Adaptive: anonymous while zero users exist; the WebAuthn ceremony endpoints
-# stay public so the suite's open sign-up and login work throughout.
+# Composite auth, enforced: anonymous sign-up is refused (ruling 602, pending
+# #2202), so the fixture provisions each account as admin and the account
+# redeems its invitation with a passkey; login stays public.
 auth:
   enabled: true
   type: "composite"

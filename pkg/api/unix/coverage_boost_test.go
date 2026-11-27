@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 )
 
@@ -34,7 +35,7 @@ func TestGRPCServer_StopWithExpiredContext(t *testing.T) {
 	require.NoError(t, err)
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-grpc.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "test-grpc.sock")
 
 	cfg := &GRPCConfig{
 		SocketPath: socketPath,

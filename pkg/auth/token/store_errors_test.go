@@ -241,7 +241,7 @@ func TestQRDBRefreshStore_RevokeFamily_DeleteError(t *testing.T) {
 
 func TestQRDBRefreshStore_RevokeBySubject_ScanError(t *testing.T) {
 	store := newQRDBStore(t, newErrorKV("scan"))
-	err := store.RevokeBySubject(context.Background(), "alice")
+	err := store.RevokeBySubject(context.Background(), "", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "scan", se.Op)
@@ -255,7 +255,7 @@ func TestQRDBRefreshStore_RevokeBySubject_DecodeErrorSurfaces(t *testing.T) {
 	require.NoError(t, kv.Put(context.Background(), refreshKey("f1", "j1"), []byte("not json")))
 	store := newQRDBStore(t, kv)
 
-	err := store.RevokeBySubject(context.Background(), "alice")
+	err := store.RevokeBySubject(context.Background(), "", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "decode", se.Op)
@@ -270,7 +270,7 @@ func TestQRDBRefreshStore_RevokeBySubject_RevokeFamilyErrorPropagates(t *testing
 	}))
 	kv.failOp = "putifabsent"
 
-	err := store.RevokeBySubject(ctx, "alice")
+	err := store.RevokeBySubject(ctx, "", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "put-if-absent", se.Op)

@@ -388,6 +388,70 @@ func TestNoIdentity_Refused(t *testing.T) {
 	require.ErrorAs(t, err, &refusal)
 }
 
+// An account-bound caller's Subject is its qrdb account id, which no client
+// can learn: a user-scope request with an empty owner is served as the
+// caller's own auth.PolicySubject (ruling 937).
+func TestKeys_EmptyUserOwnerIsCaller(t *testing.T) {
+	bound := &auth.Identity{Subject: "116704235864723456", TenantID: tenantA}
+	passkey := &auth.Identity{
+		Subject:  "116704235864723457",
+		TenantID: tenantA,
+		Metadata: map[string]string{auth.PasskeyHandleMetadataKey: "carol-handle"},
+	}
+	for _, tc := range []struct {
+		name  string
+		id    *auth.Identity
+		owner string
+	}{
+		{"account id", bound, "116704235864723456"},
+		{"passkey handle", passkey, "carol-handle"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := newTestClient(t, false)
+			key, err := c.Keys().Generate(as(tc.id), sdkssh.GenerateRequest{Scope: "user", Name: "mine", Algorithm: "ed25519"})
+			require.NoError(t, err)
+			assert.Equal(t, tc.owner, key.Owner, "the created key records the resolved owner")
+
+			got, err := c.Keys().Get(as(tc.id), sdkssh.GetKeyRequest{Scope: "user", Name: "mine"})
+			require.NoError(t, err)
+			assert.Equal(t, tc.owner, got.Owner)
+			got, err = c.Keys().Get(as(tc.id), sdkssh.GetKeyRequest{Scope: "user", Owner: tc.owner, Name: "mine"})
+			require.NoError(t, err, "the explicit own owner addresses the same key")
+			assert.Equal(t, tc.owner, got.Owner)
+
+			_, err = c.Keys().ExportPublic(as(tc.id), sdkssh.ExportRequest{Scope: "user", Name: "mine"})
+			require.NoError(t, err)
+			pub, _ := publicLine(t)
+			require.NoError(t, c.KnownHosts().Add(as(tc.id), sdkssh.AddKnownHostRequest{Scope: "user", Host: "h.example", PublicKey: pub}))
+			require.NoError(t, c.Keys().Delete(as(tc.id), sdkssh.DeleteKeyRequest{Scope: "user", Name: "mine"}))
+		})
+	}
+}
+
+// The empty-owner default never widens access: a foreign owner is still
+// refused as a miss with nothing written, and an unauthenticated caller with
+// an empty owner is refused as before.
+func TestKeys_EmptyUserOwnerRefusals(t *testing.T) {
+	bound := &auth.Identity{Subject: "116704235864723456", TenantID: tenantA}
+	c, daos := newLayoutClient(t)
+	empty, _ := newTestClient(t, false)
+
+	_, err := c.Keys().Generate(as(bound), sdkssh.GenerateRequest{Scope: "user", Owner: "someone-else", Name: "k", Algorithm: "ed25519"})
+	var refusal *OwnerBindingError
+	require.ErrorAs(t, err, &refusal)
+	_, err = c.Keys().Get(as(bound), sdkssh.GetKeyRequest{Scope: "user", Owner: "someone-else", Name: "k"})
+	_, miss := empty.Keys().Get(as(bound), sdkssh.GetKeyRequest{Scope: "user", Owner: "someone-else", Name: "k"})
+	requireRefusedAsMissing(t, err, miss)
+	assert.Empty(t, storedPaths(t, daos), "a refused generate writes nothing")
+
+	_, err = c.Keys().Generate(context.Background(), sdkssh.GenerateRequest{Scope: "user", Name: "k", Algorithm: "ed25519"})
+	require.ErrorAs(t, err, &refusal)
+	var unauthenticated *scope.UnauthenticatedError
+	require.ErrorAs(t, refusal.Cause, &unauthenticated)
+	_, err = c.Keys().Get(context.Background(), sdkssh.GetKeyRequest{Scope: "user", Name: "k"})
+	require.ErrorAs(t, err, &refusal)
+}
+
 // TestPlatform_InvalidTenantOwner proves an owner no tenant can have is
 // answered as missing and never written.
 func TestPlatform_InvalidTenantOwner(t *testing.T) {

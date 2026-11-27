@@ -179,6 +179,10 @@ func oracleContext(tenantID string) context.Context {
 		Roles: []string{
 			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameAdmin),
 			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameSO),
+			// go-qrdb v0.58 (#1278): a grantor may grant only what it holds,
+			// and the data-plane kv permissions the fixtures' roles carry are
+			// the Operator's.
+			qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameOperator),
 		},
 	}
 	return qrdbsdk.ContextWithTenant(qrdbsdk.WithIdentity(context.Background(), oracle), tenantID)

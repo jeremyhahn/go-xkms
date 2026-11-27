@@ -38,6 +38,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
 
@@ -168,9 +169,9 @@ func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI, peerCert *x509.Ce
 	require.NoError(t, err)
 
 	node, err := qrdbnode.NewStandaloneNode(ctx, cfg,
-		[]qrdbsdk.ServerOption{
-			qrdbsdk.WithServerTLS(p.serverTLS(t, tls.VerifyClientCertIfGiven)),
-			qrdbsdk.WithRESTListener(restListener),
+		[]qrdbserver.ServerOption{
+			qrdbserver.WithServerTLS(p.serverTLS(t, tls.VerifyClientCertIfGiven)),
+			qrdbserver.WithRESTListener(restListener),
 		},
 		qrdbnode.WithPeerAttestationGate(gate),
 	)
@@ -222,7 +223,9 @@ func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI, peerCert *x509.Ce
 	})
 	require.NoError(t, err)
 	// Creating a user with a role needs users:create and roles:assign in the
-	// tenant; the test provisions as a system identity that holds exactly those.
+	// tenant, and under go-qrdb v0.58 a grantor may grant only permissions it
+	// holds, so the provisioner also holds the role's admin:status; the test
+	// provisions as a system identity that holds exactly those.
 	provisioner, err := client.Roles().CreateRole(ctx, &qrdbtransport.CreateRoleRequest{
 		Name:     "test-provisioner",
 		TenantID: qrdbsdk.SystemTenantID,
@@ -230,6 +233,7 @@ func newGateHost(t *testing.T, policy peer.Policy, p *gatePKI, peerCert *x509.Ce
 			qrdbsdk.PermissionUsersCreate.String(),
 			qrdbsdk.PermissionRolesAssign.String(),
 			qrdbsdk.PermissionUsersAddCertBinding.String(),
+			qrdbsdk.PermissionAdminStatus.String(),
 		},
 	})
 	require.NoError(t, err)

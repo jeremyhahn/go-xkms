@@ -22,7 +22,7 @@ FROM golang:1.27.4-bookworm AS builder
 ENV GOTOOLCHAIN=auto
 
 # Build dependencies for CGO (PKCS#11 support pulled in transitively).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     libusb-1.0-0-dev \
@@ -69,7 +69,7 @@ RUN test -f /out/xkmsd || (echo "ERROR: Server binary not built" && exit 1)
 # ──────────────────────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     ca-certificates \
     wget \
     openssl \

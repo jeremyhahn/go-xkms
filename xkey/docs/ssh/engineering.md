@@ -111,7 +111,7 @@ directly — only the SDK.
 |---|---|---|
 | Environment | `XKMSD_URL`, `XKEY_XKMSD_URL` | `sshClient` (CLI) via `resolveXKMSdEndpoint` — selects the server (any scheme) when `--server` is unset and `--local` is not given |
 | Environment | `XKMSD_TOKEN` | `sshClient` (CLI) via `resolveXKMSdToken` — bearer token on every transport; when unset, the login `xkey auth login` stored for the server URL |
-| Environment | `XKMSD_TLS_CA`, `XKMSD_TLS_CERT`, `XKMSD_TLS_KEY` | `sshClient` (CLI) — server trust and mTLS client credential on TLS transports |
+| Environment | `XKMSD_TLS_CA`, `XKMSD_TLS_CERT`, `XKMSD_TLS_KEY` | `sshClient` (CLI) — server trust and mTLS client credential on TLS transports; `--tls-ca`, `--tls-cert`, `--tls-key` override them |
 | Config file | `xkmsd_url` (viper), `xkmsd.address` | `sshClient` (CLI) — same effect as `XKMSD_URL`, lower precedence |
 | Config file | `State.StorageEngine` (`xkey/pkg/config`) | `xkeySSHStorageEngineKind` — selects `file`/`pebble`/`memory` for the plain-engine store; defaults to `file` |
 | Environment | `SSH_AUTH_SOCK` | `sshlocal.ListLocalKeys`, `ResolveLocalSigners` (via the SDK) — system agent socket |

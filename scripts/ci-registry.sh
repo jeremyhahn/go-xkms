@@ -601,6 +601,48 @@ resolve() {
 }
 
 # hold_name prints a hold's name for family $1, unique to this job.
+# #2299: the in-network registry of the self-hosted docker pool, from the
+# CI_IMAGE_REGISTRY secret (host[:port][/path]). It is never printed: every
+# message names the image as go-xkms-ci-<family>:<hash> alone.
+pool_registry() {
+  local reg=${CI_IMAGE_REGISTRY:-}
+  reg=${reg%/}
+  [ -n "$reg" ] || die "CI_IMAGE_REGISTRY is empty: the pool registry secret is not in the job's environment"
+  [[ $reg =~ ^[A-Za-z0-9.-]+(:[0-9]+)?(/[a-z0-9._-]+)*$ ]] || die "CI_IMAGE_REGISTRY does not name a registry"
+  printf '%s\n' "$reg"
+}
+
+# pool toolchain|it: on a same-repo pull request whose content main has not
+# published, ci-images builds the image once on the pool, pushes
+# <CI_IMAGE_REGISTRY>/go-xkms-ci-<family>:<hash>, and prints
+# go-xkms-ci-<family>@<digest> with no registry in it: a job output that
+# holds a secret is dropped, so each consumer's `use` adds the registry back.
+pool() {
+  [ $# -eq 1 ] || die "usage: pool toolchain|it"
+  check_family "$1"
+  [ "${CI_POOL:-}" = true ] || die "pool runs on a same-repo pull request alone, and CI_POOL is not true"
+  local family=$1 tag reg name label target digest="" d
+  tag=$(content_tag "$family")
+  reg=$(pool_registry)
+  name=go-xkms-ci-$family
+  label=$name:${tag##*:}
+  target=$reg/$label
+  if docker pull --quiet "$target" >/dev/null 2>&1; then
+    echo "==> $label is in the pool registry already; nothing to build" >&2
+  else
+    echo "==> $label is not in the pool registry; building it once and pushing it" >&2
+    build_local "$family" "$tag"
+    docker tag "$tag" "$target" || die "cannot tag $tag as the pool image $label"
+    docker push "$target" >&2 || die "the pool registry refused the push of $label"
+  fi
+  while IFS= read -r d; do
+    case $d in "$reg/$name@"*) digest=${d#"$reg/$name@"} ;; esac
+  done < <(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$target")
+  [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || die "the pool image $label has no digest"
+  echo "==> pool image $label is $digest" >&2
+  printf '%s@%s\n' "$name" "$digest"
+}
+
 hold_name() {
   local prefix=${CI_STACK_PREFIX:-} run=${GITHUB_RUN_ID:-} attempt=${GITHUB_RUN_ATTEMPT:-1}
   [[ $prefix =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "CI_STACK_PREFIX does not name this repository's CI resources"
@@ -613,30 +655,59 @@ hold_name() {
 # registry, with the run's token on GHCR and anonymously on the forge
 # (read_login), and holds it as $2, in at most $attempts attempts.
 pull_ref() {
-  local ref=$1 hold=$2 host repos backoff=${CI_REGISTRY_BACKOFF:-10} n
+  local ref=$1 hold=$2 host repos
   check_ref "$ref"
-  [[ $backoff =~ ^[0-9]+$ ]] || die "CI_REGISTRY_BACKOFF is not a number of seconds"
   host=$(registry_host)
   [ "${ref%%/*}" = "$host" ] || die "'$ref' is not in this run's registry, $host"
   repos=$host/$(registry_owner)/
   [[ $ref == "$repos"* ]] || die "'$ref' is not under $repos, where main publishes"
   private_config
   read_login "$host"
-  for ((n = 1; n <= attempts; n++)); do
+  pull_hold "$ref" "$hold"
+}
+
+# #2299: the pool image ci-images pushed on a same-repo pull request; the
+# pool runners reach the pool registry with no login.
+#
+# Codex P1 on #2296: a GitHub-hosted consumer (coverage, coverage-threshold;
+# ruling 999) has no network path to the in-network pool registry. It tries
+# the pool image once and, when that fails, returns 1 so use builds the image
+# on its own runner; a pool consumer retries and never builds its own. The
+# messages name the image without the registry, which is a secret.
+pull_pool() {
+  local ref=$1 hold=$2 label=$3 tries=$attempts
+  check_ref "$ref"
+  [[ $ref == "$(pool_registry)/go-xkms-ci-"* ]] || die "the reference is not a pool image"
+  [ "${RUNNER_ENVIRONMENT:-}" != github-hosted ] || tries=1
+  pull_hold "$ref" "$hold" "the pool image $label" "$tries" && return 0
+  if [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ]; then
+    echo "==> the pool image $label is unreachable from this GitHub-hosted runner" >&2
+    return 1
+  fi
+  die "cannot pull the pool image $label after $tries attempts; a pool consumer never builds its own"
+}
+
+# pull_hold <ref> <hold> [<label> <tries>]: with a label, the messages name
+# the label in place of the reference and a failed last attempt returns 1.
+pull_hold() {
+  local ref=$1 hold=$2 label=${3:-$1} tries=${4:-$attempts} backoff=${CI_REGISTRY_BACKOFF:-10} n
+  [[ $backoff =~ ^[0-9]+$ ]] || die "CI_REGISTRY_BACKOFF is not a number of seconds"
+  for ((n = 1; n <= tries; n++)); do
     if docker pull --quiet "$ref" >/dev/null; then
       docker rm -f "$hold" >/dev/null 2>&1 || true
       # A concurrent reap can remove the image between the pull and the
       # hold; the next attempt pulls it again.
       if docker create --pull never --name "$hold" "$ref" true >/dev/null; then
-        echo "==> $hold holds $ref until the job's teardown" >&2
+        echo "==> $hold holds $label until the job's teardown" >&2
         return 0
       fi
     fi
-    [ "$n" -lt "$attempts" ] || break
-    echo "==> pull of $ref failed (attempt $n of $attempts); retrying" >&2
+    [ "$n" -lt "$tries" ] || break
+    echo "==> pull of $label failed (attempt $n of $tries); retrying" >&2
     sleep $((n * backoff))
   done
-  die "cannot pull $ref after $attempts attempts; a consumer never rebuilds an image main published"
+  [ $# -lt 3 ] || return 1
+  die "cannot pull $ref after $tries attempts; a consumer never rebuilds an image main published"
 }
 
 # hold_local builds or reuses family $1's image on this runner, holds it as
@@ -668,10 +739,23 @@ use() {
   hold=$(hold_name "$family")
   image=""
   if [ -n "$ref" ]; then
-    pull_ref "$ref" "$hold"
-    image=$ref
+    # #2299: ci-images outputs a pool image with no registry in it (a job
+    # output that holds a secret is dropped); the secret supplies it here.
+    if [ "${CI_POOL:-}" = true ] && [[ $ref == "go-xkms-ci-$family@"* ]]; then
+      if pull_pool "$(pool_registry)/$ref" "$hold" "$ref"; then
+        image=$(pool_registry)/$ref
+      else
+        echo "==> building the $family image on this runner, with no push" >&2
+        hold_local "$family" "$hold"
+      fi
+    else
+      pull_ref "$ref" "$hold"
+      image=$ref
+    fi
   elif [ "${CI_PUBLISH:-}" = true ]; then
     die "no $family image reference on a push to main: a consumer runs the image ci-images published and never builds its own"
+  elif [ "${CI_POOL:-}" = true ]; then
+    die "no $family image reference on a same-repo pull request: ci-images builds it once on the pool, and a consumer never builds its own"
   else
     echo "==> no $family image of main's for this content; building it on this runner, with no push" >&2
     hold_local "$family" "$hold"
@@ -745,12 +829,13 @@ retain() {
 }
 
 main() {
-  [ $# -ge 1 ] || die "usage: ci-registry.sh publish|resolve|use|release|retain ..."
+  [ $# -ge 1 ] || die "usage: ci-registry.sh publish|resolve|pool|use|release|retain ..."
   local cmd=$1
   shift
   case $cmd in
     publish) publish "$@" ;;
     resolve) resolve "$@" ;;
+    pool) pool "$@" ;;
     use) use "$@" ;;
     release) release "$@" ;;
     retain) retain "$@" ;;

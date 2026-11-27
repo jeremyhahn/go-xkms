@@ -3,7 +3,7 @@
 # tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
 # be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
 FROM golang:1.27.4-bookworm AS softhsm
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     autoconf automake libtool libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 COPY scripts/build-softhsm.sh /build/build-softhsm.sh
@@ -11,7 +11,7 @@ RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
 
 FROM golang:1.27.4-bookworm
 
-RUN apt-get update && apt-get install -y \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y \
     ca-certificates \
     netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*

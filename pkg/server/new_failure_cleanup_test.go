@@ -32,7 +32,7 @@ func requireDatastoreReleased(t *testing.T, cfg *config.Config) {
 	t.Helper()
 	cfg.Invite = nil
 	cfg.Attestation = nil
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err, "a failed New left the datastore open")
 	require.NoError(t, srv.Shutdown())
 }
@@ -82,7 +82,7 @@ func TestNew_InvalidInviteConfigReleasesDatastore(t *testing.T) {
 	cfg := pebbleMinimalConfig(t)
 	cfg.Invite = &config.InviteConfig{DefaultTTL: "a day"}
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.Nil(t, srv)
 	var parseErr *InviteConfigParseError
 	require.ErrorAs(t, err, &parseErr)
@@ -96,7 +96,7 @@ func TestNew_InvalidAttestationConfigReleasesDatastore(t *testing.T) {
 	cfg := pebbleMinimalConfig(t)
 	cfg.Attestation = &config.AttestationConfig{Formats: map[string]*truststore.Config{"tpm2": nil}}
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.Nil(t, srv)
 	require.ErrorIs(t, err, config.ErrAttestationTrustStoreMissing)
 

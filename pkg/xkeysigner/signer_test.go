@@ -33,6 +33,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // generateTestCert creates a self-signed ECDSA P-256 certificate for testing.
@@ -62,7 +64,7 @@ func generateTestCert(t *testing.T) (certPEM string, key *ecdsa.PrivateKey) {
 func startMockIPCServer(t *testing.T, handler func(raw json.RawMessage) []byte) string {
 	t.Helper()
 
-	sockPath := filepath.Join(t.TempDir(), "test.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 	ln, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = ln.Close() })
@@ -232,7 +234,7 @@ func TestNewSigner_AllValidSlots(t *testing.T) {
 }
 
 func TestNewSigner_ConnectionFailed(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "nonexistent.sock")
 
 	signer, err := NewSigner(&SignerConfig{
 		SocketPath: sockPath,

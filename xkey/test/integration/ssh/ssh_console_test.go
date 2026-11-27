@@ -32,6 +32,8 @@ import (
 
 	gossh "golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 // This suite drives the real `xkey ssh console` command end-to-end against an
@@ -334,7 +336,7 @@ func TestSSHConsoleNoKeyNoLocalIdentities(t *testing.T) {
 // SSH_AUTH_SOCK.
 func serveTestAgentSocket(t *testing.T, keyring sshagent.Agent) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "agent.sock")
+	sock := filepath.Join(testsupport.SocketDir(t), "agent.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatalf("agent listen: %v", err)

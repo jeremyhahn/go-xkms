@@ -68,8 +68,32 @@ private() {
 	return 0
 }
 
+# resolved <host>: mask each address the runner resolves a host name to, the
+# form a Docker dial error prints in place of the name. A host the runner
+# cannot resolve, or an address literal, adds nothing.
+resolved() {
+	local h=${1#[}
+	h=${h%]}
+	# An empty host, an IPv6 literal or an IPv4 literal resolves to itself.
+	case $h in '' | *:*) return 0 ;; esac
+	case $h in *[!0-9.]*) ;; *) return 0 ;; esac
+	command -v getent >/dev/null 2>&1 || return 0
+	local addr _
+	while read -r addr _; do
+		if [ -n "$addr" ]; then mask "$addr"; fi
+	done < <(getent ahosts "${h%.}" 2>/dev/null | sort -u -k1,1 || true)
+	return 0
+}
+
 for v in $(compgen -e); do
+	# Codex P1 on go-xkms #2296: the pool registry is the CI_IMAGE_REGISTRY
+	# secret, and Actions masks a secret's complete value only. Its host
+	# forms are masked whatever its name, and so are the addresses it
+	# resolves to; every job that hands the secret to a step runs this
+	# script with it in the env first.
+	secret=0
 	case $v in
+	CI_IMAGE_REGISTRY) secret=1 ;;
 	DEVCACHE_* | GOPROXY | *_REGISTRY | GITHUB_SERVER_URL) ;;
 	*) continue ;;
 	esac
@@ -91,11 +115,12 @@ for v in $(compgen -e); do
 			password=${userinfo#*:}
 			[ "$password" = "$userinfo" ] || [ -z "$password" ] || mask "$password"
 		fi
-		private "$host" || continue
+		private "$host" || [ "$secret" = 1 ] || continue
 		maskhost "$entry"
 		[ "$authority" = "$entry" ] || maskhost "$authority"
 		[ "$hostport" = "$authority" ] || maskhost "$hostport"
 		[ "$host" = "$hostport" ] || maskhost "$host"
 		case $host in \[*\]) inner=${host#[}; maskhost "${inner%]}" ;; esac
+		[ "$secret" = 0 ] || resolved "$host"
 	done
 done

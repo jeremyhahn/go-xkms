@@ -26,6 +26,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // TestNewTPM2_CommandAddress_DerivesPlatformPort proves that when
@@ -112,7 +114,7 @@ func TestOpen_UseSimulator_OpenerError(t *testing.T) {
 // surfaces a Unix-domain-socket dial failure for a ".sock"-suffixed Device
 // path that has no listener behind it.
 func TestNewTPM2_Device_UnixSocketOpenError(t *testing.T) {
-	sockPath := filepath.Join(t.TempDir(), "no-listener.sock")
+	sockPath := filepath.Join(testsupport.SocketDir(t), "no-listener.sock")
 
 	params := &Params{
 		Config: &Config{Hash: "SHA-256", Device: sockPath},
