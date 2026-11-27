@@ -192,10 +192,8 @@ func TestCeremonyGrant_IsLeastPrivilegeCopy(t *testing.T) {
 	assert.NotEqual(t, got[0], CeremonyGrant()[0], "CeremonyGrant returns a copy")
 }
 
-// TestPrincipal_HoldsNoUserWritePermission: no grant this package registers
-// lets the service principal create, update or delete a user; WebAuthn
-// reaches users through the node's user service instead.
-func TestPrincipal_HoldsNoUserWritePermission(t *testing.T) {
+// TestPrincipal_HoldsNoUserDeletePermission checks no grant this package registers lets the service principal delete a user.
+func TestPrincipal_HoldsNoUserDeletePermission(t *testing.T) {
 	grants := map[string][]qrdbsdk.Permission{
 		"base":     Grant(),
 		"ceremony": CeremonyGrant(),
