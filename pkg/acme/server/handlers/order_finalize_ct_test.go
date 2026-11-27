@@ -191,7 +191,7 @@ func TestFinalizeTCGCSRIsNotCTLogged(t *testing.T) {
 	}
 	req := httptest.NewRequest("POST", service.baseRESTURI+"/acme/order/745/finalize", nil)
 
-	_, pemBytes, err := service.finalizeTCGCSR("198.51.100.21:4444", csrDER, req, account, order, nil)
+	_, pemBytes, _, err := service.finalizeTCGCSR("198.51.100.21:4444", csrDER, req, account, order, nil)
 
 	require.NoError(t, err)
 	assert.NotEmpty(t, pemBytes)
