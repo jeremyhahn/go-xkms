@@ -283,14 +283,8 @@ func TestNewHostServer_AddPasskeyBeginOverEnforcingNode(t *testing.T) {
 	require.Equal(t, handle, options.PublicKey.User.ID, "the ceremony enrols the session's own account")
 }
 
-// TestNewHostServer_PublicRegistrationBeginRefusedOverEnforcingNode is the
-// Codex P1 on BuildWebAuthnService: with the node user adapter the user
-// store's Create ran on the node's routing user service, which checks no
-// users:create, so anonymous registration/begin persisted an active account
-// before any credential was verified. The service principal holds no
-// users:create (CA ruling 602), so even with public registration allowed the
-// begin is refused and no account exists afterwards.
-func TestNewHostServer_PublicRegistrationBeginRefusedOverEnforcingNode(t *testing.T) {
+// TestNewHostServer_PublicRegistrationBeginOverEnforcingNode checks registration/begin with public registration allowed creates the account through the principal's users grant.
+func TestNewHostServer_PublicRegistrationBeginOverEnforcingNode(t *testing.T) {
 	node := newEnforcingNode(t)
 	srv := newEnforcingHostServer(t, node)
 
@@ -302,13 +296,12 @@ func TestNewHostServer_PublicRegistrationBeginRefusedOverEnforcingNode(t *testin
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
-	require.Empty(t, w.Header().Get(webauthnhttp.HeaderSessionID), "a refused begin opens no ceremony")
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	require.NotEmpty(t, w.Header().Get(webauthnhttp.HeaderSessionID), "the begin opens a ceremony")
 
 	u, err := auth.NewNodeUserClient(node).GetUserByEmail(context.Background(), DefaultWebAuthnTenant, email)
-	require.Error(t, err, "the refused begin must leave no account, found %+v", u)
-	var notFound *qrdbsdk.UserNotFoundError
-	require.True(t, errors.As(err, &notFound), "lookup after the refusal: %v", err)
+	require.NoError(t, err, "the begin creates the account")
+	require.Equal(t, email, u.Email)
 }
 
 // keysProbeModule mounts GET /api/v1/keys under keys:read on the unified
