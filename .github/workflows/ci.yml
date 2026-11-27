@@ -1,4 +1,4 @@
-# ci-template: v1.59 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# ci-template: v1.61 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
 # v1.59 (handbook b18e6499, #113): the step `Balanced runner pool (ruling
 # 1137)` is copied from the template at v1.59. A listing short of its
 # total_count is a lower bound again, named in a ::notice, and the choice
@@ -663,14 +663,13 @@ on:
 # `schedule-{repository}`, with no sha, so a repository has one schedule run
 # at a time. It is tested first, so a schedule run never takes a main group.
 # The push, pull_request and workflow_dispatch groups do not change.
-# v1.53 (ruling 1087, supersedes v1.26.2's main group): on main the group is
-# the workflow and the event, `main-{event}`, so a newer main run cancels the
-# older one still queued or in progress, and the newest run validates every
-# merge under it. A schedule run keeps `schedule-{repository}` and a
-# workflow_dispatch run keeps `main-workflow_dispatch`, so neither shares a
-# group with a push run; every other ref keeps github.ref.
+# On main a push run is grouped by commit, `main-push-{sha}`, so a later push
+# no longer cancels it; any other main run is grouped by event, `main-{event}`.
+# A schedule run keeps `schedule-{repository}` and a workflow_dispatch run
+# keeps `main-workflow_dispatch`, so neither shares a group with a push run;
+# every other ref keeps github.ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || github.ref == 'refs/heads/main' && format('main-{0}', github.event_name) || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/main') && format('main-push-{0}', github.sha) || github.ref == 'refs/heads/main' && format('main-{0}', github.event_name) || github.ref }}
   cancel-in-progress: true
 
 permissions:
