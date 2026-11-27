@@ -20,6 +20,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
+	"github.com/jeremyhahn/go-xkms/pkg/embeddednode/serviceprincipal"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/barriertest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	xkmsmocks "github.com/jeremyhahn/go-xkms/pkg/xkms/mocks"
@@ -90,34 +91,31 @@ func TestModuleHost_NodeUsers_WebAuthnBeginOverAuthNode(t *testing.T) {
 		"email":        "passkey-user@example.com",
 		"display_name": "Passkey User",
 	})
-	// The lookup no longer fails unauthenticated (ruling 973); the
-	// anonymous create is then refused for want of users:create (CA
-	// ruling 602), never a server fault.
-	require.Equal(t, http.StatusForbidden, w.Code, "registration/begin: %s", w.Body.String())
+	// The lookup runs on the node's user service, and the principal's users grant answers the create.
+	require.Equal(t, http.StatusOK, w.Code, "registration/begin: %s", w.Body.String())
 	require.NotContains(t, w.Body.String(), "unauthenticated")
 }
 
-// TestModuleHost_WebAuthnPrincipalGainsNoUserPermission: a self-built module
-// host with WebAuthn over the node leaves the service principal's grant as
-// it was (role grants are process-global, so any node of the principal
-// shows it): its service context still cannot read or update a user.
-func TestModuleHost_WebAuthnPrincipalGainsNoUserPermission(t *testing.T) {
+// TestModuleHost_WebAuthnPrincipalHoldsTheUsersGrant checks a self-built module host leaves the service principal main's users grant and no delete.
+func TestModuleHost_WebAuthnPrincipalHoldsTheUsersGrant(t *testing.T) {
 	_, _, h := nodeHostedModule(t)
 	// The first request builds the module's host.
 	w := serveJSON(t, h, http.MethodPost, "/api/v1/webauthn/registration/begin", map[string]string{
 		"email":        "principal-check@example.com",
 		"display_name": "Principal Check",
 	})
-	require.Equal(t, http.StatusForbidden, w.Code, "registration/begin: %s", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "registration/begin: %s", w.Body.String())
 
 	node := barriertest.NewPrincipalNode(t)
 	ctx, err := node.ServiceContext(context.Background())
 	require.NoError(t, err)
 	var denied *qrdbsdk.PermissionDeniedError
 	_, err = node.Client().Users().GetUserByEmail(ctx, "system", "nobody@example.com")
-	require.ErrorAs(t, err, &denied, "the service principal reads users")
-	_, err = node.Client().Users().UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: 1, Name: "renamed"})
-	require.ErrorAs(t, err, &denied, "the service principal updates users")
+	require.NotErrorAs(t, err, &denied, "the service principal reads users")
+	for _, p := range []qrdbsdk.Permission{"users:create", "users:read", "users:update"} {
+		require.True(t, qrdbsdk.HasPermissionRoleGrant(serviceprincipal.Name, p), "the service principal holds %s", p)
+	}
+	require.False(t, qrdbsdk.HasPermissionRoleGrant(serviceprincipal.Name, "users:delete"), "the service principal deletes no user")
 }
 
 // TestModuleHost_NodeUsers_FreshInviteRedeemsOverAuthNode is ruling 973 on

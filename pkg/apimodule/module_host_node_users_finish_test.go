@@ -30,17 +30,15 @@ import (
 // the route begin already takes, and the ceremony must answer 200 instead of
 // internal_error.
 //
-// Anonymous public registration is refused over such a node: the service
-// principal holds no users:create (CA ruling 602), so the SDK begin answers
-// 403 and the account an enrolment finishes is the one an invitation names.
+// The SDK begin answers 200 over such a node, as the service principal holds the users grant.
 func TestModuleHost_NodeUsers_WebAuthnFinishOverAuthNode(t *testing.T) {
 	m, _, h := nodeHostedModule(t)
 
 	w := serveJSON(t, h, http.MethodPost, "/api/v1/webauthn/sdk/registration/begin", transport.BeginRegistrationRequest{
-		Email:       "finish-user@example.com",
-		DisplayName: "Finish User",
+		Email:       "anonymous-user@example.com",
+		DisplayName: "Anonymous User",
 	})
-	require.Equal(t, http.StatusForbidden, w.Code, "anonymous sdk registration/begin: %s", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code, "anonymous sdk registration/begin: %s", w.Body.String())
 
 	// The first request builds the host (and composes its stores).
 	w = serveJSON(t, h, http.MethodGet, "/api/v1/invites/"+qrdbsdk.SystemTenantID+"/not-a-token", nil)

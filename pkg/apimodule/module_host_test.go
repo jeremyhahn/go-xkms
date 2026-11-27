@@ -263,7 +263,7 @@ func TestModule_NodeCORSBeforeClientPublishedKeepsPersistenceAndWebAuthn(t *test
 // registers no WebAuthn grant itself: the module-host construction path must
 // give the service principal the user store's permissions, or
 // registration/begin fails users:read authorization and answers 500.
-func TestModule_SelfBuiltSurfaceOnAnEnforcingNode(t *testing.T) {
+func TestModule_SelfBuiltSurfaceRegistersOnAnEnforcingNode(t *testing.T) {
 	xkms.Reset()
 	t.Cleanup(xkms.Reset)
 	backend := xkmsmocks.NewMockKeyStore()
@@ -283,8 +283,7 @@ func TestModule_SelfBuiltSurfaceOnAnEnforcingNode(t *testing.T) {
 			RPID:                    "example.com",
 			AllowPublicRegistration: &allow,
 		}),
-		// The principal holds no user permission: the ceremonies reach
-		// users through the node's user service.
+		// The ceremonies reach users through the node's user service.
 		WithNodeUsers(node))
 	require.NoError(t, err)
 
@@ -303,25 +302,28 @@ func TestModule_SelfBuiltSurfaceOnAnEnforcingNode(t *testing.T) {
 	require.NotNil(t, begin, "webauthn registration/begin must be registered")
 	require.NotNil(t, addBegin, "webauthn credentials/begin must be registered")
 
-	// Anonymous public registration is refused over an enforcing node (CA
-	// ruling 602, pending go-xkms #2202): a clean 403, never a 500 for a
-	// missing users grant, and no account persisted.
+	// Public registration begins over an enforcing node: the principal's users grant answers it, never a 500.
 	body, _ := json.Marshal(map[string]string{"email": "alice@example.com", "display_name": "Alice"})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/webauthn/registration/begin", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	begin(w, req)
 
-	require.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
-	var refusal rest.ErrorResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &refusal))
-	require.Equal(t, webauthnhttp.ErrorCodeRegistrationRefused, refusal.Error)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+	var registration struct {
+		PublicKey struct {
+			User struct {
+				Name string `json:"name"`
+			} `json:"user"`
+		} `json:"publicKey"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &registration))
+	require.Equal(t, "alice@example.com", registration.PublicKey.User.Name)
 
 	// Looked up through the node's user service, as the ceremonies do.
 	_, err = auth.NewNodeUserClient(node).GetUserByEmail(context.Background(), rest.DefaultWebAuthnTenant, "alice@example.com")
-	require.Error(t, err, "a refused anonymous begin must leave no user")
 	var denied *qrdbsdk.PermissionDeniedError
-	require.NotErrorAs(t, err, &denied, "the lookup must be authorized, so its failure means no user")
+	require.NotErrorAs(t, err, &denied, "the node user service lookup must be authorized")
 
 	// An account's own add-a-passkey begin still works on this path: the
 	// ceremony reads the session's user through the node's user service.
