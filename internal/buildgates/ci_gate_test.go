@@ -2,6 +2,7 @@ package buildgates
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -69,6 +70,14 @@ const guardedNightlyIf = "(" + nightlyIf + ") && " + verdictRun
 // tier (v1.30, fix 3): never a draft, the guard's `run`, and on a pull
 // request a changed file that matches LINT_GATES_PATTERN.
 const scopedIf = draftIf + " && " + verdictRun + " && needs.preflight.outputs.lint_gates != 'false'"
+
+// codeIf is the whole condition of a job CI Gate marks code: never a draft,
+// the guard's `run`, and skipped only on a docs-only pull request.
+const codeIf = draftIf + " && " + verdictRun + " && needs.preflight.outputs.docs_only != 'true'"
+
+// gateDocsOnly is CI Gate's DOCS_ONLY env, which lets a code job skip only on
+// a docs-only pull request.
+const gateDocsOnly = "${{ needs.preflight.outputs.docs_only == 'true' }}"
 
 // gateLine matches one `check <job> "${{ needs.<job>.result }}" <tier>` line
 // of CI Gate's script.
@@ -142,7 +151,7 @@ func condition(s string) string {
 func gateTiers(gate job) (map[string]string, []string) {
 	tiers := map[string]string{}
 	var problems []string
-	fullTier, nightly, draft := "", "", ""
+	fullTier, nightly, draft, docsOnly := "", "", "", ""
 	for _, step := range gate.Steps {
 		if v, ok := step.Env["FULL_TIER"]; ok {
 			fullTier = collapse(v)
@@ -152,6 +161,9 @@ func gateTiers(gate job) (map[string]string, []string) {
 		}
 		if v, ok := step.Env["DRAFT"]; ok {
 			draft = collapse(v)
+		}
+		if v, ok := step.Env["DOCS_ONLY"]; ok {
+			docsOnly = collapse(v)
 		}
 		for _, raw := range strings.Split(step.Run, "\n") {
 			line := strings.TrimSpace(raw)
@@ -164,8 +176,8 @@ func gateTiers(gate job) (map[string]string, []string) {
 				continue
 			}
 			name, ref, tier := m[1], m[2], m[3]
-			if tier != "pr" && tier != "scoped" && tier != "full" && tier != "nightly" {
-				problems = append(problems, fmt.Sprintf("CI Gate tags %s %q, want pr, scoped, full or nightly", name, tier))
+			if tier != "pr" && tier != "code" && tier != "scoped" && tier != "full" && tier != "nightly" {
+				problems = append(problems, fmt.Sprintf("CI Gate tags %s %q, want pr, code, scoped, full or nightly", name, tier))
 			}
 			if name != ref {
 				problems = append(problems, fmt.Sprintf("CI Gate line for %s reads needs.%s.result", name, ref))
@@ -184,6 +196,9 @@ func gateTiers(gate job) (map[string]string, []string) {
 	}
 	if draft != gateDraft {
 		problems = append(problems, fmt.Sprintf("CI Gate DRAFT is %q, want %q", draft, gateDraft))
+	}
+	if slices.Contains(slices.Collect(maps.Values(tiers)), "code") && docsOnly != gateDocsOnly {
+		problems = append(problems, fmt.Sprintf("CI Gate DOCS_ONLY is %q, want %q", docsOnly, gateDocsOnly))
 	}
 	return tiers, problems
 }
@@ -229,6 +244,10 @@ func tierProblems(wf workflow) []string {
 			if cond != fullTierJobIf && (!guarded || cond != fullTierJobIf+" && "+verdictRun) {
 				problems = append(problems, fmt.Sprintf("%s is tagged full but its if: is %q, want %q", name, cond, fullTierJobIf))
 			}
+		case "code":
+			if !guarded || cond != codeIf {
+				problems = append(problems, fmt.Sprintf("%s is tagged code but its if: is %q, want %q with %s in its needs", name, cond, codeIf, scheduleGuardJob))
+			}
 		case "nightly":
 			if cond != nightlyIf && (!guarded || cond != guardedNightlyIf) {
 				problems = append(problems, fmt.Sprintf("%s is tagged nightly but its if: is %q, want %q", name, cond, nightlyIf))
@@ -246,7 +265,7 @@ func tierProblems(wf workflow) []string {
 				problems = append(problems, fmt.Sprintf("%s is tagged pr but its if: is %q, want %q or none", name, cond, draftIf))
 			}
 			for _, need := range j.Needs {
-				if t := tiers[need]; t == "full" || t == "nightly" {
+				if t := tiers[need]; t == "code" || t == "full" || t == "nightly" {
 					problems = append(problems, fmt.Sprintf("pr-tier %s needs %s-tier %s", name, t, need))
 				}
 			}
@@ -372,23 +391,29 @@ jobs:
     needs: [preflight]
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.lint_gates != 'false' }}
     timeout-minutes: 45
+  integration:
+    needs: preflight
+    if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only != 'true' }}
+    timeout-minutes: 60
   preflight:
     if: ${{ !github.event.pull_request.draft }}
   ci-gate:
     if: always()
-    needs: [lint, build, race, soak, lint-gates, preflight]
+    needs: [lint, build, race, soak, lint-gates, integration, preflight]
     timeout-minutes: 5
     steps:
       - env:
           FULL_TIER: ${{ env.CI_FULL_TIER }}
           NIGHTLY: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
           DRAFT: ${{ github.event.pull_request.draft == true }}
+          DOCS_ONLY: ${{ needs.preflight.outputs.docs_only == 'true' }}
         run: |
           check lint  "${{ needs.lint.result }}" pr
           check build "${{ needs.build.result }}" pr
           check race  "${{ needs.race.result }}" full
           check soak  "${{ needs.soak.result }}" nightly
           check lint-gates "${{ needs.lint-gates.result }}" scoped
+          check integration "${{ needs.integration.result }}" code
           check preflight "${{ needs.preflight.result }}" pr
 `
 
@@ -404,7 +429,7 @@ func TestCIGateTiersCatchEachMismatch(t *testing.T) {
 		{"pr job tagged full", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}" full`, "build is tagged full but its if:"},
 		{"pr job with an if", "needs: [lint]\n", "needs: [lint]\n    if: github.event_name == 'push'\n", "build is tagged pr but its if:"},
 		{"job missing from the gate", "          check race  \"${{ needs.race.result }}\" full\n", "", "race has no check line in CI Gate"},
-		{"job missing from gate needs", "needs: [lint, build, race, soak, lint-gates, preflight]", "needs: [lint, build, soak, lint-gates, preflight]", "race is not in ci-gate needs"},
+		{"job missing from gate needs", "needs: [lint, build, race, soak, lint-gates, integration, preflight]", "needs: [lint, build, soak, lint-gates, integration, preflight]", "race is not in ci-gate needs"},
 		{"unknown tier", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}" fast`, `tags build "fast"`},
 		{"tier missing", `"${{ needs.build.result }}" pr`, `"${{ needs.build.result }}"`, "is malformed"},
 		{"line reads another job", `build "${{ needs.build.result }}"`, `build "${{ needs.race.result }}"`, "reads needs.race.result"},
@@ -429,6 +454,12 @@ func TestCIGateTiersCatchEachMismatch(t *testing.T) {
 		{"FULL_TIER not read from CI_FULL_TIER", "FULL_TIER: ${{ env.CI_FULL_TIER }}", "FULL_TIER: ${{ github.event_name != 'pull_request' }}", "CI Gate FULL_TIER is"},
 		{"CI_FULL_TIER drifts from the full tier", "CI_FULL_TIER: ${{ (github.event_name != 'pull_request' &&", "CI_FULL_TIER: ${{ (github.event_name == 'push' &&", "env.CI_FULL_TIER is"},
 		{"CI_FULL_TIER takes a dispatch off main", "CI_FULL_TIER: ${{ (github.event_name != 'pull_request' && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'))", "CI_FULL_TIER: ${{ (github.event_name != 'pull_request')", "env.CI_FULL_TIER is"},
+		{"code job without the docs-only scope", " && needs.preflight.outputs.docs_only != 'true' }}", " }}", "integration is tagged code but its if:"},
+		{"code job with the ci:full selection", "if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only", "if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' && needs.preflight.outputs.docs_only", "integration is tagged code but its if:"},
+		{"code job without the guard in needs", "  integration:\n    needs: preflight\n", "  integration:\n", "integration is tagged code but its if:"},
+		{"code job tagged full", `"${{ needs.integration.result }}" code`, `"${{ needs.integration.result }}" full`, "integration is tagged full but its if:"},
+		{"CI Gate without DOCS_ONLY", "          DOCS_ONLY: ${{ needs.preflight.outputs.docs_only == 'true' }}\n", "", "CI Gate DOCS_ONLY is"},
+		{"pr job needs a code job", "needs: [lint]\n", "needs: [lint, integration]\n", "pr-tier build needs code-tier integration"},
 		{"NIGHTLY drifts from the nightly if", "NIGHTLY: ${{ github.event_name == 'schedule' || ", "NIGHTLY: ${{ ", "CI Gate NIGHTLY is"},
 	}
 	for _, tc := range cases {
