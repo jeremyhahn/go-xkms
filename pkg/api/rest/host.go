@@ -489,10 +489,10 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 // reads, updates and deletes run on the node's user service (the ceremony
 // routes are public, so their request context carries no qrdb credentials,
 // ruling 973), but CreateUser runs on the qrdb client, whose transport
-// checks users:create. The node's routing user service checks no
-// permission, so creating through it would let anonymous registration/begin
-// persist an account the service principal is not granted to create (CA
-// ruling 602). The by-id calls run in tenantID, the configured WebAuthn
+// checks users:create; the service principal holds that grant for the RP
+// ceremonies (#2409). Whether an unknown account may be created at all is
+// webauthn.allow_public_registration: with it off, registration/begin
+// refuses the account before any create. The by-id calls run in tenantID, the configured WebAuthn
 // scope, never a tenant the request chose.
 type nodeWebAuthnUsers struct {
 	*auth.TenantNodeUsers
