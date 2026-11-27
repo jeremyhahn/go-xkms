@@ -30,6 +30,8 @@ import (
 	"github.com/google/go-tpm/tpm2/transport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // These tests run the real swtpm binary, a declared test dependency of
@@ -177,7 +179,7 @@ func TestManager_StatePersistsAcrossRestartUnderItsKey(t *testing.T) {
 // returns the socket path and a channel carrying serve's result.
 func listenOnce(t *testing.T, serve func(conn net.Conn) error) (string, <-chan error) {
 	t.Helper()
-	socket := filepath.Join(t.TempDir(), "vtpm.sock")
+	socket := filepath.Join(testsupport.SocketDir(t), "vtpm.sock")
 	ln, err := net.Listen("unix", socket)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, ln.Close()) })
@@ -219,7 +221,7 @@ func TestProbeReady_AcceptedButUnansweredIsNotReady(t *testing.T) {
 }
 
 func TestProbeReady_NoSocketIsNotReady(t *testing.T) {
-	assert.Error(t, probeReady(filepath.Join(t.TempDir(), "absent.sock")))
+	assert.Error(t, probeReady(filepath.Join(testsupport.SocketDir(t), "absent.sock")))
 }
 
 // TestManager_RestartsACrashedVTPMAndTheTransportFollows proves the

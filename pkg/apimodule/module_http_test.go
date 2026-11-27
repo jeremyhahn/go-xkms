@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
@@ -42,9 +43,9 @@ type captured struct {
 
 // newCaptureRegistrar builds a real qrdb HTTPRegistrar whose route/public
 // sinks record into the returned slice.
-func newCaptureRegistrar() (*qrdbsdk.ModuleHTTPRegistrar, *[]captured) {
+func newCaptureRegistrar() (*qrdbserver.ModuleHTTPRegistrar, *[]captured) {
 	var recs []captured
-	r := qrdbsdk.NewModuleHTTPRegistrar(chi.NewRouter(),
+	r := qrdbserver.NewModuleHTTPRegistrar(chi.NewRouter(),
 		func(method, pattern string, perm qrdbsdk.Permission, h http.HandlerFunc) {
 			recs = append(recs, captured{method: method, pattern: pattern, perm: perm, handler: h})
 		},
@@ -90,7 +91,21 @@ func TestRegisterHTTP_FullSurface(t *testing.T) {
 			wantOrder++
 		}
 	}
-	require.Len(t, *recs, wantOrder, "one registration per distinct route")
+	// Plus one public CORS preflight (OPTIONS) per distinct pattern that
+	// the table does not already serve for OPTIONS.
+	preflights := map[string]bool{}
+	for k := range want {
+		if _, has := want[key{"OPTIONS", k.p}]; !has {
+			preflights[k.p] = true
+		}
+	}
+	require.Len(t, *recs, wantOrder+len(preflights),
+		"one registration per distinct route and one preflight per pattern")
+	for _, rec := range *recs {
+		if rec.method == "OPTIONS" && preflights[rec.pattern] {
+			assert.True(t, rec.public, "OPTIONS %s must register public", rec.pattern)
+		}
+	}
 
 	got := map[key]captured{}
 	for _, rec := range *recs {

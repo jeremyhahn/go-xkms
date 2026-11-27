@@ -1,6 +1,8 @@
 package tpm2
 
 import (
+	"bytes"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1013,6 +1015,24 @@ func (tpm *TPM2) LoadKeyPair(
 	tpm.logger.Debug("tpm: LoadKeyPair - loading blobs",
 		slog.String("cn", keyAttrs.CN),
 		slog.String("keyType", fmt.Sprintf("%v", keyAttrs.KeyType)))
+	// The public blob is read first: SaveKeyPair publishes a real public blob
+	// only after its matching private blob is durable, so once one is read
+	// the private blob beside it is final. A recovery fence in its place is
+	// an incomplete pair (a recovery in progress or interrupted).
+	pub, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		// Log at debug level - this is expected during fresh initialization
+		// when the key doesn't exist yet
+		tpm.logger.Debug("tpm: LoadKeyPair - failed to load public blob",
+			slog.String("error", err.Error()),
+			slog.String("cn", keyAttrs.CN))
+		return nil, err
+	}
+	if isKeyPairRecoveryFence(pub) {
+		return nil, fmt.Errorf("%w: key pair %q is incomplete (its recovery is in progress or was interrupted)",
+			store.ErrBlobNotFound, keyAttrs.CN)
+	}
+	tpm.logger.Debug("tpm: LoadKeyPair - loaded public blob", slog.Int("bytes", len(pub)))
 	priv, err := backend.Get(keyAttrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
 		// Log at debug level - this is expected during fresh initialization
@@ -1023,16 +1043,6 @@ func (tpm *TPM2) LoadKeyPair(
 		return nil, err
 	}
 	tpm.logger.Debug("tpm: LoadKeyPair - loaded private blob", slog.Int("bytes", len(priv)))
-	pub, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
-	if err != nil {
-		// Log at debug level - this is expected during fresh initialization
-		// when the key doesn't exist yet
-		tpm.logger.Debug("tpm: LoadKeyPair - failed to load public blob",
-			slog.String("error", err.Error()),
-			slog.String("cn", keyAttrs.CN))
-		return nil, err
-	}
-	tpm.logger.Debug("tpm: LoadKeyPair - loaded public blob", slog.Int("bytes", len(pub)))
 	if err := checkLoadAreaSizes(pub, priv); err != nil {
 		return nil, err
 	}
@@ -1212,13 +1222,168 @@ func (tpm *TPM2) SaveKeyPair(
 	if backend == nil {
 		backend = tpm.backend
 	}
-	err := backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, overwrite)
+	// An overwrite replaces the pair under the fence protocol recovery
+	// uses (replaceKeyPair), so a concurrent recovery or overwrite never
+	// leaves one writer's public blob beside another's private blob.
+	if overwrite {
+		return tpm.replaceKeyPair(keyAttrs, outPrivate, outPublic, backend, false,
+			fmt.Errorf("tpm: key pair %q replaced by a concurrent writer: %w", keyAttrs.CN, store.ErrBlobExists))
+	}
+	// The private blob is written first and the public blob last, so a key is
+	// complete only once its real public blob exists. A create-only save that
+	// finds a private blob without a public blob meets either an incomplete
+	// earlier save (a storage fault or crash between the two writes) or a
+	// live writer between its two writes; recoverKeyPair takes it over.
+	err := backend.Save(keyAttrs, outPrivate.Buffer, store.FSEXT_PRIVATE_BLOB, false)
+	if errors.Is(err, store.ErrBlobExists) {
+		return tpm.recoverKeyPair(keyAttrs, outPrivate, outPublic, backend, err)
+	}
 	if err != nil {
 		return err
 	}
-	err = backend.Save(keyAttrs, outPublic.Bytes(), store.FSEXT_PUBLIC_BLOB, overwrite)
+	return backend.Save(keyAttrs, outPublic.Bytes(), store.FSEXT_PUBLIC_BLOB, false)
+}
+
+// keyPairRecoveryFence prefixes the placeholder a recovering create-only save
+// stores in a key's public-blob slot while it replaces the private blob. It
+// cannot begin a marshalled TPMT_PUBLIC (its first two bytes are no TPM
+// algorithm ID), so no reader takes it for a public area.
+var keyPairRecoveryFence = []byte("xkms-tpm2-key-pair-recovery\x00")
+
+// KeyBlobSwapper is the KeyBackend capability that makes a key pair update
+// safe across processes sharing one store: CompareAndSwapBlob atomically
+// writes next at fsext only if the stored blob equals expected, and reports
+// false (no write) when it does not or the blob is absent. A key pair
+// replacement (recovery or overwrite) on a backend without it refuses with
+// store.ErrKeyBlobSwapUnsupported.
+type KeyBlobSwapper interface {
+	CompareAndSwapBlob(attrs *types.KeyAttributes, fsext types.FSExtension, expected, next []byte) (bool, error)
+}
+
+// The production store swaps key blobs atomically.
+var _ KeyBlobSwapper = (*store.BlobStore)(nil)
+
+// getKeyBlob reads one blob; present is false when the backend has none.
+func getKeyBlob(backend store.KeyBackend, attrs *types.KeyAttributes, fsext types.FSExtension) (blob []byte, present bool, err error) {
+	blob, err = backend.Get(attrs, fsext)
+	if errors.Is(err, store.ErrBlobNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return blob, true, nil
+}
+
+// swapKeyBlob writes next at fsext only if the blob is still what the
+// caller observed (expected, or absent when present is false), and reports
+// false when another writer changed it. An absent blob is written by a
+// create-only save, a present one by the backend's KeyBlobSwapper; a
+// backend without one returns store.ErrKeyBlobSwapUnsupported and writes
+// nothing, never a read followed by an overwrite.
+func swapKeyBlob(backend store.KeyBackend, attrs *types.KeyAttributes, fsext types.FSExtension, expected []byte, present bool, next []byte) (bool, error) {
+	if !present {
+		err := backend.Save(attrs, next, fsext, false)
+		if errors.Is(err, store.ErrBlobExists) {
+			return false, nil
+		}
+		return err == nil, err
+	}
+	s, ok := backend.(KeyBlobSwapper)
+	if !ok {
+		return false, store.ErrKeyBlobSwapUnsupported
+	}
+	return s.CompareAndSwapBlob(attrs, fsext, expected, next)
+}
+
+// isKeyPairRecoveryFence reports whether a public-blob record is a recovery
+// fence rather than a public area.
+func isKeyPairRecoveryFence(pub []byte) bool {
+	return bytes.HasPrefix(pub, keyPairRecoveryFence)
+}
+
+// recoverKeyPair replaces an incomplete key pair (a private blob without a
+// real public blob) with outPrivate/outPublic. exists is the create-only
+// private save's ErrBlobExists, returned when the key is complete.
+//
+// The backend stores the two blobs independently, so the public-blob slot is
+// the fence: the recovery first claims it with a unique fence record
+// (create-only, so a live writer still between its two writes loses its own
+// public save), then overwrites the private blob, and publishes the real
+// public blob last, only once the matching private blob is durable. A crash
+// at any point leaves the fence, never a real public blob beside a foreign
+// private blob: LoadKeyPair reports the fenced key as incomplete, and the
+// next create-only save takes the fence over and finishes the pair.
+func (tpm *TPM2) recoverKeyPair(
+	keyAttrs *types.KeyAttributes,
+	outPrivate tpm2.TPM2BPrivate,
+	outPublic tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic],
+	backend store.KeyBackend,
+	exists error) error {
+
+	return tpm.replaceKeyPair(keyAttrs, outPrivate, outPublic, backend, true, exists)
+}
+
+// replaceKeyPair writes outPrivate/outPublic over the stored pair under the
+// fence protocol every pair writer shares (recovery and overwrite): claim
+// the public slot with a unique fence, write the private blob only if it is
+// still the one observed before the fence, and publish the public blob only
+// while the fence is still this writer's. Each step is a conditional write
+// (swapKeyBlob), so a writer that loses to another (in this process or, on
+// a KeyBlobSwapper backend, in another) stops without touching the other's
+// blobs and returns lost: the store holds one writer's whole pair, or a
+// fence beside a private blob, which LoadKeyPair reports as incomplete and
+// the next create-only save recovers. recovery refuses a pair whose real
+// public blob exists.
+func (tpm *TPM2) replaceKeyPair(
+	keyAttrs *types.KeyAttributes,
+	outPrivate tpm2.TPM2BPrivate,
+	outPublic tpm2.TPM2B[tpm2.TPMTPublic, *tpm2.TPMTPublic],
+	backend store.KeyBackend,
+	recovery bool,
+	lost error) error {
+
+	tpm.keyPairMu.Lock()
+	defer tpm.keyPairMu.Unlock()
+
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return err
+	}
+	fence := append(append([]byte{}, keyPairRecoveryFence...), nonce...)
+
+	priv, privOK, err := getKeyBlob(backend, keyAttrs, store.FSEXT_PRIVATE_BLOB)
 	if err != nil {
 		return err
+	}
+	pub, pubOK, err := getKeyBlob(backend, keyAttrs, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		return err
+	}
+	if recovery && pubOK && !isKeyPairRecoveryFence(pub) {
+		// A writer published the pair: leave it to it.
+		return lost
+	}
+	if ok, err := swapKeyBlob(backend, keyAttrs, store.FSEXT_PUBLIC_BLOB, pub, pubOK, fence); err != nil {
+		return err
+	} else if !ok {
+		return lost
+	}
+	if recovery {
+		tpm.logger.Warn("tpm: replacing an incomplete key pair (private blob without public blob)",
+			slog.String("cn", keyAttrs.CN))
+	}
+	// Write the private blob only over the one observed before the fence:
+	// a writer that replaced it since owns the pair now.
+	if ok, err := swapKeyBlob(backend, keyAttrs, store.FSEXT_PRIVATE_BLOB, priv, privOK, outPrivate.Buffer); err != nil {
+		return err
+	} else if !ok {
+		return lost
+	}
+	// Publish only while this writer still holds the fence: a later writer
+	// that took the fence over owns the pair now.
+	if ok, err := swapKeyBlob(backend, keyAttrs, store.FSEXT_PUBLIC_BLOB, fence, true, outPublic.Bytes()); err != nil || !ok {
+		return errors.Join(lost, err)
 	}
 	return nil
 }

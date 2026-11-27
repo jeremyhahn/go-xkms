@@ -25,6 +25,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 )
@@ -55,7 +56,7 @@ func TestGRPCServer_ConnectionTracker_ActiveConnectionsGauge(t *testing.T) {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	socketPath := filepath.Join(tmpDir, "test-conn-tracker.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "tracker.sock")
 	server, err := NewGRPCServer(&GRPCConfig{SocketPath: socketPath})
 	if err != nil {
 		t.Fatalf("NewGRPCServer() error = %v", err)

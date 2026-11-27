@@ -23,6 +23,11 @@
 # bound, a non-root user, no network. The root filesystem is writable only
 # because `docker cp` cannot write into a read-only one.
 #
+# CUSTOMIZE (go-xkms, DS-8139): IN_IMAGE_EXPORT copies named outputs back to
+# the runner; the coverage shards need it. It is space-separated paths relative
+# to /src, copied to the same path under $PWD after the command succeeds; a
+# path the command did not produce fails the stage.
+#
 # IN_IMAGE_NETWORK=bridge gives the container a network, for the stages that
 # must reach one: `make deps-check` asks the module proxy for the newest
 # releases, and `make security` fetches the vulnerability databases. Only then
@@ -60,6 +65,9 @@
 #   12g, overrides) becomes --memory, and --memory-swap is set to the same
 #   size, so the stage gets no swap: a stage that outgrows it is OOM-killed and
 #   fails, instead of swapping the shared runner host. A 16g job slot gives 16g.
+#   CI_CGROUP_PARENT, a cgroup path the runner's environment sets (go-xkms
+#   #1877, ruling 289 (e)), becomes --cgroup-parent, so the sibling is charged
+#   to the runner's slice instead of the Docker daemon's root. Unset, no flag.
 # - Go's build and link scratch is on disk, not the 3 GB /tmp tmpfs (go-xkms
 #   #1733, 6d40166): `make coverage` links cgo test binaries in $WORK and filled
 #   /tmp (ENOSPC "final link failed") in 8 go-xkms Devcontainer jobs on
@@ -150,6 +158,12 @@ case $scratch in
   /*) ;;
   *) echo "IN_IMAGE_SCRATCH must be an absolute path: $scratch" >&2; exit 2 ;;
 esac
+read -r -a exports <<<"${IN_IMAGE_EXPORT:-}"
+for p in "${exports[@]}"; do
+  case /$p/ in
+    //* | */../*) echo "IN_IMAGE_EXPORT paths must be relative to /src with no ..: $p" >&2; exit 2 ;;
+  esac
+done
 args=(
   --name "$name"
   --cpus "$cpus"
@@ -184,6 +198,14 @@ args=(
   --env HOME=/tmp
   --env CI="${CI:-}"
 )
+cgroup_parent=${CI_CGROUP_PARENT:-}
+if [ -n "$cgroup_parent" ]; then
+  if ! [[ $cgroup_parent =~ ^/?[A-Za-z0-9_.@:-]+(/[A-Za-z0-9_.@:-]+)*$ ]] || [[ $cgroup_parent == *..* ]]; then
+    echo "CI_CGROUP_PARENT must be a cgroup path, e.g. runner.slice: $cgroup_parent" >&2
+    exit 2
+  fi
+  args+=(--cgroup-parent "$cgroup_parent")
+fi
 modcache=/tmp/gomodcache
 if [ "$cache" = on ]; then
   vols="${prefix}cache-${class}"
@@ -226,3 +248,7 @@ docker create "${args[@]}" "$image" sh -c "$guard; $*" >/dev/null
 tar -C "$PWD" --owner="$uid" --group="$uid" --numeric-owner -cf - . |
   docker cp -a - "$name:/src"
 docker start -a "$name"
+for p in "${exports[@]}"; do
+  mkdir -p "$PWD/$(dirname "$p")"
+  docker cp "$name:/src/$p" "$PWD/$p" || { echo "in-toolchain-image: IN_IMAGE_EXPORT path $p was not produced" >&2; exit 1; }
+done

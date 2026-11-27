@@ -32,6 +32,7 @@ import (
 	"time"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -94,6 +95,11 @@ type TokenIssuerParams struct {
 	// when set; nil falls back to an in-memory store (sessions then end on
 	// restart).
 	QRDBClient *qrdbsdk.Client
+
+	// NodeUsers, when set, is the embedded node the refresh re-check reads
+	// users through: the refresh route is public, so its request context
+	// carries no qrdb credentials (ruling 973). Nil reads through QRDBClient.
+	NodeUsers auth.NodeUserSource
 
 	// CallContext binds the refresh store's and user resolver's qrdb calls; nil uses the caller's context.
 	CallContext CallContextFunc
@@ -211,12 +217,16 @@ func BuildTokenIssuer(ctx context.Context, p TokenIssuerParams) (*token.Issuer, 
 		userResolver token.UserResolver
 	)
 	if p.QRDBClient != nil {
-		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV())
+		qs, storeErr := token.NewQRDBRefreshStore(p.QRDBClient.KV(), token.WithCallContext(token.CallContext(p.CallContext)))
 		if storeErr != nil {
 			return nil, &TokenIssuerConfigError{Err: storeErr}
 		}
-		refreshStore = bindRefreshStore(qs, p.CallContext)
-		userResolver = bindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
+		refreshStore = qs
+		if p.NodeUsers != nil {
+			userResolver = auth.NewQRDBUserResolver(auth.NewNodeUserClient(p.NodeUsers))
+		} else {
+			userResolver = bindUserResolver(auth.NewQRDBUserResolver(p.QRDBClient.Users()), p.CallContext)
+		}
 	} else {
 		refreshStore = token.NewMemoryRefreshStore()
 	}
@@ -340,6 +350,20 @@ func (a *WebAuthnTokenAdapter) GenerateTokenPair(ctx context.Context, user webau
 // already verified attestation, origin, RP ID, challenge, and user handle
 // before it calls Save, and a decorator cannot reach or relax any of those
 // checks.
+//
+// For an account's first credential the relying party persists the record
+// through its first-credential claim and calls the decorator's Save only
+// after that claim commits, so a ceremony fenced out at Commit, or one that
+// crashed before it, leaves no side effect. That Save delegates to the
+// wrapped store as usual (which then only confirms the committed record); if
+// it fails, the relying party deletes the credential through the decorator,
+// so the decorator must undo its own effect in Delete. A crash after the
+// claim commits, or a crashed claimer's claim rolled forward, leaves the
+// credential undecorated; the invite resume repairs it by repeating that
+// Save once possession is proven, so a decorator's Save for a first
+// credential must be idempotent. Once it has completed, the wrapped store
+// refuses a repeat with webauthn.ErrFirstCredentialSettled, and the decorator
+// must add no effect on that error.
 type WebAuthnCredentialStoreDecorator func(webauthn.CredentialStore) webauthn.CredentialStore
 
 // WebAuthnServiceParams configures BuildWebAuthnService.
@@ -351,6 +375,12 @@ type WebAuthnServiceParams struct {
 	// single source of identity for the stack. Required.
 	QRDBClient *qrdbsdk.Client
 
+	// NodeUsers, when set, is the embedded node the ceremonies look users
+	// up through: the ceremony routes are public, so their request context
+	// carries no qrdb credentials (ruling 973). Nil reads through
+	// QRDBClient.
+	NodeUsers auth.NodeUserSource
+
 	// DAOFactory builds the DAO the relying party persists credentials
 	// through. Required.
 	DAOFactory *qrdbsdk.DAOFactory
@@ -359,7 +389,11 @@ type WebAuthnServiceParams struct {
 	// Defaults to DefaultWebAuthnTenant.
 	TenantID string
 
-	// CallContext binds the relying party's qrdb user calls; nil uses the request context.
+	// CallContext binds the context the qrdb user store's calls run on
+	// (webauthn.QRDBUserStoreOptions.CallContext). Over an embedded node it
+	// is Node.ServiceContext: the store runs as the node's service
+	// principal, as the DAOs do, since a sign-up's registration/begin is
+	// anonymous. Nil keeps the caller's context.
 	CallContext webauthn.CallContext
 
 	// TokenIssuer mints verifiable session tokens on ceremony completion.
@@ -421,8 +455,15 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		tenantID = DefaultWebAuthnTenant
 	}
 
+	var users webauthn.QRDBUsers = p.QRDBClient.Users()
+	if p.NodeUsers != nil {
+		users = nodeWebAuthnUsers{
+			NodeUserClient: auth.NewNodeUserClient(p.NodeUsers),
+			creator:        users,
+		}
+	}
 	userStore, credStore, err := webauthn.NewQRDBUserStoreAdapter(webauthn.QRDBUserStoreOptions{
-		Users:       p.QRDBClient.Users(),
+		Users:       users,
 		DAOFactory:  p.DAOFactory,
 		TenantID:    tenantID,
 		CallContext: p.CallContext,
@@ -460,6 +501,24 @@ func BuildWebAuthnService(p WebAuthnServiceParams) (*webauthn.Service, error) {
 		return nil, &WebAuthnServiceBuildError{Err: err}
 	}
 	return svc, nil
+}
+
+// nodeWebAuthnUsers is the WebAuthn user store's view of an embedded node:
+// reads, updates and deletes run on the node's user service (the ceremony
+// routes are public, so their request context carries no qrdb credentials,
+// ruling 973), but CreateUser runs on the qrdb client, whose transport
+// checks users:create. The node's routing user service checks no
+// permission, so creating through it would let anonymous registration/begin
+// persist an account the service principal is not granted to create (CA
+// ruling 602).
+type nodeWebAuthnUsers struct {
+	*auth.NodeUserClient
+	creator webauthn.QRDBUsers
+}
+
+// CreateUser creates the user through the authorized qrdb client.
+func (u nodeWebAuthnUsers) CreateUser(ctx context.Context, req *qrdbtransport.CreateUserRequest) (*qrdbtransport.User, error) {
+	return u.creator.CreateUser(ctx, req)
 }
 
 // isNilCredentialStore reports whether cs carries no usable store. It
@@ -637,6 +696,14 @@ type HostConfig struct {
 	// back to an in-memory store.
 	QRDBClient *qrdbsdk.Client
 
+	// NodeUsers, when set, is the embedded node whose user service the
+	// public routes (WebAuthn ceremonies, invite redemption, the refresh
+	// re-check) look users up through; their request context carries no
+	// qrdb credentials, so QRDBClient's user calls are refused on a node
+	// that enforces authentication (ruling 973). Nil reads through
+	// QRDBClient.
+	NodeUsers auth.NodeUserSource
+
 	// DAOFactory builds the DAOs the WebAuthn relying party persists
 	// credentials through. The composition root supplies it from the host's
 	// datastore; nil leaves the WebAuthn routes unmounted.
@@ -763,6 +830,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			AccessTTL:    session.AccessTTL,
 			RefreshTTL:   session.RefreshTTL,
 			QRDBClient:   hc.QRDBClient,
+			NodeUsers:    hc.NodeUsers,
 			CallContext:  CallContextFunc(hc.ServiceCallContext),
 			Logger:       logger,
 		})
@@ -813,6 +881,7 @@ func NewHostServer(ctx context.Context, hc *HostConfig) (*Server, error) {
 			svc, waErr := BuildWebAuthnService(WebAuthnServiceParams{
 				Config:                   hc.WebAuthn,
 				QRDBClient:               hc.QRDBClient,
+				NodeUsers:                hc.NodeUsers,
 				DAOFactory:               hc.DAOFactory,
 				TenantID:                 tenantID,
 				TokenIssuer:              cfg.TokenIssuer,

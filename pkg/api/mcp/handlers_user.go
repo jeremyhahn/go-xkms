@@ -119,6 +119,10 @@ func mapUserError(err error) error {
 	if errors.Is(err, ErrUsernameRequired) || errors.Is(err, xkms.ErrEmailRequired) {
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
 	}
+	// An invited account outside the system tenant is refused by policy.
+	if errors.Is(err, xkms.ErrInviteUnusable) {
+		return &KeyOpError{Code: ErrCodeForbidden, Err: err}
+	}
 
 	var notFound *qrdbsdk.UserNotFoundError
 	if errors.As(err, &notFound) {

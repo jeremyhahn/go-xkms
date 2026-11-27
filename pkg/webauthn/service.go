@@ -14,10 +14,12 @@
 package webauthn
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -173,6 +175,14 @@ func NewService(params ServiceParams) (*Service, error) {
 // credential through this unauthenticated entry point is the hole
 // go-xkms#1294 part B closes. Before that ruling this method enrolled such
 // an account's first passkey with no proof of possession at all.
+//
+// Over an enforcing embedded node anonymous public registration is refused
+// (CA ruling 602): the store's service principal holds no users:create, so
+// the implicit Create is denied and this method answers
+// ErrRegistrationRefused (HTTP 403) having persisted nothing. It stays
+// refused pending the owner's decision on a pending-account lifecycle
+// (go-xkms #2202), because a Create here makes a durable account before any
+// credential is verified.
 func (s *Service) BeginRegistration(ctx context.Context, email, displayName string) (*protocol.CredentialCreation, string, error) {
 	if !s.configured {
 		return nil, "", ErrNotConfigured
@@ -191,6 +201,13 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 	}
 	user, err := s.users.Create(ctx, email, displayName)
 	if err != nil {
+		// Over an enforcing embedded node the store's principal holds no
+		// users:create (CA ruling 602, go-xkms #2202): the refusal is the
+		// documented registration refusal, never a server fault.
+		var denied *qrdbsdk.PermissionDeniedError
+		if errors.As(err, &denied) {
+			return nil, "", ErrRegistrationRefused
+		}
 		return nil, "", WrapError("create user", err)
 	}
 
@@ -204,14 +221,16 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 
 	// beginRegistrationFor also checks account standing — which is how
 	// public registration created accounts as active from the start.
-	return s.beginRegistrationFor(ctx, user, existingCreds)
+	return s.beginRegistrationFor(ctx, user, existingCreds, purposeRegistration)
 }
 
 // BeginInviteRegistration opens a WebAuthn registration ceremony for a
 // PENDING account, authorized by an out-of-band invitation the caller has
 // already validated (pkg/xkms's BeginInviteRegistration looks up the
-// invitation and resolves email from the account it names — never from
-// caller input — before calling this).
+// invitation and passes the user handle of the account it names — never
+// caller input — before calling this). The account is resolved by that
+// handle, never by an email lookup: an email can name another account, and
+// the invitation authorizes only the one it names.
 //
 // This is the ONLY unauthenticated entry point that may enroll the first
 // credential of an account that already existed before the call
@@ -222,17 +241,46 @@ func (s *Service) BeginRegistration(ctx context.Context, email, displayName stri
 // already holds a credential, all get the same ErrRegistrationRefused a
 // public BeginRegistration refusal carries, so this cannot be used to add a
 // second credential or to re-run activation.
-func (s *Service) BeginInviteRegistration(ctx context.Context, email string) (*protocol.CredentialCreation, string, error) {
+func (s *Service) BeginInviteRegistration(ctx context.Context, userHandle []byte) (*protocol.CredentialCreation, string, error) {
 	if !s.configured {
 		return nil, "", ErrNotConfigured
 	}
-	user, err := s.users.GetByEmail(ctx, email)
+	if len(userHandle) == 0 {
+		return nil, "", ErrRegistrationRefused
+	}
+	user, err := s.users.GetByID(ctx, userHandle)
 	if err != nil {
 		if IsUserNotFound(err) {
 			return nil, "", ErrRegistrationRefused
 		}
-		return nil, "", WrapError("get user by email", err)
+		return nil, "", WrapError("get user", err)
 	}
+	return s.beginInviteRegistrationFor(ctx, user)
+}
+
+// BeginInviteRegistrationForUser starts the invite enrolment ceremony for
+// the account whose WebAuthn handle is userHandle, resolved by id in the
+// tenant the caller bound on ctx (a validated invite's). Unlike
+// BeginInviteRegistration it never re-resolves an email in the store's
+// configured scope, which would miss a non-system invite's account or find
+// another tenant's account with the same email.
+func (s *Service) BeginInviteRegistrationForUser(ctx context.Context, userHandle []byte) (*protocol.CredentialCreation, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	user, err := s.users.GetByID(ctx, userHandle)
+	if err != nil {
+		if IsUserNotFound(err) {
+			return nil, "", ErrRegistrationRefused
+		}
+		return nil, "", WrapError("get user by id", err)
+	}
+	return s.beginInviteRegistrationFor(ctx, user)
+}
+
+// beginInviteRegistrationFor starts the ceremony for a pending account
+// that holds no credential yet.
+func (s *Service) beginInviteRegistrationFor(ctx context.Context, user User) (*protocol.CredentialCreation, string, error) {
 	if user.Lifecycle() != qrdbsdk.LifecyclePending {
 		return nil, "", ErrRegistrationRefused
 	}
@@ -244,7 +292,7 @@ func (s *Service) BeginInviteRegistration(ctx context.Context, email string) (*p
 		return nil, "", ErrRegistrationRefused
 	}
 
-	return s.runBeginRegistration(ctx, user, nil)
+	return s.runBeginRegistration(ctx, user, nil, purposeInvite)
 }
 
 // BeginAddCredential starts a registration ceremony that adds a passkey to
@@ -278,7 +326,66 @@ func (s *Service) BeginAddCredential(ctx context.Context, acct SessionAccount) (
 	if err != nil {
 		return nil, "", WrapError("get credentials", err)
 	}
-	return s.beginRegistrationFor(ctx, user, existingCreds)
+	return s.beginRegistrationFor(ctx, user, existingCreds, purposeAddCredential)
+}
+
+// sessionPurpose names the authorization a registration ceremony was opened
+// under. It is written into the server-side session record when the ceremony
+// begins and checked when it finishes, so a session opened by one entry point
+// cannot be finished through another: an invite ceremony's session never
+// completes through the public registration finish (which would enrol a
+// further credential once the account is active and mint tokens without the
+// first credential being used), and an ordinary session never completes
+// through the invite finish.
+type sessionPurpose string
+
+const (
+	// purposeRegistration: public BeginRegistration of a new account.
+	purposeRegistration sessionPurpose = "registration"
+	// purposeAddCredential: BeginAddCredential for an authenticated
+	// session's account; the session also records that account.
+	purposeAddCredential sessionPurpose = "add_credential"
+	// purposeInvite: BeginInviteRegistration for an invited pending account.
+	purposeInvite sessionPurpose = "invite"
+)
+
+// The purpose and bound account are kept in the session's Extensions.Extra,
+// the map go-webauthn persists verbatim for the relying party's own use,
+// under keys no WebAuthn extension uses. SessionData never leaves the
+// server, so the client cannot set them; both are strings so a store that
+// serializes the session round-trips them unchanged.
+const (
+	sessionPurposeKey = "xkms_session_purpose"
+	sessionAccountKey = "xkms_session_account"
+)
+
+// bindSessionPurpose records purpose, and for add-a-passkey the account the
+// authenticated caller belongs to, in the session record.
+func bindSessionPurpose(session *webauthn.SessionData, purpose sessionPurpose, account []byte) {
+	if session.Extensions.Extra == nil {
+		session.Extensions.Extra = map[string]any{}
+	}
+	session.Extensions.Extra[sessionPurposeKey] = string(purpose)
+	if purpose == purposeAddCredential {
+		session.Extensions.Extra[sessionAccountKey] = base64.RawURLEncoding.EncodeToString(account)
+	}
+}
+
+// sessionPurposeAllows reports whether the session was opened under one of
+// allowed, and, for an add-a-passkey session, whether the account it was
+// bound to is user. A session without a recorded purpose (a login session,
+// or one not opened by a registration begin) is never allowed.
+func sessionPurposeAllows(session *webauthn.SessionData, user User, allowed ...sessionPurpose) bool {
+	got, _ := session.Extensions.Extra[sessionPurposeKey].(string)
+	purpose := sessionPurpose(got)
+	if purpose == "" || !slices.Contains(allowed, purpose) {
+		return false
+	}
+	if purpose == purposeAddCredential {
+		bound, _ := session.Extensions.Extra[sessionAccountKey].(string)
+		return bound != "" && bound == base64.RawURLEncoding.EncodeToString(user.WebAuthnID())
+	}
+	return true
 }
 
 // beginRegistrationFor runs the registration ceremony for an already
@@ -286,12 +393,12 @@ func (s *Service) BeginAddCredential(ctx context.Context, acct SessionAccount) (
 // that is not active is refused with ErrRegistrationRefused, the same answer
 // every other refused enrolment gets, so the refusal does not reveal the
 // account's state (go-xkms#1298).
-func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingCreds []*Credential) (*protocol.CredentialCreation, string, error) {
+func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingCreds []*Credential, purpose sessionPurpose) (*protocol.CredentialCreation, string, error) {
 	if err := checkLifecycle(user); err != nil {
 		s.logStandingRefusal("begin registration", err)
 		return nil, "", ErrRegistrationRefused
 	}
-	return s.runBeginRegistration(ctx, user, existingCreds)
+	return s.runBeginRegistration(ctx, user, existingCreds, purpose)
 }
 
 // runBeginRegistration starts the go-webauthn ceremony for an already
@@ -300,8 +407,9 @@ func (s *Service) beginRegistrationFor(ctx context.Context, user User, existingC
 // or credential-count policy of its own — every caller decides that before
 // reaching here — because BeginInviteRegistration's policy (pending, zero
 // credentials) and beginRegistrationFor's (active) are deliberately
-// different gates in front of the identical ceremony mechanics.
-func (s *Service) runBeginRegistration(ctx context.Context, user User, existingCreds []*Credential) (*protocol.CredentialCreation, string, error) {
+// different gates in front of the identical ceremony mechanics. The session
+// records purpose, which the matching finish entry point requires.
+func (s *Service) runBeginRegistration(ctx context.Context, user User, existingCreds []*Credential, purpose sessionPurpose) (*protocol.CredentialCreation, string, error) {
 	excludeList := make([]protocol.CredentialDescriptor, len(existingCreds))
 	for i, cred := range existingCreds {
 		excludeList[i] = protocol.CredentialDescriptor{
@@ -317,6 +425,7 @@ func (s *Service) runBeginRegistration(ctx context.Context, user User, existingC
 	if err != nil {
 		return nil, "", WrapError("begin registration", err)
 	}
+	bindSessionPurpose(session, purpose, user.WebAuthnID())
 
 	sessionID, err := s.sessions.Save(ctx, session)
 	if err != nil {
@@ -364,7 +473,7 @@ func (s *Service) FinishRegistrationPair(ctx context.Context, sessionID string, 
 // The account must still be active: it may have left that state since the
 // ceremony began.
 func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
-	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+	return s.runFinishRegistration(ctx, sessionID, response, false, []sessionPurpose{purposeRegistration, purposeAddCredential}, func(user User) error {
 		if err := checkLifecycle(user); err != nil {
 			s.logStandingRefusal("finish registration", err)
 			return ErrRegistrationRefused
@@ -387,13 +496,167 @@ func (s *Service) finishRegistrationUser(ctx context.Context, sessionID string, 
 // FinishInviteRegistration) leaves the invitation intact and the token
 // retryable rather than a redeemed invite pointing at a still-pending
 // account with no way back in.
-func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData) (User, error) {
-	return s.runFinishRegistration(ctx, sessionID, response, func(user User) error {
+//
+// invitedHandle is the user handle of the account the caller's invitation
+// names: a session begun for any other account is refused with
+// ErrRegistrationRefused before a credential is created or stored.
+func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string, invitedHandle []byte, response *protocol.ParsedCredentialCreationData) (User, error) {
+	return s.runFinishRegistration(ctx, sessionID, response, true, []sessionPurpose{purposeInvite}, func(user User) error {
+		// The session must belong to the account the invitation names. The
+		// check runs before the credential is created or stored: a session
+		// begun for another invitation's account enrols nothing, so both
+		// accounts can still redeem their own invitations.
+		if len(invitedHandle) == 0 || !bytes.Equal(user.WebAuthnID(), invitedHandle) {
+			return ErrRegistrationRefused
+		}
 		if user.Lifecycle() != qrdbsdk.LifecyclePending {
+			return ErrRegistrationRefused
+		}
+		// An account that already holds its invite credential resumes
+		// through BeginInviteResume; no session (a resume session
+		// included) enrols a second one.
+		existing, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+		if err != nil {
+			return WrapError("get credentials", err)
+		}
+		if len(existing) > 0 {
 			return ErrRegistrationRefused
 		}
 		return nil
 	})
+}
+
+// ErrInviteNotResumable reports that BeginInviteResume found no persisted
+// invite enrolment to resume; the caller runs the normal invite ceremony.
+var ErrInviteNotResumable = errors.New("webauthn: no persisted invite enrolment to resume")
+
+// resumableInviteCredential returns the account named by invitedHandle and
+// the one credential enrolled under its invitation, when the account is
+// still pending and holds exactly one credential, stored no earlier than
+// issuedAt (the invitation's issue time). Otherwise it returns
+// ErrInviteNotResumable.
+func (s *Service) resumableInviteCredential(ctx context.Context, invitedHandle []byte, issuedAt time.Time) (User, *Credential, error) {
+	if len(invitedHandle) == 0 {
+		return nil, nil, ErrInviteNotResumable
+	}
+	user, err := s.users.GetByID(ctx, invitedHandle)
+	if err != nil {
+		if IsUserNotFound(err) {
+			return nil, nil, ErrInviteNotResumable
+		}
+		return nil, nil, WrapError("get user", err)
+	}
+	if user.Lifecycle() != qrdbsdk.LifecyclePending {
+		return nil, nil, ErrInviteNotResumable
+	}
+	creds, err := s.creds.GetByUserID(ctx, user.WebAuthnID())
+	if err != nil {
+		return nil, nil, WrapError("get credentials", err)
+	}
+	if len(creds) != 1 {
+		return nil, nil, ErrInviteNotResumable
+	}
+	stored := creds[0]
+	if !bytes.Equal(stored.UserID, invitedHandle) || stored.CreatedAt.Before(issuedAt) || len(stored.ID) == 0 {
+		return nil, nil, ErrInviteNotResumable
+	}
+	return user, stored, nil
+}
+
+// BeginInviteResume starts the recovery of an invite enrolment whose
+// credential was stored by FinishInviteRegistration but whose account
+// activation then failed. The invitation alone, or the stored credential's
+// ID and public key (public data), prove nothing, so the resume is a
+// possession proof: a fresh WebAuthn get ceremony whose only allowed
+// credential is the one enrolled under the invitation, in a new bounded
+// session. It returns ErrInviteNotResumable unless resumableInviteCredential
+// holds; the caller then runs the normal invite ceremony.
+func (s *Service) BeginInviteResume(ctx context.Context, invitedHandle []byte, issuedAt time.Time) (*protocol.CredentialAssertion, string, error) {
+	if !s.configured {
+		return nil, "", ErrNotConfigured
+	}
+	user, stored, err := s.resumableInviteCredential(ctx, invitedHandle, issuedAt)
+	if err != nil {
+		return nil, "", err
+	}
+	options, session, err := s.webauthn.BeginLogin(user, webauthn.WithAllowedCredentials([]protocol.CredentialDescriptor{{
+		Type:         protocol.PublicKeyCredentialType,
+		CredentialID: stored.ID,
+	}}))
+	if err != nil {
+		return nil, "", WrapError("begin invite resume", err)
+	}
+	return s.saveLoginSession(ctx, options, session)
+}
+
+// FinishInviteResume verifies the assertion answering a BeginInviteResume
+// ceremony with go-webauthn's login validation (signature, challenge,
+// origin, RP ID, sign count) against the enrolled credential, and returns
+// the invited account only for a valid assertion by that credential over
+// this session's challenge. The session is claimed first, so an assertion
+// verifies at most once. Nothing about the account's standing changes here:
+// the caller activates the account and then redeems the invitation.
+func (s *Service) FinishInviteResume(ctx context.Context, sessionID string, invitedHandle []byte, issuedAt time.Time, response *protocol.ParsedCredentialAssertionData) (User, error) {
+	if !s.configured {
+		return nil, ErrNotConfigured
+	}
+	session, err := s.sessions.Take(ctx, sessionID)
+	if err != nil {
+		return nil, sessionClaimError("take invite resume session", err)
+	}
+	if response == nil {
+		return nil, NewVerificationError("validate invite resume", nil)
+	}
+	user, stored, err := s.resumableInviteCredential(ctx, invitedHandle, issuedAt)
+	if err != nil {
+		return nil, err
+	}
+	// Only a resume session begun for this account and its one enrolled
+	// credential: a registration session carries credential parameters, a
+	// login or another account's session another handle or allow list.
+	if len(session.CredParams) != 0 ||
+		!bytes.Equal(session.UserID, invitedHandle) ||
+		len(session.AllowedCredentialIDs) != 1 ||
+		!bytes.Equal(session.AllowedCredentialIDs[0], stored.ID) {
+		return nil, NewVerificationError("validate invite resume", nil)
+	}
+	credential, err := s.webauthn.ValidateLogin(user, *session, response)
+	if err != nil {
+		return nil, verificationError("validate invite resume", err)
+	}
+	if !bytes.Equal(credential.ID, stored.ID) {
+		return nil, NewVerificationError("validate invite resume", nil)
+	}
+	// Possession is proven: repair a first credential a crash left
+	// undecorated before the resume records its use.
+	if err := s.reconcileFirstCredential(ctx, stored); err != nil {
+		return nil, err
+	}
+	if err := s.recordAssertion(ctx, user, credential, response); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// ClaimInviteFirstCredential takes the invited account's first-credential
+// claim for an activation method that stores no passkey (PIV): the same
+// claim an invite registration finish stores its passkey under, so of the
+// two anonymous activation methods only one ever enrols the account. A claim
+// already held, pending or committed, is refused with ErrRegistrationRefused.
+// The caller commits the claim (with a nil credential) once its activation
+// commits, or releases it if the activation fails.
+func (s *Service) ClaimInviteFirstCredential(ctx context.Context, invitedHandle []byte) (FirstCredentialClaim, error) {
+	if !s.configured {
+		return nil, ErrNotConfigured
+	}
+	claim, err := s.creds.ClaimFirstCredential(ctx, invitedHandle)
+	if errors.Is(err, ErrFirstCredentialClaimed) {
+		return nil, ErrRegistrationRefused
+	}
+	if err != nil {
+		return nil, WrapError("claim first credential", err)
+	}
+	return claim, nil
 }
 
 // runFinishRegistration claims the ceremony session, resolves the account it
@@ -404,7 +667,15 @@ func (s *Service) FinishInviteRegistration(ctx context.Context, sessionID string
 // account must still be pending): everything else about completing a
 // WebAuthn registration ceremony is identical, and duplicating it per caller
 // is how the two could silently drift.
-func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, accept func(User) error) (User, error) {
+//
+// firstCredential marks a ceremony that may only store the account's FIRST
+// credential (an invite finish). accept's zero-credential check alone cannot
+// arbitrate two such finishes begun in different sessions: both can read
+// zero credentials before either saves. So the credential is stored only
+// under a won CredentialStore.ClaimFirstCredential, a create-if-absent in the
+// shared store; the loser is refused with ErrRegistrationRefused and stores
+// nothing, and a winner whose save fails releases the claim.
+func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, response *protocol.ParsedCredentialCreationData, firstCredential bool, purposes []sessionPurpose, accept func(User) error) (User, error) {
 	if !s.configured {
 		return nil, ErrNotConfigured
 	}
@@ -423,6 +694,13 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 		return nil, WrapError("get user", err)
 	}
 
+	// The session must have been opened by a begin this finish serves (and
+	// an add-a-passkey session for this very account). The session is
+	// already claimed, so a refused one cannot be retried elsewhere.
+	if !sessionPurposeAllows(session, user, purposes...) {
+		return nil, ErrRegistrationRefused
+	}
+
 	if err := accept(user); err != nil {
 		return nil, err
 	}
@@ -435,8 +713,22 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 
 	// Convert and store credential
 	cred := FromWebAuthnCredential(user.WebAuthnID(), credential)
-	if err := s.creds.Save(ctx, cred); err != nil {
-		return nil, WrapError("save credential", err)
+	var claim FirstCredentialClaim
+	if firstCredential {
+		claim, err = s.creds.ClaimFirstCredential(ctx, user.WebAuthnID())
+		if errors.Is(err, ErrFirstCredentialClaimed) {
+			return nil, ErrRegistrationRefused
+		}
+		if err != nil {
+			return nil, WrapError("claim first credential", err)
+		}
+	}
+	if claim == nil {
+		if err := s.creds.Save(ctx, cred); err != nil {
+			return nil, WrapError("save credential", err)
+		}
+	} else if err := s.saveFirstCredential(ctx, claim, cred); err != nil {
+		return nil, err
 	}
 
 	// Add credential to user
@@ -446,6 +738,70 @@ func (s *Service) runFinishRegistration(ctx context.Context, sessionID string, r
 	}
 
 	return user, nil
+}
+
+// saveFirstCredential stores cred, an account's first credential, under
+// claim. The claim persists it fenced by its token and Commit makes it the
+// account's; only then is the configured store's Save called, under
+// withCommittedFirstCredential, so a decorator's side effects (a composer's
+// auth factor) apply only to a credential the account keeps. A ceremony
+// fenced out at Commit, or one that crashes before it, leaves none. If that
+// decorated Save fails, the credential is deleted through the configured
+// store, so the decorator undoes its own effect and the account may enrol
+// again. Once it succeeds the claim is settled. A crash between Commit and
+// the settle leaves the claim unsettled; the invite resume repeats the
+// decorated Save (reconcileFirstCredential), so a decorator's Save for a
+// first credential must be idempotent.
+func (s *Service) saveFirstCredential(ctx context.Context, claim FirstCredentialClaim, cred *Credential) error {
+	if err := claim.Save(ctx, cred); err != nil {
+		if relErr := claim.Release(context.WithoutCancel(ctx)); relErr != nil {
+			s.logger.Error("release first-credential claim after a failed save", "error", relErr)
+		}
+		return WrapError("save credential", err)
+	}
+	// The claim's lease ran out and another ceremony recovered it: Commit
+	// removed this credential, so the account keeps only the recoverer's.
+	if err := claim.Commit(context.WithoutCancel(ctx), cred); err != nil {
+		if errors.Is(err, ErrFirstCredentialClaimed) {
+			return ErrRegistrationRefused
+		}
+		return WrapError("commit first credential", err)
+	}
+	if err := s.creds.Save(withCommittedFirstCredential(ctx), cred); err != nil {
+		// A concurrent resume already completed and settled it.
+		if errors.Is(err, ErrFirstCredentialSettled) {
+			return nil
+		}
+		if delErr := s.creds.Delete(context.WithoutCancel(ctx), cred.ID); delErr != nil {
+			s.logger.Error("delete first credential after a failed decorated save", "error", delErr)
+		}
+		return WrapError("save credential", err)
+	}
+	if err := s.creds.SettleFirstCredential(context.WithoutCancel(ctx), cred.UserID); err != nil {
+		// The credential and its decorator effect are in place; the claim
+		// stays unsettled and a resume repeats the idempotent Save.
+		s.logger.Error("settle first credential", "error", err)
+	}
+	return nil
+}
+
+// reconcileFirstCredential completes the decorated Save of stored, an
+// account's first credential, when a crash left its committed claim
+// unsettled (after Commit, or rolled forward from a crashed claimer). A
+// settled credential is not decorated again. Any other failure fails the
+// resume and keeps the credential, so a later resume retries.
+func (s *Service) reconcileFirstCredential(ctx context.Context, stored *Credential) error {
+	err := s.creds.Save(withCommittedFirstCredential(ctx), stored)
+	if errors.Is(err, ErrFirstCredentialSettled) {
+		return nil
+	}
+	if err != nil {
+		return WrapError("reconcile first credential", err)
+	}
+	if err := s.creds.SettleFirstCredential(ctx, stored.UserID); err != nil {
+		return WrapError("settle first credential", err)
+	}
+	return nil
 }
 
 // BeginLogin starts the WebAuthn authentication ceremony.
@@ -713,14 +1069,23 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 		return nil, NewVerificationError("validate login", nil)
 	}
 
-	// Update credential sign counter
+	if err := s.recordAssertion(ctx, user, credential, response); err != nil {
+		return nil, err
+	}
+	return user, nil
+}
+
+// recordAssertion stores what a verified assertion tells about its
+// credential: the sign counter (reporting a clone warning) and last use.
+// Login and the invite resume share it.
+func (s *Service) recordAssertion(ctx context.Context, user User, credential *webauthn.Credential, response *protocol.ParsedCredentialAssertionData) error {
 	cred, err := s.creds.GetByCredentialID(ctx, credential.ID)
 	if err != nil {
-		return nil, WrapError("get credential for update", err)
+		return WrapError("get credential for update", err)
 	}
 	if credential.Authenticator.CloneWarning {
 		if err := s.reportCloneWarning(ctx, user, cred, response.Response.AuthenticatorData.Counter); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	cred.Authenticator.SignCount = credential.Authenticator.SignCount
@@ -728,16 +1093,15 @@ func (s *Service) finishLoginUser(ctx context.Context, sessionID string, respons
 	cred.LastUsedAt = time.Now().UTC()
 
 	if err := s.creds.Update(ctx, cred); err != nil {
-		return nil, WrapError("update credential", err)
+		return WrapError("update credential", err)
 	}
 
 	// Update user's credential
 	user.UpdateCredential(cred)
 	if err := s.users.Save(ctx, user); err != nil {
-		return nil, WrapError("save user", err)
+		return WrapError("save user", err)
 	}
-
-	return user, nil
+	return nil
 }
 
 // logStandingRefusal records, for the operator, why a ceremony was refused
@@ -816,6 +1180,35 @@ func (s *Service) DeleteUser(ctx context.Context, userID []byte) error {
 
 	// Delete user
 	return s.users.Delete(ctx, userID)
+}
+
+// UserStoreTenant is the tenant the relying party resolves accounts in: the
+// configured tenant of its user store. A store that names none is a
+// *UserStoreTenantUnsetError, never the system tenant (ruling 1041 (1)).
+func (s *Service) UserStoreTenant() (string, error) {
+	return userStoreTenant(s.users)
+}
+
+// UserStoreTenantUnsetError reports a user store that names no tenant. Such
+// a store is refused, never read as the system tenant: the fallback reopened
+// the cross-tenant invite hole (ruling 1041 (1)).
+type UserStoreTenantUnsetError struct{}
+
+func (*UserStoreTenantUnsetError) Error() string {
+	return "webauthn: user store names no tenant"
+}
+
+// userStoreTenant returns the tenant users resolves accounts in, or a
+// *UserStoreTenantUnsetError when users is nil or names none.
+func userStoreTenant(users UserStore) (string, error) {
+	if users == nil {
+		return "", &UserStoreTenantUnsetError{}
+	}
+	tenant := users.TenantID()
+	if tenant == "" {
+		return "", &UserStoreTenantUnsetError{}
+	}
+	return tenant, nil
 }
 
 // Config returns the service configuration.

@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/jeremyhahn/go-xkms/xkey/internal/testsupport"
 )
 
 func testSSHProxyClient(t *testing.T) *Client {
@@ -35,7 +37,7 @@ func testSSHProxyClient(t *testing.T) *Client {
 }
 
 func TestNewSSHProxy_Success(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	proxy, err := NewSSHProxy(socketPath, client, testLogger())
@@ -57,7 +59,7 @@ func TestNewSSHProxy_EmptySocketPath(t *testing.T) {
 }
 
 func TestNewSSHProxy_NilClient(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 
 	_, err := NewSSHProxy(socketPath, nil, testLogger())
 	if !errors.Is(err, ErrNilClient) {
@@ -66,7 +68,7 @@ func TestNewSSHProxy_NilClient(t *testing.T) {
 }
 
 func TestNewSSHProxy_NilLogger(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	_, err := NewSSHProxy(socketPath, client, nil)
@@ -76,7 +78,7 @@ func TestNewSSHProxy_NilLogger(t *testing.T) {
 }
 
 func TestSSHProxy_StartStop(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	proxy, err := NewSSHProxy(socketPath, client, testLogger())
@@ -128,7 +130,7 @@ func TestSSHProxy_StartStop(t *testing.T) {
 }
 
 func TestSSHProxy_DoubleStart(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	proxy, _ := NewSSHProxy(socketPath, client, testLogger())
@@ -144,7 +146,7 @@ func TestSSHProxy_DoubleStart(t *testing.T) {
 }
 
 func TestSSHProxy_StopWithoutStart(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	proxy, _ := NewSSHProxy(socketPath, client, testLogger())
@@ -156,7 +158,7 @@ func TestSSHProxy_StopWithoutStart(t *testing.T) {
 }
 
 func TestSSHProxy_CreatesSocketDirectory(t *testing.T) {
-	sockDir := filepath.Join(t.TempDir(), "sub", "deep")
+	sockDir := filepath.Join(testsupport.SocketDir(t), "s", "d")
 	socketPath := filepath.Join(sockDir, "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
@@ -176,7 +178,7 @@ func TestSSHProxy_CreatesSocketDirectory(t *testing.T) {
 }
 
 func TestSSHProxy_DetectsExistingSocket(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	// Start first proxy.
@@ -248,7 +250,7 @@ func (c *erroringConn) Close() error { return c.closeErr }
 // a tracked in-flight connection is surfaced through Stop's return value
 // rather than being silently discarded.
 func TestSSHProxy_Stop_JoinsConnectionCloseError(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 	client := testSSHProxyClient(t)
 
 	proxy, err := NewSSHProxy(socketPath, client, testLogger())
@@ -271,7 +273,7 @@ func TestSSHProxy_Stop_JoinsConnectionCloseError(t *testing.T) {
 }
 
 func TestSSHProxy_RemovesStaleSocket(t *testing.T) {
-	socketPath := filepath.Join(t.TempDir(), "ssh-agent.sock")
+	socketPath := filepath.Join(testsupport.SocketDir(t), "ssh-agent.sock")
 
 	// Create a stale socket file (not a real listener).
 	if err := os.WriteFile(socketPath, []byte("stale"), 0600); err != nil {

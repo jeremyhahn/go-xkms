@@ -12,12 +12,12 @@
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
 // Package apimodule registers go-xkms's hardware crypto + identity plane into
-// go-qrdb's unified multi-protocol server as a qrdbsdk.ServiceModule (the
+// go-qrdb's unified multi-protocol server as a qrdbserver.ServiceModule (the
 // Phase 3 seam of plans/unified-api-server-2026-08-14.md). The stack-wide
 // convention is one module per provider project, named after the project:
 // go-xkms exports this Module ("xkms"); go-quicbaas and go-trusted-platform
 // export their own, and any daemon hosting an embedded qrdb node composes the
-// modules it needs via qrdbsdk.WithModule.
+// modules it needs via qrdbserver.WithModule.
 //
 // Module carries the WHOLESALE KeystoreService gRPC surface — the same
 // pb.KeystoreServiceServer implementation every legacy transport drives — so
@@ -47,11 +47,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	grpcapi "github.com/jeremyhahn/go-xkms/pkg/api/grpc"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -141,6 +143,19 @@ func WithQRDBClient(resolve QRDBClientResolver) Option {
 func WithServiceContext(bind qrdbstorage.CallContext) Option {
 	return func(m *Module) {
 		m.serviceContext = bind
+	}
+}
+
+// WithNodeUsers wires the host's embedded go-qrdb node as the user source
+// the module's public routes (WebAuthn ceremonies, invite redemption, the
+// refresh re-check) look users up through. Those routes' request context
+// carries no qrdb credentials, so on a node that enforces authentication the
+// qrdb client's user calls are refused there (ruling 973). A host that
+// embeds a node passes it (*node.Node satisfies auth.NodeUserSource); a
+// host that dials a remote qrdb leaves it unset.
+func WithNodeUsers(node auth.NodeUserSource) Option {
+	return func(m *Module) {
+		m.nodeUsers = node
 	}
 }
 
@@ -270,7 +285,7 @@ func WithTenantStores(resolve TenantStoresResolver) Option {
 }
 
 // WithPINBackend supplies the host's PIN backend (the one its qrdb node was
-// built with, qrdbsdk.WithPINBackend). Its user PIN opens a tenant's
+// built with, qrdbserver.WithPINBackend). Its user PIN opens a tenant's
 // Password Manager session (/api/v1/password-vault/unlock), so without it tenant
 // password stores stay locked; it also backs the /api/v1/pin/* routes.
 func WithPINBackend(pin qrdbsdk.PINBackend) Option {
@@ -342,13 +357,16 @@ func WithVTPM(cfg *vtpm.Config) Option {
 // pkg/server, which composes the service and tears it down — the module only
 // exposes it and must not double-manage those resources.
 type Module struct {
-	qrdbsdk.BaseModule
+	qrdbserver.BaseModule
 
 	resolve           ServiceResolver
 	resolveSSH        SSHClientResolver
 	resolveREST       RESTResolver
 	resolveMCP        MCPResolver
 	resolveQRDBClient QRDBClientResolver
+
+	// nodeUsers is WithNodeUsers' embedded node; nil without one.
+	nodeUsers auth.NodeUserSource
 
 	// serviceContext is WithServiceContext's binder, applied to every
 	// datastore the module opens (openDatastore).
@@ -396,9 +414,12 @@ type Module struct {
 
 	// selfREST memoizes the module's self-built REST surface
 	// (rest.NewHostServer), built the first time restServer() is called
-	// with no WithRESTServer resolver configured. Lock-free: concurrent
-	// first calls may both construct, and CompareAndSwap keeps exactly one.
-	selfREST atomic.Pointer[rest.Server]
+	// with no WithRESTServer resolver configured. Loads are lock-free;
+	// selfRESTMu is held across the empty check, the build and the publish,
+	// so concurrent first calls build exactly one server and the build's
+	// writes to the shared XKMSService never run twice at once.
+	selfREST   atomic.Pointer[rest.Server]
+	selfRESTMu sync.Mutex
 
 	// stores memoizes the host composition (hostStores). Unlike the
 	// service and REST memos it must be built exactly once -- building the
@@ -416,7 +437,7 @@ type Module struct {
 }
 
 // Compile-time interface check.
-var _ qrdbsdk.ServiceModule = (*Module)(nil)
+var _ qrdbserver.ServiceModule = (*Module)(nil)
 
 // NewModule builds go-xkms's ServiceModule around the XKMSService resolver.
 // A nil resolver is a composition error and fails construction.

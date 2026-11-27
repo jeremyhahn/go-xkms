@@ -68,6 +68,8 @@ func writeInviteError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, xkms.ErrInviteUnusable):
 		writeInviteUnusable(w)
+	case errors.Is(err, xkms.ErrInviteTenantNotServed):
+		writeError(w, err, http.StatusForbidden)
 	case errors.As(err, &certDecode):
 		writeError(w, err, http.StatusBadRequest)
 	case errors.As(err, &certRejected):

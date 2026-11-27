@@ -51,7 +51,7 @@ func (r *recordingRefreshStore) RevokeFamily(ctx context.Context, _ string) erro
 	return nil
 }
 
-func (r *recordingRefreshStore) RevokeBySubject(ctx context.Context, _ string) error {
+func (r *recordingRefreshStore) RevokeBySubject(ctx context.Context, _, _ string) error {
 	r.mark(ctx)
 	return nil
 }
@@ -83,7 +83,7 @@ func TestTokenStores_RunOnServiceCallContext(t *testing.T) {
 	if err := store.RevokeFamily(ctx, "f"); err != nil {
 		t.Fatalf("RevokeFamily: %v", err)
 	}
-	if err := store.RevokeBySubject(ctx, "s"); err != nil {
+	if err := store.RevokeBySubject(ctx, "", "s"); err != nil {
 		t.Fatalf("RevokeBySubject: %v", err)
 	}
 	if len(inner.bound) != 5 {

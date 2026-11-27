@@ -23,6 +23,8 @@ import (
 
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	qrdbunix "github.com/jeremyhahn/go-qrdb/sdk/go/transport/unix"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // TestNewQRDBControlTransport_UnixSpeaksTLS proves the cluster verbs reach
@@ -94,7 +96,7 @@ func TestNewQRDBControlUnixTransport_ClientCertLoadError(t *testing.T) {
 		TLSKey:  filepath.Join(dir, "missing-key.pem"),
 	}
 
-	_, err := newQRDBControlUnixTransport(cfg, filepath.Join(dir, "xkms.sock"))
+	_, err := newQRDBControlUnixTransport(cfg, filepath.Join(testsupport.SocketDir(t), "xkms.sock"))
 	var certErr *QRDBControlClientCertError
 	if !errors.As(err, &certErr) {
 		t.Fatalf("newQRDBControlUnixTransport() error = %v, want *QRDBControlClientCertError", err)

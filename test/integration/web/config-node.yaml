@@ -1,0 +1,109 @@
+# xkmsd config for passkey-node.spec.ts (playwright.node.config.ts).
+#
+# The web-console tier's config (config.yaml) on its own port and state
+# directory. xkmsd runs over its embedded go-qrdb node, which enforces
+# authentication on every user call. The public WebAuthn routes carry an
+# anonymous context, so before ruling 973 their user lookups through the qrdb
+# client were refused ("qrdb/auth: unauthenticated", a 500). The spec first
+# creates an operator, so the server is past its zero-user anonymous mode
+# (auth.spec.ts only ever registers that first operator), then registers and
+# signs in a second operator against the node as a real deployment runs it.
+server:
+  host: "127.0.0.1"
+  rest_port: 18464
+
+protocols:
+  unix: false
+  rest: true
+  grpc: false
+  quic: false
+  mcp: false
+  noise: false
+
+logging:
+  level: "info"
+  format: "json"
+
+tls:
+  enabled: true
+  server_cn: "localhost"
+  # Request but do not require a client certificate: the suite's fixture
+  # (tests/support/passkeyAccount.ts) presents the init-ceremony admin
+  # credential (.runtime-node/storage/admin-cert.pem) to provision its
+  # operators, while the browser connects without one.
+  client_auth: verify
+
+# Composite auth, enforced: the embedded node refuses anonymous user
+# creation (its WebAuthn principal has no users:create), so the fixture
+# provisions each operator as admin and the operator redeems its invitation
+# with a passkey.
+auth:
+  enabled: true
+  type: "composite"
+
+# Initialized by run-server.sh (`xkmsd init`, SO PIN in the environment) and
+# unsealed through the sealed window; the config never carries the secret.
+barrier:
+  enabled: true
+  strategy: "passphrase"
+
+ratelimit:
+  enabled: false
+
+metrics:
+  enabled: false
+
+health:
+  enabled: true
+  path: "/health"
+
+datastore:
+  engine: file
+  path: "./.runtime-node/storage"
+
+default_backend: "software"
+
+backends:
+  software:
+    enabled: true
+    path: "./.runtime-node/data/software"
+
+ca:
+  identity:
+    - subject:
+        cn: "xkms Web Node E2E Root CA"
+        organization: "go-xkms Web E2E"
+        country: "US"
+      valid: 10
+      keys:
+        - algorithm: "ECDSA"
+          ecc:
+            curve: "P-256"
+          hash: "SHA-256"
+          signature-algorithm: "ECDSAWithSHA256"
+          store: "software"
+          key-type: "CA"
+      keystore-type: "software"
+      is-root: true
+      max-path-length: 1
+  selected-ca: 0
+  default-validity-days: 365
+  include-localhost-sans: true
+  home-dir: "./.runtime-node/ca"
+
+webauthn:
+  enabled: true
+  rp_id: "localhost"
+  rp_origins:
+    - "https://localhost:18464"
+  rp_display_name: "xKMS Web Console Node E2E"
+  attestation_preference: "none"
+  authenticator_attachment: ""
+  resident_key: "preferred"
+  user_verification: "preferred"
+  # The same opt-in as config.yaml: the SPA's /register screen creates the
+  # operators.
+  allow_public_registration: true
+
+ui:
+  enabled: true

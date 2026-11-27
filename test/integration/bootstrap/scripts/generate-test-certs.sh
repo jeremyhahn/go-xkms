@@ -138,6 +138,48 @@ chmod 644 "${CERT_DIR}/ca.crt" "${CERT_DIR}/server.crt" "${CERT_DIR}/fullchain.c
 chmod 600 "${CERT_DIR}/ca.key" "${CERT_DIR}/server.key"
 
 # ---------------------------------------------------------------------------
+# Step 4b: Administrator client credential
+#
+# The generated config authenticates the admin API with mTLS against ca.crt
+# (auth.type mtls, tls.client_auth request), and the suite's key discovery
+# (GET /api/v1/bootstrap/keys, xkmsctl bootstrap show-keys) is an admin
+# call. This is the identity both present: an EC P-256 key with a clientAuth
+# certificate signed by the test CA.
+# ---------------------------------------------------------------------------
+
+echo "Generating administrator client credential..."
+openssl ecparam -genkey -name prime256v1 -noout -out "${CERT_DIR}/admin-client.key" 2>/dev/null
+
+openssl req -new \
+    -key "${CERT_DIR}/admin-client.key" \
+    -out "${CERT_DIR}/admin-client.csr" \
+    -subj "/C=US/O=go-xkms Test/OU=system/CN=bootstrap-admin" \
+    2>/dev/null
+
+cat > "${CERT_DIR}/admin_client_ext.cnf" << CLIENTEXT
+authorityKeyIdentifier = keyid,issuer
+basicConstraints       = CA:FALSE
+keyUsage               = digitalSignature
+extendedKeyUsage       = clientAuth
+CLIENTEXT
+
+openssl x509 -req \
+    -in "${CERT_DIR}/admin-client.csr" \
+    -CA "${CERT_DIR}/ca.crt" \
+    -CAkey "${CERT_DIR}/ca.key" \
+    -CAcreateserial \
+    -out "${CERT_DIR}/admin-client.crt" \
+    -days ${DAYS_VALID} \
+    -sha256 \
+    -extfile "${CERT_DIR}/admin_client_ext.cnf" \
+    2>/dev/null
+
+rm -f "${CERT_DIR}/admin-client.csr" "${CERT_DIR}/admin_client_ext.cnf" "${CERT_DIR}/ca.srl"
+# The test container reads this credential from the shared certs volume.
+chmod 644 "${CERT_DIR}/admin-client.crt" "${CERT_DIR}/admin-client.key"
+echo "Administrator client certificate generated: ${CERT_DIR}/admin-client.crt"
+
+# ---------------------------------------------------------------------------
 # Step 5: Compute SPKI SHA-256 pin for the server certificate
 # ---------------------------------------------------------------------------
 
@@ -191,38 +233,35 @@ tls:
   cert_file: ${CERT_DIR}/fullchain.crt
   key_file: ${CERT_DIR}/server.key
   ca_file: ${CERT_DIR}/ca.crt
-  # The admin API authenticates the first-boot administrator's mTLS pair;
-  # clients without a certificate (health check, bootstrap discovery) must still complete the handshake.
-  client_auth: verify
+  # Ask for (but do not demand) a client certificate: the admin mTLS
+  # identity authenticates with one chained to ca.crt, while the Noise/SPKI/
+  # DANE bootstrap probes and the health check connect without one.
+  client_auth: request
 
-# cmd/xkmsd refuses to start on any config.ComplianceGaps finding, so the
-# test config names an authenticator and a CA the way the web and
-# webauthn-browser integration configs do.
+# xkmsd refuses to start on any config.ComplianceGaps entry, so the suite
+# runs with an authenticator: mTLS against the test CA above.
 auth:
   enabled: true
-  type: "composite"
+  type: mtls
+  mtls: true
 
+# The daemon's issuing CA (required by config.ComplianceGaps). Its root is
+# generated on first boot under the data volume; ca.crt above stays the TLS
+# and mTLS trust anchor.
 ca:
   identity:
     - subject:
-        cn: "go-xkms Bootstrap Test Root CA"
-        organization: "go-xkms Bootstrap Test"
-        country: "US"
-      valid: 10
+        cn: "go-xkms Bootstrap Test Issuing CA"
+        organization: "go-xkms Test CA"
+      valid: 1
       keys:
         - algorithm: "ECDSA"
-          ecc:
-            curve: "P-256"
-          hash: "SHA-256"
-          signature-algorithm: "ECDSAWithSHA256"
-          store: "software"
-          key-type: "CA"
+          ecc-curve: "P-256"
+          key_type: "CA"
       keystore-type: "software"
       is-root: true
-      max-path-length: 1
   selected-ca: 0
-  default-validity-days: 365
-  include-localhost-sans: true
+  default-validity-days: ${DAYS_VALID}
   home-dir: ${DATA_DIR}/ca
 
 ratelimit:
@@ -237,12 +276,10 @@ health:
   enabled: true
   path: /health
 
-storage:
-  backend: file
-  path: ${DATA_DIR}
-
 datastore:
-  path: ${DATA_DIR}/datastore
+  engine: pebble
+  mode: standalone
+  path: ${DATA_DIR}/storage
 
 rng:
   mode: software
@@ -254,14 +291,14 @@ backends:
     enabled: true
     path: ${DATA_DIR}/software
 
+# strategy "none": the default (passphrase) boots sealed and serves the
+# unauthenticated sealed window, which xkmsd refuses to bind on 0.0.0.0, and
+# this suite has no unseal ceremony. Same choice as
+# test/integration/acmeadmin/xkmsd.yaml.
 barrier:
   enabled: true
-  root_key_path: ${DATA_DIR}/barrier
-  # "none": the qrdb node's own barrier auto-unseals unattended at startup,
-  # as in test/integration/acmeadmin. The default "passphrase" boots sealed
-  # behind a sealed-window listener that refuses server.host=0.0.0.0 and
-  # answers /health 503 until an unseal ceremony, which this suite lacks.
   strategy: "none"
+  root_key_path: ${DATA_DIR}/barrier
 
 bootstrap:
   noise:

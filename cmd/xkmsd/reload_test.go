@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // insecureReloadConfig is a valid configuration (config.Load accepts it) that is
@@ -162,7 +164,7 @@ ca:
       is-root: true
   selected-ca: 0
   default-validity-days: 365
-`, host, filepath.Join(dir, "xkms.sock"), filepath.Join(dir, "storage"), filepath.Join(dir, "software"))
+`, host, filepath.Join(testsupport.SocketDir(t), "xkms.sock"), filepath.Join(dir, "storage"), filepath.Join(dir, "software"))
 
 	path := filepath.Join(dir, "xkmsd.yaml")
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

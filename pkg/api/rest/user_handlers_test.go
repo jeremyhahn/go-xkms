@@ -57,6 +57,9 @@ type restMockUserClient struct {
 	unsuspendUser     func(ctx context.Context, id uint64) error
 	addCertBinding    func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
 	updateUser        func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error)
+
+	activatePendingUser     func(ctx context.Context, userID uint64) (*qrdbtransport.User, error)
+	activateWithCertBinding func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error)
 }
 
 var _ qrdbtransport.UserClient = (*restMockUserClient)(nil)
@@ -89,6 +92,23 @@ func (m *restMockUserClient) GetUserByCertThumbprint(ctx context.Context, thumbp
 
 func (m *restMockUserClient) AddCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
 	return m.addCertBinding(ctx, userID, thumbprint, notAfterUnix)
+}
+
+// ActivatePendingUser and ActivateWithCertBinding make the mock an
+// xkms.InviteUserClient: the invite routes refuse a user client without
+// conditional activation as unconfigured (503).
+func (m *restMockUserClient) ActivatePendingUser(ctx context.Context, userID uint64) (*qrdbtransport.User, error) {
+	if m.activatePendingUser != nil {
+		return m.activatePendingUser(ctx, userID)
+	}
+	return nil, errRestMockUnused
+}
+
+func (m *restMockUserClient) ActivateWithCertBinding(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+	if m.activateWithCertBinding != nil {
+		return m.activateWithCertBinding(ctx, userID, thumbprint, notAfterUnix)
+	}
+	return nil, errRestMockUnused
 }
 
 func (m *restMockUserClient) RemoveCertBinding(ctx context.Context, userID uint64, thumbprint string) (*qrdbtransport.User, error) {
@@ -186,6 +206,10 @@ func (m *restMockRoleClient) ListPermissions(ctx context.Context) (*qrdbtranspor
 // this mock reports the verb as unused exactly as its other unexercised methods
 // do. The convergence itself is go-qrdb's, served by its transports.
 func (m *restMockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtransport.ReconcileRolesRequest) (*qrdbtransport.ReconcileRolesResponse, error) {
+	return nil, errRestMockUnused
+}
+
+func (m *restMockRoleClient) ReconcileBuiltInRolesAllTenants(context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
 	return nil, errRestMockUnused
 }
 

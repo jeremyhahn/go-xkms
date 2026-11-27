@@ -66,14 +66,14 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 	)
 
 	stores := webauthntest.NewStores(t)
-	// The ceremony enrolls a new account through the public sign-up path.
-	allowPublicRegistration := true
 	webauthnSvc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
-			RPID:                    rpID,
-			RPDisplayName:           rpDisplayName,
-			RPOrigins:               []string{rpOrigin},
-			AllowPublicRegistration: &allowPublicRegistration,
+			RPID:          rpID,
+			RPDisplayName: rpDisplayName,
+			RPOrigins:     []string{rpOrigin},
+			// These tests exercise first-passkey sign-up for an unknown
+			// email, which is closed unless the relying party opts in.
+			AllowPublicRegistration: openRegistration(),
 		},
 		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
@@ -119,6 +119,13 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 		webauthnSvc: webauthnSvc,
 		rpID:        rpID,
 	}
+}
+
+// openRegistration returns a true AllowPublicRegistration value, as the
+// pkg/webauthn tests do for the same first-passkey flow.
+func openRegistration() *bool {
+	b := true
+	return &b
 }
 
 // runRegistrationCeremony drives the full registration ceremony against the real

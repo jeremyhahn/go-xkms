@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package rest_test
 
 import (
 	"bytes"
@@ -28,6 +28,7 @@ import (
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
@@ -65,7 +66,7 @@ func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) (*webauthn.Ser
 	ds, err := datastore.New(node.Client(), config.DatastoreConfig{}, datastore.WithCallContext(node.ServiceContext))
 	require.NoError(t, err)
 	var binds atomic.Int32
-	issuer, err := BuildTokenIssuer(context.Background(), TokenIssuerParams{
+	issuer, err := rest.BuildTokenIssuer(context.Background(), rest.TokenIssuerParams{
 		Backend:     xkmsmocks.NewMockKeyStore(),
 		BackendName: "test",
 		QRDBClient:  ds.Client(),
@@ -75,11 +76,16 @@ func buildXKMSDWebAuthnService(t *testing.T, node *qrdbnode.Node) (*webauthn.Ser
 		},
 	})
 	require.NoError(t, err)
-	svc, err := BuildWebAuthnService(WebAuthnServiceParams{
-		Config:      qrdbWebAuthnConfig(),
+	allow := true
+	svc, err := rest.BuildWebAuthnService(rest.WebAuthnServiceParams{
+		Config: rest.WebAuthnConfigFromXKMS(&config.WebAuthnConfig{
+			RPID:                    "example.com",
+			RPOrigins:               []string{"https://example.com"},
+			AllowPublicRegistration: &allow,
+		}),
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),
-		TenantID:    DefaultWebAuthnTenant,
+		TenantID:    rest.DefaultWebAuthnTenant,
 		CallContext: node.ServiceContext,
 		TokenIssuer: issuer,
 	})

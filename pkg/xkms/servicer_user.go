@@ -54,6 +54,23 @@ func (s *XKMSService) userToTransport(ctx context.Context, u *qrdbtransport.User
 	}, nil
 }
 
+// effectiveRequestTenant resolves the tenant an IAM request acts on exactly
+// as go-qrdb's tenant.EffectiveTenant will: the request tenant when given,
+// else the tenant bound to the caller context (qrdbsdk.TenantFromContext
+// reads the same binding). An unbound context yields "", which
+// qrdbsdk.NormalizeTenantID reads as the system tenant. A request tenant
+// that differs from the context is left as given: go-qrdb refuses that
+// cross-tenant request itself.
+func effectiveRequestTenant(ctx context.Context, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if fromCtx, ok := qrdbsdk.TenantFromContext(ctx); ok {
+		return fromCtx
+	}
+	return ""
+}
+
 // roleNameToID resolves a role name to its qrdb role id in tenantID (the
 // context tenant when empty). A built-in role's id is deterministic
 // (qrdbsdk.SystemRoleID); a custom role is looked up by name. An empty name
@@ -62,11 +79,7 @@ func (s *XKMSService) roleNameToID(ctx context.Context, tenantID, name string) (
 	if name == "" {
 		return "", nil
 	}
-	if tenantID == "" {
-		if fromCtx, ok := qrdbsdk.TenantFromContext(ctx); ok {
-			tenantID = fromCtx
-		}
-	}
+	tenantID = effectiveRequestTenant(ctx, tenantID)
 	if qrdbsdk.IsSystemRoleName(name) {
 		return qrdbsdk.SystemRoleID(tenantID, name), nil
 	}
@@ -298,14 +311,15 @@ func (s *XKMSService) DisableUser(ctx context.Context, username string) error {
 // re-check (pkg/auth.QRDBUserResolver) still refuses u's sessions on their
 // next refresh attempt even when this sweep could not reach the store.
 func (s *XKMSService) revokeUserSessions(ctx context.Context, u *qrdbtransport.User) {
-	if s.tokenIssuer == nil {
+	if s.issuer() == nil {
 		return
 	}
-	if err := s.tokenIssuer.RevokeBySubject(ctx, u.Username); err != nil {
+	// Usernames are tenant-scoped: only u's tenant's sessions end (#2296).
+	if err := s.issuer().RevokeBySubject(ctx, u.TenantID, u.Username); err != nil {
 		log.Printf("xkms: revoke refresh sessions for user %q failed: %v", u.Username, err)
 	}
 	handle := base64.RawURLEncoding.EncodeToString(webauthn.HandleFromUserID(u.ID))
-	if err := s.tokenIssuer.RevokeBySubject(ctx, handle); err != nil {
+	if err := s.issuer().RevokeBySubject(ctx, u.TenantID, handle); err != nil {
 		log.Printf("xkms: revoke webauthn refresh sessions for user %q failed: %v", u.Username, err)
 	}
 }

@@ -28,10 +28,10 @@ import (
 func execCLI(t *testing.T, cfg *TestConfig, args ...string) (string, string, error) {
 	t.Helper()
 
-	// Prepend --server flag to use the configured Unix socket path
-	allArgs := []string{"--server", "unix://" + cfg.UnixSocketPath,
-		"--tls-ca", getEnv("KEYSTORE_TLS_CA", "/etc/xkms/certs/ca.crt")}
-	allArgs = append(allArgs, clientCertArgs()...)
+	// Prepend --server flag to use the configured Unix socket path, with the
+	// admin mTLS credential and the trust bundle (the socket is a TLS listener).
+	serverURL := "unix://" + cfg.UnixSocketPath
+	allArgs := append([]string{"--server", serverURL}, cliTLSArgs(t, serverURL)...)
 	allArgs = append(allArgs, args...)
 	cmd := exec.Command(cfg.CLIBinPath, allArgs...)
 

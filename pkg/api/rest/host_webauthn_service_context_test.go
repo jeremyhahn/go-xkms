@@ -11,7 +11,7 @@
 // 2. Commercial License
 //    Contact licensing@automatethethings.com for commercial licensing options.
 
-package rest
+package rest_test
 
 import (
 	"bytes"
@@ -26,6 +26,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
@@ -35,7 +36,7 @@ import (
 
 // newAuthNodeHostServer builds a host server over an auth-enabled node with
 // the given WebAuthn call context and logger.
-func newAuthNodeHostServer(t *testing.T, node *qrdbnode.Node, bind webauthn.CallContext, logger *slog.Logger) *Server {
+func newAuthNodeHostServer(t *testing.T, node *qrdbnode.Node, bind webauthn.CallContext, logger *slog.Logger) *rest.Server {
 	t.Helper()
 	xkms.Reset()
 	t.Cleanup(xkms.Reset)
@@ -49,12 +50,17 @@ func newAuthNodeHostServer(t *testing.T, node *qrdbnode.Node, bind webauthn.Call
 	ds, err := datastore.New(node.Client(), config.DatastoreConfig{}, datastore.WithCallContext(node.ServiceContext))
 	require.NoError(t, err)
 
-	srv, err := NewHostServer(context.Background(), &HostConfig{
+	allow := true
+	srv, err := rest.NewHostServer(context.Background(), &rest.HostConfig{
 		XKMSService: svc,
 		QRDBClient:  ds.Client(),
 		DAOFactory:  ds.DAOFactory(),
-		WebAuthn:    qrdbWebAuthnConfig(),
-		Logger:      logger,
+		WebAuthn: rest.WebAuthnConfigFromXKMS(&config.WebAuthnConfig{
+			RPID:                    "example.com",
+			RPOrigins:               []string{"https://example.com"},
+			AllowPublicRegistration: &allow,
+		}),
+		Logger: logger,
 
 		ServiceCallContext: bind,
 	})
@@ -62,7 +68,7 @@ func newAuthNodeHostServer(t *testing.T, node *qrdbnode.Node, bind webauthn.Call
 	return srv
 }
 
-func beginAnonymousRegistration(t *testing.T, srv *Server) *httptest.ResponseRecorder {
+func beginAnonymousRegistration(t *testing.T, srv *rest.Server) *httptest.ResponseRecorder {
 	t.Helper()
 	body, err := json.Marshal(map[string]string{"email": "anon@example.com", "display_name": "Anon"})
 	require.NoError(t, err)

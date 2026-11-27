@@ -29,6 +29,8 @@ import (
 
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/invitetest"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
+	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -53,6 +55,7 @@ func newInviteGRPCService(t *testing.T) (*Service, string) {
 	xkmsSvc := &xkms.XKMSService{}
 	xkmsSvc.SetUserClients(users, &grpcFakeRoleClient{})
 	xkmsSvc.SetInviteStore(invites)
+	xkmsSvc.SetInviteUserClient(grpcInviteUsers{users})
 	return NewService(nil, nil, xkmsSvc), token
 }
 
@@ -154,6 +157,7 @@ func TestInvitationErrorStatus(t *testing.T) {
 		{"undecodable certificate", &xkms.ErrPIVCertDecode{Reason: "no PEM block"}, codes.InvalidArgument, "invite: piv certificate decode: no PEM block"},
 		{"rejected certificate", &xkms.ErrPIVCertRejected{Err: errors.New("unknown issuer")}, codes.FailedPrecondition, "invite: piv certificate chain verification failed: unknown issuer"},
 		{"not configured", xkms.ErrNotConfigured, codes.Unavailable, xkms.ErrNotConfigured.Error()},
+		{"tenant not served", fmt.Errorf("begin: %w", errors.Join(xkms.ErrInviteTenantNotServed, errors.New("user store names no tenant"))), codes.PermissionDenied, xkms.ErrInviteTenantNotServed.Error()},
 		{"unclassified", errTPMPolicyUnclassified, codes.Internal, errTPMPolicyUnclassified.Error()},
 	}
 	for _, tt := range tests {
@@ -161,6 +165,75 @@ func TestInvitationErrorStatus(t *testing.T) {
 			st := status.Convert(invitationErrorStatus(tt.err))
 			assert.Equal(t, tt.code, st.Code())
 			assert.Equal(t, tt.message, st.Message())
+		})
+	}
+}
+
+// TestInviteRegistration_TenantNotServedIsPermissionDenied proves passkey
+// enrolment through an invitation whose account is outside the tenant the
+// relying party serves answers PermissionDenied on both registration RPCs,
+// as REST answers 403, never Internal.
+// grpcInviteUsers gives the fake user client the conditional activations
+// xkms.InviteUserClient requires, without which every invite RPC answers
+// not configured; the tests here never reach an activation.
+type grpcInviteUsers struct{ *grpcFakeUserClient }
+
+func (grpcInviteUsers) ActivatePendingUser(context.Context, uint64) (*qrdbtransport.User, error) {
+	return nil, errors.New("activation must not be reached")
+}
+
+func (grpcInviteUsers) ActivateWithCertBinding(context.Context, uint64, string, int64) (*qrdbtransport.User, error) {
+	return nil, errors.New("activation must not be reached")
+}
+
+func TestInviteRegistration_TenantNotServedIsPermissionDenied(t *testing.T) {
+	const tenant = "acme"
+	ctx := context.Background()
+	users := newGRPCFakeUserClient()
+	invitee, err := users.CreateUser(ctx, &qrdbtransport.CreateUserRequest{
+		Username: "invitee@acme.example", Email: "invitee@acme.example", Name: "Invitee",
+		TenantID: tenant, Pending: true,
+	})
+	require.NoError(t, err)
+	invites, err := invitetest.New(grpcSingleStoreResolver{store: qrdbsdk.NewMemoryKVStore()})
+	require.NoError(t, err)
+	token, _, err := invites.Create(ctx, fmt.Sprint(invitee.ID), tenant, time.Hour)
+	require.NoError(t, err)
+
+	stores := webauthntest.NewStores(t)
+	rp, err := webauthn.NewService(webauthn.ServiceParams{
+		Config: &webauthn.Config{
+			RPID:          "example.com",
+			RPDisplayName: "Example",
+			RPOrigins:     []string{"https://example.com"},
+		},
+		UserStore:       stores.Users,
+		SessionStore:    webauthn.NewMemorySessionStore(),
+		CredentialStore: stores.Credentials,
+	})
+	require.NoError(t, err)
+	xkmsSvc := &xkms.XKMSService{}
+	xkmsSvc.SetUserClients(users, &grpcFakeRoleClient{})
+	xkmsSvc.SetInviteStore(invites)
+	xkmsSvc.SetWebAuthn(rp)
+	xkmsSvc.SetInviteUserClient(grpcInviteUsers{users})
+	s := NewService(nil, nil, xkmsSvc)
+
+	rpcs := map[string]func() error{
+		"BeginInviteRegistration": func() error {
+			_, err := s.BeginInviteRegistration(ctx, &pb.BeginInviteRegistrationRequest{TenantId: tenant, Token: token})
+			return err
+		},
+		"FinishInviteRegistration": func() error {
+			_, err := s.FinishInviteRegistration(ctx, &pb.FinishInviteRegistrationRequest{TenantId: tenant, Token: token, SessionId: "s1", AttestationJson: "{}"})
+			return err
+		},
+	}
+	for name, call := range rpcs {
+		t.Run(name, func(t *testing.T) {
+			st := status.Convert(call())
+			assert.Equal(t, codes.PermissionDenied, st.Code())
+			assert.Equal(t, xkms.ErrInviteTenantNotServed.Error(), st.Message())
 		})
 	}
 }

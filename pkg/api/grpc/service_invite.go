@@ -44,7 +44,9 @@ import (
 // the one opaque answer every unusable token gets (absent, expired, already
 // redeemed, malformed) — mapped to NotFound, mirroring the REST transport's
 // 404. A PIV certificate error carries its own detail, since it describes
-// the caller's own input, not a probeable secret.
+// the caller's own input, not a probeable secret. xkms.ErrInviteTenantNotServed
+// (an invitation outside the relying party's tenant) is PermissionDenied with
+// the sentinel's fixed message, mirroring the REST transport's 403.
 func invitationErrorStatus(err error) error {
 	var certDecode *xkms.ErrPIVCertDecode
 	var certRejected *xkms.ErrPIVCertRejected
@@ -57,6 +59,8 @@ func invitationErrorStatus(err error) error {
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, xkms.ErrNotConfigured):
 		return status.Error(codes.Unavailable, err.Error())
+	case errors.Is(err, xkms.ErrInviteTenantNotServed):
+		return status.Error(codes.PermissionDenied, xkms.ErrInviteTenantNotServed.Error())
 	default:
 		return status.Error(codes.Internal, err.Error())
 	}
@@ -97,7 +101,7 @@ func (s *Service) BeginInviteRegistration(ctx context.Context, req *pb.BeginInvi
 	if err != nil {
 		return nil, invitationErrorStatus(err)
 	}
-	return &pb.BeginInviteRegistrationResponse{SessionId: resp.SessionID, OptionsJson: resp.OptionsJSON}, nil
+	return &pb.BeginInviteRegistrationResponse{SessionId: resp.SessionID, OptionsJson: resp.OptionsJSON, Ceremony: resp.Ceremony}, nil
 }
 
 // FinishInviteRegistration completes the invite-authorized WebAuthn

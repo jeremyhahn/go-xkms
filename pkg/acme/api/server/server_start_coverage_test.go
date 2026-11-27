@@ -29,6 +29,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // TestShutdown_RESTShutdownError tests handling of REST server shutdown error.
@@ -101,8 +103,7 @@ func TestShutdown_MCPShutdownError(t *testing.T) {
 func TestShutdown_WithMultipleErrors(t *testing.T) {
 	mockAdmin := &mockAdminService{}
 
-	tmpDir := t.TempDir()
-	unixSocketPath := filepath.Join(tmpDir, "test.sock")
+	unixSocketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	config := &ServerConfig{
 		RESTAddr:        "",
@@ -250,8 +251,7 @@ func TestShutdown_WithErrsJoin(t *testing.T) {
 func TestShutdown_WithMultipleServersActive(t *testing.T) {
 	mockAdmin := &mockAdminService{}
 
-	tmpDir := t.TempDir()
-	unixSocketPath := filepath.Join(tmpDir, "test.sock")
+	unixSocketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	config := &ServerConfig{
 		RESTAddr:        "",
@@ -360,8 +360,7 @@ func TestShutdown_UnixSocketRemovalWarning(t *testing.T) {
 
 	// Use a non-existent parent directory that will cause removal to fail
 	// (though os.Remove on non-existent files returns nil on most systems)
-	tmpDir := t.TempDir()
-	unixSocketPath := filepath.Join(tmpDir, "test.sock")
+	unixSocketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	config := &ServerConfig{
 		RESTAddr:        "",

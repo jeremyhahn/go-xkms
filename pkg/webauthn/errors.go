@@ -89,6 +89,18 @@ var (
 	// the credential record changed between the owner check and the write
 	// (a concurrent update or delete); the stale update is not applied.
 	ErrCredentialUpdateConflict = errors.New("credential changed concurrently; update not applied")
+
+	// ErrFirstCredentialClaimed is returned by
+	// CredentialStore.ClaimFirstCredential when another ceremony already
+	// claimed the account's first credential (a concurrent invite finish,
+	// on this replica or another). The caller stores nothing.
+	ErrFirstCredentialClaimed = errors.New("account's first credential already claimed")
+
+	// ErrFirstCredentialSettled is returned by the store's Save under the
+	// committed-first-credential marker when the account's first credential
+	// has already had its decorated Save completed (it is settled), so a
+	// decorator over the store applies no side effect a second time.
+	ErrFirstCredentialSettled = errors.New("account's first credential already settled")
 )
 
 // AccountNotActiveError reports an account whose lifecycle state does not

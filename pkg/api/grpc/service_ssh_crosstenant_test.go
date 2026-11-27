@@ -270,6 +270,28 @@ func TestSSHGRPC_OwnersKeepAccess(t *testing.T) {
 	assert.Equal(t, "alice-a-key", resp.GetKeys()[0].GetName())
 }
 
+// An empty user-scope owner passes gRPC validation and reaches tenancy,
+// which serves it as the caller's PolicySubject (ruling 937). A foreign
+// owner is still answered as a miss.
+func TestSSHGRPC_EmptyUserOwnerIsCaller(t *testing.T) {
+	svc, _ := newGRPCSSHTenancyService(t)
+	bound := &auth.Identity{Subject: "116704235864723456", TenantID: grpcSSHTenantA}
+
+	created, err := svc.SSHGenerateKey(grpcSSHAs(bound), &pb.SSHGenerateKeyRequest{Scope: "user", Name: "mine", Algorithm: "ed25519"})
+	require.NoError(t, err)
+	assert.Equal(t, "116704235864723456", created.GetKey().GetOwner())
+	got, err := svc.SSHGetKey(grpcSSHAs(bound), &pb.SSHKeyRef{Scope: "user", Name: "mine"})
+	require.NoError(t, err)
+	assert.Equal(t, "116704235864723456", got.GetKey().GetOwner())
+	_, err = svc.SSHSign(grpcSSHAs(bound), &pb.SSHSignRequest{Key: &pb.SSHKeyRef{Scope: "user", Name: "mine"}, Digest: []byte("payload")})
+	require.NoError(t, err)
+
+	_, err = svc.SSHGenerateKey(grpcSSHAs(bound), &pb.SSHGenerateKeyRequest{Scope: "user", Owner: "someone-else", Name: "theirs", Algorithm: "ed25519"})
+	require.Error(t, err)
+	_, err = svc.SSHGetKey(grpcSSHAs(bound), &pb.SSHKeyRef{Scope: "user", Owner: "someone-else", Name: "theirs"})
+	assert.Equal(t, codes.NotFound, status.Code(err))
+}
+
 func requireGRPCSSHOwnersIntact(t *testing.T, client sdkssh.Client) {
 	t.Helper()
 	_, err := client.Keys().Get(grpcSSHAs(grpcSSHAdminB), sdkssh.GetKeyRequest{Scope: "tenant", Owner: grpcSSHTenantB, Name: "b-key"})

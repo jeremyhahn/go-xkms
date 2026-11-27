@@ -399,11 +399,13 @@ func firstSuccess[R any](versions []keyVersion, op func(keyVersion) (R, error)) 
 	return zero, 0, firstErr
 }
 
-// callerSubject returns the subject of ctx's identity, recorded as a new
+// callerSubject returns the principal name of ctx's identity
+// (auth.PolicySubject: a passkey caller's handle, else its Subject), which
+// key policies match and which is recorded as a policy's owner and a new
 // version's creator, or "" without one.
 func callerSubject(ctx context.Context) string {
 	if identity := auth.GetIdentity(ctx); identity != nil {
-		return identity.Subject
+		return auth.PolicySubject(identity)
 	}
 	return ""
 }

@@ -26,6 +26,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+
+	"github.com/jeremyhahn/go-xkms/internal/testsupport"
 )
 
 // TestGRPC_InvalidTCPAddress tests starting gRPC with an invalid TCP address.
@@ -80,8 +82,7 @@ func TestGRPC_StaleSocketRemovalError(t *testing.T) {
 	mockAdmin := &mockAdminService{}
 
 	// Create temp directory for Unix socket
-	tmpDir := t.TempDir()
-	unixSocketPath := filepath.Join(tmpDir, "test.sock")
+	unixSocketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	// Create a stale regular file (not socket)
 	f, err := os.Create(unixSocketPath)
@@ -196,8 +197,7 @@ func TestGRPC_UnixServerCreation(t *testing.T) {
 	mockAdmin := &mockAdminService{}
 
 	// Create temp directory for Unix socket
-	tmpDir := t.TempDir()
-	unixSocketPath := filepath.Join(tmpDir, "test.sock")
+	unixSocketPath := filepath.Join(testsupport.SocketDir(t), "test.sock")
 
 	config := &ServerConfig{
 		RESTAddr:        "",
