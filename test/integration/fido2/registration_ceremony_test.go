@@ -65,17 +65,15 @@ func newCeremonySurface(t *testing.T) *ceremonySurface {
 		rpOrigin      = "https://localhost"
 	)
 
-	// The ceremony enrols a new email, which the invite-only default refuses
-	// (ErrRegistrationRefused); this relying party opts into open registration
-	// as the service's own registration tests do.
-	allowRegistration := true
 	stores := webauthntest.NewStores(t)
+	// The ceremony enrolls a new account through the public sign-up path.
+	allowPublicRegistration := true
 	webauthnSvc, err := webauthn.NewService(webauthn.ServiceParams{
 		Config: &webauthn.Config{
 			RPID:                    rpID,
 			RPDisplayName:           rpDisplayName,
 			RPOrigins:               []string{rpOrigin},
-			AllowPublicRegistration: &allowRegistration,
+			AllowPublicRegistration: &allowPublicRegistration,
 		},
 		UserStore:       stores.Users,
 		SessionStore:    webauthn.NewMemorySessionStore(),
