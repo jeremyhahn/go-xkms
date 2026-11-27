@@ -381,3 +381,64 @@ func TestWebAuthnFactorVerifier_BeginChallenge_UsernameHint(t *testing.T) {
 		}
 	}
 }
+
+// emailFaultUserStore fails every email lookup with err.
+type emailFaultUserStore struct {
+	xkmswebauthn.UserStore
+	err error
+}
+
+func (s *emailFaultUserStore) GetByEmail(context.Context, string) (xkmswebauthn.User, error) {
+	return nil, s.err
+}
+
+func TestWebAuthnFactorVerifier_BeginChallenge_EmailLookupFailureDoesNotFallBackToUsername(t *testing.T) {
+	ctx := context.Background()
+	client, _, err := testutil.NewQRDBFakeClient()
+	if err != nil {
+		t.Fatalf("fake qrdb client: %v", err)
+	}
+	stores := webauthntest.NewStoresFor(t, client.Users())
+	errTransport := errors.New("credential store unavailable")
+	svc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
+		Config: &xkmswebauthn.Config{
+			RPID:          "localhost",
+			RPDisplayName: "test",
+			RPOrigins:     []string{"https://localhost"},
+		},
+		UserStore:       &emailFaultUserStore{UserStore: stores.Users, err: errTransport},
+		SessionStore:    xkmswebauthn.NewMemorySessionStore(),
+		CredentialStore: stores.Credentials,
+	})
+	if err != nil {
+		t.Fatalf("webauthn service: %v", err)
+	}
+	v, err := NewWebAuthnFactorVerifier(svc)
+	if err != nil {
+		t.Fatalf("verifier: %v", err)
+	}
+	for _, req := range []*qrdbtransport.CreateUserRequest{
+		{Username: "carol", Email: "carol@example.com"},
+		{Username: "carol@example.com", WithoutEmailLoginKey: true},
+	} {
+		req.TenantID = webauthntest.TenantID
+		if _, err := client.Users().CreateUser(ctx, req); err != nil {
+			t.Fatalf("CreateUser(%q): %v", req.Username, err)
+		}
+	}
+	shadow, err := stores.Users.GetByUsername(ctx, "carol@example.com")
+	if err != nil {
+		t.Fatalf("GetByUsername: %v", err)
+	}
+	if err := stores.Credentials.Save(ctx, &xkmswebauthn.Credential{ID: []byte("shadow-cred"), UserID: shadow.WebAuthnID(), PublicKey: []byte("pk")}); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+
+	_, meta, _, err := v.BeginChallenge(ctx, "system", qrdbtransport.FactorTypeFIDO2, "carol@example.com")
+	if !errors.Is(err, errTransport) {
+		t.Fatalf("BeginChallenge err = %v, want the email lookup error", err)
+	}
+	if meta != nil {
+		t.Fatalf("a failed email lookup returned ceremony options %v", meta)
+	}
+}
