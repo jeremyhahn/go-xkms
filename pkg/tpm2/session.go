@@ -1310,8 +1310,20 @@ func (tpm *TPM2) recoverKeyPair(
 		slog.String("cn", keyAttrs.CN))
 
 	// The fence stays on a failed write: the next create-only save takes the
-	// pair over.
-	if err := swapBlob(keyAttrs, cas, store.FSEXT_PRIVATE_BLOB, current, outPrivate.Buffer, exists); err != nil {
+	// pair over. The private blob first takes this recovery's own fence, so a
+	// winner that stored the bytes read above again is told apart from them.
+	if err := ownKeyPairFence(keyAttrs, cas, fence, exists); err != nil {
+		return err
+	}
+	if err := swapBlob(keyAttrs, cas, store.FSEXT_PRIVATE_BLOB, current, fence, exists); err != nil {
+		return err
+	}
+	if err := ownKeyPairFence(keyAttrs, cas, fence, exists); err != nil {
+		// Another recovery published or took the fence over: give back the
+		// private bytes this recovery replaced.
+		return errors.Join(err, swapBlob(keyAttrs, cas, store.FSEXT_PRIVATE_BLOB, fence, current, nil))
+	}
+	if err := swapBlob(keyAttrs, cas, store.FSEXT_PRIVATE_BLOB, fence, outPrivate.Buffer, exists); err != nil {
 		return err
 	}
 	return swapBlob(keyAttrs, cas, store.FSEXT_PUBLIC_BLOB, fence, outPublic.Bytes(), exists)
@@ -1341,6 +1353,18 @@ func claimKeyPairFence(keyAttrs *types.KeyAttributes, backend store.ConditionalK
 	// An earlier recovery never finished, or is still running: take its
 	// fence over, unless another recovery took it, or published, first.
 	return swapBlob(keyAttrs, backend, store.FSEXT_PUBLIC_BLOB, pub, fence, exists)
+}
+
+// ownKeyPairFence returns exists unless the public blob is still fence.
+func ownKeyPairFence(keyAttrs *types.KeyAttributes, backend store.ConditionalKeyBackend, fence []byte, exists error) error {
+	pub, err := backend.Get(keyAttrs, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		return errors.Join(exists, err)
+	}
+	if !bytes.Equal(pub, fence) {
+		return exists
+	}
+	return nil
 }
 
 // swapBlob replaces the ext blob with data only while it still holds
