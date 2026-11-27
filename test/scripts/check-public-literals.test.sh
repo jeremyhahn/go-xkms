@@ -171,6 +171,30 @@ track "$ALLOW"
 "$SCRIPT" "$ALLOW" >/dev/null 2>&1
 eq "CLAUDE.md/AGENTS.md/.claude are excluded at any depth" "0" "$?"
 
+# --- the lab-string-ok waiver, as in ci.yml's Releasability step ---------------
+section "the lab-string-ok waiver"
+WAIVED="$WORK/waived"
+mkdir -p "$WAIVED"
+printf 'fixture 198.51.100.9 // lab-string-ok: synthetic fixture\n' > "$WAIVED/a_test.go"
+printf 'first\nhost SynthHost-5 # lab-string-ok:reason\n' > "$WAIVED/b.txt"
+track "$WAIVED"
+OUT=$("$SCRIPT" "$WAIVED" 2>&1); RC=$?
+eq "only waived matches pass" "0" "$RC"
+eq "waived lines are listed as path:line" "1" "$(grep -cx 'a_test.go:1' <<<"$OUT")"
+eq "a waived line on a later line is listed" "1" "$(grep -cx 'b.txt:2' <<<"$OUT")"
+eq "waived lines never print their text" "0" "$(grep -c 'fixture 198\|SynthHost' <<<"$OUT")"
+BARE="$WORK/bare"
+mkdir -p "$BARE"
+printf 'fixture 198.51.100.9 // lab-string-ok:\n' > "$BARE/a.txt"
+printf 'fixture 198.51.100.8 // lab-string-ok\n' > "$BARE/b.txt"
+printf 'ok 198.51.100.7 // lab-string-ok: fine\n' > "$BARE/c.txt"
+track "$BARE"
+OUT=$("$SCRIPT" "$BARE" 2>&1); RC=$?
+eq "a bare marker still fails" "1" "$RC"
+eq "a marker with no reason is a finding" "1" "$(grep -cx 'a.txt:1' <<<"$OUT")"
+eq "a marker with no colon is a finding" "1" "$(grep -cx 'b.txt:1' <<<"$OUT")"
+eq "the waived line is not a finding" "0" "$(grep -A99 'internal literal' <<<"$OUT" | grep -cx 'c.txt:1')"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
 exit $?
