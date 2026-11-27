@@ -140,11 +140,10 @@ printf 200
 // preflightRunsOn is the preflight runs-on (Codex #2323 P1, ruling 999):
 // hosted unless CI_PREFLIGHT_RUNS_ON is set, and never the variable on a
 // pull request from a fork, so a fork never reaches a self-hosted pool.
-// v1.52: the template's fork clause comes before the variable, so a fork's
-// pull request (under pull_request or pull_request_target, a deleted fork
-// included) takes ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds.
+// Only a push to main and a same-repository pull request read the variable;
+// every other event takes ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds.
 const preflightRunsOn = "${{ github.server_url == 'https://github.com' && " +
-	"(!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository)" +
+	"((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))" +
 	" && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
 
 func TestCIPreflightRunsHostedByDefault(t *testing.T) {
@@ -225,6 +224,7 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 		"C1=10",
 		"C2=10",
 		"EVENT=pull_request",
+		"REF=refs/pull/1/merge",
 		"REPO=o/r",
 		"HEAD_REPO="+headRepo(fork),
 		"GITHUB_OUTPUT="+out,
