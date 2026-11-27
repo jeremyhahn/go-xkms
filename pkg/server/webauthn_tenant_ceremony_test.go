@@ -138,11 +138,8 @@ func TestWebAuthnCeremony_NonSystemTenantOverRBACNode(t *testing.T) {
 	require.NotEmpty(t, pair.AccessToken)
 }
 
-// TestWebAuthnStartup_PrincipalGainsNoUserPermission: building WebAuthn over
-// the embedded node leaves the service principal's grant as it was. Its
-// service context still cannot read or update a user, so the ceremonies
-// above reach users through the node's user service, never the principal.
-func TestWebAuthnStartup_PrincipalGainsNoUserPermission(t *testing.T) {
+// TestWebAuthnStartup_PrincipalHoldsTheUsersGrant checks the service principal's service context reads users through main's users grant.
+func TestWebAuthnStartup_PrincipalHoldsTheUsersGrant(t *testing.T) {
 	s := tenantCeremonyNode(t, "acme-principal")
 	ds := s.datastore.Load()
 	require.NotNil(t, ds)
@@ -151,9 +148,9 @@ func TestWebAuthnStartup_PrincipalGainsNoUserPermission(t *testing.T) {
 
 	var denied *qrdbsdk.PermissionDeniedError
 	_, err = ds.Client().Users().GetUserByEmail(ctx, "system", "nobody@example.com")
-	require.ErrorAs(t, err, &denied, "the service principal reads users")
+	require.NotErrorAs(t, err, &denied, "the service principal reads users")
 	_, err = ds.Client().Users().UpdateUser(ctx, &qrdbtransport.UpdateUserRequest{ID: 1, Name: "renamed"})
-	require.ErrorAs(t, err, &denied, "the service principal updates users")
+	require.NotErrorAs(t, err, &denied, "the service principal updates users")
 }
 
 // TestInviteRedemption_RPTenantOverRBACNode drives a full invitation
