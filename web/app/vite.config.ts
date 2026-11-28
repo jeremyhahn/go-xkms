@@ -22,6 +22,10 @@ import tailwindcss from "@tailwindcss/vite";
 const devAPI = process.env.XKMS_DEV_API ?? "https://localhost:8443";
 const proxyTarget = { target: devAPI, secure: false, ws: true, changeOrigin: true };
 
+// Node 22.4+ knows the flag and Node 26 needs it (#2167); the CI image's
+// Node 20 rejects it and every worker exits.
+const webstorageOff = process.allowedNodeEnvironmentFlags.has("--experimental-webstorage") ? ["--no-experimental-webstorage"] : [];
+
 export default defineConfig({
   // base is "./" so Vite emits RELATIVE asset paths (./assets/index.js) in
   // index.html, which resolve correctly in every deployment context:
@@ -64,6 +68,12 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // Node 26 enables Web Storage by default; its global localStorage
+    // shadows jsdom's (#2167). Workers run without it.
+    poolOptions: {
+      forks: { execArgv: webstorageOff },
+      threads: { execArgv: webstorageOff },
+    },
     setupFiles: ["./test/setup.ts"],
     include: ["test/**/*.test.ts"],
     coverage: {
