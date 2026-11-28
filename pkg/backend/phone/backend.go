@@ -269,7 +269,12 @@ func (b *Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttributes) (
 		return nil, ErrInvalidResponse
 	}
 
-	pubKey, err := parsePublicKey(result.PublicKeyDER, result.Algorithm)
+	// The phone must return a key of the requested algorithm.
+	if result.Algorithm != "" && result.Algorithm != algorithm {
+		return nil, ErrInvalidResponse
+	}
+
+	pubKey, err := parsePublicKey(result.PublicKeyDER, algorithm)
 	if err != nil {
 		return nil, err
 	}
