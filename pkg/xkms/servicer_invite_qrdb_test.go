@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -248,7 +249,14 @@ func TestActivateInvitePIV_QRDB_ConcurrentRedemptionBindsOnce(t *testing.T) {
 	arrived.Add(n)
 	allRead := make(chan struct{})
 	go func() { arrived.Wait(); close(allRead) }()
+	// A redemption reads the account more than once; only the first n reads
+	// meet at the barrier. A reader blocks here until all n have arrived, so
+	// those n reads come from n distinct redemptions.
+	var reads atomic.Int32
 	f.hooked.beforeGetUser = func() {
+		if reads.Add(1) > n {
+			return
+		}
 		arrived.Done()
 		select {
 		case <-allRead:
