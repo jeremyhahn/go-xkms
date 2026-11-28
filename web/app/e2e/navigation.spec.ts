@@ -82,7 +82,7 @@ test.describe('Route navigation', () => {
     await seedAuthenticated(page, defaultAuthMe());
 
     await page.goto('/#/dashboard');
-    await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Keys' }).click();
+    await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Keys', exact: true }).click();
 
     await expect(page).toHaveURL(/#\/keys$/);
     await expect(page.getByRole('heading', { name: 'Keys' })).toBeVisible();

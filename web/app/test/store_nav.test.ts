@@ -44,6 +44,11 @@ describe("navSections", () => {
     expect(item!.requires).toEqual({ resource: "keys", action: "list" });
   });
 
+  it("has no FROST signing entry: signing rounds run through xkmsctl frost", () => {
+    const all = navSections.flatMap((s) => s.items);
+    expect(all.some((i) => i.path === "/frost/sign" || String(i.route) === "frostSigning")).toBe(false);
+  });
+
   it("maps the dashboard route to /dashboard with no RBAC or capability gate", () => {
     const item = findItem("dashboard");
     expect(item).toBeDefined();

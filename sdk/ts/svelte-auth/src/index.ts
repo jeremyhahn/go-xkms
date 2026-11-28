@@ -83,3 +83,11 @@ export {
 // Components
 export { default as LoginPanel } from './components/LoginPanel.svelte';
 export { default as RegisterPanel } from './components/RegisterPanel.svelte';
+export {
+  AUTH_CAPABILITY,
+  REGISTRATION_DISABLED_MESSAGE,
+  SIGN_IN_DISABLED_MESSAGE,
+  methodOff,
+  readAuthCapabilities,
+  type AuthCapabilities,
+} from './capabilities.ts';

@@ -81,6 +81,15 @@ export function can(resource: string, action: string): boolean {
   return _me.permissions[`${resource}:${action}`] === true;
 }
 
+/**
+ * lacks reports whether a loaded session is known to miss resource:action.
+ * A view uses it to disable one control of a multi-operation page; with no
+ * session loaded the server stays the authority and nothing is disabled.
+ */
+export function lacks(resource: string, action: string): boolean {
+  return _me !== null && !can(resource, action);
+}
+
 /** hasCapability reports whether an optional server subsystem is wired. */
 export function hasCapability(name: string): boolean {
   return _me?.capabilities?.[name] === true;

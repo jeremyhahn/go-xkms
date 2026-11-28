@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	qrdbauth "github.com/jeremyhahn/go-qrdb/pkg/auth"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 
@@ -291,6 +292,71 @@ func TestGetInvite_NotConfigured(t *testing.T) {
 
 	_, err = svc.GetInvite(context.Background(), &xkmstransport.GetInviteRequest{TenantID: inviteFixtureTenant, Token: "tok"})
 	require.ErrorIs(t, err, ErrNotConfigured)
+}
+
+// requireCallerIdentity makes the fixture's user client refuse a context with
+// no identity, the way the embedded qrdb client does on an auth-enabled node
+// (authorizeUserTarget), so the invite lookups must run under the invite call
+// context rather than the anonymous request context.
+func (f *inviteFixture) requireCallerIdentity() {
+	refuse := func(ctx context.Context) error {
+		if qrdbauth.IdentityFromContext(ctx) == nil {
+			return qrdbsdk.ErrUnauthenticated
+		}
+		return nil
+	}
+	getUser, getByEmail, update, addCert := f.users.getUser, f.users.getUserByEmail, f.users.updateUser, f.users.addCertBinding
+	f.users.getUser = func(ctx context.Context, id uint64) (*qrdbtransport.User, error) {
+		if err := refuse(ctx); err != nil {
+			return nil, err
+		}
+		return getUser(ctx, id)
+	}
+	f.users.getUserByEmail = func(ctx context.Context, tenantID, email string) (*qrdbtransport.User, error) {
+		if err := refuse(ctx); err != nil {
+			return nil, err
+		}
+		return getByEmail(ctx, tenantID, email)
+	}
+	f.users.updateUser = func(ctx context.Context, req *qrdbtransport.UpdateUserRequest) (*qrdbtransport.User, error) {
+		if err := refuse(ctx); err != nil {
+			return nil, err
+		}
+		return update(ctx, req)
+	}
+	f.users.addCertBinding = func(ctx context.Context, userID uint64, thumbprint string, notAfterUnix int64) (*qrdbtransport.User, error) {
+		if err := refuse(ctx); err != nil {
+			return nil, err
+		}
+		return addCert(ctx, userID, thumbprint, notAfterUnix)
+	}
+	f.svc.SetInviteCallContext(func(ctx context.Context) (context.Context, error) {
+		return qrdbauth.WithIdentity(ctx, qrdbauth.NewServicePrincipal("xkms-test", inviteFixtureTenant, nil)), nil
+	})
+}
+
+// TestInvite_ValidTokenWithoutCallerIdentity: the invite routes are public, so
+// the request context carries no identity; after the token is validated the
+// user lookup still succeeds on an auth-enabled node, and a bad token still
+// reads as unusable.
+func TestInvite_ValidTokenWithoutCallerIdentity(t *testing.T) {
+	f := newInviteFixture(t)
+	token := f.mintInvite(t)
+	f.requireCallerIdentity()
+
+	got, err := f.getInvite(inviteFixtureTenant, token)
+	require.NoError(t, err)
+	assert.Equal(t, inviteFixtureEmail, got.Email)
+
+	begin, err := f.beginRegistration(inviteFixtureTenant, token)
+	require.NoError(t, err)
+	assert.NotEmpty(t, begin.SessionID)
+	assert.Contains(t, begin.OptionsJSON, inviteFixtureEmail)
+
+	_, err = f.getInvite(inviteFixtureTenant, "unknown-invite-token-fixture")
+	assert.ErrorIs(t, err, ErrInviteUnusable)
+	_, err = f.beginRegistration(inviteFixtureTenant, "unknown-invite-token-fixture")
+	assert.ErrorIs(t, err, ErrInviteUnusable)
 }
 
 // ============================================================================

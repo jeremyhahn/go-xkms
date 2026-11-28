@@ -51,17 +51,37 @@ export default defineConfig({
       args: ['--no-sandbox'],
     },
   },
-  webServer: {
-    command: 'bash ./run-server.sh',
-    // The daemon boots sealed, and its sealed window answers on this port
-    // before run-server.sh unseals it, so a bare TCP check would start the
-    // suite too early. /health is served once the daemon has booted;
-    // ignoreHTTPSErrors skips verifying its self-issued certificate.
-    url: 'https://localhost:18463/health',
-    ignoreHTTPSErrors: true,
-    reuseExistingServer: false,
-    timeout: 180_000,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  },
+  webServer: [
+    {
+      command: 'bash ./run-server.sh',
+      // The daemon boots sealed, and its sealed window answers on this port
+      // before run-server.sh unseals it, so a bare TCP check would start the
+      // suite too early. /health is served once the daemon has booted;
+      // ignoreHTTPSErrors skips verifying its self-issued certificate.
+      url: 'https://localhost:18463/health',
+      ignoreHTTPSErrors: true,
+      reuseExistingServer: false,
+      timeout: 180_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+    {
+      // A second daemon with passkeys off (tests/capability-gating.spec.ts).
+      // Playwright starts the servers in order, so the first has built
+      // .runtime/xkmsd by the time this one starts.
+      command: 'bash ./run-server.sh',
+      env: {
+        XKMS_XKMSD_BIN: './.runtime/xkmsd',
+        XKMS_WEB_CONFIG: 'config-webauthn-off.yaml',
+        XKMS_WEB_RUNTIME: './.runtime/webauthn-off',
+        XKMS_WEB_PORT: '18464',
+      },
+      url: 'https://localhost:18464/health',
+      ignoreHTTPSErrors: true,
+      reuseExistingServer: false,
+      timeout: 180_000,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    },
+  ],
 });

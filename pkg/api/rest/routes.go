@@ -332,8 +332,8 @@ func Routes() []RouteSpec {
 	// /v1/ca/bootstrap route. GET /ca/crl has no counterpart on any other
 	// transport (go-xkms#275), so it has no canonical pair to adopt and stays
 	// session-authenticated until one is defined. ---
-	hasCA := func(s *Server) bool { return s.caHandlers != nil }
-	noCA := func(s *Server) bool { return s.caHandlers == nil }
+	hasCA := (*Server).hasCA
+	noCA := func(s *Server) bool { return !s.hasCA() }
 	permIf("GET", "/ca/bundle", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCABundle })
 	permIf("GET", "/ca/certificate", auth.ResourceCerts, auth.ActionRead, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleGetCACertificate })
 	permIf("POST", "/ca/sign-csr", auth.ResourceCerts, auth.ActionIssue, hasCA, func(s *Server) http.HandlerFunc { return s.caHandlers.HandleSignCSR })
@@ -357,7 +357,7 @@ func Routes() []RouteSpec {
 	// another tenant" from "does not exist". Entitlements and quotas are plan
 	// management and carry their own qrdb permissions
 	// (tenants:set_entitlements, tenants:set_quotas), never tenants:update. ---
-	hasTenants := func(s *Server) bool { return s.tenantHandlers != nil }
+	hasTenants := (*Server).hasTenants
 	// The tenant lifecycle has one owner, this table (go-xkms#794): the ACME
 	// admin plane keeps only its record updates under /api/v1/tenants/{id}.
 	// Each route is gated by the tenants it reaches (TenantGate).
@@ -378,7 +378,7 @@ func Routes() []RouteSpec {
 	// PasswordStoreSetAccessMode and MCP's password.setAccessMode
 	// (go-xkms#1249: it used to be the one route on this family left
 	// session-authenticated with no RBAC permission of its own). ---
-	hasPasswords := func(s *Server) bool { return s.passwordHandlers != nil }
+	hasPasswords := (*Server).hasPasswords
 	permIf("POST", "/passwords/", auth.ResourcePasswords, auth.ActionWrite, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.AddPasswordHandler })
 	permIf("GET", "/passwords/", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.ListPasswordsHandler })
 	permIf("GET", "/passwords/{id}", auth.ResourcePasswords, auth.ActionRead, hasPasswords, func(s *Server) http.HandlerFunc { return s.passwordHandlers.GetPasswordHandler })
@@ -537,7 +537,7 @@ func Routes() []RouteSpec {
 	// one: that requires a session authenticated as that account
 	// (go-xkms#1294). Browser ceremony routes mirror pkg/webauthn/http
 	// MountChi; the SDK ceremony routes delegate to the XKMSService. ---
-	hasWebAuthn := func(s *Server) bool { return s.webauthnHandler != nil }
+	hasWebAuthn := (*Server).hasWebAuthn
 	wa := func(method, pattern string, h func(s *Server) http.HandlerFunc) {
 		specs = append(specs, RouteSpec{Method: method, Pattern: "/api/v1/webauthn" + pattern, Group: GroupWebAuthn, Auth: RouteAuthPublic, Enabled: hasWebAuthn, Handler: h})
 	}
@@ -588,7 +588,7 @@ func Routes() []RouteSpec {
 	// The gate admits the operation; the SSH service (pkg/ssh/tenancy) binds
 	// the scope and owner the request names to the caller (go-xkms#1230).
 	// No interactive SSH console is served, by design. ---
-	hasSSH := func(s *Server) bool { return s.sshHandlers != nil }
+	hasSSH := (*Server).hasSSH
 	ssh := func(method, pattern, action string, h func(s *Server) http.HandlerFunc) {
 		specs = append(specs, RouteSpec{Method: method, Pattern: "/xkms/v1/ssh" + pattern, Group: GroupSSH, Auth: RouteAuthPermission, Resource: auth.ResourceSSH, Action: action, Enabled: hasSSH, Handler: h})
 	}

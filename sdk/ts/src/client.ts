@@ -17,6 +17,7 @@ import { AuthClient } from './clients/auth.js';
 import { BackendsClient } from './clients/backends.js';
 import { CaClient } from './clients/ca.js';
 import { CapabilitiesClient } from './clients/capabilities.js';
+import { InvitesClient } from './clients/invites.js';
 import { CertsClient } from './clients/certs.js';
 import { CredentialsClient } from './clients/credentials.js';
 import { FrostClient } from './clients/frost.js';
@@ -45,6 +46,7 @@ export class XkmsClient {
 
   readonly health: HealthClient;
   readonly capabilities: CapabilitiesClient;
+  readonly invites: InvitesClient;
   readonly auth: AuthClient;
   readonly backends: BackendsClient;
   readonly keys: KeysClient;
@@ -70,6 +72,7 @@ export class XkmsClient {
 
     this.health = new HealthClient(this.http);
     this.capabilities = new CapabilitiesClient(this.http, this.authPaths);
+    this.invites = new InvitesClient(this.http);
     this.auth = new AuthClient(this.http, this.authPaths);
     this.backends = new BackendsClient(this.http);
     this.keys = new KeysClient(this.http);

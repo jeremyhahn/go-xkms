@@ -1,0 +1,1 @@
+- Web console: a FROST Signing view (`#/frost/sign`) runs this node's part of a FROST threshold signature: it generates nonces and shows the commitment to share, signs a round with the other participants' commitments, and aggregates the signature shares with optional verification. The secret nonces are never displayed and are dropped after the sign round.

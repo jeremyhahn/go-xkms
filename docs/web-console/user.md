@@ -20,6 +20,17 @@ Browse to `https://<host>:8443/ui/`. Sign in with a passkey (enroll one
 first through the Register screen or `xkmsctl`) or a PIV/mTLS client
 certificate.
 
+**Invite links.** Creating a user (`POST /api/v1/users`) mints a single-use
+link `<public base URL>/#/invite/<tenant>/<token>`
+(`pkg/xkms/servicer_invite.go` `buildInviteURL`). Opening it shows the
+Accept your invitation screen (`web/app/src/views/InviteView.svelte`): the
+tenant, the invited address and a Register passkey button. The passkey is
+bound to the invite (`/api/v1/invites/<tenant>/<token>/fido2/begin` and
+`/finish`), then the console signs the new user in with it. A link that is
+unknown, expired or already used reads "This invite link is not valid". With
+`webauthn.enabled` off the screen says so and starts no ceremony. The base
+URL must point at the console mount, e.g. `https://<host>:8443/ui`.
+
 For local development, `xkmsd -c configs/xkmsd-local.yaml` needs no flags:
 that config already turns on TLS with a CA-minted certificate,
 `auth.type: adaptive` (anonymous only until the first user is provisioned,
@@ -131,18 +142,28 @@ tenants. The dashboard shows whether the deployment is clustered.
 
 | Section | Screen | Route |
 |---|---|---|
-| Overview | Dashboard, Backends | `#/dashboard`, `#/backends` |
-| Keys & Crypto | Keys, FROST, TPM Policies | `#/keys`, `#/frost`, `#/tpm/policies` |
-| Certificates & CA | Certificates, Certificate Authority | `#/certs`, `#/ca` |
-| Security | PIN, PIV, SSH, Passwords, OIDC Credentials, Platform Secrets | `#/pin`, `#/piv`, `#/ssh`, `#/passwords`, `#/oidc/credentials`, `#/platform` |
-| Identity & Access | Users, Tenants | `#/users`, `#/tenants` |
-| Settings | Settings | `#/settings` |
+| Overview | Dashboard, Trust Bundle, Backends, System Health, Backend Diagnostics | `#/dashboard`, `#/trust/bundle`, `#/backends`, `#/system/health`, `#/backends/diagnostics` |
+| Keys & Crypto | FROST Key Import, Keys, Key Versions, FROST, TPM Key Policy, TPM Policies, Seal, Key Safety, OTA Image Keys, Random & Hash, Key Access Policy, Rotation Policy, Key Metadata, HMAC, Rewrap, Data Keys, Batch Crypto, Public Keys, Key Lifecycle, TPM Policy Detail | `#/frost/import`, `#/keys`, `#/keys/versions`, `#/frost`, `#/tpm/key-policy`, `#/tpm/policies`, `#/seal`, `#/keys/safety`, `#/keys/ota`, `#/tools/crypto`, `#/keys/access-policy`, `#/keys/rotation-policy`, `#/keys/metadata`, `#/keys/hmac`, `#/keys/rewrap`, `#/keys/data-keys`, `#/keys/batch`, `#/keys/public-key`, `#/keys/lifecycle`, `#/tpm/policies/detail` |
+| Certificates & CA | Certificate Binding, Certificates, Import Certificate, Certificate Authority, TCG Certificates, Trust Roots | `#/users/cert-bindings`, `#/certs`, `#/certs/import`, `#/ca`, `#/ca/tcg`, `#/trust/roots` |
+| Security | SSH Key Import, PIN, PIN Setup, PIV, PIV Slots, SSH, SSH Trust, SSH Sign, Passwords, Password Access Mode, OIDC Credentials, Signing Keys, Platform Secrets, Boot Credentials, Bootstrap Keys | `#/ssh/import`, `#/pin`, `#/pin/setup`, `#/piv`, `#/piv/slots`, `#/ssh`, `#/ssh/trust`, `#/ssh/sign`, `#/passwords`, `#/passwords/access-mode`, `#/oidc/credentials`, `#/attestation/signing-keys`, `#/platform`, `#/credentials/boot`, `#/bootstrap/keys` |
+| Identity & Access | Tenant Quotas, Users, Add Passkey, User Detail, Tenants, Tenant TPM, Tenant Detail | `#/tenants/quotas`, `#/users`, `#/account/passkeys`, `#/users/detail`, `#/tenants`, `#/tenants/tpm`, `#/tenants/detail` |
+| Settings | Secret Names, Settings, Tenant Entitlements | `#/platform/secrets`, `#/settings`, `#/tenants/entitlements` |
 
 Every nav entry is gated twice: an RBAC gate hides an entry the identity
 has no permission for, and a capability gate hides one the deployment never
-wired. Hiding is a convenience — the server's own RBAC decorators are the
+wired. A screen serving several operations (HMAC: sign or verify; Batch
+Crypto: encrypt or decrypt; Key Lifecycle: enable/disable or revoke) shows
+for any one of them and disables the controls the identity lacks. Hiding is a convenience — the server's own RBAC decorators are the
 enforcement authority, and any view you reach anyway (a stale link, a typed
 hash route) still renders the 403 it gets back.
+
+A screen whose subsystem this server does not run (CA, SSH, tenants,
+passwords, Add Passkey without WebAuthn) never calls a route that would
+answer 501: reached by a link or a typed hash route, it shows what is off and
+the setting to turn on (for example "Add a ca: section to xkmsd.yaml and
+restart xkmsd.") instead of the screen. The sign-in and enrolment screens do
+the same for passkeys and certificates, naming `webauthn.enabled` and
+`auth.piv_login.enabled`.
 
 Cluster membership and status, and per-user auth factors, are go-qrdb's
 services and have no console page: use `xkmsctl cluster` and
@@ -158,6 +179,13 @@ services and have no console page: use `xkmsctl cluster` and
 - **No FROST signing rounds.** Generate, list, delete threshold keys and
   verify finished signatures here; the three-round signing ceremony
   coordinates separate share-holders through `xkmsctl frost`.
+- **No scheduled rotation or version retention.** Rotation Policy records
+  whether a key's rotation is due and at what interval; Auto rotate and
+  Retain versions are disabled because the service runs no rotation
+  scheduler and retires no versions by itself. Rotate by hand on Key
+  Versions and disable or retire old versions there.
+- **No per-operation MFA.** Key Access Policy disables Require MFA: the
+  service has no per-operation MFA challenge and refuses the flag.
 - **No barrier, audit, custodian or share screens.** Those surfaces are go-qrdb's and xkms does not re-expose them.
 - **No cluster status, membership or auth-factor management.** Those are
   go-qrdb services; use `xkmsctl cluster` and `xkmsctl auth factor`.
@@ -168,8 +196,10 @@ services and have no console page: use `xkmsctl cluster` and
 |---|---|---|
 | `https://host:8443/ui/` 404s | Binary built without the `ui` tag | Rebuild with `make build-ui` |
 | Daemon exits at startup with a `gaps: [...]` log line | Secure-by-default refused an insecure config | Fix the named control, or run `xkmsd init` |
-| Login screen offers no passkey option | `webauthn_enabled: false` in `/api/v1/capabilities` | The server has no WebAuthn RP configured |
-| Login screen offers no certificate option | `piv_login_enabled: false` | `auth.piv_login.enabled` is off, or `tls.client_auth` does not request client certs |
+| Login screen shows "Passkey sign-in is off" | `webauthn_enabled: false` in `/api/v1/capabilities` | Set `webauthn.enabled: true` (with an RP id and origins) in `xkmsd.yaml` |
+| Enrol / Create account shows "Passkey sign-up is off" | Same flag: passkey sign-up needs the WebAuthn RP | Set `webauthn.enabled: true` in `xkmsd.yaml` |
+| Login screen shows "Certificate sign-in is off" | `piv_login_enabled: false` | Set `auth.piv_login.enabled: true`, and have `tls.client_auth` request client certs |
+| A screen shows "... is off on this server" | The subsystem is not wired (`capabilities` in `/api/v1/auth/me`) | Apply the setting the screen names and restart `xkmsd` |
 | Desktop app: "remote mode requires XKMS_SERVER_URL or a saved bookmark" | Neither set | Set `XKMS_SERVER_URL`, or save a bookmark from inside the app once connected |
 | Desktop standalone: nothing loads | `XKMS_CONFIG` config itself fails secure-by-default validation | Same fix as the server-hosted refusal above — the standalone engine is the same `pkg/server.Server` |
 
