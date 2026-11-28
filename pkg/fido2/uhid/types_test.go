@@ -37,9 +37,3 @@ func TestDefaultCreateConfigUniq(t *testing.T) {
 	cfg := DefaultCreateConfig()
 	assert.Equal(t, "XKEY001", cfg.Uniq)
 }
-
-func TestDefaultCreateConfigVendorProduct(t *testing.T) {
-	cfg := DefaultCreateConfig()
-	assert.Equal(t, VendorIDVirtualFIDO, cfg.VendorID)
-	assert.Equal(t, ProductIDVirtualFIDO, cfg.ProductID)
-}

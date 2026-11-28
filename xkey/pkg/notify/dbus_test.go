@@ -247,6 +247,23 @@ func TestBuildNotificationBody(t *testing.T) {
 			},
 			expected: "Approve register for My Service",
 		},
+		{
+			name: "selection names the authenticator and no RP",
+			req: &TouchRequest{
+				Operation:         "select",
+				AuthenticatorName: "xkey",
+			},
+			expected: "xkey: Approve select",
+		},
+		{
+			name: "authenticator name prefixes an RP prompt",
+			req: &TouchRequest{
+				Operation:         "register",
+				RPID:              "example.com",
+				AuthenticatorName: "xkey",
+			},
+			expected: "xkey: Approve register for example.com",
+		},
 	}
 
 	for _, tc := range tests {

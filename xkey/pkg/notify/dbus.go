@@ -160,7 +160,15 @@ func buildNotificationBody(req *TouchRequest) string {
 	if display == "" {
 		display = req.RPID
 	}
-	return fmt.Sprintf("Approve %s for %s", req.Operation, display)
+	body := fmt.Sprintf("Approve %s for %s", req.Operation, display)
+	if display == "" {
+		// authenticatorSelection carries no relying party.
+		body = fmt.Sprintf("Approve %s", req.Operation)
+	}
+	if req.AuthenticatorName != "" {
+		body = req.AuthenticatorName + ": " + body
+	}
+	return body
 }
 
 // NotifyTouchRequired sends a desktop notification via D-Bus informing the

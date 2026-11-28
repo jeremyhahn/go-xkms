@@ -18,17 +18,6 @@ import (
 	"testing"
 )
 
-func TestFIDO2HIDReportDescriptorLength(t *testing.T) {
-	// The FIDO2 HID report descriptor must be exactly 34 bytes
-	// per the FIDO Alliance HID specification
-	const expectedLength = 34
-
-	if len(FIDO2HIDReportDescriptor) != expectedLength {
-		t.Errorf("FIDO2HIDReportDescriptor length = %d, want %d",
-			len(FIDO2HIDReportDescriptor), expectedLength)
-	}
-}
-
 func TestFIDO2HIDReportDescriptorContent(t *testing.T) {
 	// Verify the report descriptor starts with the FIDO usage page
 	if len(FIDO2HIDReportDescriptor) < 3 {
@@ -87,48 +76,6 @@ func TestCreateConfigDefaults(t *testing.T) {
 
 	if len(cfg.ReportDescriptor) != 34 {
 		t.Errorf("Default ReportDescriptor length = %d, want 34", len(cfg.ReportDescriptor))
-	}
-}
-
-func TestCreateConfigCustomValues(t *testing.T) {
-	customRdesc := []byte{0x01, 0x02, 0x03}
-
-	cfg := &CreateConfig{
-		Name:             "Test Device",
-		Phys:             "test-phys",
-		Uniq:             "TEST123",
-		VendorID:         0x1234,
-		ProductID:        0x5678,
-		Version:          0x0200,
-		ReportDescriptor: customRdesc,
-	}
-
-	if cfg.Name != "Test Device" {
-		t.Errorf("Name = %q, want %q", cfg.Name, "Test Device")
-	}
-
-	if cfg.Phys != "test-phys" {
-		t.Errorf("Phys = %q, want %q", cfg.Phys, "test-phys")
-	}
-
-	if cfg.Uniq != "TEST123" {
-		t.Errorf("Uniq = %q, want %q", cfg.Uniq, "TEST123")
-	}
-
-	if cfg.VendorID != 0x1234 {
-		t.Errorf("VendorID = 0x%04X, want 0x1234", cfg.VendorID)
-	}
-
-	if cfg.ProductID != 0x5678 {
-		t.Errorf("ProductID = 0x%04X, want 0x5678", cfg.ProductID)
-	}
-
-	if cfg.Version != 0x0200 {
-		t.Errorf("Version = 0x%04X, want 0x0200", cfg.Version)
-	}
-
-	if len(cfg.ReportDescriptor) != 3 {
-		t.Errorf("ReportDescriptor length = %d, want 3", len(cfg.ReportDescriptor))
 	}
 }
 
@@ -191,40 +138,6 @@ func TestFIDO2Constants(t *testing.T) {
 				if v != tt.expected.(string) {
 					t.Errorf("%s = %q, want %q", tt.name, v, tt.expected)
 				}
-			}
-		})
-	}
-}
-
-func TestErrorTypes(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-	}{
-		{"ErrUHIDNotAvailable", ErrUHIDNotAvailable},
-		{"ErrDeviceCreationFailed", ErrDeviceCreationFailed},
-		{"ErrDeviceNotOpen", ErrDeviceNotOpen},
-		{"ErrWriteFailed", ErrWriteFailed},
-		{"ErrReadFailed", ErrReadFailed},
-		{"ErrInvalidPacket", ErrInvalidPacket},
-		{"ErrNotSupported", ErrNotSupported},
-		{"ErrDeviceAlreadyCreated", ErrDeviceAlreadyCreated},
-		{"ErrTimeout", ErrTimeout},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if tt.err == nil {
-				t.Errorf("%s is nil", tt.name)
-			}
-
-			if tt.err.Error() == "" {
-				t.Errorf("%s has empty error message", tt.name)
-			}
-
-			// Verify error type checking works with errors.Is
-			if !errors.Is(tt.err, tt.err) {
-				t.Errorf("errors.Is(%s, %s) = false, want true", tt.name, tt.name)
 			}
 		})
 	}

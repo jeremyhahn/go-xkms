@@ -1874,7 +1874,7 @@ coverage-xkmsctl:
 # softhsm, swtpm and xkms-server compose images once for the run, and the
 # target-specific XKMS_SERVER_UP_BUILD below makes every PKCS#11 suite start
 # those prebuilt tags instead of rebuilding all three (7-14 min each).
-integration-test: clean-test-containers integration-images integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
+integration-test: clean-test-containers integration-images integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-fido2-hidraw integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
 
 # The suites of one integration-test run start the images integration-images
@@ -2990,13 +2990,28 @@ devcontainer-server-wait:
 # only that build compiles in the //go:build integration && fido2 virtual-device
 # seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
 # binary (make build / make release-*) never carries those tags. See #807.
+# The UHID round trip (#2052) needs /dev/uhid. A container's /dev is copied
+# when it starts, and the host has no uhid node until the module is loaded,
+# so the step makes the misc node (10:239) when it is missing: opening it
+# loads uhid on the host kernel (misc_open requests char-major-10-239), where
+# post-start.sh's in-container modprobe cannot (no /lib/modules).
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration fido2 gms_pure_go codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration fido2 $(BUILD_TAGS))' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration fido2 gms_pure_go codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration fido2 $(BUILD_TAGS))' ./test/integration/fido2/... -timeout 10m && $(GO) test -c -tags='$(call go_tags,linux)' -o build/bin/fido2-uhid.test ./pkg/fido2/ && { [ -c /dev/uhid ] || sudo mknod -m 600 /dev/uhid c 10 239; } && sudo XKMS_REQUIRE_UHID=1 build/bin/fido2-uhid.test -test.v -test.count=1 -test.run TestLinuxHIDDevice_UHIDRoundTrip,integration-test-fido2)
+
+.PHONY: integration-test-fido2-hidraw
+## integration-test-fido2-hidraw: Run the FIDO2 hidraw report-ID suite against a UHID device (runs in devcontainer)
+# The suite (#2052) creates a UHID device and writes CTAPHID packets through
+# pkg/fido2's hidraw transport, so it needs root for /dev/uhid and the hidraw
+# node: it runs under sudo with the full go path, as integration-test-uhid
+# and integration-test-logins do. The /dev/uhid node is made when missing,
+# for the reason integration-test-fido2 gives.
+integration-test-fido2-hidraw:
+	$(call run_in_devcontainer,{ [ -c /dev/uhid ] || sudo mknod -m 600 /dev/uhid c 10 239; } && sudo -E /usr/local/go/bin/go test -v -count=1 -tags='$(call go_tags,integration$(comma)linux)' ./test/integration/fido2hidraw/... -timeout 5m,integration-test-fido2-hidraw)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
 integration-test-fido2-cli:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'CLI' -timeout 10m,integration-test-fido2-cli)
 
 .PHONY: integration-test-fido2-hardware
 ## integration-test-fido2-hardware: Run FIDO2 ceremonies against a REAL attached authenticator (requires a physical YubiKey/CTAP2 key and a human to touch it)
@@ -3013,7 +3028,7 @@ integration-test-fido2-webauthn:
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
 integration-test-fido2-multiprotocol:
-	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
+	$(call run_in_devcontainer,$(GO) build -tags='$(call go_tags,integration$(comma)fido2)' -o build/bin/xkmsctl ./cmd/xkmsctl && FIDO2_USE_VIRTUAL=true $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)codec_cbor$(comma)codec_json$(comma)codec_msgpack)' ./test/integration/fido2/... -run 'MultiProtocol' -timeout 15m,integration-test-fido2-multiprotocol)
 
 .PHONY: integration-test-uhid
 ## integration-test-uhid: Run UHID package integration tests (runs in devcontainer with /dev/uhid access)

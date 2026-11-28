@@ -114,6 +114,18 @@ relying party.
 - **`WaitForDevice` respects context cancellation**; it does not spin.
 - **`Close()` releases the HID handle.** A leaked handle blocks the next open on
   some platforms.
+- **Every hidraw write is report ID 0x00 followed by the 64-byte CTAPHID
+  packet.** Linux `Documentation/hid/hidraw.rst`, "write()": the first byte of
+  the buffer is the report number, 0 for a device without numbered reports, as
+  every FIDO authenticator is. `LinuxHIDDevice.Write`
+  (`pkg/fido2/hid_linux.go:153`) prepends `hidrawUnnumberedReportID`
+  (`hid_linux.go:147`) and writes the 65-byte report in one call
+  (`hid_linux.go:157-161`); it returns the caller's 64, never 65
+  (`hid_linux.go:168`), and a short write is an error. Without the prefix the
+  kernel takes the first CID byte as the report ID, and a CID starting with
+  0x00 sends a truncated packet. Reads carry no report-ID byte:
+  `LinuxHIDDevice.Read` (`hid_linux.go:172`) returns the 64-byte input report
+  as the device sent it.
 - **Concurrency.** A `FIDO2Handler` drives one device at a time; the CTAPHID
   channel is not multiplexed. Do not share a handler across concurrent
   ceremonies.
@@ -193,7 +205,11 @@ go-qrdb's user store, xkey stores them locally.
 - **Mock device** — `mock_test.go` supplies a `HIDDeviceEnumerator`, so the
   whole ceremony path runs with no hardware.
 - **Integration** — `test/integration/fido2` (real devices),
-  `test/integration/webauthn-browser`, `test/integration/logins`.
+  `test/integration/webauthn-browser`, `test/integration/logins`, and
+  `test/integration/fido2hidraw`: a UHID-made hidraw node that
+  `LinuxHIDDevice` opens, proving each write reaches the device as report ID
+  0x00 plus the 64-byte packet and each read comes back unchanged. It needs
+  root and `/dev/uhid`; run it with `make integration-test-fido2-hidraw`.
 - **Fault injection** — `device_edge_cases_test.go` covers short reads, framing
   errors and disconnects mid-ceremony.
 

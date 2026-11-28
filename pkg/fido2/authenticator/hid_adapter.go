@@ -170,6 +170,8 @@ type CTAPHIDHandler struct {
 	// to abort blocking operations (e.g., user presence prompts) when the host
 	// sends CTAPHID_CANCEL.
 	cancelCBOR context.CancelFunc
+	// cborCID is the channel of the command cancelCBOR belongs to.
+	cborCID uint32
 
 	mu sync.Mutex
 }
@@ -205,6 +207,13 @@ func (h *CTAPHIDHandler) SetLogger(logger *slog.Logger) {
 // The packet must be exactly 64 bytes (HIDPacketSize).
 // Responses are delivered via the response handler callback.
 func (h *CTAPHIDHandler) HandleMessage(data []byte) {
+	h.HandleMessageContext(context.Background(), data)
+}
+
+// HandleMessageContext is HandleMessage with a parent context for the CBOR
+// command the packet completes: cancelling ctx cancels that command, and a
+// command whose ctx is already done answers CTAP2_ERR_KEEPALIVE_CANCEL.
+func (h *CTAPHIDHandler) HandleMessageContext(ctx context.Context, data []byte) {
 	if h.closed.Load() {
 		debugHIDLog("HandleMessage: handler is closed, ignoring")
 		return
@@ -226,9 +235,9 @@ func (h *CTAPHIDHandler) HandleMessage(data []byte) {
 	isInitPacket := (cmdOrSeq & 0x80) != 0
 
 	if isInitPacket {
-		h.handleInitPacket(cid, cmdOrSeq, data)
+		h.handleInitPacket(ctx, cid, cmdOrSeq, data)
 	} else {
-		h.handleContPacket(cid, cmdOrSeq, data)
+		h.handleContPacket(ctx, cid, cmdOrSeq, data)
 	}
 }
 
@@ -248,7 +257,7 @@ func (h *CTAPHIDHandler) Close() error {
 }
 
 // handleInitPacket processes an initialization packet (command with high bit set).
-func (h *CTAPHIDHandler) handleInitPacket(cid uint32, cmd byte, data []byte) {
+func (h *CTAPHIDHandler) handleInitPacket(ctx context.Context, cid uint32, cmd byte, data []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -277,7 +286,7 @@ func (h *CTAPHIDHandler) handleInitPacket(cid uint32, cmd byte, data []byte) {
 
 	case CTAPHIDCBOR:
 		debugHIDLog("handleInitPacket: CTAPHID_CBOR command")
-		h.handleCBOR(cid, payload, payloadLen)
+		h.handleCBOR(ctx, cid, payload, payloadLen)
 
 	case CTAPHIDWink:
 		debugHIDLog("handleInitPacket: CTAPHID_WINK command")
@@ -305,7 +314,7 @@ func (h *CTAPHIDHandler) handleInitPacket(cid uint32, cmd byte, data []byte) {
 }
 
 // handleContPacket processes a continuation packet.
-func (h *CTAPHIDHandler) handleContPacket(cid uint32, seq byte, data []byte) {
+func (h *CTAPHIDHandler) handleContPacket(ctx context.Context, cid uint32, seq byte, data []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -358,7 +367,7 @@ func (h *CTAPHIDHandler) handleContPacket(cid uint32, seq byte, data []byte) {
 		// Handle the complete command
 		switch cmd {
 		case CTAPHIDCBOR:
-			h.processCBORCommandLocked(cid, payload)
+			h.processCBORCommandLocked(ctx, cid, payload)
 		case CTAPHIDPing:
 			h.sendResponseLocked(cid, CTAPHIDPing, payload)
 		default:
@@ -442,7 +451,7 @@ func (h *CTAPHIDHandler) handlePing(cid uint32, payload []byte, payloadLen int) 
 }
 
 // handleCBOR processes CTAPHID_CBOR command start.
-func (h *CTAPHIDHandler) handleCBOR(cid uint32, payload []byte, payloadLen int) {
+func (h *CTAPHIDHandler) handleCBOR(ctx context.Context, cid uint32, payload []byte, payloadLen int) {
 	// Validate channel
 	if cid == CIDBroadcast {
 		debugHIDLog("handleCBOR: broadcast CID not allowed")
@@ -472,7 +481,7 @@ func (h *CTAPHIDHandler) handleCBOR(cid uint32, payload []byte, payloadLen int) 
 
 	// Single packet CBOR - process immediately
 	debugHIDLog("handleCBOR: single packet CBOR, processing %d bytes", payloadLen)
-	h.processCBORCommandLocked(cid, payload[:payloadLen])
+	h.processCBORCommandLocked(ctx, cid, payload[:payloadLen])
 }
 
 // handleWink processes CTAPHID_WINK command.
@@ -491,10 +500,20 @@ func (h *CTAPHIDHandler) handleCancel(cid uint32) {
 
 	// Cancel the in-flight CBOR command context. This unblocks any pending
 	// user presence request, causing it to return context.Canceled.
-	if h.cancelCBOR != nil {
+	// A CANCEL on an unknown channel, or on one without the active command,
+	// leaves the active ceremony running.
+	if _, known := h.channels[cid]; !known || cid == CIDBroadcast {
+		debugHIDLog("handleCancel: ignoring CANCEL on unknown channel 0x%08x", cid)
+		return
+	}
+	if h.cancelCBOR != nil && h.cborCID == cid {
 		h.cancelCBOR()
 		h.cancelCBOR = nil
 	}
+
+	// A cancelled ceremony on this channel ends any Selection presence
+	// grant bound to it.
+	h.authenticator.revokePresenceGrantForChannel(cid)
 
 	// Reset channel state.
 	h.channels[cid] = &channelState{cid: cid}
@@ -502,7 +521,7 @@ func (h *CTAPHIDHandler) handleCancel(cid uint32) {
 
 // processCBORCommandLocked processes a complete CTAP2 CBOR command.
 // Caller must hold h.mu.
-func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
+func (h *CTAPHIDHandler) processCBORCommandLocked(parent context.Context, cid uint32, payload []byte) {
 	if len(payload) == 0 {
 		debugHIDLog("processCBORCommandLocked: empty payload")
 		h.sendErrorLocked(cid, CTAPHIDErrInvalidLen)
@@ -529,8 +548,17 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 
 	// Create a cancellable context for this CBOR command. CTAPHID_CANCEL
 	// calls h.cancelCBOR() to abort blocking operations like user presence.
-	ctx, cancel := context.WithCancel(context.Background())
+	// The context carries the channel ID: a presence grant from an approved
+	// authenticatorSelection is bound to the channel it arrived on.
+	// A command the host cancelled before it started never runs.
+	if parent.Err() != nil {
+		h.authenticator.revokePresenceGrantForChannel(cid)
+		h.sendResponseLocked(cid, CTAPHIDCBOR, []byte{StatusKeepaliveCancel})
+		return
+	}
+	ctx, cancel := context.WithCancel(WithCTAPHIDChannel(parent, cid))
 	h.cancelCBOR = cancel
+	h.cborCID = cid
 
 	// Multi-authenticator coexistence: when this authenticator has no
 	// matching credentials for a GetAssertion request AND the request
@@ -602,7 +630,15 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 		h.mu.Lock()
 
 		cancel()
-		h.cancelCBOR = nil
+		if h.cborCID == cid {
+			h.cancelCBOR = nil
+		}
+
+		// The GetAssertion never reached the authenticator, so it did not
+		// consume a Selection presence grant on this channel. Revoke it on
+		// both exits (cancel and safety timeout): the ceremony it was given
+		// for has ended, and a later credential operation must ask again.
+		h.authenticator.revokePresenceGrantForChannel(cid)
 
 		if h.logger != nil {
 			h.logger.Info("GetAssertion no-credentials deferral ended",
@@ -634,7 +670,8 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 	//     required) and the authenticator is waiting for a physical touch.
 	keepaliveDone := make(chan struct{})
 	var keepaliveWG sync.WaitGroup
-	if cmd == CmdMakeCredential || cmd == CmdGetAssertion {
+	//   - authenticatorSelection always waits for a touch (CTAP 2.1 §6.9).
+	if cmd == CmdMakeCredential || cmd == CmdGetAssertion || cmd == CmdSelection {
 		keepaliveStatus := byte(KeepaliveStatusUpNeeded)
 		if h.authenticator.NeedsPINBeforeTouch(cmd, data) {
 			keepaliveStatus = KeepaliveStatusProcessing
@@ -666,7 +703,9 @@ func (h *CTAPHIDHandler) processCBORCommandLocked(cid uint32, payload []byte) {
 
 	// Clear the cancel function now that the command has completed.
 	cancel()
-	h.cancelCBOR = nil
+	if h.cborCID == cid {
+		h.cancelCBOR = nil
+	}
 
 	if err != nil {
 		debugHIDLog("processCBORCommandLocked: ProcessCBOR error: %v", err)
