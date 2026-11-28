@@ -52,6 +52,10 @@ const (
 	// forgeAnonymous is read_credential's guard that reads any registry but
 	// GHCR, the forge's public namespace, with no credential (ruling 217).
 	forgeAnonymous = `[ "$host" = ghcr.io ] || return 0`
+	// lanNeedsDigest is lan_pull's refusal of a LAN hit when main's digest
+	// from the forge is unknown (#2243 Codex: the LAN registry is
+	// unauthenticated HTTP, so its own digest proves nothing).
+	lanNeedsDigest = `[ -n "$want" ] || { echo "==> no digest of main's for $family; $CI_IMAGE_REGISTRY not used" >&2; return 1; }`
 	ownerCond      = "${{ github.server_url != 'https://github.com' && vars.CI_REGISTRY_OWNER || '' }}"
 )
 
@@ -303,6 +307,11 @@ func registryScriptProblems(src string) []string {
 	}
 	if !strings.Contains(funcs["resolve"], `read_credential "$host"`) {
 		add("resolve does not read GHCR with the run's token")
+	}
+	// #2243 Codex: the LAN registry is unauthenticated HTTP; a hit is taken
+	// only against main's digest from the forge.
+	if !strings.Contains(funcs["lan_pull"], lanNeedsDigest) {
+		add("lan_pull takes a LAN image without main's digest from the forge")
 	}
 	return problems
 }
@@ -634,6 +643,7 @@ func TestCIImageDigest_RegistryScriptCanFail(t *testing.T) {
 		{"resolve reads GHCR anonymously", "  read_credential \"$host\"\n  if [ -n \"$user\" ]; then", "  if [ -n \"$user\" ]; then", "resolve does not read GHCR with the run's token"},
 		{"read login ignores the credential", "  read_credential \"$host\"\n  [ -n \"$user\" ] || return 0", "  [ -n \"$user\" ] || return 0", "read_login does not take read_credential's credential"},
 		{"pull logs in itself", "  private_config\n  read_login \"$host\"\n", "  private_config\n  printf '%s' \"$CI_REGISTRY_TOKEN\" | docker login \"$host\" -u \"$CI_REGISTRY_USER\" --password-stdin\n", "pull_ref logs in"},
+		{"LAN hit without main's digest", "  " + lanNeedsDigest, "  true", "lan_pull takes a LAN image without main's digest"},
 		{"resolve returns to imagetools", `    remote_digest "$target" "$scheme" || rc=$?`, `  digest=$(docker buildx imagetools inspect "$target" --format '{{json .Manifest}}') || rc=$?`, "resolve reads with buildx imagetools"},
 	}
 	for _, tc := range cases {

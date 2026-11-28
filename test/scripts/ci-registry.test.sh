@@ -51,12 +51,25 @@ cat >"$FAKE_BIN/docker" <<'FAKE'
 #!/bin/bash
 # Fake docker: record each invocation and answer from FAKE_* variables.
 echo "docker $*" >>"$FAKE_LOG"
+# The Docker config each pull and push ran with (#2243 P1-2): its directory and
+# the names in it, never their contents.
+case "$1" in
+  pull | push) echo "docker-cfg $1 ${*: -1} ${DOCKER_CONFIG:-unset} files=$(ls -A "${DOCKER_CONFIG:-/nonexistent}" 2>/dev/null | tr '\n' ' ')" >>"$FAKE_LOG" ;;
+esac
 case "$1" in
   login)
     stdin=$(cat)
     echo "login-stdin-bytes ${#stdin}" >>"$FAKE_LOG"
     case "${FAKE_LOGIN:-ok}" in
-      ok) echo "Login Succeeded" ;;
+      ok)
+        # As the real CLI does, persist dummy auths in the config it ran with
+        # (#2243 lane-verify Codex P1-B), so a reused login config shows up.
+        cfg=${DOCKER_CONFIG:-$HOME/.docker}
+        mkdir -p "$cfg"
+        printf '{"auths":{"%s":{"auth":"%s"}}}\n' "$2" "$(printf 'stub:%s' "$$" | base64)" >"$cfg/config.json"
+        echo "login-cfg $cfg" >>"$FAKE_LOG"
+        echo "Login Succeeded"
+        ;;
       refused) echo "Error response from daemon: login attempt to https://$2/v2/ failed with status: 401 Unauthorized" >&2; exit 1 ;;
       unreachable) echo "Error response from daemon: Get \"https://$2/v2/\": dial tcp: lookup $2: no such host" >&2; exit 1 ;;
       *) echo "Error response from daemon: something went wrong" >&2; exit 1 ;;
@@ -66,7 +79,14 @@ case "$1" in
     case "$4" in
       *RepoDigests*)
         case "${FAKE_REPO_DIGEST:-pushed}" in
-          pushed) echo "${5%:*}@$FAKE_DIGEST" ;;
+          pushed)
+            # FAKE_LAN_DIGEST: the digest an image pulled from FAKE_LAN reports.
+            d=$FAKE_DIGEST
+            if [ -n "${FAKE_LAN:-}" ]; then
+              case "$5" in "$FAKE_LAN/"*) d=${FAKE_LAN_DIGEST:-$FAKE_DIGEST} ;; esac
+            fi
+            echo "${5%:*}@$d"
+            ;;
           elsewhere) echo "elsewhere.invalid/jeremyhahn/go-xkms-ci-toolchain@$FAKE_DIGEST" ;;
           short) echo "${5%:*}@sha256:abc" ;;
         esac
@@ -77,7 +97,14 @@ case "$1" in
           [ "$i" != "$5" ] || { echo "$c"; break; }
         done
         ;;
-      *) echo "$FAKE_IMAGE_ID" ;;
+      *)
+        # FAKE_RETAG_ID: a tag (not a digest-pinned ref) now names another
+        # image, as after a concurrent push or rebuild of the content tag.
+        case "${*: -1}" in
+          *@sha256:*) echo "$FAKE_IMAGE_ID" ;;
+          *) echo "${FAKE_RETAG_ID:-$FAKE_IMAGE_ID}" ;;
+        esac
+        ;;
     esac
     ;;
   # FAKE_IMAGES: one "<repository> <tag> <id> <created>" line per name.
@@ -87,7 +114,22 @@ case "$1" in
     case " ${FAKE_RMI_FAIL:-} " in *" $2 "*) echo "Error response from daemon: conflict: unable to remove $2" >&2; exit 1 ;; esac
     echo "Untagged: $2"
     ;;
-  pull) exit "${FAKE_PULL_RC:-0}" ;;
+  pull)
+    # FAKE_LAN: the CI_IMAGE_REGISTRY a case sets; its pulls answer FAKE_LAN_PULL_RC.
+    if [ -n "${FAKE_LAN:-}" ]; then
+      # FAKE_LAN_PULL_SLEEP: a stalled pull that never answers on its own.
+      case "$*" in *" $FAKE_LAN/"*)
+        [ -z "${FAKE_LAN_PULL_SLEEP:-}" ] || exec sleep "$FAKE_LAN_PULL_SLEEP"
+        exit "${FAKE_LAN_PULL_RC:-0}" ;;
+      esac
+    fi
+    exit "${FAKE_PULL_RC:-0}"
+    ;;
+  push)
+    # FAKE_PUSH_SLEEP: a stalled push that never answers on its own.
+    [ -z "${FAKE_PUSH_SLEEP:-}" ] || exec sleep "$FAKE_PUSH_SLEEP"
+    exit "${FAKE_PUSH_RC:-0}"
+    ;;
   create) exit "${FAKE_CREATE_RC:-0}" ;;
 esac
 exit 0
@@ -117,6 +159,10 @@ exit "${FAKE_BUILD_RC:-0}"
 FAKE
 cat >"$FAKE_BIN/curl" <<'FAKE'
 #!/bin/bash
+# The CI_IMAGE_REGISTRY probe (#2243): FAKE_LAN_CURL_RC answers it (7 = closed port).
+if [ -n "${FAKE_LAN:-}" ]; then
+  case " $* " in *" http://$FAKE_LAN/v2/ "*) echo "curl $*" >>"$FAKE_LOG"; exit "${FAKE_LAN_CURL_RC:-0}" ;; esac
+fi
 # Fake curl: a registry on every host, served over FAKE_SERVES (https by
 # default). It records each request with the credential it carried named,
 # never its value, and answers from FAKE_* variables:
@@ -776,15 +822,17 @@ run_script 1 use toolchain "ghcr.io/jeremyhahn/go-xkms-ci-toolchain@$DIGEST" -- 
 stderr_has "is not in this run's registry, $FORGE"
 not_called "docker pull"
 
-start_case "use: a failed pull fails after three attempts and never rebuilds"
-run_script 1 use toolchain "$TOOLCHAIN_REPO@$DIGEST" -- "${RUN_TOKEN[@]}" FAKE_PULL_RC=1
-stderr_has "cannot pull $TOOLCHAIN_REPO@$DIGEST after 3 attempts"
+start_case "use: a failed pull tries three times, then builds on this runner (DS-9239)"
+run_script 0 use toolchain "$TOOLCHAIN_REPO@$DIGEST" -- "${RUN_TOKEN[@]}" FAKE_PULL_RC=1
+stderr_has "failed (attempt 2 of 3)"
+stderr_has "cannot pull $TOOLCHAIN_REPO@$DIGEST; building it on this runner"
+called "docker-build-toolchain"
 if [ "$(grep -c '^docker pull ' "$CALL_LOG")" -eq 3 ]; then
   pass "three pull attempts"
 else
   fail "$(grep -c '^docker pull ' "$CALL_LOG") pull attempts, want 3"
 fi
-not_called "make "
+called "make --no-print-directory docker-build-toolchain"
 
 start_case "use: no reference on a pull request builds locally, with no push, held by image ID"
 run_script 0 use it "" -- "${RUN_TOKEN[@]}"
@@ -798,10 +846,34 @@ else
   fail "printed '$(cat "$WORK_DIR/stdout")'"
 fi
 
-start_case "use: no reference on a push to main fails rather than rebuild"
-run_script 1 use toolchain "" -- CI_PUBLISH=true
-stderr_has "a consumer runs the image ci-images published and never builds its own"
-not_called "make "
+# DS-9239 (ruling 752): a consumer never turns a job red because no image of
+# main's can be had; a missing ref on a push to main, or a forge pull that
+# fails every attempt, falls back to a build on this runner.
+FB_LAN=lan.invalid:5000
+FB_REF="$TOOLCHAIN_REPO@sha256:$(printf '%064d' 0 | tr 0 a)"
+
+start_case "use (e): CI_PUBLISH=true, empty ref, no CI_IMAGE_REGISTRY: builds on this runner"
+run_script 0 use toolchain "" -- CI_PUBLISH=true
+called "docker-build-toolchain"
+stderr_has "building it on this runner"
+not_called "docker push"
+
+start_case "use (f): CI_PUBLISH=true, empty ref, CI_IMAGE_REGISTRY set: not used, builds on this runner"
+run_script 0 use toolchain "" -- CI_PUBLISH=true CI_IMAGE_REGISTRY="$FB_LAN" FAKE_LAN="$FB_LAN"
+stderr_has "no digest of main's for toolchain; $FB_LAN not used"
+not_called "docker pull --quiet $FB_LAN/"
+not_called "docker push"
+called "docker-build-toolchain"
+
+start_case "use (g): the forge pull fails every attempt: builds on this runner"
+run_script 0 use toolchain "$FB_REF" -- "GITHUB_SERVER_URL=https://$FORGE" CI_REGISTRY_BACKOFF=0 FAKE_PULL_RC=1
+stderr_has "cannot pull $FB_REF; building it on this runner"
+called "docker-build-toolchain"
+
+start_case "use (h): CI_IMAGE_REGISTRY misses and the forge pull fails: builds on this runner"
+run_script 0 use toolchain "$FB_REF" -- "GITHUB_SERVER_URL=https://$FORGE" CI_REGISTRY_BACKOFF=0 FAKE_PULL_RC=1 CI_IMAGE_REGISTRY="$FB_LAN" FAKE_LAN="$FB_LAN" FAKE_LAN_PULL_RC=1
+stderr_has "cannot pull $FB_REF; building it on this runner"
+called "docker-build-toolchain"
 
 start_case "use: no CI_STACK_PREFIX, no hold name"
 run_script 1 use toolchain "$TOOLCHAIN_REPO@$DIGEST" -- CI_STACK_PREFIX=
@@ -889,6 +961,281 @@ not_called "docker"
 start_case "an unknown command"
 run_script 1 push toolchain
 stderr_has "unknown command 'push'"
+
+# #2243 (ruling 752): CI_IMAGE_REGISTRY, a LAN registry with no auth, serves
+# the content-hash tag; a hit is pulled instead of built, a miss is built and
+# pushed, and neither a failed pull nor a failed push turns the job red.
+LAN=lan.invalid:5000
+LAN_TC="$LAN/$TOOLCHAIN_TAG"
+LAN_REF="$TOOLCHAIN_REPO@$DIGEST"
+# A forge pull that fails every attempt, so a LAN miss builds on this runner.
+NO_FORGE=(FAKE_PULL_RC=1 CI_REGISTRY_BACKOFF=0)
+
+start_case "use: CI_IMAGE_REGISTRY hit pulls the content tag, tags it locally, builds nothing"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "pulled $LAN_TC $DIGEST"
+called "docker pull --quiet $LAN_TC"
+called "docker tag $IMAGE_ID $TOOLCHAIN_TAG"
+not_called "docker-build-toolchain"
+not_called "docker push"
+not_called "docker login"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout" && grep -q '^TOOLCHAIN_HOLD=go-xkms-ci-hold-42-1-toolchain-' "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE as the image ID and TOOLCHAIN_HOLD"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+# #2243 Codex: the LAN registry is unauthenticated HTTP; with no digest of
+# main's from the forge nothing vouches for its image, so it is not used.
+start_case "use: with no ref, CI_IMAGE_REGISTRY is not used: no LAN pull or push, builds on this runner"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" GITHUB_SERVER_URL=
+stderr_has "no digest of main's for toolchain; $LAN not used"
+not_called "docker pull"
+not_called "docker push"
+not_called "$LAN/"
+called "docker-build-toolchain"
+# Codex round 2 P1-1: a ref is checked against GITHUB_SERVER_URL's registry
+# before the CI_IMAGE_REGISTRY path, so with no GITHUB_SERVER_URL it is refused.
+start_case "use: a ref with no GITHUB_SERVER_URL is refused before any CI_IMAGE_REGISTRY pull"
+run_script 1 use toolchain "$FORGE/example-ci-images/go-xkms-ci-toolchain@$DIGEST" -- CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" GITHUB_SERVER_URL=
+stderr_has "GITHUB_SERVER_URL is empty"
+not_called "docker pull"
+
+start_case "use: CI_IMAGE_REGISTRY miss builds, tags and pushes the content tag"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1
+called "docker pull --quiet $LAN_TC"
+called "docker-build-toolchain"
+called "docker tag $TOOLCHAIN_TAG $LAN_TC"
+called "docker push $LAN_TC"
+stderr_has "miss, built and pushed $LAN_TC"
+not_called "docker login"
+
+start_case "use: CI_IMAGE_REGISTRY push failure is one line and the job stays green"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 FAKE_PUSH_RC=1
+called "docker-build-toolchain"
+called "docker push $LAN_TC"
+stderr_has "miss, built, push failed"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE after a failed push"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+# Codex round 4 P1-2: the transfers are bounded by CI_IMAGE_TIMEOUT. A fake
+# pull or push that stalls for 30 s must end at the 1 s timeout; without the
+# timeout wrapper the case takes 30 s and fails its elapsed check.
+ended_within() {
+  if [ "$1" -lt 15 ]; then pass "ended in ${1}s"; else fail "took ${1}s: the transfer was not bounded"; fi
+}
+
+start_case "use: a stalled CI_IMAGE_REGISTRY pull ends at CI_IMAGE_TIMEOUT and builds on this runner"
+SECONDS=0
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" CI_IMAGE_TIMEOUT=1 FAKE_LAN_PULL_SLEEP=30
+ended_within "$SECONDS"
+called "docker pull --quiet $LAN_TC"
+called "docker-build-toolchain"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE after a stalled pull"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+start_case "use: a stalled CI_IMAGE_REGISTRY push ends at CI_IMAGE_TIMEOUT and the job stays green"
+SECONDS=0
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 CI_IMAGE_TIMEOUT=1 FAKE_PUSH_SLEEP=30
+ended_within "$SECONDS"
+called "docker push $LAN_TC"
+stderr_has "miss, built, push failed"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE after a stalled push"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+start_case "use: CI_IMAGE_REGISTRY unset builds as before, with no pull and no push"
+run_script 0 use toolchain "" -- FAKE_LAN="$LAN"
+called "docker-build-toolchain"
+not_called "docker pull"
+not_called "docker push"
+not_called "$LAN"
+
+start_case "use: CI_IMAGE_REGISTRY on a closed port builds as before, with no pull and no push"
+# #2243 Codex round 2 P1: a valid digest ref, so lan_pull passes its
+# missing-digest guard and reaches the probe the closed port answers.
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_CURL_RC=7
+called "curl -fsS --max-time 5 -o /dev/null http://$LAN/v2/"
+stderr_has "CI_IMAGE_REGISTRY does not answer; not used"
+called "docker-build-toolchain"
+not_called "docker pull --quiet $LAN_TC"
+not_called "docker tag $TOOLCHAIN_TAG $LAN_TC"
+not_called "docker push"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints TOOLCHAIN_IMAGE from the fallback build"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+# #2243 Codex P1-1: a LAN image is accepted for a ref only when its digest is
+# the ref's; otherwise use pulls the ref from the forge (and builds, DS-9239).
+OTHER_DIGEST="sha256:$(printf '%064d' 9)"
+LAN_REF="$TOOLCHAIN_REPO@$DIGEST"
+start_case "use: a CI_IMAGE_REGISTRY hit whose digest is not the ref's is refused; the forge pull of the ref is used"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_DIGEST="$OTHER_DIGEST"
+called "docker pull --quiet $LAN_TC"
+stderr_has "$LAN_TC is $OTHER_DIGEST, not the digest of $LAN_REF; not used"
+not_called "docker tag $LAN_TC $TOOLCHAIN_TAG"
+called "docker pull --quiet $LAN_REF"
+not_called "docker-build-toolchain"
+if grep -qx "TOOLCHAIN_IMAGE=$LAN_REF" "$WORK_DIR/stdout"; then
+  pass "prints the ref as TOOLCHAIN_IMAGE"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")', want TOOLCHAIN_IMAGE=$LAN_REF"
+fi
+called "docker push $LAN_TC"
+
+start_case "use: a refused CI_IMAGE_REGISTRY hit and a failed forge pull build on this runner (DS-9239)"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_DIGEST="$OTHER_DIGEST" FAKE_PULL_RC=1
+stderr_has "not the digest of $LAN_REF; not used"
+not_called "docker tag $LAN_TC $TOOLCHAIN_TAG"
+called "docker-build-toolchain"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints the local build's image ID"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")'"
+fi
+
+start_case "use: a CI_IMAGE_REGISTRY hit whose digest is the ref's is used"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "pulled $LAN_TC $DIGEST"
+called "docker tag $IMAGE_ID $TOOLCHAIN_TAG"
+not_called "docker pull --quiet $LAN_REF"
+not_called "docker-build-toolchain"
+
+# #2243 Codex P1-2: every CI_IMAGE_REGISTRY pull and push runs with an empty
+# private Docker config, never the runner's (its auths and credsStore).
+RUNNER_CFG="$WORK_DIR/runner-docker"
+mkdir -p "$RUNNER_CFG"
+printf '{"auths":{"%s":{"auth":"%s"}},"credsStore":"desktop"}\n' "$LAN" "$(printf 'runner:%s' "$SECRET" | base64)" >"$RUNNER_CFG/config.json"
+# lan_cfg_private <pull|push>: each LAN <op> ran with a private, empty config.
+lan_cfg_private() {
+  local lines line bad=0
+  lines=$(grep -F "docker-cfg $1 $LAN/" "$CALL_LOG")
+  [ -n "$lines" ] || { fail "no CI_IMAGE_REGISTRY $1 recorded"; return; }
+  while IFS= read -r line; do
+    case $line in
+      *" $RUNNER_CFG files="* | *" unset files="* | *config.json*) bad=1 ;;
+      *" files=" | *" files=cli-plugins ") ;;
+      *) bad=1 ;;
+    esac
+  done <<<"$lines"
+  if [ "$bad" = 0 ]; then
+    pass "every CI_IMAGE_REGISTRY $1 ran with an empty private DOCKER_CONFIG"
+  else
+    fail "a CI_IMAGE_REGISTRY $1 saw the runner's Docker config: $lines"
+  fi
+}
+start_case "use: a CI_IMAGE_REGISTRY pull never sees the runner's Docker config"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" DOCKER_CONFIG="$RUNNER_CFG"
+lan_cfg_private pull
+not_called "docker login"
+start_case "use: a CI_IMAGE_REGISTRY miss's pull and push never see the runner's Docker config"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 DOCKER_CONFIG="$RUNNER_CFG"
+lan_cfg_private pull
+lan_cfg_private push
+start_case "use: after a forge pull, the CI_IMAGE_REGISTRY push never sees the run's login config"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 DOCKER_CONFIG="$RUNNER_CFG"
+called "docker pull --quiet $LAN_REF"
+lan_cfg_private push
+no_secret_printed
+# The forge read above is anonymous, so no login ran there. On GHCR the pull
+# logs in, and the login stub writes auths into its DOCKER_CONFIG: the LAN
+# push after it must run with a config that holds none.
+start_case "use: after a GHCR login and pull, the CI_IMAGE_REGISTRY push sees no auths"
+run_script 0 use toolchain "$GHCR_REPO@$DIGEST" -- "${RUN_TOKEN[@]}" "${GHCR[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_LAN_PULL_RC=1 DOCKER_CONFIG="$RUNNER_CFG"
+called "docker login ghcr.io -u runner --password-stdin"
+called "docker pull --quiet $GHCR_REPO@$DIGEST"
+lan_cfg_private push
+login_cfg=$(grep '^login-cfg ' "$CALL_LOG" | cut -d' ' -f2-)
+if [ -n "$login_cfg" ] && ! grep -qF "docker-cfg push $LAN/" <(grep -F " $login_cfg files=" "$CALL_LOG"); then
+  pass "the LAN push did not run with the login's DOCKER_CONFIG"
+else
+  fail "login config '$login_cfg' reused: $(grep -F 'docker-cfg push' "$CALL_LOG")"
+fi
+no_secret_printed
+
+# #2243 Codex round 2, P1-1: a CI_IMAGE_REGISTRY hit is no way around the ref
+# checks; a ref pull_ref would refuse is refused before any LAN pull.
+start_case "use: a ':latest' ref with a CI_IMAGE_REGISTRY hit is refused before any pull"
+run_script 1 use toolchain "$TOOLCHAIN_REPO:latest" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "is not a digest reference"
+not_called "docker pull"
+not_called "docker tag $LAN_TC"
+start_case "use: a ref outside the publishing namespace with a CI_IMAGE_REGISTRY hit is refused before any pull"
+run_script 1 use toolchain "$FORGE/jeremyhahn/go-xkms-ci-toolchain@$DIGEST" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "is not under $FORGE/example-ci-images/, where main publishes"
+not_called "docker pull"
+not_called "docker tag $LAN_TC"
+start_case "use: a ref in another registry with a CI_IMAGE_REGISTRY hit is refused before any pull"
+run_script 1 use toolchain "ghcr.io/jeremyhahn/go-xkms-ci-toolchain@$DIGEST" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN"
+stderr_has "is not in this run's registry, $FORGE"
+not_called "docker pull"
+not_called "docker tag $LAN_TC"
+
+# P1-2: with no private config dir (mktemp fails), no LAN docker call runs.
+start_case "use: no private Docker config for CI_IMAGE_REGISTRY: no LAN pull or push, builds on this runner"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" "${NO_FORGE[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" DOCKER_CONFIG="$RUNNER_CFG" TMPDIR="$WORK_DIR/no-such-tmp"
+not_called "docker pull --quiet $LAN/"
+not_called "docker push"
+called "docker-build-toolchain"
+if grep -F "$LAN/" "$CALL_LOG" | grep -q '^docker-cfg'; then
+  fail "a CI_IMAGE_REGISTRY call ran: $(grep -F "docker-cfg" "$CALL_LOG")"
+else
+  pass "no CI_IMAGE_REGISTRY docker call ran without a private config"
+fi
+
+# P1-3: a single-label CI_IMAGE_REGISTRY would be read by Docker as a Docker Hub
+# namespace; it is rejected with a warning and treated as unset.
+start_case "use: a single-label CI_IMAGE_REGISTRY is rejected and treated as unset"
+run_script 0 use toolchain "" -- CI_IMAGE_REGISTRY=registry FAKE_LAN=registry
+stderr_has "CI_IMAGE_REGISTRY is a single-label name"
+not_called "registry/go-xkms-toolchain"
+not_called "docker pull"
+not_called "docker push"
+called "docker-build-toolchain"
+start_case "use: CI_IMAGE_REGISTRY=localhost is a registry host"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY=localhost FAKE_LAN=localhost
+called "docker pull --quiet localhost/$TOOLCHAIN_TAG"
+not_called "docker-build-toolchain"
+
+# #2243 Codex round 3 P1-1: pull_ref runs inside an if, where errexit is off;
+# a failed private config must stop it before any login or pull, which would
+# otherwise read the runner's Docker config.
+start_case "use: no private Docker config for the forge pull: no pull, no login, builds on this runner"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" DOCKER_CONFIG="$RUNNER_CFG" TMPDIR="$WORK_DIR/no-such-tmp"
+not_called "docker pull"
+not_called "docker login"
+called "docker-build-toolchain"
+start_case "use: no private Docker config for a GHCR pull: no login, no pull, builds on this runner"
+run_script 0 use toolchain "$GHCR_REPO@$DIGEST" -- "${RUN_TOKEN[@]}" "${GHCR[@]}" DOCKER_CONFIG="$RUNNER_CFG" TMPDIR="$WORK_DIR/no-such-tmp"
+not_called "docker login"
+not_called "docker pull"
+called "docker-build-toolchain"
+no_secret_printed
+
+# Round 3 P1-2: the image whose digest was checked is the one held and run;
+# a retag of the content tag after the check changes nothing.
+RETAG_ID="sha256:$(printf '%064d' 0 | tr 0 b)"
+start_case "use: a CI_IMAGE_REGISTRY hit is held by the checked digest's image ID, never re-read from a tag"
+run_script 0 use toolchain "$LAN_REF" -- "${RUN_TOKEN[@]}" CI_IMAGE_REGISTRY="$LAN" FAKE_LAN="$LAN" FAKE_RETAG_ID="$RETAG_ID"
+called "docker image inspect -f {{.Id}} $LAN/go-xkms-toolchain@$DIGEST"
+called "docker tag $IMAGE_ID $TOOLCHAIN_TAG"
+called "docker create --pull never --name go-xkms-ci-hold-42-1-toolchain-"
+not_called "$RETAG_ID"
+if grep -qx "TOOLCHAIN_IMAGE=$IMAGE_ID" "$WORK_DIR/stdout"; then
+  pass "prints the checked image's ID as TOOLCHAIN_IMAGE"
+else
+  fail "printed '$(cat "$WORK_DIR/stdout")', want TOOLCHAIN_IMAGE=$IMAGE_ID"
+fi
 
 # --------------------------------------------------------------------------
 if [ "$FAILURES" -eq 0 ]; then
