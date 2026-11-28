@@ -109,7 +109,7 @@ func (g *PermissionGate) Authorize(ctx context.Context, resource, action string,
 	}
 
 	err := g.authorizer.Authorize(ctx, identity, resource, action)
-	if err == nil && adminRoleExcluded(resource, action) {
+	if err == nil && g.Enforcing() && adminRoleExcluded(resource, action) {
 		err = g.authorizeWithoutAdminRole(ctx, identity, resource, action)
 	}
 	if err != nil {

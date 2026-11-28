@@ -23,6 +23,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	db "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 )
@@ -95,5 +96,24 @@ func TestPermissionGate_AdminRoleCannotCreateOrUpdateRoles(t *testing.T) {
 				assert.Error(t, err)
 			}
 		})
+	}
+}
+
+// TestPermissionGate_AdminRoleExclusionOffWhenRBACDisabled: with the
+// authorizer disabled every authenticated request is allowed, so an identity
+// holding only Admin (by name or by tenant role ID) may create and update
+// roles exactly like one holding no roles.
+func TestPermissionGate_AdminRoleExclusionOffWhenRBACDisabled(t *testing.T) {
+	gate := NewPermissionGate(auth.NewAuthorizer(nil), discardLogger())
+	require.False(t, gate.Enforcing())
+
+	adminRoleID := qrdbsdk.SystemRoleID("t1", qrdbsdk.RoleNameAdmin)
+	for _, roles := range [][]string{nil, {qrdbsdk.RoleNameAdmin}, {adminRoleID}} {
+		for _, action := range []string{auth.ActionCreate, auth.ActionUpdate} {
+			ctx := auth.WithIdentity(context.Background(), &auth.Identity{
+				Subject: "tester", TenantID: "t1", Roles: roles,
+			})
+			assert.NoError(t, gate.Authorize(ctx, auth.ResourceRoles, action), "roles %v %s", roles, action)
+		}
 	}
 }
