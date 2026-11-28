@@ -36,9 +36,13 @@ const (
 	// outputs the producer's outputs name.
 	publishStep = "publish"
 	resolveStep = "resolve"
+	// poolBuildStep builds the images main has not published once, on the pool,
+	// for a same-repo pull request (#2299).
+	poolBuildStep = "pool"
 	// producerRunsOn puts ci-images on the release runner for a push to main
 	// and on the pull-request pool otherwise.
-	producerRunsOn   = "${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}"
+	// #2299: a same-repo pull request runs it on the self-hosted docker pool.
+	producerRunsOn   = `${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || (github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk') }}`
 	digestRefPattern = `^[^@ ]+@sha256:[0-9a-f]{64}$`
 	// consumerFloor is the number of jobs in ci.yml that run a stage in the
 	// toolchain image; a parse that finds fewer has stopped seeing them.
@@ -88,6 +92,10 @@ type imageFamily struct {
 	hold   string
 	stage  *regexp.Regexp
 	use    *regexp.Regexp
+	// pooled: the same-repo pull-request pool builds this image (step
+	// pool). Only the toolchain image is: no ci.yml job consumes the
+	// integration image's reference (#2302 Codex P2).
+	pooled bool
 }
 
 var imageFamilies = []imageFamily{
@@ -98,6 +106,7 @@ var imageFamilies = []imageFamily{
 		hold:   "TOOLCHAIN_HOLD",
 		stage:  regexp.MustCompile(`scripts/(in-toolchain-image|trim-ci-caches)\.sh`),
 		use:    regexp.MustCompile(`scripts/ci-registry\.sh use toolchain "\$([A-Z_]+)"`),
+		pooled: true,
 	},
 	{
 		name:   "it",
@@ -177,10 +186,15 @@ func producerProblems(job digestJob) []string {
 		add("has no packages: write to publish the images")
 	}
 	for _, fam := range imageFamilies {
-		// Both paths feed one output: publish on a push to main, resolve on
-		// any other event. A step counts only under its id, writing that
+		// The paths feed one output: publish on a push to main, the pool
+		// build on a same-repo pull request (pooled families only), resolve
+		// on any other event. A step counts only under its id, writing that
 		// output.
-		want := "${{ steps." + publishStep + ".outputs." + fam.output + " || steps." + resolveStep + ".outputs." + fam.output + " }}"
+		pool := ""
+		if fam.pooled {
+			pool = " || steps." + poolBuildStep + ".outputs." + fam.output
+		}
+		want := "${{ steps." + publishStep + ".outputs." + fam.output + pool + " || steps." + resolveStep + ".outputs." + fam.output + " }}"
 		if got := collapse(job.Outputs[fam.output]); got != want {
 			add("output %s is %q, want %q", fam.output, got, want)
 		}
@@ -435,8 +449,10 @@ func TestCIImageDigest_RevertedConsumerFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v", ciWorkflow, err)
 	}
-	take := `run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"`
-	revert := `run: docker image inspect "$TOOLCHAIN_REF" >/dev/null 2>&1 || make docker-build-toolchain TOOLCHAIN_IMAGE="$TOOLCHAIN_REF"`
+	// The take step's run is a block (#2302: it masks the registry first);
+	// the revert swaps its last line.
+	take := `scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"`
+	revert := `docker image inspect "$TOOLCHAIN_REF" >/dev/null 2>&1 || make docker-build-toolchain TOOLCHAIN_IMAGE="$TOOLCHAIN_REF"`
 	src := string(data)
 	if !strings.Contains(src, take) {
 		t.Fatalf("%s has no %q to revert", ciWorkflow, take)
@@ -457,12 +473,12 @@ env:
   CI_REGISTRY_OWNER: ${{ github.server_url != 'https://github.com' && vars.CI_REGISTRY_OWNER || '' }}
 jobs:
   ci-images:
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || (github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk') }}
     permissions:
       contents: read
       packages: write
     outputs:
-      toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
+      toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
       it_ref: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
     steps:
       - id: publish
@@ -483,7 +499,7 @@ jobs:
           ref=$(scripts/ci-registry.sh resolve it)
           echo "it_ref=$ref" >> "$GITHUB_OUTPUT"
       - env:
-          TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
+          TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
           IT_REF: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
         run: |
           re='^[^@ ]+@sha256:[0-9a-f]{64}$'
@@ -554,14 +570,15 @@ func TestCIImageDigest_CanFail(t *testing.T) {
 		{"publish under a negation", "if: ${{ env.CI_PUBLISH == 'true' }}", "if: ${{ !(env.CI_PUBLISH == 'true') }}", "no step publishes the toolchain image"},
 		{"no resolve", "scripts/ci-registry.sh resolve it", "true", "no step resolves the it image"},
 		{"references not validated", "re='^[^@ ]+@sha256:[0-9a-f]{64}$'", "true", "no step validates"},
-		{"output not a step's", "toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}", "toolchain_ref: main", "output toolchain_ref"},
+		{"output not a step's", "toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}", "toolchain_ref: main", "output toolchain_ref"},
 		{"output drops the pull-request path", "it_ref: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}", "it_ref: ${{ steps.publish.outputs.it_ref }}", "output it_ref"},
-		{"output drops the main path", "toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}", "toolchain_ref: ${{ steps.resolve.outputs.toolchain_ref }}", "output toolchain_ref"},
+		{"output takes an integration image from the pool", "it_ref: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}", "it_ref: ${{ steps.publish.outputs.it_ref || steps.pool.outputs.it_ref || steps.resolve.outputs.it_ref }}", "output it_ref"},
+		{"output drops the main path", "toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}", "toolchain_ref: ${{ steps.resolve.outputs.toolchain_ref }}", "output toolchain_ref"},
 		{"publish step under another id", "- id: publish\n", "- id: push\n", "no step publishes the toolchain image"},
 		{"resolve step under another id", "- id: resolve\n", "- id: lookup\n", "no step resolves the it image"},
 		{"publish writes another output", "ref=$(scripts/ci-registry.sh publish toolchain)\n          echo \"toolchain_ref=$ref\"", "ref=$(scripts/ci-registry.sh publish toolchain)\n          echo \"toolchain=$ref\"", "no step publishes the toolchain image"},
 		{"resolve never writes its output", "ref=$(scripts/ci-registry.sh resolve it)\n          echo \"it_ref=$ref\" >> \"$GITHUB_OUTPUT\"", "ref=$(scripts/ci-registry.sh resolve it)\n          echo \"it_ref=$ref\"", "no step resolves the it image"},
-		{"validation reads the pull-request path alone", "TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}", "TOOLCHAIN_REF: ${{ steps.resolve.outputs.toolchain_ref }}", "no step validates TOOLCHAIN_REF"},
+		{"validation reads the pull-request path alone", "TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}", "TOOLCHAIN_REF: ${{ steps.resolve.outputs.toolchain_ref }}", "no step validates TOOLCHAIN_REF"},
 		{"validation without the integration image", "          IT_REF: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}\n", "", "no step validates IT_REF"},
 		{"consumer rebuilds", `run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"`, "run: make docker-build-toolchain", "lint: runs a toolchain stage without"},
 		{"consumer probes and rebuilds", `run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"`, `run: docker image inspect "$TOOLCHAIN_REF" >/dev/null 2>&1 || make docker-build-toolchain TOOLCHAIN_IMAGE="$TOOLCHAIN_REF"`, "lint: rebuilds or probes"},

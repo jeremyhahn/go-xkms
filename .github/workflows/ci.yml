@@ -727,6 +727,12 @@ env:
   # event pulls main's copy by digest or builds its own with no push
   # (scripts/ci-registry.sh, docs/testing/docker-testing.md "CI images").
   CI_PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  # #2299: whether this run is a same-repo pull request. Its ci-images job
+  # runs on the self-hosted docker pool and, when main has not published
+  # this content, builds each CI image once and pushes it to the pool
+  # registry (the CI_IMAGE_REGISTRY secret); its consumers pull that image
+  # by digest and never build their own. Main and fork PRs keep GHCR.
+  CI_POOL: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
   # The namespace the CI images live in. On the forge, the repository
   # variable CI_REGISTRY_OWNER: the release runner's registry user and public,
   # since Gitea 1.27 lets only a user namespace's owner or an admin write it
@@ -1289,13 +1295,16 @@ jobs:
     if: ${{ !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
     # v1.48: publishes to the registry, so it never overflows to a pool runner
     # (as the template's publish-images); ubuntu-latest on github.com.
-    runs-on: ${{ github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}
+    # #2299: a same-repo pull request runs on the self-hosted docker pool,
+    # where it builds the images main has not published, once, for every
+    # consumer job.
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","linux","x64","bigdisk-docker"]') || (github.server_url == 'https://github.com' && 'ubuntu-latest' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk') }}
     timeout-minutes: 120
     permissions:
       contents: read
       packages: write
     outputs:
-      toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
+      toolchain_ref: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
       it_ref: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -1323,6 +1332,20 @@ jobs:
       - name: Mask the LAN addresses
         run: scripts/ci-mask-lan.sh
 
+      # #2299: the pool registry is a secret; mask it, and its host, before
+      # any step prints an image reference.
+      - name: Mask the pool registry
+        if: ${{ env.CI_POOL == 'true' }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          [ -n "$reg" ] || { echo "::error::the CI_IMAGE_REGISTRY secret is empty"; exit 1; }
+          host=${reg%%/*}
+          echo "::add-mask::$reg"
+          echo "::add-mask::$host"
+          echo "::add-mask::${host%%:*}"
+
       - name: Read the Alpine package index
         run: |
           APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
@@ -1336,7 +1359,7 @@ jobs:
       # to GHCR with the run's token.
       # v1.29.4, v1.29.5: Athens first, as in the image job.
       - name: Route the image build through Athens
-        if: ${{ env.CI_PUBLISH == 'true' }}
+        if: ${{ env.CI_PUBLISH == 'true' || env.CI_POOL == 'true' }}
         run: |
           if [ -n "${DEVCACHE_GOPROXY:-}" ] && curl -s -o /dev/null --max-time 5 "$DEVCACHE_GOPROXY/"; then
             echo "GO_BUILD_PROXY=$DEVCACHE_GOPROXY|https://proxy.golang.org" >> "$GITHUB_ENV"
@@ -1369,17 +1392,41 @@ jobs:
           ref=$(scripts/ci-registry.sh resolve it)
           echo "it_ref=$ref" >> "$GITHUB_OUTPUT"
 
+      # #2299: on a same-repo pull request, an image main has not published
+      # is built here once, on the pool, and pushed to the pool registry;
+      # the reference names no registry (a job output holding a secret is
+      # dropped), and each consumer's `use` adds it back from the secret.
+      # Codex round 3 on #2302: only when preflight put every consumer (runs-on
+      # from `runner` or `runner_docker`) on the self-hosted pool; a hosted
+      # consumer cannot reach the LAN registry, so it gets the resolved
+      # reference, or "" and builds the image itself, as before #2299.
+      - name: Build the CI images on the pool
+        id: pool
+        # #2302 Codex round 4: off github.com every consumer keeps its fixed self-hosted
+        # label, so preflight's ubuntu-latest output does not describe where it runs.
+        if: ${{ env.CI_POOL == 'true' && (github.server_url != 'https://github.com' || (contains(needs.preflight.outputs.runner, 'self-hosted') && contains(needs.preflight.outputs.runner_docker, 'self-hosted'))) }}
+        env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
+          TOOLCHAIN_REF: ${{ steps.resolve.outputs.toolchain_ref }}
+        run: |
+          if [ -z "$TOOLCHAIN_REF" ]; then
+            ref=$(scripts/ci-registry.sh pool toolchain)
+            echo "toolchain_ref=$ref" >> "$GITHUB_OUTPUT"
+          fi
+
       # A published reference is always a digest; a resolved one is a digest
-      # or "".
+      # or "" (the toolchain is never "" when the pool step ran: the pool
+      # built it; the integration image may be "", no pool job consumes it).
       - name: Validate the image references
         env:
-          TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
+          POOL_HANDOFF: ${{ env.CI_POOL == 'true' && (github.server_url != 'https://github.com' || (contains(needs.preflight.outputs.runner, 'self-hosted') && contains(needs.preflight.outputs.runner_docker, 'self-hosted'))) }}
+          TOOLCHAIN_REF: ${{ steps.publish.outputs.toolchain_ref || steps.pool.outputs.toolchain_ref || steps.resolve.outputs.toolchain_ref }}
           IT_REF: ${{ steps.publish.outputs.it_ref || steps.resolve.outputs.it_ref }}
         run: |
           re='^[^@ ]+@sha256:[0-9a-f]{64}$'
           for v in TOOLCHAIN_REF IT_REF; do
             ref=${!v}
-            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ]; then
+            if [ -z "$ref" ] && [ "$CI_PUBLISH" != true ] && { [ "$POOL_HANDOFF" != true ] || [ "$v" = IT_REF ]; }; then
               echo "$v is empty: the consumers build the image on their runners"
               continue
             fi
@@ -1464,11 +1511,23 @@ jobs:
       # scan alone, which moved to scans.yml, so this job no longer takes it
       # (nor reads the Alpine package index its tag hashes).
       - name: Take the toolchain image
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
       # <<< CUSTOMIZE
 
       # v1.22: bound this repo's cache volumes on the host before the stages
@@ -1683,11 +1742,23 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: ${{ runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' }}
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # v1.22: bound this repo's cache volumes (as in the image job). It never
       # fails the job and keeps every volume a container mounts.
@@ -1886,6 +1957,7 @@ jobs:
       # <<< CUSTOMIZE
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        timeout-minutes: 10
 
       # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
       # any other step. The runner injects them as plain environment
@@ -1893,6 +1965,7 @@ jobs:
       # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
       # as well.
       - name: Mask the forge credentials
+        timeout-minutes: 5
         run: |
           for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
             val=${!v:-}
@@ -1907,13 +1980,16 @@ jobs:
       # this step's env, since Actions prints a step's env unredacted before
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
+        timeout-minutes: 5
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
+        timeout-minutes: 15
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29: the Alpine package index checksum (as in ci-images).
       - name: Read the Alpine package index
+        timeout-minutes: 10
         run: |
           APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
           export APK_BASE_IMAGES
@@ -1922,6 +1998,7 @@ jobs:
 
       # v1.23: the content-addressed integration image (as in the image job).
       - name: Name the integration image
+        timeout-minutes: 30     # #2307: image build/pull class, unmeasured
         run: echo "IT_IMAGE=$(make -s it-image)" >> "$GITHUB_ENV"
 
       # v1.23: a lease on the integration image (from a Codex review). A
@@ -1932,6 +2009,7 @@ jobs:
       # removes the lease; one a dead job leaves behind is a stale container,
       # which the reap step removes after the job timeout like any other.
       - name: Lease the integration image
+        timeout-minutes: 5
         run: |
           if docker image inspect "$IT_IMAGE" >/dev/null 2>&1; then
             lease="${CI_STACK_PREFIX}lease-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
@@ -1941,6 +2019,7 @@ jobs:
       # CUSTOMIZE: host tuning the suite needs goes here, as in the test job.
 
       - name: Write the module credential file
+        timeout-minutes: 5
         run: |
           umask 077
           : > "$RUNNER_TEMP/gomodauth.env"
@@ -1949,15 +2028,18 @@ jobs:
           done
 
       - name: make integration-test (integration image)
+        timeout-minutes: 45     # #2307: test class, unmeasured; tighten from run timings
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       # Ruling 888: no image this run built carries a private address in its
       # history or config, whatever the suite's result.
       - name: Check the images carry no private address
+        timeout-minutes: 30
         if: ${{ !cancelled() && runner.environment != 'github-hosted' }}
         run: make check-run-images IT_IMAGE="$IT_IMAGE"
 
       - name: Tear down
+        timeout-minutes: 15
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/gomodauth.env"
@@ -1969,10 +2051,12 @@ jobs:
       # clean-test-containers removes the per-suite stacks, and
       # devcontainer-clean the devcontainer project it leaves.
       - name: Tear down the integration stacks
+        timeout-minutes: 15
         if: always()
         run: make clean-test-containers IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" CLEAN_RUN_IMAGES=1
 
       - name: Tear down the devcontainer
+        timeout-minutes: 15
         if: always()
         run: make devcontainer-clean IT_PROJECT="$IT_PROJECT"
       # <<< CUSTOMIZE
@@ -2215,11 +2299,23 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: ${{ runner.environment == 'github-hosted' && needs.preflight.outputs.docs_only != 'true' }}
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Static analysis (toolchain image)
         if: ${{ runner.environment == 'github-hosted' && needs.preflight.outputs.docs_only != 'true' }}
@@ -2332,11 +2428,23 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # This job writes the shared cache volumes too, so it bounds them first,
       # as the image job does (ci-standard.md §6). It never fails the job.
@@ -2487,11 +2595,23 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Build sdk/go, web/desktop and xkey (toolchain image)
         if: runner.environment == 'github-hosted'
@@ -2602,11 +2722,23 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: sdk/go and web/desktop tests (toolchain image)
         if: runner.environment == 'github-hosted'
@@ -2760,11 +2892,23 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: Build, vet and test (toolchain image)
         if: runner.environment == 'github-hosted'
@@ -2871,11 +3015,23 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       # -timeout 75m, not the 10m default (#1587: above this job's slowest
       # green run, 71m, forge API, last 60 CI runs, 2026-10-17, and below its
@@ -2999,11 +3155,23 @@ jobs:
       # (as in the image job).
       - name: Take the toolchain image
         if: runner.environment == 'github-hosted'
+        timeout-minutes: 30
         env:
+          CI_IMAGE_REGISTRY: ${{ secrets.CI_IMAGE_REGISTRY }}
           TOOLCHAIN_REF: ${{ needs.ci-images.outputs.toolchain_ref }}
           CI_REGISTRY_USER: ${{ github.actor }}
           CI_REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
+        # Codex on #2302: ci-images' masks do not reach this job, so mask the
+        # registry, host:port and bare host before the first pull.
+        run: |
+          reg=${CI_IMAGE_REGISTRY%/}
+          if [ -n "$reg" ]; then
+            host=${reg%%/*}
+            echo "::add-mask::$reg"
+            echo "::add-mask::$host"
+            echo "::add-mask::${host%%:*}"
+          fi
+          scripts/ci-registry.sh use toolchain "$TOOLCHAIN_REF" >> "$GITHUB_ENV"
 
       - name: pkg/tpm2 on the simulator (toolchain image)
         if: runner.environment == 'github-hosted'

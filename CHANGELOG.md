@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`make release-alpha` cuts on a GitHub remote (#1082).** `release-alpha.sh` mapped a GitHub SSH or scp-like remote to Gitea's HTTP port and always called the forge at `<origin>/api/v1/repos/...`, so the repository read and the release pull request failed on GitHub. A `github.com` remote now maps to `https://github.com/<owner>/<repo>` and its API to `https://api.github.com/repos/<owner>/<repo>` (`forge_api_url`); a Gitea remote is unchanged.
 
+### Changed
+
+- **CI builds the toolchain image once per hash on the self-hosted pool, and apt-get is bounded (#2299).** On a same-repo pull request on the self-hosted forge, the `ci-images` job builds the toolchain image once and pushes it to the pool registry (`CI_IMAGE_REGISTRY`); pool consumers take it by digest and no consumer step runs `make docker-build-toolchain`. `scripts/ci-registry.sh use` fails on a same-repo pull request with an empty reference instead of building. Every "Take the toolchain image" step has `timeout-minutes: 30`, and every `apt-get` in a Dockerfile `RUN` runs under `timeout 300`. Gated by `internal/buildgates` and `test/scripts/ci-registry.test.sh`; see `docs/testing/docker-testing.md`.
+
 ## [0.64.0-alpha] - 2026-10-25
 
 ### Security

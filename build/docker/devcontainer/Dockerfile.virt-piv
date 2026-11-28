@@ -11,7 +11,7 @@
 #       -f build/docker/devcontainer/Dockerfile.virt-piv build/docker/devcontainer
 
 FROM debian:bookworm-slim AS softhsm
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     build-essential autoconf automake libtool pkg-config libssl-dev \
     curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -23,7 +23,7 @@ FROM debian:bookworm-slim
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     libssl3 \
     opensc \
     opensc-pkcs11 \
