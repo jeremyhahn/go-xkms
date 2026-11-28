@@ -122,6 +122,10 @@ var (
 	// ErrPossessionCSRMalformed, when a possession set's measurements claim
 	// (273) is not the one shape that carries the application evidence.
 	ErrPossessionMeasurementsShape = errors.New("device-attest-01: the measurements claim is not the application evidence shape")
+	// ErrPossessionEvidenceMismatch rejects a possession request whose
+	// application evidence differs from the evidence the verified alias
+	// certificate carries.
+	ErrPossessionEvidenceMismatch = errors.New("device-attest-01: the possession request's application evidence is not the alias certificate's")
 )
 
 // PossessionRequest is what a possession certificate request states.
@@ -412,6 +416,20 @@ func (v *VerifiedAttestation) VerifyPossessionCSR(csr *x509.CertificateRequest, 
 	}
 	if !bytes.Equal(csr.RawSubjectPublicKeyInfo, leaf.RawSubjectPublicKeyInfo) {
 		return ErrPossessionKeyMismatch
+	}
+	// When the verified alias carries application evidence, the request's
+	// evidence must be that evidence, so the reference gate at finalization
+	// and the issued certificate hold the attested value and not one the
+	// client chose. An alias without a measurements claim attests none; the
+	// reference gate refuses such a leaf for a device with a reference.
+	aliasClaims, err := dice.UccsFromCertificate(leaf)
+	if err != nil {
+		return &errs.Joined{Lead: ErrPossessionEvidenceMismatch, Detail: "the alias certificate carries no UCCS evidence", Cause: err}
+	}
+	if _, attested := aliasClaims.Other[dice.ClaimMeasurements]; attested {
+		if err := dice.VerifyApplicationReference(aliasClaims, request.ApplicationEvidence); err != nil {
+			return &errs.Joined{Lead: ErrPossessionEvidenceMismatch, Cause: err}
+		}
 	}
 	if subtle.ConstantTimeCompare(request.Claims.Nonce, DICENonce(v.KeyAuthorization)) != 1 {
 		return ErrPossessionNonceMismatch

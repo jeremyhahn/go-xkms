@@ -1117,6 +1117,7 @@ test-scripts:
 	@bash test/scripts/in-toolchain-image.test.sh
 	@bash test/scripts/touched-features.test.sh
 	@bash test/scripts/touched-packages.test.sh
+	@$(GO) test -count=1 ./test/e2e/
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 # test-buildgates: the CI tier gate (#1483) -- every ci.yml job is in CI Gate

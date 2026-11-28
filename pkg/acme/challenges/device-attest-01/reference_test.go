@@ -29,6 +29,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
+	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 )
 
@@ -37,21 +39,9 @@ import (
 // as the application's 32 bytes.
 func mintAliasWithApplication(t *testing.T, key *ecdsa.PrivateKey, evidence []byte) *x509.Certificate {
 	t.Helper()
-	mode, err := cbor.CoreDetEncOptions().EncMode()
-	require.NoError(t, err)
-	coswid, err := mode.Marshal(map[int64]any{
-		0:  bytes.Repeat([]byte{0x5a}, 16),
-		1:  "app-fw",
-		2:  map[int64]any{31: "vendor", 33: 1},
-		3:  map[int64]any{17: map[int64]any{24: "app", 7: []any{1, evidence}}},
-		12: 0,
-	})
-	require.NoError(t, err)
-	measurements, err := mode.Marshal([]any{[]any{258, coswid}})
-	require.NoError(t, err)
 	uccs, err := dice.CreateUccsEvidenceExtension(&dice.ClaimsSet{
 		Nonce: DICENonce(diceKeyAuth),
-		Other: map[int64][]byte{dice.ClaimMeasurements: measurements},
+		Other: map[int64][]byte{dice.ClaimMeasurements: applicationMeasurements(t, evidence)},
 	})
 	require.NoError(t, err)
 
@@ -68,6 +58,34 @@ func mintAliasWithApplication(t *testing.T, key *ecdsa.PrivateKey, evidence []by
 	leaf, err := x509.ParseCertificate(der)
 	require.NoError(t, err)
 	return leaf
+}
+
+// applicationMeasurements is a measurements claim (273) in the application
+// evidence shape carrying evidence.
+func applicationMeasurements(t *testing.T, evidence []byte) []byte {
+	t.Helper()
+	mode, err := cbor.CoreDetEncOptions().EncMode()
+	require.NoError(t, err)
+	coswid, err := mode.Marshal(map[int64]any{
+		0:  bytes.Repeat([]byte{0x5a}, 16),
+		1:  "app-fw",
+		2:  map[int64]any{31: "vendor", 33: 1},
+		3:  map[int64]any{17: map[int64]any{24: "app", 7: []any{1, evidence}}},
+		12: 0,
+	})
+	require.NoError(t, err)
+	measurements, err := mode.Marshal([]any{[]any{258, coswid}})
+	require.NoError(t, err)
+	return measurements
+}
+
+// claimsWithEvidence is the vector possession claims set carrying evidence
+// in its measurements claim.
+func claimsWithEvidence(t *testing.T, evidence []byte) *dice.ClaimsSet {
+	t.Helper()
+	return vectorClaimsWith(t, func(other map[int64][]byte) {
+		other[dice.ClaimMeasurements] = applicationMeasurements(t, evidence)
+	})
 }
 
 // referencedFor is provisionedFor with reference registered as the device's
@@ -148,6 +166,36 @@ func TestConfirmRegistrationHoldsTheApplicationReference(t *testing.T) {
 	t.Run("a reference changed after validation is refused", func(t *testing.T) {
 		err := verified.ConfirmRegistration(ctx, referencedFor(t, deviceKey, bytes.Repeat([]byte{0x5a}, 32)))
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
+		assert.ErrorIs(t, err, dice.ErrApplicationEvidenceMismatch)
+	})
+}
+
+// The finalize request's possession CSR is bound to the alias's application
+// evidence: an alias carrying registered evidence A and a CSR, correctly
+// signed by the same DeviceID key, carrying evidence B is refused, so the
+// registered reference the alias passed holds for the request too.
+func TestVerifyPossessionCSRHoldsTheAliasApplicationEvidence(t *testing.T) {
+	ctx := context.Background()
+	deviceKey := newP256Key(t)
+	registered := bytes.Repeat([]byte{0xa5}, 32)
+	leaf := mintAliasWithApplication(t, deviceKey, registered)
+
+	validated, err := referencedFor(t, deviceKey, registered).VerifyRegisteredDevice(ctx, leaf, diceKeyAuth)
+	require.NoError(t, err)
+	verified := &VerifiedAttestation{Format: FormatDICE, KeyAuthorization: diceKeyAuth, LeafDER: leaf.Raw, AttestedSPKI: validated.AttestedSPKI}
+	order := []entities.ACMEIdentifier{{Type: common.AuthzTypePermanentIdentifier, Value: vectorDeviceID}}
+
+	t.Run("the alias's evidence is accepted", func(t *testing.T) {
+		claims := claimsWithEvidence(t, registered)
+		require.NoError(t, verified.VerifyPossessionCSR(possessionRequest(t, deviceKey, claims, diceKeyAuth), order))
+		require.NoError(t, verified.ConfirmRegistration(ctx, referencedFor(t, deviceKey, registered)))
+	})
+
+	t.Run("other evidence under the same key is refused", func(t *testing.T) {
+		other := bytes.Repeat([]byte{0x5a}, 32)
+		claims := claimsWithEvidence(t, other)
+		err := verified.VerifyPossessionCSR(possessionRequest(t, deviceKey, claims, diceKeyAuth), order)
+		assert.ErrorIs(t, err, ErrPossessionEvidenceMismatch)
 		assert.ErrorIs(t, err, dice.ErrApplicationEvidenceMismatch)
 	})
 }

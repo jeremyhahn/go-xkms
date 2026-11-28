@@ -69,7 +69,9 @@ Examples:
 			return err
 		}
 
-		// Trigger ACME registration by requesting a client for this account.
+		// Build the client to check the key settings. This makes no ACME
+		// request: registration (newAccount) happens on the first command
+		// that needs an order (docs/acme-issuance/cli.md).
 		if _, err := svc.Accounts().Client(cmd.Context(), name); err != nil {
 			return err
 		}
