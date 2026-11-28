@@ -1983,6 +1983,7 @@ integration-test-storage: integration-test-storage-file integration-test-storage
 integration-test-storage-file: integration-gocache
 	@echo "$(CYAN)$(BOLD)→ Running file storage integration tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
+	$(if $(SUITE_BUILD),@cd test/integration/storage && $(call compose,storage) build test)
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,storage) run --rm test-file
 	@echo "$(GREEN)✓ File storage integration tests complete$(RESET)"
@@ -1992,6 +1993,7 @@ integration-test-storage-file: integration-gocache
 integration-test-storage-memory: integration-gocache
 	@echo "$(CYAN)$(BOLD)→ Running memory storage integration tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
+	$(if $(SUITE_BUILD),@cd test/integration/storage && $(call compose,storage) build test)
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,storage) run --rm test-memory
 	@echo "$(GREEN)✓ Memory storage integration tests complete$(RESET)"
@@ -2012,6 +2014,7 @@ integration-test-yubikey:
 integration-test-storage-hardware-pkcs11: integration-gocache
 	@echo "$(CYAN)$(BOLD)→ Running PKCS#11 hardware storage tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
+	$(if $(SUITE_BUILD),@cd test/integration/storage && $(call compose,storage) build test)
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,storage) run --rm test-hardware-pkcs11
 	@echo "$(GREEN)✓ PKCS#11 hardware storage tests complete$(RESET)"
@@ -2021,6 +2024,7 @@ integration-test-storage-hardware-pkcs11: integration-gocache
 integration-test-storage-hardware-tpm2: integration-gocache
 	@echo "$(CYAN)$(BOLD)→ Running TPM2 hardware storage tests...$(RESET)"
 	@cd test/integration/storage && $(call compose,storage) down -v >/dev/null 2>&1 || true
+	$(if $(SUITE_BUILD),@cd test/integration/storage && $(call compose,storage) build test)
 	@cd test/integration/storage && $(call compose,storage) up -d tpm-simulator
 	@sleep 3
 	@cd test/integration/storage && trap '$(call compose,storage) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
@@ -5130,7 +5134,7 @@ integration-test-cluster: stage-gomodauth
 integration-test-truststrap:
 	@echo "$(CYAN)$(BOLD)→ Running xkey TrustService truststrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) --profile xkey down -v >/dev/null 2>&1 || true
-	@cd test/integration/bootstrap && $(call compose,bootstrap) --profile xkey build xkey-truststrap-test
+	@cd test/integration/bootstrap && $(call compose,bootstrap) --profile xkey build test
 	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) --profile xkey down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
 		$(call compose,bootstrap) --profile xkey run --rm xkey-truststrap-test
 	@echo "$(GREEN)✓ xkey TrustService truststrap integration tests complete$(RESET)"

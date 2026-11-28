@@ -21,11 +21,6 @@ services:
 
   # File storage tests (no special requirements, run standalone)
   test-file:
-    build:
-      context: ../../..
-      dockerfile: test/integration/Dockerfile.suite
-      secrets:
-        - gomodauth
     image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
     volumes:
@@ -45,11 +40,6 @@ services:
 
   # Memory storage tests (no special requirements, run standalone)
   test-memory:
-    build:
-      context: ../../..
-      dockerfile: test/integration/Dockerfile.suite
-      secrets:
-        - gomodauth
     image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
     volumes:
@@ -67,11 +57,6 @@ services:
 
   # Hardware storage tests with PKCS#11 (SoftHSM)
   test-hardware-pkcs11:
-    build:
-      context: ../../..
-      dockerfile: test/integration/Dockerfile.suite
-      secrets:
-        - gomodauth
     image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
     volumes:
@@ -94,11 +79,6 @@ services:
 
   # Hardware storage tests with TPM2
   test-hardware-tpm2:
-    build:
-      context: ../../..
-      dockerfile: test/integration/Dockerfile.suite
-      secrets:
-        - gomodauth
     image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
     volumes:

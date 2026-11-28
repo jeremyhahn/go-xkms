@@ -160,11 +160,6 @@ services:
   # Runs inside the xkey Go module so cross-module imports resolve
   # naturally without workspace or replace-directive gymnastics.
   xkey-truststrap-test:
-    build:
-      context: ../../..
-      dockerfile: test/integration/Dockerfile.suite
-      secrets:
-        - gomodauth
     image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       xkms-server:
