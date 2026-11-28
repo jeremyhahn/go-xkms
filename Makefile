@@ -1932,6 +1932,7 @@ clean-run-images:
 	else \
 		$(call run-image-refs,r=) 2>/dev/null; \
 		if [ -n "$$(echo $$refs)" ]; then docker rmi -f $$refs >/dev/null 2>&1 || true; fi; \
+		docker volume rm -f $(XKMS_GOCACHE_VOLUME) >/dev/null 2>&1 || true; \
 		echo "$(GREEN)✓ Removed this run's images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
 	fi
 
@@ -1959,6 +1960,7 @@ clean-test-containers:
 		cat $(BUILD_DIR)/clean-test-containers.log; \
 		exit 1; \
 	fi
+	@docker volume rm -f $(XKMS_GOCACHE_VOLUME) >/dev/null 2>&1 || true
 	@# CLEAN_RUN_IMAGES=1 (CI teardown only) also removes this run's images: run-image-refs (XKMS_IMAGE_REPOS at tag XKMS_IMAGE_TAG), never IT_IMAGE.
 	@if [ "$(CLEAN_RUN_IMAGES)" = 1 ] && [ -n "$(IT_PROJECT)" ] && [ -n "$(XKMS_IMAGE_TAG)" ]; then \
 		$(call run-image-refs,r=) 2>/dev/null; \

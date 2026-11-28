@@ -1,0 +1,1 @@
+- `make integration-test` builds each integration image once in `integration-images`; the compose suites share one test image (`test/integration/Dockerfile.suite`) and one Go build cache volume. A sub-suite run on its own still builds.
