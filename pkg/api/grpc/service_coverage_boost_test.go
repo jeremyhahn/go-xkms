@@ -288,10 +288,10 @@ func TestCopyKey_Validation(t *testing.T) {
 			wantMsg:  "dest_key_id is required",
 		},
 		{
-			name:     "missing wrapping_algorithm",
-			req:      &pb.CopyKeyRequest{SourceBackend: "b", SourceKeyId: "k", DestBackend: "b", DestKeyId: "k"},
-			wantCode: codes.InvalidArgument,
-			wantMsg:  "wrapping_algorithm is required",
+			name:     "omitted wrapping_algorithm reaches the service (go-xkms#2283)",
+			req:      &pb.CopyKeyRequest{SourceBackend: "nonexistent", SourceKeyId: "k", DestBackend: "software", DestKeyId: "k"},
+			wantCode: codes.NotFound,
+			wantMsg:  "source backend: " + xkms.ErrBackendNotFound.Error(),
 		},
 		{
 			name:     "source backend not found",

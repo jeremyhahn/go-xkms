@@ -1968,7 +1968,7 @@ func init() {
 	// Flags for copy command
 	keyCopyCmd.Flags().String("dest-backend", "software", "Destination backend (software, pkcs11, tpm2, awskms, etc.)")
 	keyCopyCmd.Flags().String("dest-keydir", "", "Destination key directory (for file-based backends)")
-	keyCopyCmd.Flags().String("algorithm", "RSAES_OAEP_SHA_256", "Wrapping algorithm")
+	keyCopyCmd.Flags().String("algorithm", "", "Wrapping algorithm (default: the destination backend's default, TPM2_DUPLICATE for tpm2)")
 
 	// Flags for get-import-params command
 	keyGetImportParamsCmd.Flags().String("key-type", "tls", "Key type")

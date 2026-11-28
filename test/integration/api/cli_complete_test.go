@@ -815,6 +815,27 @@ func TestCLICompleteKeyCopy(t *testing.T) {
 				t.Logf("[%s] key copy passed", proto)
 			})
 
+			// Without --algorithm the server picks the destination
+			// backend's default wrapping algorithm (go-xkms#2283).
+			t.Run("key_copy_default_algorithm", func(t *testing.T) {
+				args := []string{
+					"key", "copy", sourceKeyID, destKeyID + "-default-alg",
+					"--backend", "software",
+					"--key-dir", suite.keyDir,
+					"--dest-backend", "software",
+					"--dest-keydir", destKeyDir,
+				}
+
+				stdout, stderr, err := suite.runCLI(serverURL, args...)
+				if err != nil {
+					t.Logf("stdout: %s", stdout)
+					t.Logf("stderr: %s", stderr)
+					t.Fatalf("key copy without --algorithm failed: %v", err)
+				}
+
+				t.Logf("[%s] key copy with the default algorithm passed", proto)
+			})
+
 			// Cleanup
 			suite.runCLI(serverURL, "key", "delete", sourceKeyID,
 				"--backend", "software",

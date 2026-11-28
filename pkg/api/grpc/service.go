@@ -1432,9 +1432,8 @@ func (s *Service) CopyKey(ctx context.Context, req *pb.CopyKeyRequest) (*pb.Copy
 	if req.DestKeyId == "" {
 		return nil, status.Error(codes.InvalidArgument, "dest_key_id is required")
 	}
-	if req.WrappingAlgorithm == "" {
-		return nil, status.Error(codes.InvalidArgument, "wrapping_algorithm is required")
-	}
+	// An empty wrapping_algorithm is not an error: the service picks the
+	// destination backend's default (go-xkms#2283).
 
 	if err := s.authorize(ctx, auth.ResourceKeys, auth.ActionCreate, req.DestKeyId); err != nil {
 		return nil, err

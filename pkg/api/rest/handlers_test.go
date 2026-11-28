@@ -2158,16 +2158,9 @@ func TestCopyKeyHandler(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("returns error for missing algorithm", func(t *testing.T) {
-		ctx := newTestHandlerContext()
-		body := `{"source_backend": "src", "source_key_id": "test", "dest_backend": "dest", "dest_key_id": "test"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
-		w := httptest.NewRecorder()
-
-		ctx.CopyKeyHandler(w, req)
-
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-	})
+	// An omitted algorithm is no longer a 400 (go-xkms#2283): the service
+	// picks the destination's default. TestCopyKeyHandler_ImportExportSuccessPath
+	// copies a key with the algorithm omitted.
 
 	t.Run("returns error for non-existent source backend", func(t *testing.T) {
 		setupTestService(t, "test-backend")

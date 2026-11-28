@@ -15,8 +15,8 @@ package tpm2
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -24,7 +24,9 @@ import (
 
 	"github.com/google/go-tpm/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/backend/tpmdup"
 	pkgtpm2 "github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -33,7 +35,7 @@ var _ backend.ImportExportBackend = (*Backend)(nil)
 
 // tpmDuplicateMetaKey is the WrappedKeyMaterial.Metadata key under which the
 // serialized TPM duplication blob is carried.
-const tpmDuplicateMetaKey = "tpm2_duplicate_blob"
+const tpmDuplicateMetaKey = tpmdup.MetadataKey
 
 // duplicationBlob is the wire representation of a TPM2 duplication produced by
 // WrapKey and consumed by UnwrapKey/ImportKey.
@@ -45,21 +47,12 @@ const tpmDuplicateMetaKey = "tpm2_duplicate_blob"
 // key material, encrypts it to the parent (SRK) public key with
 // TPM2_CreateDuplicate, and serializes the three resulting fields here.
 // UnwrapKey/ImportKey feed them back into TPM2_Import under the SRK.
-type duplicationBlob struct {
-	// Public is the marshaled TPMTPublic of the duplicated sealed object.
-	Public []byte `json:"public"`
-
-	// Duplicate is the outer-wrapped private area (the duplication blob).
-	Duplicate []byte `json:"duplicate"`
-
-	// EncSecret is the seed protected by the SRK's asymmetric algorithm.
-	EncSecret []byte `json:"enc_secret"`
-}
+type duplicationBlob = tpmdup.Blob
 
 // importExportAlgorithm is the wrapping-algorithm label reported by the TPM2
 // backend's import/export surface. It denotes the TCG duplication protocol
 // (labeled encapsulation under the parent storage key), not an RSA family.
-const importExportAlgorithm = backend.WrappingAlgorithm("TPM2_DUPLICATE")
+const importExportAlgorithm = backend.WrappingAlgorithmTPM2Duplicate
 
 // srkPublicContents reads the public area of this backend's own storage
 // parent (b.srkAttrs -- the Platform SRK, see NewBackend) and returns its
@@ -86,8 +79,8 @@ func (b *Backend) srkPublicContents() (tpm2.TPM2BName, tpm2.TPMTPublic, error) {
 // GetImportParameters returns the parameters required to wrap key material for
 // import into the TPM. The wrapping key is the SRK public area; WrapKey uses
 // it to build the duplication blob. The marshaled SRK TPMTPublic is carried in
-// ImportToken so WrapKey can reconstruct the encapsulation key without a second
-// TPM round trip.
+// ImportToken so a source without this TPM (tpmdup.Wrap, e.g. the software
+// backend's ExportKeyTo) can build the same duplication blob WrapKey builds.
 func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -102,7 +95,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("TPM2 import requires algorithm %s, got %s", importExportAlgorithm, algorithm)}
 	}
 
-	name, pub, err := b.srkPublicContents()
+	_, pub, err := b.srkPublicContents()
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +110,7 @@ func (b *Backend) GetImportParameters(ctx context.Context, attrs *types.KeyAttri
 
 	return &backend.ImportParameters{
 		WrappingPublicKey: pubKey,
-		ImportToken:       name.Buffer,
+		ImportToken:       tpm2.Marshal(pub),
 		Algorithm:         importExportAlgorithm,
 		KeySpec:           "TPM2_KEYEDHASH",
 	}, nil
@@ -152,43 +145,11 @@ func (b *Backend) WrapKey(ctx context.Context, keyMaterial []byte, params *backe
 		return nil, err
 	}
 
-	encKey, err := tpm2.ImportEncapsulationKey(&srkPub)
+	wrapped, err := tpmdup.Wrap(b.tpm.RandomSource(), tpm2.Marshal(srkPub), keyMaterial)
 	if err != nil {
-		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to build SRK encapsulation key: %v", err)}
+		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: err.Error()}
 	}
-
-	// Build the duplicable sealed object that holds the key material as its
-	// keyedhash secret, then compute its Name (required to seed the outer
-	// duplication HMAC).
-	public, sensitive, err := b.buildSealedDuplicate(keyMaterial)
-	if err != nil {
-		return nil, err
-	}
-	name, err := tpm2.ObjectName(public)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to compute object name: %v", err)}
-	}
-
-	duplicate, encSecret, err := tpm2.CreateDuplicate(b.tpm.RandomSource(), encKey, name.Buffer, sensitive)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to create duplication blob: %v", err)}
-	}
-
-	blob := duplicationBlob{
-		Public:    tpm2.Marshal(*public),
-		Duplicate: duplicate,
-		EncSecret: encSecret,
-	}
-	encoded, err := json.Marshal(blob)
-	if err != nil {
-		return nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to encode duplication blob: %v", err)}
-	}
-
-	return &backend.WrappedKeyMaterial{
-		WrappedKey: encoded,
-		Algorithm:  importExportAlgorithm,
-		Metadata:   map[string]string{tpmDuplicateMetaKey: "1"},
-	}, nil
+	return wrapped, nil
 }
 
 // UnwrapKey recovers key material from a TPM2 duplication blob by importing it
@@ -241,10 +202,10 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	if err := b.refuseReserved(attrs); err != nil {
 		return err
 	}
-
-	public, outPrivate, err := b.importDuplicate(wrapped.WrappedKey)
-	if err != nil {
-		return err
+	// An imported key is kept as a sealed object only; the symmetric
+	// encrypt and decrypt paths cannot use it yet, so refuse it fail-closed.
+	if attrs.SymmetricAlgorithm != "" {
+		return &errs.Detail{Err: backend.ErrExportToUnsupported, Detail: "a TPM2 copy of a symmetric key is not usable by the service yet"}
 	}
 
 	if attrs.Parent == nil {
@@ -252,8 +213,20 @@ func (b *Backend) ImportKey(ctx context.Context, attrs *types.KeyAttributes, wra
 	}
 	attrs.StoreType = types.StoreTPM2
 
+	// An import never replaces a stored key: refuse before the TPM work.
+	if _, err := b.keyBackend.Get(attrs, store.FSEXT_PRIVATE_BLOB); err == nil {
+		return &errs.Detail{Err: backend.ErrKeyAlreadyExists, Detail: attrs.CN}
+	} else if !errors.Is(err, store.ErrBlobNotFound) {
+		return err
+	}
+
+	public, outPrivate, err := b.importDuplicate(wrapped.WrappedKey)
+	if err != nil {
+		return err
+	}
+
 	publicBlob := tpm2.New2B(*public)
-	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, true); err != nil {
+	if err := b.tpm.SaveKeyPair(attrs, outPrivate, publicBlob, b.keyBackend, false); err != nil {
 		return &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to persist imported key: %v", err)}
 	}
 	return nil
@@ -303,38 +276,6 @@ func (b *Backend) ExportKeyMaterial(ctx context.Context, attrs *types.KeyAttribu
 // The object is duplicable: FixedTPM and FixedParent are false, which is
 // required for the duplication/import protocol. The unique field is the
 // canonical KEYEDHASH unique = H_nameAlg(obfuscation || secret) per TCG Part 1.
-func (b *Backend) buildSealedDuplicate(keyMaterial []byte) (*tpm2.TPMTPublic, []byte, error) {
-	obfuscation := make([]byte, sha256.Size)
-	if _, err := b.tpm.RandomSource().Read(obfuscation); err != nil {
-		return nil, nil, &errs.Detail{Err: ErrUnsupportedOperation, Detail: fmt.Sprintf("failed to read obfuscation: %v", err)}
-	}
-
-	uniqueHash := sha256.New()
-	uniqueHash.Write(obfuscation)
-	uniqueHash.Write(keyMaterial)
-
-	public := &tpm2.TPMTPublic{
-		Type:    tpm2.TPMAlgKeyedHash,
-		NameAlg: tpm2.TPMAlgSHA256,
-		ObjectAttributes: tpm2.TPMAObject{
-			UserWithAuth: true,
-			NoDA:         true,
-		},
-		Parameters: tpm2.NewTPMUPublicParms(tpm2.TPMAlgKeyedHash, &tpm2.TPMSKeyedHashParms{}),
-		Unique:     tpm2.NewTPMUPublicID(tpm2.TPMAlgKeyedHash, &tpm2.TPM2BDigest{Buffer: uniqueHash.Sum(nil)}),
-	}
-
-	sensitive := tpm2.TPMTSensitive{
-		SensitiveType: tpm2.TPMAlgKeyedHash,
-		SeedValue:     tpm2.TPM2BDigest{Buffer: obfuscation},
-		Sensitive: tpm2.NewTPMUSensitiveComposite(tpm2.TPMAlgKeyedHash, &tpm2.TPM2BSensitiveData{
-			Buffer: keyMaterial,
-		}),
-	}
-
-	return public, tpm2.Marshal(sensitive), nil
-}
-
 // importDuplicate decodes a duplication blob and runs TPM2_Import under the SRK,
 // returning the imported object's public area and private blob. The caller owns
 // the returned private blob and must load/persist it as appropriate.

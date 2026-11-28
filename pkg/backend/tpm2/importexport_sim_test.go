@@ -28,6 +28,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/tpmblobtest"
+	"github.com/jeremyhahn/go-xkms/pkg/tpm2/store"
 	"github.com/jeremyhahn/go-xkms/pkg/types"
 )
 
@@ -161,7 +162,7 @@ func TestWrapKey_IsNonDeterministic(t *testing.T) {
 
 // TestGetImportParameters_ReturnsSRKWrappingKey verifies the returned wrapping
 // key really is the TPM's Storage Root Key public area and that ImportToken
-// carries the SRK Name. Wrapping to the wrong key would produce blobs the TPM
+// carries the marshaled SRK TPMTPublic. Wrapping to the wrong key would produce blobs the TPM
 // silently refuses to import later, far from the point of failure.
 func TestGetImportParameters_ReturnsSRKWrappingKey(t *testing.T) {
 	b := newSimBackend(t)
@@ -177,12 +178,12 @@ func TestGetImportParameters_ReturnsSRKWrappingKey(t *testing.T) {
 		t.Errorf("KeySpec = %q, want TPM2_KEYEDHASH", params.KeySpec)
 	}
 
-	srkName, srkPub, err := b.srkPublicContents()
+	_, srkPub, err := b.srkPublicContents()
 	if err != nil {
 		t.Fatalf("srkPublicContents: %v", err)
 	}
-	if !bytes.Equal(params.ImportToken, srkName.Buffer) {
-		t.Errorf("ImportToken does not match the SRK Name\n got %x\nwant %x", params.ImportToken, srkName.Buffer)
+	if !bytes.Equal(params.ImportToken, gotpm2.Marshal(srkPub)) {
+		t.Errorf("ImportToken does not carry the marshaled SRK public area\n got %x\nwant %x", params.ImportToken, gotpm2.Marshal(srkPub))
 	}
 
 	// The default SRK in this config is RSA-2048; the wrapping public key must
@@ -358,6 +359,66 @@ func TestUnwrapKey_RejectsCorruptBlobs(t *testing.T) {
 // TPM2_Import: it must persist the imported public/private blobs so the key
 // survives a restart. The test asserts the key becomes visible to ListKeys and
 // that the persisted blobs are the ones the TPM produced.
+// TestImportKey_RefusesExistingKey pins that ImportKey never overwrites a key
+// already stored under the same CN: the second import fails with
+// backend.ErrKeyAlreadyExists and the first key's blobs stay byte-identical.
+func TestImportKey_RefusesExistingKey(t *testing.T) {
+	b := newSimBackend(t)
+	ctx := context.Background()
+
+	_, wrappedA := wrapMaterial(t, b, bytes.Repeat([]byte{0x11}, 32))
+	attrsA := &types.KeyAttributes{CN: "existing", KeyType: types.KeyTypeStorage}
+	if err := b.ImportKey(ctx, attrsA, wrappedA); err != nil {
+		t.Fatalf("ImportKey (A): %v", err)
+	}
+	privA, err := b.keyBackend.Get(attrsA, store.FSEXT_PRIVATE_BLOB)
+	if err != nil {
+		t.Fatalf("Get private blob (A): %v", err)
+	}
+	pubA, err := b.keyBackend.Get(attrsA, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		t.Fatalf("Get public blob (A): %v", err)
+	}
+
+	_, wrappedB := wrapMaterial(t, b, bytes.Repeat([]byte{0x22}, 32))
+	attrsB := &types.KeyAttributes{CN: "existing", KeyType: types.KeyTypeStorage}
+	err = b.ImportKey(ctx, attrsB, wrappedB)
+	if !errors.Is(err, backend.ErrKeyAlreadyExists) {
+		t.Fatalf("ImportKey (B) over an existing CN: err = %v, want backend.ErrKeyAlreadyExists", err)
+	}
+
+	privAfter, err := b.keyBackend.Get(attrsA, store.FSEXT_PRIVATE_BLOB)
+	if err != nil {
+		t.Fatalf("Get private blob (after): %v", err)
+	}
+	pubAfter, err := b.keyBackend.Get(attrsA, store.FSEXT_PUBLIC_BLOB)
+	if err != nil {
+		t.Fatalf("Get public blob (after): %v", err)
+	}
+	if !bytes.Equal(privA, privAfter) {
+		t.Error("private blob of the existing key was overwritten")
+	}
+	if !bytes.Equal(pubA, pubAfter) {
+		t.Error("public blob of the existing key was overwritten")
+	}
+}
+
+// TestImportKey_RefusesSymmetricKey pins the fail-closed refusal of a
+// symmetric key: an imported sealed object is not usable by the symmetric
+// encrypt and decrypt paths, so nothing is stored.
+func TestImportKey_RefusesSymmetricKey(t *testing.T) {
+	b := newSimBackend(t)
+	_, wrapped := wrapMaterial(t, b, bytes.Repeat([]byte{0x33}, 32))
+	attrs := &types.KeyAttributes{CN: "imported-aes", KeyType: types.KeyTypeSecret, SymmetricAlgorithm: types.SymmetricAES256GCM}
+	if err := b.ImportKey(context.Background(), attrs, wrapped); !errors.Is(err, backend.ErrExportToUnsupported) {
+		t.Fatalf("ImportKey of a symmetric key: err = %v, want backend.ErrExportToUnsupported", err)
+	}
+	probe := &types.KeyAttributes{CN: "imported-aes", StoreType: types.StoreTPM2, Parent: b.srkAttrs}
+	if _, err := b.keyBackend.Get(probe, store.FSEXT_PRIVATE_BLOB); !errors.Is(err, store.ErrBlobNotFound) {
+		t.Fatalf("refused import left a private blob: err = %v", err)
+	}
+}
+
 func TestImportKey_PersistsUnderCN(t *testing.T) {
 	b := newSimBackend(t)
 	ctx := context.Background()

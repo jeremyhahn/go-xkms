@@ -797,7 +797,7 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		ECCAttributes:      srcAttrs.ECCAttributes,
 		SymmetricAlgorithm: srcAttrs.SymmetricAlgorithm,
 	}
-	algorithm := backend.WrappingAlgorithmRSAES_OAEP_SHA_256
+	algorithm := defaultCopyWrappingAlgorithm(dstB.Type())
 	if req.Algorithm != "" {
 		algorithm = backend.WrappingAlgorithm(req.Algorithm)
 	}
@@ -837,6 +837,18 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 		Success: true,
 		KeyID:   req.DestKeyID,
 	}, nil
+}
+
+// defaultCopyWrappingAlgorithm is the wrapping algorithm a key copy uses
+// when the request names none: the destination backend's own default. A
+// TPM 2.0 destination accepts only the TCG duplication protocol, so it gets
+// TPM2_DUPLICATE; every other backend gets RSAES_OAEP_SHA_256, the algorithm
+// the CLI used to send unconditionally (go-xkms#2283).
+func defaultCopyWrappingAlgorithm(destStore types.StoreType) backend.WrappingAlgorithm {
+	if destStore == types.StoreTPM2 {
+		return backend.WrappingAlgorithmTPM2Duplicate
+	}
+	return backend.WrappingAlgorithmRSAES_OAEP_SHA_256
 }
 
 // ExportKeyMaterial exports raw symmetric key bytes for extractable keys: the

@@ -1098,6 +1098,43 @@ func TestCopyKeyHandler_ImportExportSuccessPath(t *testing.T) {
 		assert.True(t, resp.Success)
 		assert.Contains(t, resp.Message, "copied successfully")
 	})
+
+	// go-xkms#2283: xkmsctl key copy sends no algorithm unless given; the
+	// handler forwards the omission and the service picks the destination
+	// backend's default instead of the request failing with 400.
+	t.Run("copies key with the algorithm omitted", func(t *testing.T) {
+		srcKs := newMockKeyStoreWithImportExport()
+		dstKs := newMockKeyStoreWithImportExport()
+
+		xkms.Reset()
+		require.NoError(t, xkms.Initialize(&xkms.ServiceConfig{
+			Backends: map[string]xkms.Backend{
+				"src-backend": srcKs,
+				"dst-backend": dstKs,
+			},
+			DefaultBackend: "src-backend",
+		}))
+		t.Cleanup(func() { xkms.Reset() })
+
+		key, _ := rsa.GenerateKey(rand.Reader, 2048)
+		srcKs.backend.SetKey("source-key", key)
+
+		body := `{
+			"source_backend": "src-backend",
+			"source_key_id": "source-key",
+			"dest_backend": "dst-backend",
+			"dest_key_id": "dest-key"
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/keys/copy", strings.NewReader(body))
+		w := httptest.NewRecorder()
+
+		newTestHandlerContext().CopyKeyHandler(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		var resp CopyKeyResponse
+		require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+		assert.True(t, resp.Success)
+	})
 }
 
 func TestCopyKeyHandler_SourceKeyNotFoundError(t *testing.T) {

@@ -358,3 +358,89 @@ func TestCopyKeyRefusesSubFloorRSASource(t *testing.T) {
 	assert.False(t, imported,
 		"the destination must never receive an import of a source key that fails the RSA floor")
 }
+
+// TestCopyKeyDefaultsWrappingAlgorithmFromDestination pins go-xkms#2283: a
+// copy request with no algorithm gets the DESTINATION backend's default --
+// TPM2_DUPLICATE for a TPM 2.0 store, whose import surface accepts nothing
+// else, and RSAES_OAEP_SHA_256 for every other store -- while an algorithm
+// the caller names is passed through unchanged.
+func TestCopyKeyDefaultsWrappingAlgorithmFromDestination(t *testing.T) {
+	cases := []struct {
+		name      string
+		destStore types.StoreType
+		requested string
+		want      backend.WrappingAlgorithm
+	}{
+		{"tpm2 destination, none given", types.StoreTPM2, "", backend.WrappingAlgorithmTPM2Duplicate},
+		{"software destination, none given", types.StoreSoftware, "", backend.WrappingAlgorithmRSAES_OAEP_SHA_256},
+		{"software destination, caller's choice", types.StoreSoftware, string(backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256), backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256},
+		// A caller's choice is forwarded, not overridden: a TPM 2.0
+		// destination refuses an RSA family, as the real backend does.
+		{"tpm2 destination, caller's RSA choice refused", types.StoreTPM2, string(backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256), ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			Reset()
+			t.Cleanup(Reset)
+
+			srcKP := newBoostIEKeyProvider()
+			srcStore := newMockKeyStore("source")
+			srcStore.backend = srcKP
+
+			dstKP := newBoostIEKeyProvider()
+			dstStore := newMockKeyStore("dest")
+			dstStore.backend = dstKP
+			if tc.destStore == types.StoreTPM2 {
+				dstStore.backend = tpm2OnlyImportProvider{dstKP}
+			}
+			dstStore.storeType = tc.destStore
+
+			require.NoError(t, Initialize(&ServiceConfig{
+				Backends:       map[string]Backend{"source": srcStore, "dest": dstStore},
+				DefaultBackend: "source",
+			}))
+			svc, err := Get()
+			require.NoError(t, err)
+
+			boostGenIEKey(t, srcStore, srcKP, &types.KeyAttributes{
+				CN:           "src-key",
+				KeyAlgorithm: x509.ECDSA,
+			})
+
+			_, err = svc.CopyKey(context.Background(), &transport.CopyKeyRequest{
+				SourceBackend: "source",
+				SourceKeyID:   "src-key",
+				DestBackend:   "dest",
+				DestKeyID:     "src-key-copy",
+				Algorithm:     tc.requested,
+			})
+			if tc.want == "" {
+				require.Error(t, err)
+				_, imported := dstKP.importedKeys["src-key-copy"]
+				assert.False(t, imported, "a refused algorithm must leave the destination untouched")
+				return
+			}
+			require.NoError(t, err)
+
+			wrapped, ok := dstKP.importedKeys["src-key-copy"]
+			require.True(t, ok, "the destination must receive the import")
+			assert.Equal(t, tc.want, wrapped.Algorithm,
+				"the destination's import parameters must be requested with this algorithm")
+		})
+	}
+}
+
+// tpm2OnlyImportProvider is the mock TPM 2.0 destination: like the real
+// backend (pkg/backend/tpm2 GetImportParameters) it mints import parameters
+// for TPM2_DUPLICATE only, so a copy test cannot pass on an algorithm a TPM
+// would refuse.
+type tpm2OnlyImportProvider struct {
+	*boostIEKeyProvider
+}
+
+func (p tpm2OnlyImportProvider) GetImportParameters(ctx context.Context, attrs *types.KeyAttributes, algorithm backend.WrappingAlgorithm) (*backend.ImportParameters, error) {
+	if algorithm != backend.WrappingAlgorithmTPM2Duplicate {
+		return nil, backend.ErrInvalidAlgorithm
+	}
+	return p.boostIEKeyProvider.GetImportParameters(ctx, attrs, algorithm)
+}

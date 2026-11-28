@@ -208,6 +208,42 @@ func TestKeyCopyCmd_Run_DefaultDest(t *testing.T) {
 	}
 }
 
+func TestKeyCopyCmd_Run_NoAlgorithmByDefault(t *testing.T) {
+	mock := &mockKeyClient{copyKeyResp: &client.CopyKeyResponse{}}
+	withGlobalConfig(t, newKeyRunConfig("text", mock))
+	captureStdout(t, func() {
+		keyCopyCmd.Run(keyCopyCmd, []string{"k1"})
+	})
+	if mock.lastCopyKeyReq == nil {
+		t.Fatal("CopyKey was not called")
+	}
+	if got := mock.lastCopyKeyReq.Algorithm; got != "" {
+		t.Errorf("Algorithm = %q, want empty (server picks the destination default)", got)
+	}
+}
+
+func TestKeyCopyCmd_Run_AlgorithmGiven(t *testing.T) {
+	mock := &mockKeyClient{copyKeyResp: &client.CopyKeyResponse{}}
+	withGlobalConfig(t, newKeyRunConfig("text", mock))
+	def := keyCopyCmd.Flags().Lookup("algorithm").DefValue
+	if err := keyCopyCmd.Flags().Set("algorithm", "RSAES_OAEP_SHA_256"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = keyCopyCmd.Flags().Set("algorithm", def)
+		keyCopyCmd.Flags().Lookup("algorithm").Changed = false
+	})
+	captureStdout(t, func() {
+		keyCopyCmd.Run(keyCopyCmd, []string{"k1"})
+	})
+	if mock.lastCopyKeyReq == nil {
+		t.Fatal("CopyKey was not called")
+	}
+	if got := mock.lastCopyKeyReq.Algorithm; got != "RSAES_OAEP_SHA_256" {
+		t.Errorf("Algorithm = %q, want RSAES_OAEP_SHA_256", got)
+	}
+}
+
 func TestKeyCopyCmd_Run_ExplicitDest(t *testing.T) {
 	mock := &mockKeyClient{copyKeyResp: &client.CopyKeyResponse{}}
 	withGlobalConfig(t, newKeyRunConfig("text", mock))
