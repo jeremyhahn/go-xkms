@@ -177,7 +177,7 @@ func (g *backendPIVKeyGenerator) deleteSlotKeys(ctx context.Context, cn string) 
 		return &PIVRekeyError{CN: cn, Err: err}
 	}
 	for _, ka := range stored {
-		if ka == nil || ka.CN != cn {
+		if !isSystemTenantKey(ka) || ka.CN != cn {
 			continue
 		}
 		if err := g.backend.DeleteKey(ctx, ka); err != nil {
@@ -185,6 +185,14 @@ func (g *backendPIVKeyGenerator) deleteSlotKeys(ctx context.Context, cn string) 
 		}
 	}
 	return nil
+}
+
+// isSystemTenantKey reports whether ka is a system-tenant (platform) key.
+// PIV is platform-scoped, and its backend view is unscoped: a listing there
+// carries every tenant's keys. A slot CN therefore names the system tenant's
+// key only; a dedicated tenant's key of the same name is never the slot key.
+func isSystemTenantKey(ka *types.KeyAttributes) bool {
+	return ka != nil && recordTenant(ka.TenantID) == ""
 }
 
 // GetPIVSigner returns a signer for an existing key in the given PIV slot.
@@ -202,7 +210,7 @@ func (g *backendPIVKeyGenerator) GetPIVSigner(slot pivcert.PIVSlot, cn string) (
 	// that persist keys (e.g. software/pkcs8).
 	if stored, err := g.backend.ListKeys(ctx); err == nil {
 		for _, ka := range stored {
-			if ka != nil && ka.CN == cn {
+			if isSystemTenantKey(ka) && ka.CN == cn {
 				return g.backend.Signer(ctx, ka)
 			}
 		}
@@ -350,7 +358,7 @@ func (g *backendPIVKeyGenerator) PIVKeyOrigin(_ pivcert.PIVSlot, cn string) (typ
 		return types.KeyOriginUnknown, false, err
 	}
 	for _, ka := range stored {
-		if ka != nil && ka.CN == cn {
+		if isSystemTenantKey(ka) && ka.CN == cn {
 			// The origin the backend read back is authoritative: it is a
 			// plain read of the persisted record (see
 			// pkg/keyprovider/pkcs8.resolveKeyOrigin), with no inference

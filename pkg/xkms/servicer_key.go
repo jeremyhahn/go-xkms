@@ -375,7 +375,7 @@ func (s *XKMSService) GetKey(ctx context.Context, backendName, keyID string) (re
 		return nil, ErrInvalidKeyID
 	}
 
-	k, err := s.resolveKeyIn(ctx, backendName, scopedTenantIDFromContext(ctx), keyID)
+	k, err := s.resolveKeyIn(ctx, "GetKey", backendName, scopedTenantIDFromContext(ctx), keyID)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +410,7 @@ func (s *XKMSService) DeleteKey(ctx context.Context, backendName, keyID string) 
 		return ErrInvalidKeyID
 	}
 
-	k, err := s.resolveKeyIn(ctx, backendName, scopedTenantIDFromContext(ctx), keyID)
+	k, err := s.resolveKeyIn(ctx, "DeleteKey", backendName, scopedTenantIDFromContext(ctx), keyID)
 	if err != nil {
 		return err
 	}
@@ -521,7 +521,11 @@ func (s *XKMSService) ExportKey(ctx context.Context, req *transport.ExportKeyReq
 		backendName = s.defaultBackendName()
 	}
 
-	b, err := s.resolveTenantBackend(backendName, req.TenantID)
+	tenant, err := ownTenant(ctx, "ExportKey", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.resolveTenantBackend(backendName, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -589,7 +593,11 @@ func (s *XKMSService) RotateKey(ctx context.Context, req *transport.RotateKeyReq
 		return nil, ErrInvalidKeyID
 	}
 
-	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "RotateKey", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -727,11 +735,15 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 	// the metrics label -- s.metricsBackendName applies the same
 	// empty-string-to-default resolution used here.
 
-	srcB, err := s.resolveTenantBackend(sourceBackend, req.TenantID)
+	tenant, err := ownTenant(ctx, "CopyKey", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	srcB, err := s.resolveTenantBackend(sourceBackend, tenant)
 	if err != nil {
 		return nil, &ErrCopyKeyBackend{Role: "source", Err: err}
 	}
-	dstB, err := s.resolveTenantBackend(destBackend, req.TenantID)
+	dstB, err := s.resolveTenantBackend(destBackend, tenant)
 	if err != nil {
 		return nil, &ErrCopyKeyBackend{Role: "destination", Err: err}
 	}
@@ -760,7 +772,7 @@ func (s *XKMSService) CopyKey(ctx context.Context, req *transport.CopyKeyRequest
 	if err := keyversion.CheckKeyID(req.DestKeyID); err != nil {
 		return nil, err
 	}
-	if err := s.refuseRotatedKeyID(ctx, req.TenantID, destBackend, req.DestKeyID); err != nil {
+	if err := s.refuseRotatedKeyID(ctx, tenant, destBackend, req.DestKeyID); err != nil {
 		return nil, err
 	}
 
@@ -865,7 +877,11 @@ func (s *XKMSService) ExportKeyMaterial(ctx context.Context, req *transport.Expo
 		return nil, requiredField("backend")
 	}
 
-	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "ExportKeyMaterial", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.resolveTenantBackend(req.Backend, tenant)
 	if err != nil {
 		return nil, roleLookupError("backend", req.Backend, err)
 	}
@@ -1102,6 +1118,15 @@ func (s *XKMSService) WrapKeyByID(ctx context.Context, req *transport.WrapKeyByI
 	if req.Algorithm == "" {
 		return nil, requiredField("algorithm")
 	}
+	// Both keys are resolved in the caller's own tenant, never the raw
+	// request tenant.
+	tenant, err := ownTenant(ctx, "WrapKeyByID", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	bound := *req
+	bound.TenantID = tenant
+	req = &bound
 
 	keyMaterial, err := s.wrapTargetKeyMaterial(ctx, req)
 	if err != nil {
@@ -1283,7 +1308,11 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 		return nil, requiredField("target_key_backend")
 	}
 
-	unwrappingBackend, err := s.resolveTenantBackend(req.UnwrappingKeyBackend, req.TenantID)
+	tenant, err := ownTenant(ctx, "UnwrapKeyByID", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	unwrappingBackend, err := s.resolveTenantBackend(req.UnwrappingKeyBackend, tenant)
 	if err != nil {
 		return nil, roleLookupError("unwrapping key backend", req.UnwrappingKeyBackend, err)
 	}
@@ -1295,7 +1324,7 @@ func (s *XKMSService) UnwrapKeyByID(ctx context.Context, req *transport.UnwrapKe
 	// decryption happened to fail first. The unwrapping backend is still
 	// resolved first, above: it is the subject of the operation, so its
 	// errors take precedence.
-	targetBackend, err := s.resolveTenantBackend(req.TargetKeyBackend, req.TenantID)
+	targetBackend, err := s.resolveTenantBackend(req.TargetKeyBackend, tenant)
 	if err != nil {
 		return nil, roleLookupError("target key backend", req.TargetKeyBackend, err)
 	}

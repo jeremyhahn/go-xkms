@@ -145,7 +145,6 @@ func rawSymmetricMaterial(t *testing.T, svc *XKMSService, attrs *types.KeyAttrib
 // (and before go-xkms#165 would have silently destroyed it).
 func TestImportKeyTenantScoped(t *testing.T) {
 	svc := setupDeriveService(t)
-	ctx := context.Background()
 	const cn = "shared-aes"
 	const wrapAlg = string(backend.WrappingAlgorithmRSAES_OAEP_SHA_256)
 
@@ -183,7 +182,7 @@ func TestImportKeyTenantScoped(t *testing.T) {
 
 	// The export leg addresses the tenant's key through the same seam: acme
 	// can export it wrapped, globex cannot even find it.
-	exported, err := svc.ExportKey(ctx, &transport.ExportKeyRequest{
+	exported, err := svc.ExportKey(identityCtx("acme"), &transport.ExportKeyRequest{
 		Backend:   "software",
 		KeyID:     cn,
 		Algorithm: wrapAlg,
@@ -192,7 +191,7 @@ func TestImportKeyTenantScoped(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, exported.WrappedKeyMaterial)
 
-	_, err = svc.ExportKey(ctx, &transport.ExportKeyRequest{
+	_, err = svc.ExportKey(identityCtx("globex"), &transport.ExportKeyRequest{
 		Backend:   "software",
 		KeyID:     cn,
 		Algorithm: wrapAlg,
@@ -211,7 +210,7 @@ func TestImportKeyTenantScoped(t *testing.T) {
 // imported it and unusable for signing.
 func TestImportKeyTenantMetadataRoundTrip(t *testing.T) {
 	svc := setupDeriveService(t)
-	ctx := context.Background()
+	ctx := identityCtx("acme")
 	const cn = "tenant-ec"
 	const wrapAlg = string(backend.WrappingAlgorithmRSA_AES_KEY_WRAP_SHA_256)
 
@@ -244,7 +243,7 @@ func TestImportKeyTenantMetadataRoundTrip(t *testing.T) {
 	assert.True(t, ecdsa.VerifyASN1(&priv.PublicKey, digest[:], signResp.Signature))
 
 	// And by nobody else's scope.
-	_, err = svc.Sign(ctx, &transport.SignRequest{
+	_, err = svc.Sign(identityCtx("globex"), &transport.SignRequest{
 		Backend:  "software",
 		KeyID:    cn,
 		Data:     message,

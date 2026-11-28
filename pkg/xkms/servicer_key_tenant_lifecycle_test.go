@@ -130,14 +130,14 @@ func TestRotateKey_ReportsKeyType(t *testing.T) {
 	svc := setupDeriveService(t)
 	storeExportableRSAKey(t, svc, "acme", "acme-key")
 
-	resp, err := svc.RotateKey(context.Background(), &transport.RotateKeyRequest{
+	resp, err := svc.RotateKey(identityCtx("acme"), &transport.RotateKeyRequest{
 		Backend: "software", KeyID: "acme-key", TenantID: "acme",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "ENCRYPTION", resp.KeyType)
 	assert.True(t, strings.Contains(resp.PublicKeyPEM, "BEGIN PUBLIC KEY"))
 
-	_, err = svc.RotateKey(context.Background(), &transport.RotateKeyRequest{
+	_, err = svc.RotateKey(identityCtx("globex"), &transport.RotateKeyRequest{
 		Backend: "software", KeyID: "acme-key", TenantID: "globex",
 	})
 	assert.ErrorIs(t, err, ErrKeyNotFound)

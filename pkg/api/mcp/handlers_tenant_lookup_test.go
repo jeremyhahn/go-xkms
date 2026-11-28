@@ -153,10 +153,22 @@ func TestHandler_FindKeyInBackend_TenantScoped(t *testing.T) {
 		assert.Contains(t, err.Error(), "key not found: payments-dek")
 	})
 
-	t.Run("an unscoped caller still sees every key", func(t *testing.T) {
-		attrs, err := server.findKeyInBackend(tenantContext(""), "payments-dek", "software")
-		require.NoError(t, err, "the system scope is not a tenant and must not be filtered")
-		assert.Equal(t, "acme", attrs.TenantID)
+	// Row 2233: the unscoped (system) view resolves a name to the system
+	// tenant's own key only, never to the first tenant key of that name.
+	t.Run("an unscoped caller resolves the system tenant's key", func(t *testing.T) {
+		sysServer, _ := newTenantLookupServer(t,
+			tenantKey("acme", "payments-dek"),
+			tenantKey("", "payments-dek"))
+		attrs, err := sysServer.findKeyInBackend(tenantContext(""), "payments-dek", "software")
+		require.NoError(t, err)
+		assert.Equal(t, "", attrs.TenantID, "the unscoped view resolves the system tenant's own key, not the first name match")
+	})
+
+	t.Run("an unscoped caller does not resolve a tenant's key", func(t *testing.T) {
+		tenantOnly, _ := newTenantLookupServer(t, tenantKey("acme", "payments-dek"))
+		_, err := tenantOnly.findKeyInBackend(tenantContext(""), "payments-dek", "software")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "key not found: payments-dek")
 	})
 }
 
@@ -180,10 +192,22 @@ func TestHandler_FindKeyByCN_TenantScoped(t *testing.T) {
 		assert.Contains(t, err.Error(), "key not found: payments-dek")
 	})
 
-	t.Run("an unscoped caller still sees every key", func(t *testing.T) {
-		attrs, err := server.findKeyByCN(tenantContext(""), "payments-dek")
+	// Row 2233: the unscoped (system) view resolves a name to the system
+	// tenant's own key only, never to the first tenant key of that name.
+	t.Run("an unscoped caller resolves the system tenant's key", func(t *testing.T) {
+		sysServer, _ := newTenantLookupServer(t,
+			tenantKey("acme", "payments-dek"),
+			tenantKey("", "payments-dek"))
+		attrs, err := sysServer.findKeyByCN(tenantContext(""), "payments-dek")
 		require.NoError(t, err)
-		assert.Equal(t, "acme", attrs.TenantID)
+		assert.Equal(t, "", attrs.TenantID, "the unscoped view resolves the system tenant's own key, not the first name match")
+	})
+
+	t.Run("an unscoped caller does not resolve a tenant's key", func(t *testing.T) {
+		tenantOnly, _ := newTenantLookupServer(t, tenantKey("acme", "payments-dek"))
+		_, err := tenantOnly.findKeyByCN(tenantContext(""), "payments-dek")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "key not found: payments-dek")
 	})
 }
 

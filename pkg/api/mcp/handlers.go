@@ -38,8 +38,9 @@ import (
 // unique only within a tenant. Against an unscoped backend such a lookup
 // matches whichever tenant's key is listed first: one tenant could export
 // another tenant's wrapped key material, unseal under its key, or delete it.
-// The system tenant is not a scope and still sees every key -- see
-// xkms.ScopeBackendToTenant.
+// The system tenant's view is unscoped and lists every tenant's keys, but a
+// lookup by name on it resolves only the system tenant's own key -- see
+// xkms.ScopeBackendToTenant, xkms.FindKeyAttributes and viewTenant.
 func (s *Server) tenantBackend(ctx context.Context, backendName string) (xkms.Backend, error) {
 	return s.xkmsService.LookupTenantBackend(backendName, callerTenantID(ctx))
 }

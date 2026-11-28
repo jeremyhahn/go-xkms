@@ -125,12 +125,12 @@ func (s *XKMSService) sealingKey(ctx context.Context, b Backend, backendName, te
 	}
 	defaults := defaultSealingKeyAttributes(kp.Type())
 	owner := recordTenant(tenant)
-	k, err := s.resolveKeyOf(ctx, b, backendName, defaults.CN, &owner)
+	k, err := s.resolveKeyOf(ctx, b, backendName, defaults.CN, owner)
 	if errors.Is(err, ErrKeyNotFound) && create {
 		if err := ensureSealingKey(ctx, b, defaults); err != nil {
 			return nil, nil, err
 		}
-		k, err = s.resolveKeyOf(ctx, b, backendName, defaults.CN, &owner)
+		k, err = s.resolveKeyOf(ctx, b, backendName, defaults.CN, owner)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -212,7 +212,11 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 		return nil, ErrNilData
 	}
 
-	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "Seal", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, tenant)
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +227,7 @@ func (s *XKMSService) Seal(ctx context.Context, req *transport.SealRequest) (*tr
 			return nil, err
 		}
 	}
-	k, attrs, err := s.sealingKey(ctx, b, backendName, req.TenantID, keyID, req.TPMPolicy, req.KeyID == "")
+	k, attrs, err := s.sealingKey(ctx, b, backendName, tenant, keyID, req.TPMPolicy, req.KeyID == "")
 	if err != nil {
 		return nil, err
 	}
@@ -301,12 +305,16 @@ func (s *XKMSService) Unseal(ctx context.Context, req *transport.UnsealRequest) 
 		return nil, ErrInvalidSealedData
 	}
 
-	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "Unseal", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, backendName, err := s.resolveTenantBackendWithName(req.Backend, tenant)
 	if err != nil {
 		return nil, err
 	}
 
-	k, attrs, err := s.sealingKey(ctx, b, backendName, req.TenantID, req.KeyID, "", false)
+	k, attrs, err := s.sealingKey(ctx, b, backendName, tenant, req.KeyID, "", false)
 	if err != nil {
 		return nil, err
 	}

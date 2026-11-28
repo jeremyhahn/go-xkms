@@ -591,6 +591,11 @@ func ListPIVSlots(ctx context.Context, req *transport.ListPIVSlotsRequest) (*tra
 			"backend", req.Backend, "error", keyErr)
 	} else {
 		for _, ka := range keys {
+			// The listing is unscoped: a tenant's same-CN key is not the
+			// slot's key.
+			if !isSystemTenantKey(ka) {
+				continue
+			}
 			if len(ka.CN) < 4 || ka.CN[:4] != "piv-" {
 				continue
 			}
@@ -873,7 +878,7 @@ func SelfSignExistingPIVKey(ctx context.Context, backend, slotStr, commonName st
 	}
 	var attrs *types.KeyAttributes
 	for _, ka := range keys {
-		if ka.CN == cn {
+		if isSystemTenantKey(ka) && ka.CN == cn {
 			attrs = ka
 			break
 		}

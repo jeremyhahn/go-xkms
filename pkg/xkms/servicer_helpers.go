@@ -59,7 +59,9 @@ func (s *XKMSService) resolveBackendWithName(backendName string) (Backend, strin
 // The system tenant is NOT a scope: qrdb's canonical predicate treats "" and
 // the system tenant as the same platform scope (tenant-scope unification), so
 // a system-scoped caller — the first-boot administrator among them — operates
-// on the unscoped backend, the same view internal pipelines use.
+// on the unscoped backend, the same view internal pipelines use. Key lookups
+// on that view (viewTenant) resolve tenant-exact in the system tenant, so the
+// view never answers a lookup with another tenant's key of the same name.
 //
 // This is the single place the predicate and its validation live, so every
 // caller that turns a tenant into a backend view agrees on what a tenant is.
@@ -94,7 +96,8 @@ func ScopeBackendToTenant(base Backend, tenantID string) (Backend, error) {
 }
 
 // resolveTenantBackend returns a Backend scoped to tenantID when tenantID
-// names a real tenant, and the unscoped backend for the system tenant. See
+// names a real tenant, and the unscoped backend for the system tenant, whose
+// key lookups resolve the system tenant's keys only (viewTenant). See
 // tenantScopes for why the system tenant is not a scope.
 func (s *XKMSService) resolveTenantBackend(name, tenantID string) (Backend, error) {
 	scoped, err := tenantScopes(tenantID)
@@ -114,7 +117,7 @@ func (s *XKMSService) resolveTenantBackend(name, tenantID string) (Backend, erro
 // resolveTenantBackendWithName returns the Backend, its resolved name, and an
 // error. When tenantID names a real tenant the returned Backend is
 // tenant-scoped; the system tenant resolves unscoped, exactly as in
-// resolveTenantBackend.
+// resolveTenantBackend, and lookups on that view are tenant-exact.
 func (s *XKMSService) resolveTenantBackendWithName(name, tenantID string) (Backend, string, error) {
 	scoped, err := tenantScopes(tenantID)
 	if err != nil {
@@ -137,14 +140,16 @@ func (s *XKMSService) defaultBackendName() string {
 	return s.defaultBackend
 }
 
-// findKeyAttrs searches a backend's key list for a key matching the given ID.
+// findKeyAttrs searches a backend's key list for the key keyID of the view's
+// tenant (viewTenant): the system tenant's on the unscoped view.
 func findKeyAttrs(ctx context.Context, b Backend, keyID string) (*types.KeyAttributes, error) {
 	attrs, err := b.ListKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
+	tenant := viewTenant(b)
 	for _, attr := range attrs {
-		if attr.CN == keyID {
+		if attr != nil && attr.CN == keyID && recordTenant(attr.TenantID) == tenant {
 			return attr, nil
 		}
 	}

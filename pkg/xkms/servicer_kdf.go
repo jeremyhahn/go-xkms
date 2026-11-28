@@ -88,7 +88,11 @@ func (s *XKMSService) deriveFromStoredKey(ctx context.Context, req *transport.De
 		return nil, 0, requiredField("backend")
 	}
 
-	b, err := s.resolveTenantBackend(backendName, req.TenantID)
+	tenant, err := ownTenant(ctx, "DeriveKey", req.TenantID)
+	if err != nil {
+		return nil, 0, err
+	}
+	b, err := s.resolveTenantBackend(backendName, tenant)
 	if err != nil {
 		return nil, 0, roleLookupError("backend", backendName, err)
 	}

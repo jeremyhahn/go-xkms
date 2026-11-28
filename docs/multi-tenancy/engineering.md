@@ -211,6 +211,18 @@ a code change.
   and the unwrap fails (#222). The destination attributes take the destination
   backend's store type and the source's digest and partition, and the tenant is
   stamped by the scoped backend's `ImportKey`, never assembled by the caller.
+- **Key lookups are tenant-exact** (go-xkms#2233). A lookup filters a listing
+  by key ID and tenant together (`versionsIn`, `pkg/xkms/key_versions.go:153`),
+  so a same-named key of another tenant never resolves. The unscoped view is
+  the system tenant's (`viewTenant`, `pkg/xkms/backend_tenant.go:50`), used by
+  `FindKeyAttributes` (`pkg/xkms/key_versions.go:179`) and `findKeyAttrs`
+  (`pkg/xkms/servicer_helpers.go:144`). `resolveKeyIn`
+  (`pkg/xkms/key_versions.go:270`) and `RotateKey` bind the request's tenant to
+  the caller through `ownTenant` (`pkg/xkms/tenant_binding.go:100`): an
+  omitted tenant is the caller's own, and any caller, the system tenant
+  included, naming another tenant is refused with `*TenantBindingError`. PIV
+  slot keys are the system tenant's (`isSystemTenantKey`,
+  `pkg/xkms/piv_keygen_backend.go:193`). See [docs/plans/2233.md](../plans/2233.md).
 
 ## Error semantics
 

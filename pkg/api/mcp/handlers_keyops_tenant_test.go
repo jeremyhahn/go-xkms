@@ -175,33 +175,51 @@ func TestHandler_AttestKey_UsesAuthenticatedTenant(t *testing.T) {
 // resolving another tenant's key would disclose that tenant's material.
 func TestHandler_ExportKeyMaterial_UsesAuthenticatedTenant(t *testing.T) {
 	material := []byte("0123456789abcdef0123456789abcdef")
+	sysMaterial := []byte("fedcba9876543210fedcba9876543210")
 	provider := newFakeIEProvider(&types.KeyAttributes{
 		CN:                 "sym-key",
 		TenantID:           "tenant-a",
 		KeyType:            types.KeyTypeSecret,
 		SymmetricAlgorithm: types.SymmetricAES256GCM,
 		Exportable:         true,
+	}, &types.KeyAttributes{
+		CN:                 "sys-key",
+		TenantID:           "",
+		KeyType:            types.KeyTypeSecret,
+		SymmetricAlgorithm: types.SymmetricAES256GCM,
+		Exportable:         true,
 	})
 	provider.material["sym-key"] = material
+	provider.material["sys-key"] = sysMaterial
 	server := newKeyOpsServer(t, map[string]types.KeyProvider{"tpm2": provider})
 
-	export := func(tenantID string) (interface{}, error) {
+	export := func(keyID, tenantID string) (interface{}, error) {
 		return server.handleExportKeyMaterial(tenantContext(tenantID),
 			keyOpsRequest(t, "xkms.exportKeyMaterial",
-				&transport.ExportKeyMaterialRequest{Backend: "tpm2", KeyID: "sym-key"}))
+				&transport.ExportKeyMaterialRequest{Backend: "tpm2", KeyID: keyID}))
 	}
 
-	result, err := export("tenant-a")
+	result, err := export("sym-key", "tenant-a")
 	require.NoError(t, err, "the owning tenant must be able to export its own key")
 	resp, ok := result.(*transport.ExportKeyMaterialResponse)
 	require.True(t, ok)
 	assert.Equal(t, material, resp.KeyMaterial)
 
-	_, err = export("tenant-b")
+	_, err = export("sym-key", "tenant-b")
 	require.Error(t, err, "another tenant must not export this key's material")
 
-	// Positive control: an unauthenticated caller still reaches the unscoped
-	// view, so single-tenant deployments are unaffected.
-	_, err = export("")
-	require.NoError(t, err)
+	// An unauthenticated caller acts as the system tenant (row 2233): it
+	// exports the system tenant's own keys, so single-tenant deployments,
+	// whose keys are all system-tenant keys, are unaffected ...
+	result, err = export("sys-key", "")
+	require.NoError(t, err, "the system caller must export a system-tenant key")
+	resp, ok = result.(*transport.ExportKeyMaterialResponse)
+	require.True(t, ok)
+	assert.Equal(t, sysMaterial, resp.KeyMaterial)
+
+	// ... but a lookup by name on the system view never resolves another
+	// tenant's key, so it cannot export tenant-a's material.
+	_, err = export("sym-key", "")
+	require.Error(t, err, "the system caller must not export a tenant's key by name")
+	assert.Contains(t, err.Error(), "key not found: sym-key")
 }

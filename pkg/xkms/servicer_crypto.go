@@ -316,7 +316,7 @@ func (s *XKMSService) Sign(ctx context.Context, req *transport.SignRequest) (res
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil sign request"}
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "Sign", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -541,7 +541,7 @@ func (s *XKMSService) Verify(ctx context.Context, req *transport.VerifyRequest) 
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil verify request"}
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "Verify", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -701,7 +701,7 @@ func (s *XKMSService) Encrypt(ctx context.Context, req *transport.EncryptRequest
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil encrypt request"}
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "Encrypt", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -879,7 +879,7 @@ func (s *XKMSService) Decrypt(ctx context.Context, req *transport.DecryptRequest
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil decrypt request"}
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "Decrypt", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -1089,7 +1089,7 @@ func (s *XKMSService) EncryptAsym(ctx context.Context, req *transport.EncryptAsy
 		return nil, &ErrValidation{Sentinel: ErrInvalidKeyAttributes, Detail: "nil encrypt-asym request"}
 	}
 
-	k, err := s.resolveKeyIn(ctx, req.Backend, req.TenantID, req.KeyID)
+	k, err := s.resolveKeyIn(ctx, "EncryptAsym", req.Backend, req.TenantID, req.KeyID)
 	if err != nil {
 		return nil, err
 	}
@@ -1457,7 +1457,11 @@ func (s *XKMSService) DeriveKeyECDH(ctx context.Context, req *transport.DeriveKe
 		}
 	}
 
-	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "DeriveKeyECDH", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.resolveTenantBackend(req.Backend, tenant)
 	if err != nil {
 		return nil, roleLookupError("backend", req.Backend, err)
 	}
@@ -1542,7 +1546,11 @@ func (s *XKMSService) AttestKey(ctx context.Context, req *transport.AttestKeyReq
 		return nil, requiredField("key_id")
 	}
 
-	b, err := s.resolveTenantBackend(req.Backend, req.TenantID)
+	tenant, err := ownTenant(ctx, "AttestKey", req.TenantID)
+	if err != nil {
+		return nil, err
+	}
+	b, err := s.resolveTenantBackend(req.Backend, tenant)
 	if err != nil {
 		return nil, roleLookupError("backend", req.Backend, err)
 	}

@@ -143,7 +143,7 @@ func (s *XKMSService) requireES256Key(ctx context.Context, backendName, tenantID
 // requireES256KeyVersion is requireES256Key that also returns the number of
 // the current version the public key belongs to.
 func (s *XKMSService) requireES256KeyVersion(ctx context.Context, backendName, tenantID, keyID string) (*ecdsa.PublicKey, uint32, error) {
-	k, err := s.resolveKeyIn(ctx, backendName, tenantID, keyID)
+	k, err := s.resolveKeyIn(ctx, "requireES256KeyVersion", backendName, tenantID, keyID)
 	if err != nil {
 		return nil, 0, err
 	}
