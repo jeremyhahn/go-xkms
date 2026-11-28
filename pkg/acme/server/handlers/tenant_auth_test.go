@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	jose "github.com/go-jose/go-jose/v4"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/common"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/entities"
 	"github.com/jeremyhahn/go-xkms/pkg/acme/server"
@@ -265,4 +266,24 @@ func TestPeekJWSKeyID_NoKID(t *testing.T) {
 
 	_, ok = peekJWSKeyID([]byte("not a jws"))
 	require.False(t, ok, "a malformed body must never report a kid")
+}
+
+// TestPeekJWSKeyID_CompactSerializationRefused: RFC 8555 §6.2 admits only the
+// flattened JSON serialization, so a compact JWS naming a kid resolves no tenant.
+func TestPeekJWSKeyID_CompactSerializationRefused(t *testing.T) {
+	key := generateTestKey(t)
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: key.PrivateKey},
+		&jose.SignerOptions{ExtraHeaders: map[jose.HeaderKey]interface{}{"kid": "https://ca.example/acme/account/7"}})
+	require.NoError(t, err)
+	jws, err := signer.Sign([]byte("{}"))
+	require.NoError(t, err)
+
+	compact, err := jws.CompactSerialize()
+	require.NoError(t, err)
+	_, ok := peekJWSKeyID([]byte(compact))
+	require.False(t, ok, "a compact JWS must never report a kid")
+
+	kid, ok := peekJWSKeyID([]byte(jws.FullSerialize()))
+	require.True(t, ok)
+	require.Equal(t, "https://ca.example/acme/account/7", kid)
 }

@@ -19,6 +19,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
+
+	jose "github.com/go-jose/go-jose/v4"
 )
 
 // Test RSA-OAEP encryption and decryption
@@ -346,6 +348,30 @@ func TestDecryptionErrors(t *testing.T) {
 		_, err := decrypter.Decrypt("invalid-jwe-format", privateKey)
 		if err == nil {
 			t.Error("Expected error for invalid JWE format")
+		}
+	})
+
+	t.Run("JSONSerializationRefused", func(t *testing.T) {
+		// Decrypt takes only the compact serialization it documents.
+		encrypter, err := jose.NewEncrypter(jose.A256GCM,
+			jose.Recipient{Algorithm: jose.RSA_OAEP, Key: &privateKey.PublicKey}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj, err := encrypter.Encrypt([]byte("test"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		decrypter := NewDecrypter()
+		if _, err := decrypter.Decrypt(obj.FullSerialize(), privateKey); err == nil {
+			t.Error("Expected error for a JSON-serialized JWE")
+		}
+		compact, err := obj.CompactSerialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := decrypter.Decrypt(compact, privateKey); err != nil || string(got) != "test" {
+			t.Errorf("compact JWE: got %q, %v", got, err)
 		}
 	})
 
