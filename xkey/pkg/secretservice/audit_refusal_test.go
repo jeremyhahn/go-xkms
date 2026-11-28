@@ -242,6 +242,28 @@ func TestPrompt_UnlockFuncErrorDismisses(t *testing.T) {
 	assert.NotNil(t, p.Prompt(""), "a dismissed prompt cannot be prompted again")
 }
 
+// TestPrompt_CredentialFreeUnlockDoesNotPanic covers an UnlockFunc that
+// returns zero credentials (an ambient or auto-unseal factor): the prompt
+// must not dereference the absent Secret, and the outcome is audited.
+func TestPrompt_CredentialFreeUnlockDoesNotPanic(t *testing.T) {
+	barrier := newTestBarrier(t)
+	d := newBusDaemonWithBarrier(t, newMemoryStore(), barrier).Daemon
+	rec := &recordingAudit{}
+	d.SetAuditLogger(rec)
+	d.SetUnlockFunc(func(context.Context) (xkms.SealCredentials, error) {
+		return xkms.SealCredentials{}, nil
+	})
+	p := unlockPrompt(t, d, barrier)
+
+	require.NotPanics(t, func() { require.Nil(t, p.Prompt("")) })
+
+	entries := rec.recorded()
+	require.NotEmpty(t, entries)
+	last := entries[len(entries)-1]
+	assert.Equal(t, audit.OpSecretServiceUnlock, last.Operation)
+	assert.NotNil(t, p.Prompt(""), "a completed prompt cannot be prompted again")
+}
+
 func TestPrompt_FailedUnlock_AuditWriteFailureStillDismisses(t *testing.T) {
 	wrongCreds := func(t *testing.T) func(context.Context) (xkms.SealCredentials, error) {
 		return func(context.Context) (xkms.SealCredentials, error) {
