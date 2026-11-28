@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
@@ -856,6 +857,7 @@ func importKey(cfg *Config, printer *Printer, keyID string, wrapped *client.Wrap
 		KeyID:              keyID,
 		WrappedKeyMaterial: wrapped.WrappedKey,
 		Algorithm:          string(wrapped.Algorithm),
+		ImportToken:        wrapped.ImportToken,
 		KeyType:            spec.keyType,
 		KeySize:            spec.keySize,
 		AESKeySize:         spec.aesKeySize,
@@ -1108,14 +1110,23 @@ func getImportParams(cfg *Config, printer *Printer, keyID, keyType, keyAlgorithm
 	}
 
 	// Convert to client.ImportParameters for output
+	// The import token binds the later unwrap or import to this ceremony;
+	// a backend that issues one refuses the material without it.
 	params := &client.ImportParameters{
 		WrappingPublicKey: resp.WrappingPublicKey,
+		ImportToken:       resp.ImportToken,
 		Algorithm:         algorithm,
+		KeySpec:           resp.KeySpec,
+	}
+	if resp.ExpiresAt != "" {
+		if expiresAt, perr := time.Parse(time.RFC3339, resp.ExpiresAt); perr == nil {
+			params.ExpiresAt = &expiresAt
+		}
 	}
 
 	// If output file is specified, save params to file
 	if outputFile != "" {
-		paramsData, err := json.MarshalIndent(params, "", "  ")
+		paramsData, err := encodeImportParams(params)
 		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrSerializeImportParametersFailed, Err: err})
 			return
@@ -1170,15 +1181,15 @@ var keyWrapCmd = &cobra.Command{
 			return
 		}
 
-		var params client.ImportParameters
-		if err := json.Unmarshal(paramsData, &params); err != nil {
+		params, err := decodeImportParams(paramsData)
+		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrDeserializeImportParametersFailed, Err: err})
 			return
 		}
 
 		printVerbose("Using wrapping algorithm: %s", params.Algorithm)
 
-		wrapKey(cfg, printer, keyMaterial, &params, outputFile)
+		wrapKey(cfg, printer, keyMaterial, params, outputFile)
 	},
 }
 
@@ -1200,11 +1211,9 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 	printVerbose("Connected to xkmsd")
 
 	// Prepare wrap key request - params.WrappingPublicKey should already be in the right format
-	var wrappingPubKeyBytes []byte
-	if pubKey, ok := params.WrappingPublicKey.([]byte); ok {
-		wrappingPubKeyBytes = pubKey
-	} else {
-		handleError(&WrappedDetailError{Sentinel: ErrWrappingKeyUnexpectedType, Detail: fmt.Sprintf("%T", params.WrappingPublicKey)})
+	wrappingPubKeyBytes, err := wrappingKeyBytes(params)
+	if err != nil {
+		handleError(err)
 		return
 	}
 
@@ -1213,6 +1222,8 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 		KeyMaterial:       keyMaterial,
 		WrappingPublicKey: wrappingPubKeyBytes,
 		Algorithm:         string(params.Algorithm),
+		ImportToken:       params.ImportToken,
+		KeySpec:           params.KeySpec,
 	}
 
 	resp, err := cl.WrapKey(ctx, req)
@@ -1225,8 +1236,9 @@ func wrapKey(cfg *Config, printer *Printer, keyMaterial []byte, params *client.I
 
 	// Create WrappedKeyMaterial structure for file output
 	wrapped := &client.WrappedKeyMaterial{
-		WrappedKey: resp.WrappedKeyMaterial,
-		Algorithm:  params.Algorithm,
+		WrappedKey:  resp.WrappedKeyMaterial,
+		Algorithm:   params.Algorithm,
+		ImportToken: params.ImportToken,
 	}
 
 	// Serialize and write wrapped key
@@ -1285,15 +1297,15 @@ var keyUnwrapCmd = &cobra.Command{
 			return
 		}
 
-		var params client.ImportParameters
-		if err := json.Unmarshal(paramsData, &params); err != nil {
+		params, err := decodeImportParams(paramsData)
+		if err != nil {
 			handleError(&WrappedError{Sentinel: ErrDeserializeImportParametersFailed, Err: err})
 			return
 		}
 
 		printVerbose("Using wrapping algorithm: %s", params.Algorithm)
 
-		unwrapKey(cfg, printer, &wrapped, &params, outputFile)
+		unwrapKey(cfg, printer, &wrapped, params, outputFile)
 	},
 }
 
@@ -1314,10 +1326,16 @@ func unwrapKey(cfg *Config, printer *Printer, wrapped *client.WrappedKeyMaterial
 
 	printVerbose("Connected to xkmsd")
 
+	importToken := wrapped.ImportToken
+	if len(importToken) == 0 {
+		importToken = params.ImportToken
+	}
 	req := &client.UnwrapKeyRequest{
 		Backend:            cfg.Backend,
 		WrappedKeyMaterial: wrapped.WrappedKey,
 		Algorithm:          string(params.Algorithm),
+		ImportToken:        importToken,
+		KeySpec:            params.KeySpec,
 	}
 
 	resp, err := cl.UnwrapKey(ctx, req)

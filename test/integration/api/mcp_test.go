@@ -28,7 +28,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
 )
 
-// MCPClient wraps TCP connection for MCP JSON-RPC testing
+// MCPClient drives the MCP server over its streamable HTTP endpoint.
 type MCPClient struct {
 	url     string
 	http    *http.Client
@@ -260,10 +260,11 @@ func TestMCPGenerateKey(t *testing.T) {
 	keyID := generateUniqueID("mcp-key")
 
 	params := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"algorithm": "rsa",
+		"key_type":  "signing",
+		"key_size":  2048,
 	}
 
 	resp, err := client.Call("xkms.generateKey", params)
@@ -304,10 +305,11 @@ func TestMCPListKeys(t *testing.T) {
 	// Generate a test key first
 	keyID := generateUniqueID("mcp-list-test")
 	params := map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"algorithm": "rsa",
+		"key_type":  "signing",
+		"key_size":  2048,
 	}
 
 	_, err = client.Call("xkms.generateKey", params)
@@ -373,10 +375,11 @@ func TestMCPSignVerify(t *testing.T) {
 
 	// Generate key
 	_, err = client.Call("xkms.generateKey", map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
-		"key_size": 2048,
+		"key_id":    keyID,
+		"backend":   "software",
+		"algorithm": "rsa",
+		"key_type":  "signing",
+		"key_size":  2048,
 	})
 	assertNoError(t, err, "Failed to generate key")
 
@@ -502,9 +505,10 @@ func TestMCPStreamingNotifications(t *testing.T) {
 	// Create a key (may trigger a notification)
 	keyID := generateUniqueID("mcp-notify-key")
 	_, err = client.Call("xkms.generateKey", map[string]interface{}{
-		"key_id":   keyID,
-		"backend":  "software",
-		"key_type": "rsa",
+		"key_id":    keyID,
+		"backend":   "software",
+		"algorithm": "rsa",
+		"key_type":  "signing",
 	})
 	assertNoError(t, err, "Failed to generate key")
 

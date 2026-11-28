@@ -42,6 +42,9 @@ func TestProtocolParity_CA_Bundle(t *testing.T) {
 
 	for _, protocol := range commands.CLIProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
+			if reason, skip := commands.CAParitySkip(protocol); skip {
+				t.Skip(reason)
+			}
 			if !isProtocolAvailable(t, runner, protocol) {
 				t.Fatalf("Protocol %s not available - server must be running", protocol)
 			}
@@ -67,6 +70,9 @@ func TestProtocolParity_CA_Certificate(t *testing.T) {
 
 	for _, protocol := range commands.CLIProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
+			if reason, skip := commands.CAParitySkip(protocol); skip {
+				t.Skip(reason)
+			}
 			if !isProtocolAvailable(t, runner, protocol) {
 				t.Fatalf("Protocol %s not available - server must be running", protocol)
 			}
@@ -95,6 +101,9 @@ func TestProtocolParity_CA_Issue(t *testing.T) {
 
 	for _, protocol := range commands.CLIProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
+			if reason, skip := commands.CAParitySkip(protocol); skip {
+				t.Skip(reason)
+			}
 			if !isProtocolAvailable(t, runner, protocol) {
 				t.Fatalf("Protocol %s not available - server must be running", protocol)
 			}
@@ -130,6 +139,9 @@ func TestProtocolParity_CA_Lifecycle(t *testing.T) {
 
 	for _, protocol := range commands.CLIProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
+			if reason, skip := commands.CAParitySkip(protocol); skip {
+				t.Skip(reason)
+			}
 			if !isProtocolAvailable(t, runner, protocol) {
 				t.Fatalf("Protocol %s not available - server must be running", protocol)
 			}
@@ -261,6 +273,9 @@ func TestProtocolParity_CA_CRL(t *testing.T) {
 
 	for _, protocol := range commands.CLIProtocols() {
 		t.Run(string(protocol), func(t *testing.T) {
+			if reason, skip := commands.CAParitySkip(protocol); skip {
+				t.Skip(reason)
+			}
 			if !isProtocolAvailable(t, runner, protocol) {
 				t.Fatalf("Protocol %s not available - server must be running", protocol)
 			}

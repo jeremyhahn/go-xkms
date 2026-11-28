@@ -67,6 +67,8 @@ type mockKeyClient struct {
 	wrapKeyErr          error
 	unwrapKeyResp       *client.UnwrapKeyResponse
 	unwrapKeyErr        error
+	wrapKeyReq          *client.WrapKeyRequest
+	unwrapKeyReq        *client.UnwrapKeyRequest
 }
 
 func (m *mockKeyClient) GenerateKey(_ context.Context, req *client.GenerateKeyRequest) (*client.GenerateKeyResponse, error) {
@@ -132,10 +134,12 @@ func (m *mockKeyClient) GetImportParameters(_ context.Context, req *client.GetIm
 }
 
 func (m *mockKeyClient) WrapKey(_ context.Context, req *client.WrapKeyRequest) (*client.WrapKeyResponse, error) {
+	m.wrapKeyReq = req
 	return m.wrapKeyResp, m.wrapKeyErr
 }
 
 func (m *mockKeyClient) UnwrapKey(_ context.Context, req *client.UnwrapKeyRequest) (*client.UnwrapKeyResponse, error) {
+	m.unwrapKeyReq = req
 	return m.unwrapKeyResp, m.unwrapKeyErr
 }
 

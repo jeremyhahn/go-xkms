@@ -16,6 +16,8 @@
 // between REST, gRPC, QUIC, MCP, and Unix socket interfaces.
 package commands
 
+import "slices"
+
 // CommandCategory represents a category of commands
 type CommandCategory string
 
@@ -28,11 +30,35 @@ const (
 	CategoryFIDO2    CommandCategory = "fido2"
 	CategoryUser     CommandCategory = "user"
 	CategoryAdmin    CommandCategory = "admin"
+	CategoryACME     CommandCategory = "acme"
 	CategoryVersion  CommandCategory = "version"
 	CategoryBackends CommandCategory = "backends"
 	CategorySealing  CommandCategory = "sealing"
 	CategoryCA       CommandCategory = "ca"
 	CategoryPolicy   CommandCategory = "policy"
+
+	CategoryTenant     CommandCategory = "tenant"
+	CategoryAuth       CommandCategory = "auth"
+	CategoryCredential CommandCategory = "credential"
+	CategoryOIDC       CommandCategory = "oidc"
+	CategoryPassword   CommandCategory = "password"
+	CategoryPIN        CommandCategory = "pin"
+	CategoryPIV        CommandCategory = "piv"
+	CategoryPlatform   CommandCategory = "platform"
+	CategoryServer     CommandCategory = "server"
+	CategoryAlgorithms CommandCategory = "algorithms"
+	CategoryCluster    CommandCategory = "cluster"
+	CategoryRebalance  CommandCategory = "rebalance"
+	CategoryBootstrap  CommandCategory = "bootstrap"
+)
+
+// Skip reasons shared by the account families (row #2321 slice c).
+const (
+	skipChain = "requires prior setup (workflow tests; later #2321 slices)"
+	// skipFIDO2 names commands that need a FIDO2 authenticator touch.
+	skipFIDO2 = "needs a FIDO2 authenticator (user presence); the compose stack has none"
+	// skipNoOIDCProvider names oidc verbs that need a live identity provider.
+	skipNoOIDCProvider = "needs an OIDC provider; the compose stack configures none"
 )
 
 // CommandDefinition defines a CLI command with its arguments and expected behavior
@@ -74,9 +100,50 @@ type CommandDefinition struct {
 	// Commands with RequiresSetup=true are skipped in standalone tests but run in workflow tests
 	RequiresSetup bool
 
+	// Workflow names the ordered workflow test that runs this command with
+	// its setup (e.g. platform put before get). The matrix counts it as a
+	// run; the standalone run leaves it to that test.
+	Workflow string
+
+	// Transports, when set, are the only transports the command runs on;
+	// every other cell is skipped with TransportSkip as the reason.
+	Transports []ProtocolType
+
+	// TransportSkip names why a transport outside Transports cannot run it.
+	TransportSkip string
+
+	// Unsupported, when set, is why no cell can run the command in the
+	// integration environment (e.g. no DNS zone serving TLSA records).
+	Unsupported string
+	// SetupSteps names the commands (by Name) that set this command up. They
+	// come earlier in AllCommands, so one ordered pass runs them first; a
+	// RequiresSetup command with SetupSteps runs in the matrix and is skipped,
+	// naming the step, only when a step did not pass in the same run.
+	SetupSteps []string
+
+	// SkipWhenOutputContains lists failure output that means the cell cannot
+	// run on this backend (e.g. no attestation); the cell is then skipped with
+	// SkipWhenReason instead of failing.
+	SkipWhenOutputContains []string
+
+	// SkipWhenReason is the skip reason logged for SkipWhenOutputContains.
+	SkipWhenReason string
+
 	// ExpectedOutputContains are strings that should be in successful output
 	ExpectedOutputContains []string
+
+	// Skip, when non-empty, is the reason the matrix skips this command on
+	// every transport (e.g. the integration stack cannot serve it).
+	Skip string
 }
+
+// MatrixWorkDir is the placeholder an argument value uses for the per-run
+// working directory the runner creates; it holds MatrixKeyMaterialFile.
+const MatrixWorkDir = "{{workdir}}"
+
+// MatrixKeyMaterialFile is the raw AES-256 key material file the runner
+// writes into MatrixWorkDir before the run, for key wrap and import.
+const MatrixKeyMaterialFile = "key-material.bin"
 
 // ArgDefinition defines a command argument
 type ArgDefinition struct {
@@ -101,17 +168,35 @@ type ArgDefinition struct {
 
 // AllCommands returns all CLI commands for testing
 func AllCommands() []CommandDefinition {
-	return append(append(append(append(append(append(append(append(append(
+	// Order matters: the standalone run executes commands in this order.
+	return slices.Concat(
 		BackendCommands(),
-		KeyCommands()...),
-		CertCommands()...),
-		TLSCommands()...),
-		FrostCommands()...),
-		FIDO2Commands()...),
-		SealingCommands()...),
-		CACommands()...),
-		PolicyCommands()...),
-		VersionCommands()...)
+		KeyCommands(),
+		CertCommands(),
+		TLSCommands(),
+		FrostCommands(),
+		FIDO2Commands(),
+		SealingCommands(),
+		CACommands(),
+		PolicyCommands(),
+		ACMECommands(),
+		AdminCommands(),
+		VersionCommands(),
+		TenantCommands(),
+		UserCommands(),
+		AuthCommands(),
+		CredentialCommands(),
+		OIDCCommands(),
+		PasswordCommands(),
+		PINCommands(),
+		PIVCommands(),
+		ServerCommands(),
+		AlgorithmsCommands(),
+		PlatformCommands(),
+		ClusterCommands(),
+		RebalanceCommands(),
+		BootstrapCommands(),
+	)
 }
 
 // VersionCommands returns version-related commands
@@ -144,7 +229,7 @@ func BackendCommands() []CommandDefinition {
 
 // KeyCommands returns key management commands
 func KeyCommands() []CommandDefinition {
-	return []CommandDefinition{
+	cmds := []CommandDefinition{
 		{
 			Name:            "key-generate-rsa",
 			Category:        CategoryKey,
@@ -292,6 +377,56 @@ func KeyCommands() []CommandDefinition {
 				{Flag: "hash", Value: "SHA-256", Description: "Hash algorithm"},
 			},
 		},
+	}
+	// The lifecycle verbs run between key-verify and key-delete.
+	cmds = append(cmds, keyVersionCommands()...)
+	cmds = append(cmds, []CommandDefinition{
+		// Import path: the runner writes raw AES-256 material into the work
+		// dir; get-import-params fetches the wrapping key, wrap seals the
+		// material under it, unwrap opens it again and import stores it.
+		keyServerCommand("key-get-import-params", "Fetch the wrapping key for an AES-256 import", []string{"key", "get-import-params"},
+			nil, keyIDArg("test-import-key"),
+			ArgDefinition{Flag: "key-algorithm", Value: "aes", Description: "Key algorithm"},
+			ArgDefinition{Flag: "key-size", Value: "256", Description: "Key size"},
+			ArgDefinition{Flag: "output", Value: MatrixWorkDir + "/import-params.json", Description: "Params output"}),
+		keyServerCommand("key-wrap", "Wrap key material under the import parameters", []string{"key", "wrap"},
+			[]string{"key-get-import-params"},
+			fileArg(MatrixWorkDir+"/"+MatrixKeyMaterialFile, "Key material file"),
+			fileArg(MatrixWorkDir+"/import-params.json", "Params file"),
+			fileArg(MatrixWorkDir+"/wrapped.json", "Wrapped output file")),
+		keyServerCommand("key-unwrap", "Unwrap the wrapped key material", []string{"key", "unwrap"},
+			[]string{"key-wrap"},
+			fileArg(MatrixWorkDir+"/wrapped.json", "Wrapped input file"),
+			fileArg(MatrixWorkDir+"/import-params.json", "Params file"),
+			fileArg(MatrixWorkDir+"/unwrapped.bin", "Unwrapped output file")),
+		// The backend consumes an import token once: UnwrapKey above took the
+		// first ceremony's token, so the import runs its own ceremony with
+		// separate files.
+		keyServerCommand("key-get-import-params-for-import", "Fetch fresh import parameters for the import", []string{"key", "get-import-params"},
+			[]string{"key-unwrap"}, keyIDArg("test-import-key"),
+			ArgDefinition{Flag: "key-algorithm", Value: "aes", Description: "Key algorithm"},
+			ArgDefinition{Flag: "key-size", Value: "256", Description: "Key size"},
+			ArgDefinition{Flag: "output", Value: MatrixWorkDir + "/import-ceremony-params.json", Description: "Params output"}),
+		keyServerCommand("key-wrap-for-import", "Wrap key material under the import ceremony's parameters", []string{"key", "wrap"},
+			[]string{"key-get-import-params-for-import"},
+			fileArg(MatrixWorkDir+"/"+MatrixKeyMaterialFile, "Key material file"),
+			fileArg(MatrixWorkDir+"/import-ceremony-params.json", "Params file"),
+			fileArg(MatrixWorkDir+"/import-wrapped.json", "Wrapped output file")),
+		keyServerCommand("key-import", "Import the wrapped AES-256 key", []string{"key", "import"},
+			[]string{"key-wrap-for-import"}, keyIDArg("test-import-key"),
+			fileArg(MatrixWorkDir+"/import-wrapped.json", "Wrapped input file"),
+			ArgDefinition{Flag: "key-type", Value: "aes", Description: "Key type"},
+			ArgDefinition{Flag: "aes-key-size", Value: "256", Description: "AES key size"}),
+		keyServerCommand("key-export", "Export an exportable key wrapped for transport", []string{"key", "export"},
+			[]string{"key-generate-symmetric-exportable"}, keyIDArg("test-symmetric-exportable"),
+			fileArg(MatrixWorkDir+"/exported.json", "Export output file")),
+		func() CommandDefinition {
+			def := keyServerCommand("key-attest", "Attest a key", []string{"key", "attest"},
+				[]string{"key-generate-rsa"}, keyIDArg("test-key"))
+			def.SkipWhenOutputContains = []string{"not supported", "unsupported", "does not support", "Unimplemented", "not implemented"}
+			def.SkipWhenReason = "backend has no key attestation (tpm2/pkcs11 backends attest)"
+			return def
+		}(),
 		{
 			Name:            "key-delete",
 			Category:        CategoryKey,
@@ -304,7 +439,88 @@ func KeyCommands() []CommandDefinition {
 				{Flag: "", Value: "test-key", Description: "Key ID", IsPositional: true},
 			},
 		},
+	}...)
+	for i := range cmds {
+		if slices.Contains(importCeremonySteps, cmds[i].Name) {
+			cmds[i] = limitToServer(cmds[i], ReasonEmbeddedImportCeremony)
+		}
 	}
+	return cmds
+}
+
+// importCeremonySteps need the import token an earlier step minted in the
+// same backend, which an embedded CLI call (a fresh SoftwareBackend each
+// time) never has.
+var importCeremonySteps = []string{"key-unwrap", "key-get-import-params-for-import", "key-wrap-for-import", "key-import"}
+
+// keyVersionCommands are the lifecycle verbs (#2321 slice f). They run
+// between key-verify and key-delete, so test-key still exists and the
+// version verbs see the versions key-rotate made. sdk/go/embedded.go wires
+// no key version service, so they run on the server transports only.
+func keyVersionCommands() []CommandDefinition {
+	cmds := []CommandDefinition{
+		keyServerCommand("key-rotate", "Rotate a key to a new version", []string{"key", "rotate"},
+			[]string{"key-generate-rsa"}, keyIDArg("test-key")),
+		keyServerCommand("key-versions", "List the versions of a key", []string{"key", "versions"},
+			[]string{"key-rotate"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-disable", "Disable key version 1", []string{"key", "version", "disable"},
+			[]string{"key-rotate"}, keyIDArg("test-key"), versionArg("1")),
+		keyServerCommand("key-version-enable", "Re-enable key version 1", []string{"key", "version", "enable"},
+			[]string{"key-version-disable"}, keyIDArg("test-key"), versionArg("1")),
+		keyServerCommand("key-version-disable-all", "Disable every version of a key", []string{"key", "version", "disable-all"},
+			[]string{"key-rotate"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-enable-all", "Re-enable every version of a key", []string{"key", "version", "enable-all"},
+			[]string{"key-version-disable-all"}, keyIDArg("test-key")),
+		keyServerCommand("key-version-retire", "Retire key version 1", []string{"key", "version", "retire"},
+			[]string{"key-version-enable-all"}, keyIDArg("test-key"), versionArg("1")),
+		{
+			Name:           "key-rotate-all",
+			Category:       CategoryKey,
+			Command:        []string{"key", "rotate-all"},
+			Description:    "Rotate every key of the caller's tenant",
+			RequiresServer: true,
+			RequiresSetup:  true,
+			SetupSteps:     []string{"key-generate-rsa"},
+		},
+	}
+	for i := range cmds {
+		cmds[i] = limitToServer(cmds[i], ReasonEmbeddedNoKeyVersions)
+	}
+	return cmds
+}
+
+// keyServerCommand declares a key command that runs against the server's
+// backend and key dir. A non-empty setup marks it RequiresSetup with those
+// SetupSteps, which run earlier in the same pass.
+func keyServerCommand(name, description string, command, setup []string, args ...ArgDefinition) CommandDefinition {
+	return CommandDefinition{
+		Name:            name,
+		Category:        CategoryKey,
+		Command:         command,
+		Description:     description,
+		RequiresBackend: true,
+		RequiresKeyDir:  true,
+		RequiresServer:  true,
+		RequiresSetup:   len(setup) > 0,
+		SetupSteps:      setup,
+		RequiredArgs:    args,
+	}
+}
+
+// keyIDArg is the positional key ID; the runner maps it to the run's unique ID.
+func keyIDArg(id string) ArgDefinition {
+	return ArgDefinition{Value: id, Description: "Key ID", IsPositional: true}
+}
+
+// versionArg is the positional key version number.
+func versionArg(version string) ArgDefinition {
+	return ArgDefinition{Value: version, Description: "Version", IsPositional: true}
+}
+
+// fileArg is a positional file path; description must be unique per command
+// because the runner overrides positional values by description.
+func fileArg(path, description string) ArgDefinition {
+	return ArgDefinition{Value: path, Description: description, IsPositional: true}
 }
 
 // CertCommands returns certificate-related commands
@@ -484,6 +700,7 @@ func FIDO2Commands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"fido2"},
+			Skip:           skipFIDO2,
 			OptionalArgs: []ArgDefinition{
 				{Flag: "timeout", Value: "30s", Description: "Timeout for device wait"},
 			},
@@ -497,6 +714,7 @@ func FIDO2Commands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"fido2"},
+			Skip:           skipFIDO2,
 			RequiredArgs: []ArgDefinition{
 				{Flag: "", Value: "testuser", Description: "Username", IsPositional: true},
 			},
@@ -518,6 +736,7 @@ func FIDO2Commands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"fido2"},
+			Skip:           skipFIDO2,
 			RequiresSetup:  true, // Requires credential to be registered first
 			RequiredArgs: []ArgDefinition{
 				{Flag: "credential-id", Value: "", Description: "Credential ID from registration"},
@@ -540,6 +759,7 @@ func FIDO2Commands() []CommandDefinition {
 			RequiresServer: false,
 			RequiresLocal:  true,
 			BuildTags:      []string{"fido2"},
+			Skip:           skipFIDO2,
 			OptionalArgs: []ArgDefinition{
 				{Flag: "device", Value: "", Description: "Specific device path"},
 			},
@@ -605,7 +825,8 @@ func SealingCommands() []CommandDefinition {
 // creates, so they carry RequiresSetup like the sealing workflow's
 // unseal/can-seal above.
 func PolicyCommands() []CommandDefinition {
-	return []CommandDefinition{
+	create := []string{"tpm-policy-create"}
+	return withSkip(ReasonNoPolicyService, []CommandDefinition{
 		{
 			Name:           "tpm-policy-create",
 			Category:       CategoryPolicy,
@@ -621,73 +842,431 @@ func PolicyCommands() []CommandDefinition {
 			},
 			ExpectedOutputContains: []string{"it-tpm-policy"},
 		},
+		expectPolicyName(policyCommand("tpm-policy-list", "List TPM policies", []string{"tpm", "policy", "list"}, create, false)),
+		expectPolicyName(policyCommand("tpm-policy-get", "Show a TPM policy", []string{"tpm", "policy", "get"}, create, true)),
+		policyCommand("tpm-policy-verify", "Compare a TPM policy with the live PCR values",
+			[]string{"tpm", "policy", "verify"}, create, true),
+		func() CommandDefinition {
+			def := policyCommand("tpm-policy-describe", "Set a TPM policy's description",
+				[]string{"tpm", "policy", "describe"}, create, true)
+			def.RequiredArgs = append(def.RequiredArgs,
+				ArgDefinition{Value: "integration matrix policy", Description: "Description text", IsPositional: true})
+			return def
+		}(),
+		expectPolicyName(policyCommand("tpm-policy-objects", "List the objects bound to a TPM policy",
+			[]string{"tpm", "policy", "objects"}, create, true)),
+		policyCommand("tpm-policy-revoke", "Withdraw a TPM policy's approval",
+			[]string{"tpm", "policy", "revoke"}, create, true),
+		// update after revoke: it re-captures the PCRs and re-approves.
+		expectPolicyName(policyCommand("tpm-policy-update", "Re-capture a TPM policy and re-approve it",
+			[]string{"tpm", "policy", "update"}, []string{"tpm-policy-revoke"}, true)),
+		policyCommand("tpm-policy-auto-unseal", "Mark a TPM policy as the auto-unseal barrier",
+			[]string{"tpm", "policy", "auto-unseal"}, create, true),
+		func() CommandDefinition {
+			def := policyCommand("tpm-policy-auto-unseal-disable", "Clear the auto-unseal mark",
+				[]string{"tpm", "policy", "auto-unseal"}, []string{"tpm-policy-auto-unseal"}, true)
+			def.OptionalArgs = []ArgDefinition{{Flag: "disable", Description: "Clear the mark", IsBoolean: true}}
+			return def
+		}(),
 		{
-			Name:                   "tpm-policy-list",
-			Category:               CategoryPolicy,
-			Command:                []string{"tpm", "policy", "list"},
-			Description:            "List TPM policies",
-			RequiresServer:         true,
-			RequiresSetup:          true,
-			ExpectedOutputContains: []string{"it-tpm-policy"},
+			// The ECDSA key survives KeyCommands (key-delete removes test-key).
+			Name:            "key-policy",
+			Category:        CategoryPolicy,
+			Command:         []string{"key", "policy"},
+			Description:     "Show the TPM policy a key is bound to",
+			RequiresBackend: true,
+			RequiresKeyDir:  true,
+			RequiresServer:  true,
+			RequiresSetup:   true,
+			SetupSteps:      []string{"key-generate-ecdsa"},
+			RequiredArgs:    []ArgDefinition{keyIDArg("test-ecdsa-key")},
 		},
-		{
-			Name:           "tpm-policy-get",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "get"},
-			Description:    "Show a TPM policy",
+		policyCommand("tpm-authority-rotate", "Rotate the TPM policy authority key",
+			[]string{"tpm", "authority", "rotate"}, create, false),
+		// delete last: every verb above needs the policy.
+		policyCommand("tpm-policy-delete", "Delete a TPM policy", []string{"tpm", "policy", "delete"}, create, true),
+	})
+}
+
+// withSkip gives every command in cmds the capability skip reason, on every
+// transport: the matrix server lacks the service the family needs.
+func withSkip(reason string, cmds []CommandDefinition) []CommandDefinition {
+	for i := range cmds {
+		cmds[i].Skip = reason
+	}
+	return cmds
+}
+
+// policyCommand declares a TPM policy command that runs after its setup
+// steps; named commands take the policy name as their positional argument.
+func policyCommand(name, description string, command, setup []string, named bool) CommandDefinition {
+	def := CommandDefinition{
+		Name:           name,
+		Category:       CategoryPolicy,
+		Command:        command,
+		Description:    description,
+		RequiresServer: true,
+		RequiresSetup:  true,
+		SetupSteps:     setup,
+	}
+	if named {
+		def.RequiredArgs = []ArgDefinition{
+			{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
+		}
+	}
+	return def
+}
+
+// expectPolicyName makes def pass only when its output names the policy.
+func expectPolicyName(def CommandDefinition) CommandDefinition {
+	def.ExpectedOutputContains = []string{"it-tpm-policy"}
+	return def
+}
+
+// acmeNoAdminAPI is the skip reason of every acme cell: the integration
+// compose stack runs no ACME server, so --acme-server has nothing to reach.
+const acmeNoAdminAPI = "integration stack serves no ACME admin API (--acme-server); needs an ACME service in docker-compose.yml (#2321)"
+
+// adminFirstUser is the skip reason of the mutating admin cells: the stack's
+// adaptive auth is anonymous only until the first user exists, so admin
+// create would lock every other suite out of the shared server.
+const adminFirstUser = "admin create provisions the first user, which ends the stack's anonymous adaptive auth for every other suite; needs a dedicated stack with an mTLS operator cert (#2321)"
+
+// acmeCmd builds one acme matrix entry, skipped with acmeNoAdminAPI.
+func acmeCmd(name string, parts []string, desc string, positional ...ArgDefinition) CommandDefinition {
+	return CommandDefinition{
+		Name:           name,
+		Category:       CategoryACME,
+		Command:        parts,
+		Description:    desc,
+		RequiresServer: true,
+		RequiredArgs: append([]ArgDefinition{
+			{Flag: "acme-server", Value: "https://acme:8443", Description: "ACME admin API address"},
+		}, positional...),
+		Skip: acmeNoAdminAPI,
+	}
+}
+
+// ACMECommands returns the acme family (cmd/xkmsctl/acme*.go). The chained
+// cells (eab create -> get -> list -> delete, account/cert get on a seeded
+// order) are RequiresSetup.
+func ACMECommands() []CommandDefinition {
+	account := ArgDefinition{Flag: "", Value: "it-acme-account", Description: "ACME account ID", IsPositional: true}
+	serial := ArgDefinition{Flag: "", Value: "it-acme-serial", Description: "Certificate serial", IsPositional: true}
+	eab := ArgDefinition{Flag: "", Value: "it-acme-eab", Description: "EAB key ID", IsPositional: true}
+
+	cmds := []CommandDefinition{
+		acmeCmd("acme-account-list", []string{"acme", "account", "list"}, "List ACME accounts"),
+		acmeCmd("acme-account-get", []string{"acme", "account", "get"}, "Show an ACME account", account),
+		acmeCmd("acme-account-disable", []string{"acme", "account", "disable"}, "Disable an ACME account", account),
+		acmeCmd("acme-cert-list", []string{"acme", "cert", "list"}, "List ACME-issued certificates"),
+		acmeCmd("acme-cert-get", []string{"acme", "cert", "get"}, "Show an ACME-issued certificate", serial),
+		acmeCmd("acme-cert-revoke", []string{"acme", "cert", "revoke"}, "Revoke an ACME-issued certificate", serial),
+		acmeCmd("acme-eab-create", []string{"acme", "eab", "create"}, "Create an EAB key"),
+		acmeCmd("acme-eab-get", []string{"acme", "eab", "get"}, "Show an EAB key", eab),
+		acmeCmd("acme-eab-list", []string{"acme", "eab", "list"}, "List EAB keys"),
+		acmeCmd("acme-eab-delete", []string{"acme", "eab", "delete"}, "Delete an EAB key", eab),
+		acmeCmd("acme-status", []string{"acme", "status"}, "Show ACME server status"),
+		acmeCmd("acme-stats", []string{"acme", "stats"}, "Show ACME server statistics"),
+	}
+	for i := range cmds {
+		switch cmds[i].Name {
+		case "acme-account-get", "acme-account-disable", "acme-cert-get", "acme-cert-revoke",
+			"acme-eab-get", "acme-eab-list", "acme-eab-delete":
+			cmds[i].RequiresSetup = true
+		}
+	}
+
+	gui := acmeCmd("acme-gui", []string{"acme", "gui"}, "Open the ACME admin GUI")
+	gui.BuildTags = []string{"gui"}
+	gui.Skip = "acme gui opens a Wails desktop window (-tags gui); no display in the integration stack"
+	return append(cmds, gui)
+}
+
+// AdminCommands returns the admin family (cmd/xkmsctl/admin.go). list and
+// status are read-only and run on every transport; the create -> get ->
+// disable -> enable -> delete chain is skipped with adminFirstUser.
+func AdminCommands() []CommandDefinition {
+	user := ArgDefinition{Flag: "", Value: "it-admin", Description: "Admin username", IsPositional: true}
+	chained := func(name, verb, desc string) CommandDefinition {
+		return CommandDefinition{
+			Name:           name,
+			Category:       CategoryAdmin,
+			Command:        []string{"admin", verb},
+			Description:    desc,
 			RequiresServer: true,
 			RequiresSetup:  true,
+			RequiredArgs:   []ArgDefinition{user},
+			Skip:           adminFirstUser,
+		}
+	}
+
+	create := chained("admin-create", "create", "Create an mTLS administrator")
+	create.RequiresSetup = false
+	create.RequiredArgs = append(create.RequiredArgs,
+		ArgDefinition{Flag: "method", Value: "mtls", Description: "Enrollment method"},
+		ArgDefinition{Flag: "cert-file", Value: "/etc/xkms/certs/operator.crt", Description: "Operator certificate"},
+	)
+
+	return []CommandDefinition{
+		create,
+		chained("admin-get", "get", "Show an administrator"),
+		chained("admin-disable", "disable", "Disable an administrator"),
+		chained("admin-enable", "enable", "Enable an administrator"),
+		chained("admin-delete", "delete", "Delete an administrator"),
+		limitToServer(CommandDefinition{
+			Name:           "admin-list",
+			Category:       CategoryAdmin,
+			Command:        []string{"admin", "list"},
+			Description:    "List administrator accounts",
+			RequiresServer: true,
+		}, ReasonEmbeddedNoAdmin),
+		limitToServer(CommandDefinition{
+			Name:           "admin-status",
+			Category:       CategoryAdmin,
+			Command:        []string{"admin", "status"},
+			Description:    "Show administrator status",
+			RequiresServer: true,
+		}, ReasonEmbeddedNoAdmin),
+	}
+}
+
+// pos is a positional argument of an account-family command.
+func pos(value, description string) ArgDefinition {
+	return ArgDefinition{Value: value, Description: description, IsPositional: true}
+}
+
+// TenantCommands returns the tenant family (cmd/xkmsctl/tenant.go). The
+// create -> show -> update-* -> delete chain runs on every server transport:
+// commandOverrides gives the tenant id a per-transport name
+// (perTransportNames), and each later verb has tenant-create as SetupSteps.
+func TenantCommands() []CommandDefinition {
+	id := ArgDefinition{Flag: "id", Value: "it-tenant", Description: "Tenant ID"}
+	chain := func(name string, command []string, desc string, args ...ArgDefinition) CommandDefinition {
+		return limitToServer(CommandDefinition{
+			Name: name, Category: CategoryTenant, Command: command, Description: desc,
+			RequiresServer: true, RequiresSetup: true, SetupSteps: []string{"tenant-create"},
+			RequiredArgs: append([]ArgDefinition{id}, args...),
+		}, ReasonEmbeddedNoTenant)
+	}
+	show := chain("tenant-show", []string{"tenant", "show"}, "Show a tenant")
+	show.ExpectedOutputContains = []string{"it-tenant"}
+	return []CommandDefinition{
+		limitToServer(CommandDefinition{
+			Name: "tenant-create", Category: CategoryTenant,
+			Command:        []string{"tenant", "create"},
+			Description:    "Create a tenant",
+			RequiresServer: true,
+			RequiredArgs: []ArgDefinition{id,
+				{Flag: "name", Value: "IT tenant", Description: "Tenant display name"}},
+			OptionalArgs: []ArgDefinition{{Flag: "isolation", Value: "prefix", Description: "Isolation mode"}},
+		}, ReasonEmbeddedNoTenant),
+		limitToServer(CommandDefinition{
+			Name: "tenant-list", Category: CategoryTenant,
+			Command:        []string{"tenant", "list"},
+			Description:    "List tenants",
+			RequiresServer: true,
+		}, ReasonEmbeddedNoTenant),
+		show,
+		chain("tenant-update-entitlements", []string{"tenant", "update-entitlements"}, "Update a tenant's entitlements",
+			ArgDefinition{Flag: "isolation-modes", Value: "prefix,barrier", Description: "Permitted isolation modes"}),
+		chain("tenant-update-quotas", []string{"tenant", "update-quotas"}, "Update a tenant's quotas",
+			ArgDefinition{Flag: "max-keys", Value: "100", Description: "Max keys"}),
+		chain("tenant-delete", []string{"tenant", "delete"}, "Delete a tenant"),
+	}
+}
+
+// UserCommands returns the user family (cmd/xkmsctl/user.go, user_invite.go).
+// The register -> get -> update -> disable -> enable -> delete chain is
+// per-transport named like the tenant chain (username and email), and each
+// later verb has user-register as SetupSteps.
+func UserCommands() []CommandDefinition {
+	user := pos("it-user", "Username")
+	chain := func(name string, command []string, desc string, args ...ArgDefinition) CommandDefinition {
+		return limitToServer(CommandDefinition{
+			Name: name, Category: CategoryUser, Command: command, Description: desc,
+			RequiresServer: true, RequiresSetup: true, SetupSteps: []string{"user-register"},
+			RequiredArgs: append([]ArgDefinition{user}, args...),
+		}, ReasonEmbeddedNoUser)
+	}
+	return []CommandDefinition{
+		limitToServer(CommandDefinition{
+			Name: "user-register", Category: CategoryUser,
+			Command:        []string{"user", "register"},
+			Description:    "Register a user",
+			RequiresServer: true,
+			RequiredArgs: []ArgDefinition{user,
+				{Flag: "email", Value: "it-user@example.com", Description: "Login email"},
+				{Flag: "role", Value: "user", Description: "User role"}},
+		}, ReasonEmbeddedNoUser),
+		{
+			Name: "user-login", Category: CategoryUser,
+			Command:        []string{"user", "login"},
+			Description:    "Log a user in with a FIDO2 authenticator",
+			RequiresServer: true, Skip: skipFIDO2,
+			RequiredArgs: []ArgDefinition{pos("it-user@example.com", "Login email")},
+		},
+		limitToServer(CommandDefinition{
+			Name: "user-list", Category: CategoryUser,
+			Command:        []string{"user", "list"},
+			Description:    "List users",
+			RequiresServer: true,
+		}, ReasonEmbeddedNoUser),
+		chain("user-get", []string{"user", "get"}, "Show a user"),
+		chain("user-update", []string{"user", "update"}, "Update a user",
+			ArgDefinition{Flag: "enable", Description: "Enable the account", IsBoolean: true}),
+		chain("user-disable", []string{"user", "disable"}, "Disable a user"),
+		chain("user-enable", []string{"user", "enable"}, "Enable a user"),
+		limitToServer(CommandDefinition{
+			Name: "user-status", Category: CategoryUser,
+			Command:        []string{"user", "status"},
+			Description:    "Show user setup status",
+			RequiresServer: true,
+		}, ReasonEmbeddedNoUser),
+		chain("user-credentials", []string{"user", "credentials"}, "List a user's credentials"),
+		chain("user-bind-cert", []string{"user", "bind-cert"}, "Bind a client certificate to a user",
+			ArgDefinition{Flag: "thumbprint", Value: "abababababababababababababababababababababababababababababababab", Description: "SPKI SHA-256 thumbprint"},
+			ArgDefinition{Flag: "not-after", Value: "4102444800", Description: "Binding expiry"}),
+		chain("user-delete", []string{"user", "delete"}, "Delete a user"),
+		{
+			Name: "user-invite-redeem", Category: CategoryUser,
+			Command:        []string{"user", "invite", "redeem"},
+			Description:    "Redeem an invitation",
+			RequiresServer: true,
+			Skip:           "needs an issued invitation token and a FIDO2/PIV activation; " + skipFIDO2,
+			RequiredArgs:   []ArgDefinition{pos("it-invite-token", "Invitation token")},
+			OptionalArgs:   []ArgDefinition{{Flag: "tenant-id", Value: "system", Description: "Tenant ID"}},
+		},
+	}
+}
+
+// AuthCommands returns the auth family (cmd/xkmsctl/canonical.go,
+// auth_factor_handlers.go). Every verb acts on a numeric user id and a bound
+// factor, which need the seeded user and factor fixtures of the user chain.
+func AuthCommands() []CommandDefinition {
+	user := ArgDefinition{Flag: "user", Value: "1", Description: "Numeric user id"}
+	factor := pos("it-factor", "Factor ID")
+	def := func(name string, command []string, desc string, args ...ArgDefinition) CommandDefinition {
+		return CommandDefinition{
+			Name: name, Category: CategoryAuth, Command: command, Description: desc,
+			RequiresServer: true, RequiresSetup: true, RequiredArgs: args,
+		}
+	}
+	return []CommandDefinition{
+		def("auth-login", []string{"auth", "login"}, "Log in with a bound factor",
+			ArgDefinition{Flag: "method", Value: "mtls", Description: "Auth method"},
+			ArgDefinition{Flag: "cert", Value: "it-user.pem", Description: "Certificate PEM path"}),
+		def("auth-factor-list", []string{"auth", "factor", "list"}, "List a user's factors", user),
+		def("auth-factor-add", []string{"auth", "factor", "add"}, "Add a factor", user,
+			ArgDefinition{Flag: "type", Value: "fido2", Description: "Factor type"},
+			ArgDefinition{Flag: "label", Value: "it-factor", Description: "Factor label"},
+			ArgDefinition{Flag: "credential-hex", Value: "00ff", Description: "Credential bytes"}),
+		def("auth-factor-rotate", []string{"auth", "factor", "rotate"}, "Rotate a factor", factor, user,
+			ArgDefinition{Flag: "credential-hex", Value: "ff00", Description: "Credential bytes"}),
+		def("auth-factor-relabel", []string{"auth", "factor", "relabel"}, "Relabel a factor", factor,
+			ArgDefinition{Flag: "label", Value: "it-factor-2", Description: "New label"}),
+		def("auth-factor-remove", []string{"auth", "factor", "remove"}, "Remove a factor", factor,
+			ArgDefinition{Flag: "force", Description: "Allow removing the last factor", IsBoolean: true}),
+	}
+}
+
+// CredentialCommands returns the credential family (cmd/xkmsctl/credential.go
+// and the verbs augmentCanonicalCredentialCmd adds in canonical.go).
+func CredentialCommands() []CommandDefinition {
+	return []CommandDefinition{
+		limitToServer(CommandDefinition{
+			Name: "credential-submit", Category: CategoryCredential,
+			Command:        []string{"credential", "submit"},
+			Description:    "Submit a backend credential",
+			RequiresServer: true,
 			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
+				{Flag: "name", Value: "it-credential", Description: "Credential name"},
+				{Flag: "value", Value: "it-secret", Description: "Credential value"},
 			},
-			ExpectedOutputContains: []string{"it-tpm-policy"},
+		}, ReasonEmbeddedNoCredential),
+		limitToServer(CommandDefinition{
+			Name: "credential-list", Category: CategoryCredential,
+			Command:        []string{"credential", "list"},
+			Description:    "List the credentials the server holds",
+			RequiresServer: true,
+		}, ReasonEmbeddedNoCredential),
+		limitToServer(CommandDefinition{
+			Name: "credential-strategy", Category: CategoryCredential,
+			Command:        []string{"credential", "strategy"},
+			Description:    "Show the configured credential strategy",
+			RequiresServer: true,
+		}, ReasonEmbeddedNoCredential),
+		{
+			Name: "credential-rotate", Category: CategoryCredential,
+			Command:        []string{"credential", "rotate"},
+			Description:    "Rotate a backend credential",
+			RequiresServer: true,
+			Skip:           "the CLI verb is a stub that returns PendingCredentialBackendError",
+		},
+	}
+}
+
+// OIDCCommands returns the oidc family (cmd/xkmsctl/oidc.go). The stack has
+// no identity provider, so the chain creates a per-transport credential and
+// imports a static token into it (create -> import -> get -> token -> delete);
+// refresh and the browser login are skipped.
+func OIDCCommands() []CommandDefinition {
+	name := pos("it-oidc", "Credential name")
+	// Every verb acts on the credential oidc-create made; oidc-import adds
+	// its token (no --create, so the pass never creates one name twice) and
+	// the later verbs run after it, so oidc-token has a token to print.
+	chain := func(cmdName, verb, desc string, setup []string, args ...ArgDefinition) CommandDefinition {
+		return limitToServer(CommandDefinition{
+			Name: cmdName, Category: CategoryOIDC, Command: []string{"oidc", verb}, Description: desc,
+			RequiresServer: true, RequiresSetup: true, SetupSteps: setup,
+			RequiredArgs: append([]ArgDefinition{name}, args...),
+		}, ReasonEmbeddedNoOIDC)
+	}
+	created := []string{"oidc-create"}
+	imported := []string{"oidc-create", "oidc-import"}
+	return []CommandDefinition{
+		{
+			Name: "oidc-templates", Category: CategoryOIDC,
+			Command:     []string{"oidc", "templates"},
+			Description: "List the OIDC provider templates",
+		},
+		limitToServer(CommandDefinition{
+			Name: "oidc-create", Category: CategoryOIDC,
+			Command:        []string{"oidc", "create"},
+			Description:    "Create an OIDC credential",
+			RequiresServer: true,
+			RequiredArgs: []ArgDefinition{name,
+				{Flag: "issuer", Value: "https://idp.example.com", Description: "Issuer URL"},
+				{Flag: "client-id", Value: "it-client", Description: "Client ID"},
+				{Flag: "token-endpoint", Value: "https://idp.example.com/token", Description: "Token endpoint"}},
+		}, ReasonEmbeddedNoOIDC),
+		chain("oidc-import", "import", "Import a static token into the OIDC credential", created,
+			ArgDefinition{Flag: "access-token", Value: "it-access-token", Description: "Access token"},
+			ArgDefinition{Flag: "expires-at", Value: "2099-01-01T00:00:00Z", Description: "Token expiry"}),
+		limitToServer(CommandDefinition{
+			Name: "oidc-list", Category: CategoryOIDC,
+			Command:        []string{"oidc", "list"},
+			Description:    "List OIDC credentials",
+			RequiresServer: true,
+		}, ReasonEmbeddedNoOIDC),
+		chain("oidc-get", "get", "Show an OIDC credential", created),
+		chain("oidc-token", "token", "Print an OIDC credential's access token", imported),
+		{
+			Name: "oidc-refresh", Category: CategoryOIDC,
+			Command:        []string{"oidc", "refresh"},
+			Description:    "Refresh an OIDC credential",
+			RequiresServer: true, Skip: skipNoOIDCProvider,
+			RequiredArgs: []ArgDefinition{name},
 		},
 		{
-			Name:           "tpm-policy-verify",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "verify"},
-			Description:    "Compare a TPM policy with the live PCR values",
+			Name: "oidc-login", Category: CategoryOIDC,
+			Command:        []string{"oidc", "login"},
+			Description:    "Log in to an OIDC provider",
 			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
+			Skip:           "browser/device login flow with no headless path; " + skipNoOIDCProvider,
+			RequiredArgs:   []ArgDefinition{name},
 		},
-		{
-			Name:           "tpm-policy-update",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "update"},
-			Description:    "Re-capture a TPM policy and re-approve it",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
-			ExpectedOutputContains: []string{"it-tpm-policy"},
-		},
-		{
-			Name:           "tpm-policy-objects",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "objects"},
-			Description:    "List the objects bound to a TPM policy",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
-			ExpectedOutputContains: []string{"it-tpm-policy"},
-		},
-		{
-			Name:           "tpm-policy-delete",
-			Category:       CategoryPolicy,
-			Command:        []string{"tpm", "policy", "delete"},
-			Description:    "Delete a TPM policy",
-			RequiresServer: true,
-			RequiresSetup:  true,
-			RequiredArgs: []ArgDefinition{
-				{Flag: "", Value: "it-tpm-policy", Description: "Policy name", IsPositional: true},
-			},
-		},
+		chain("oidc-delete", "delete", "Delete an OIDC credential", created),
 	}
 }
 
@@ -695,7 +1274,7 @@ func PolicyCommands() []CommandDefinition {
 // These commands interact with the XKMS Certificate Authority for certificate lifecycle management.
 // All CA commands require a server connection.
 func CACommands() []CommandDefinition {
-	return []CommandDefinition{
+	cmds := []CommandDefinition{
 		// Bundle - get CA certificate bundle
 		{
 			Name:                   "ca-bundle",
@@ -793,6 +1372,13 @@ func CACommands() []CommandDefinition {
 			},
 		},
 	}
+	// The CA lives in the server: every server transport runs the verbs,
+	// the embedded cell names why it cannot.
+	for i := range cmds {
+		cmds[i].Transports = []ProtocolType{ProtocolUnix, ProtocolREST, ProtocolGRPC, ProtocolQUIC, ProtocolMCP}
+		cmds[i].TransportSkip = ReasonEmbeddedNoCA
+	}
+	return cmds
 }
 
 // CommandsByCategory returns commands filtered by category

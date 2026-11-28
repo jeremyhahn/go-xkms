@@ -4464,12 +4464,12 @@ gosec:
 	fi
 
 .PHONY: vuln
-## vuln: Run govulncheck to scan for known vulnerabilities
+## vuln: Run govulncheck; fail on reached vulnerabilities outside .govulncheck-allow
 vuln:
 	@echo "$(CYAN)$(BOLD)→ Running vulnerability scan with govulncheck...$(RESET)"
 	@GOVULNCHECK_BIN=$$(command -v govulncheck 2>/dev/null || echo "$$HOME/go/bin/govulncheck"); \
 	if [ -x "$$GOVULNCHECK_BIN" ]; then \
-		$$GOVULNCHECK_BIN$(call go_tags_flag,) ./... || { \
+		GOVULNCHECK_BIN="$$GOVULNCHECK_BIN" bash scripts/govulncheck-allow.sh$(call go_tags_flag,) ./... || { \
 			echo "$(RED)✗ govulncheck found reachable vulnerabilities$(RESET)"; \
 			exit 1; \
 		}; \
@@ -4907,9 +4907,8 @@ integration-test-api-kill:
 	@echo "$(GREEN)✓ All integration test containers killed$(RESET)"
 
 .PHONY: integration-test-api-all
-## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC)
-## MCP is excluded: SDK transport speaks HTTP but MCP server speaks JSON-RPC over TCP.
-integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-ssh
+## integration-test-api-all: Run ALL API protocol integration tests (Unix, REST, gRPC, QUIC, MCP)
+integration-test-api-all: integration-test-api-kill integration-test-api-unix integration-test-api-rest integration-test-api-grpc integration-test-api-quic integration-test-api-mcp integration-test-api-ssh integration-test-api-parity
 	@echo "$(GREEN)$(BOLD)✓ All API protocol integration tests complete!$(RESET)"
 
 .PHONY: integration-test-api-unix
@@ -5030,7 +5029,7 @@ integration-test-api-parity:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'Parity|AllProtocols|PlatformMatrix|SecretsMatrix|ClusterMatrix|BootstrapMatrix|EmbeddedProtocol' -timeout 20m"
 	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
 
 .PHONY: integration-test-sdk-go

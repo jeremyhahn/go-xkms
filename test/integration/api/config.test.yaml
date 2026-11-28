@@ -37,10 +37,8 @@ tls:
   client_cas:
     - "/data/storage/ca-bundle.pem"
 
-# Adaptive authentication: anonymous until the first user is provisioned, then
-# enforced. This keeps the integration suites able to exercise the API without
-# pre-seeding credentials while still satisfying the secure-by-default gate
-# (the daemon has no insecure override).
+# The integration runner presents the first-boot admin credential, which
+# composite auth's mtls method binds to its user by SPKI thumbprint.
 auth:
   enabled: true
   type: "composite"
@@ -136,3 +134,15 @@ barrier:
   strategy: "passphrase"
   # The test containers dial xkms-server over the compose network, so the window binds 0.0.0.0 too.
   sealed_window_allow_remote: true
+
+# Services the integration-test-api-parity target drives on every server
+# transport (TestCLISecretsMatrix pin family, TestCLIBootstrapMatrix
+# bootstrap-show-keys). matrix_test.go TestMatrix_FixtureServicesDeclared
+# requires each one enabled here, or its cells to name the key they lack.
+pin:
+  enabled: true
+  strategy: "software"
+
+bootstrap:
+  noise:
+    enabled: true
