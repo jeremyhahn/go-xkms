@@ -24,7 +24,27 @@ var (
 
 	// ErrNilRecord is returned by Store.Put for a nil record.
 	ErrNilRecord = errors.New("keyversion: record is nil")
+
+	// ErrVersionConflict is matched (errors.Is) by every *VersionConflictError.
+	ErrVersionConflict = errors.New("keyversion: version record changed since it was read")
 )
+
+// VersionConflictError reports a conditional write of a key's version
+// record refused because the stored record is no longer the one the writer
+// read: another writer changed, created or deleted it in between. Nothing
+// was written; the writer reads the record again and retries.
+type VersionConflictError struct {
+	KeyID   string
+	Backend string
+}
+
+// Error implements the error interface.
+func (e *VersionConflictError) Error() string {
+	return fmt.Sprintf("keyversion: the version record of key %q in backend %q changed since it was read; read it again and retry", e.KeyID, e.Backend)
+}
+
+// Is reports whether target is ErrVersionConflict.
+func (e *VersionConflictError) Is(target error) bool { return target == ErrVersionConflict }
 
 // ReservedKeyIDError reports a key ID ending in the reserved version suffix
 // "--v<digits>". Version n > 1 of key K is the backend key "K--v<n>", so a
