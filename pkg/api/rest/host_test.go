@@ -210,6 +210,22 @@ func TestWebAuthnConfigFromXKMS_Defaults(t *testing.T) {
 	assert.Equal(t, []string{"https://example.com"}, cfg.RPOrigins, "origin derived from RPID")
 }
 
+func TestWebAuthnConfigFromXKMS_TenantHosts(t *testing.T) {
+	hosts := map[string]string{"b.example.com": "tenant-b"}
+	cfg := WebAuthnConfigFromXKMS(&config.WebAuthnConfig{
+		RPID:        "example.com",
+		RPOrigins:   []string{"https://example.com", "https://b.example.com"},
+		TenantHosts: hosts,
+	})
+	require.NotNil(t, cfg)
+	assert.Equal(t, hosts, cfg.TenantHosts, "tenant_hosts reaches the relying-party config")
+	for _, host := range []string{"b.example.com", "b.example.com:443"} {
+		tenant, ok := cfg.TenantForHost(host)
+		assert.True(t, ok, host)
+		assert.Equal(t, "tenant-b", tenant, host)
+	}
+}
+
 func TestWebAuthnConfigFromXKMS_Nil(t *testing.T) {
 	assert.Nil(t, WebAuthnConfigFromXKMS(nil))
 }

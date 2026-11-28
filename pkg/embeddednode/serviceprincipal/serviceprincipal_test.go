@@ -147,6 +147,8 @@ func TestGrant_IsLeastPrivilegeCopy(t *testing.T) {
 	for _, p := range got {
 		assert.NotContains(t, string(p), "*", "the grant never holds a wildcard")
 	}
+	// Tenant ceremonies read the invited or logging-in account (#2319).
+	assert.Contains(t, Grant(), qrdbsdk.Permission("users:read"))
 
 	got[0] = "admin:*"
 	assert.NotEqual(t, got[0], Grant()[0], "Grant returns a copy")

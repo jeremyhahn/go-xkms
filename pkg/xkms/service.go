@@ -102,7 +102,10 @@ type XKMSService struct {
 	// users and roles are the embedded qrdb node's identity clients. xkms
 	// presents its own user-management API on top of them, so callers only
 	// ever see xkms users; qrdb is an internal implementation detail.
-	users           qrdbtransport.UserClient
+	users qrdbtransport.UserClient
+	// ceremonyUsers returns the tenant-confined user client of invitation
+	// redemption; nil uses users.
+	ceremonyUsers   func(tenantID string) qrdbtransport.UserClient
 	roles           qrdbtransport.RoleClient
 	platformStore   subsystem[seal.PlatformStore]
 	tpmPolicies     subsystem[*tpmpolicy.Service]
@@ -113,6 +116,7 @@ type XKMSService struct {
 	peerEvidence    subsystem[*peergate.Collector]
 	appraiser       subsystem[*appraisal.Appraiser]
 	webauthnService *webauthn.Service
+	webauthnTenants *webauthn.TenantRouter
 
 	// tokenIssuer mints and revokes the browser/desktop session token
 	// pairs behind the WebAuthn, PIV, and mTLS login flows. DisableUser and
@@ -278,6 +282,24 @@ func (s *XKMSService) SetPasswordStore(p *staticpw.DAOStore) { s.passwordStore.s
 // SetPKCS11StateStore wires the remote-mode PKCS#11 state persistence store.
 func (s *XKMSService) SetPKCS11StateStore(p *pkcs11state.Store) { s.pkcs11StateStore = p }
 
+// SetCeremonyUsers wires the per-tenant user client invitation redemption
+// reads and activates accounts through.
+func (s *XKMSService) SetCeremonyUsers(users func(tenantID string) qrdbtransport.UserClient) {
+	s.ceremonyUsers = users
+}
+
+// inviteUsers returns the user client an invitation of tenantID is redeemed
+// through: the tenant-confined ceremony client when one is wired, else the
+// service's user client.
+func (s *XKMSService) inviteUsers(tenantID string) qrdbtransport.UserClient {
+	if s.ceremonyUsers != nil && tenantID != "" {
+		if users := s.ceremonyUsers(tenantID); users != nil {
+			return users
+		}
+	}
+	return s.users
+}
+
 // SetUserClients wires the embedded qrdb node's user and role clients into the
 // service so xkms can present its own user-management API backed by qrdb.
 func (s *XKMSService) SetUserClients(users qrdbtransport.UserClient, roles qrdbtransport.RoleClient) {
@@ -299,6 +321,42 @@ func (s *XKMSService) SetEscrowRegistry(r *escrow.Registry) { s.escrow = r }
 
 // SetWebAuthn sets the WebAuthn/FIDO2 subsystem.
 func (s *XKMSService) SetWebAuthn(w *webauthn.Service) { s.webauthnService = w }
+
+// SetWebAuthnTenants makes the passkey ceremonies tenant-aware
+// (go-xkms#2319): a request naming a tenant reaches that tenant's relying
+// party, an unknown tenant reaches the decoy, and an empty tenant keeps the
+// SetWebAuthn service.
+func (s *XKMSService) SetWebAuthnTenants(r *webauthn.TenantRouter) { s.webauthnTenants = r }
+
+// WebAuthnTenantExists reports whether tenantID names a registered tenant,
+// for TenantRouter. A login is unauthenticated, so this asks the tenant
+// service directly with no caller admission; it answers only the router,
+// never a client. Only qrdbsdk.ErrTenantMissing reads as an unknown tenant,
+// which the router answers with the decoy; any other failure is returned.
+func (s *XKMSService) WebAuthnTenantExists(ctx context.Context, tenantID string) (bool, error) {
+	if s.tenantService == nil || tenantID == "" {
+		return false, nil
+	}
+	if _, err := s.tenantService.GetTenant(ctx, tenantID); err != nil {
+		if errors.Is(err, qrdbsdk.ErrTenantMissing) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// webauthnFor returns the relying party of tenantID, applying the tenant host
+// rule to the host webauthn.ContextWithRequestHost put on ctx (no host and no
+// tenant reaches the system RP).
+// Codex round 2 on #2387: the SDK lane must follow the same host rule as
+// pkg/webauthn/http, so a mapped host decoys a login naming another tenant.
+func (s *XKMSService) webauthnFor(ctx context.Context, tenantID string) (*webauthn.Service, error) {
+	if s.webauthnTenants == nil {
+		return s.webauthnService, nil
+	}
+	return s.webauthnTenants.ForRequest(ctx, webauthn.RequestHostFromContext(ctx), tenantID)
+}
 
 // SetInviteStore wires the per-tenant enrollment-invitation store
 // (go-xkms#1294 part B) into the service. Nil leaves invitations

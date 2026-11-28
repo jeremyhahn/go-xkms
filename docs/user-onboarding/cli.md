@@ -44,6 +44,18 @@ summary fields.
 longer apply to this command — nothing here drives a local authenticator any
 more. They remain on `xkmsctl user login`, which is unaffected.
 
+## `xkmsctl user login <email> --tenant <id>`
+
+`--tenant` names the tenant whose accounts the login is scoped to
+(go-xkms#2319). It is sent as `tenant_id` on both the begin and the finish
+request, on every transport (`cmd/xkmsctl/user.go:1139`). Without it the
+server uses its system tenant. A tenant that does not exist, or an account
+that belongs to another tenant, fails the same way as a wrong assertion.
+
+```sh
+xkmsctl user login member@example.com --tenant tenant-b
+```
+
 ## `xkmsctl admin create <username> --email <address>`
 
 Same change, for the FIDO2 admin-enrollment method: it creates the account

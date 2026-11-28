@@ -52,6 +52,7 @@ export interface AuthCeremonyApi {
   webAuthnFinishLogin(
     sessionId: string,
     credential: AssertionCredentialJSON,
+    tenantId?: string,
   ): Promise<WebAuthnAuthResponse>;
   webAuthnRegisterBegin(
     req: WebAuthnBeginRegistrationRequest,

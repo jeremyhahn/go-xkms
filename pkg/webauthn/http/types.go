@@ -16,6 +16,10 @@ package http
 // HeaderSessionID is the header name for the session ID.
 const HeaderSessionID = "X-Session-Id"
 
+// HeaderTenantID names the tenant of a login or add-passkey ceremony; login
+// finish and registration finish read it to reach the tenant's session store.
+const HeaderTenantID = "X-Tenant-Id"
+
 // BeginRegistrationRequest is the request body for starting registration.
 type BeginRegistrationRequest struct {
 	// Email is the user's email address (required).
@@ -33,6 +37,11 @@ type BeginLoginRequest struct {
 
 	// Email is the user's email address (optional, alternative to UserID).
 	Email string `json:"email,omitempty"`
+
+	// TenantID is the tenant whose account signs in (optional). Empty
+	// selects the tenant of the request host in tenant_hosts, then the
+	// system tenant; an unknown tenant gets decoy options.
+	TenantID string `json:"tenant_id,omitempty"`
 }
 
 // AuthResponse is the response after successful registration or login.

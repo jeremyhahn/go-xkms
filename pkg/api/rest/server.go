@@ -162,6 +162,12 @@ type Config struct {
 	// sessions and credentials live in one place.
 	WebAuthnService *webauthn.Service
 
+	// WebAuthnTenants, when set, makes the browser login tenant-aware
+	// (go-xkms#2319): tenant_id, X-Tenant-Id or the tenant_hosts entry of
+	// the request host selects the relying party. Its System service must
+	// be WebAuthnService.
+	WebAuthnTenants *webauthn.TenantRouter
+
 	// RateLimiter is the rate limiter instance (optional, disables rate limiting if not provided)
 	RateLimiter *ratelimit.Limiter
 
@@ -398,6 +404,9 @@ func NewServer(cfg *Config) (*Server, error) {
 			return nil, ErrWebAuthnServiceRequired
 		}
 		server.webauthnHandler = webauthnhttp.NewHandler(cfg.WebAuthnService).WithLogger(server.logger)
+		if cfg.WebAuthnTenants != nil {
+			server.webauthnHandler.WithTenants(cfg.WebAuthnTenants)
+		}
 
 		log.Info("WebAuthn enabled",
 			slog.String("rpid", cfg.WebAuthnConfig.RPID))

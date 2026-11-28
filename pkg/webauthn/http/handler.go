@@ -29,7 +29,47 @@ import (
 // These handlers can be mounted on any HTTP router.
 type Handler struct {
 	service *webauthn.Service
+	tenants *webauthn.TenantRouter
 	logger  *slog.Logger
+}
+
+// WithTenants makes login tenant-aware (go-xkms#2319): begin and finish
+// select the relying party of the tenant named by the request body's
+// tenant_id or the X-Tenant-Id header, or of the host mapped in
+// tenant_hosts.
+func (h *Handler) WithTenants(router *webauthn.TenantRouter) *Handler {
+	h.tenants = router
+	return h
+}
+
+// loginService returns the relying party a login request reaches.
+func (h *Handler) loginService(r *http.Request, tenantID string) (*webauthn.Service, error) {
+	if h.tenants == nil {
+		return h.service, nil
+	}
+	if tenantID == "" {
+		tenantID = r.Header.Get(HeaderTenantID)
+	}
+	return h.tenants.ForRequest(r.Context(), r.Host, tenantID)
+}
+
+// enrolService returns the relying party that enrols a credential on r: the
+// identity's tenant when tenants are routed and r carries an identity; with
+// no identity, the tenant the X-Tenant-Id header names (the add-passkey
+// finish on the public route); otherwise the system RP. The host rule is not
+// applied, so a public first-passkey registration finishes where it began.
+// A tenant user adding a passkey reaches its own tenant's RP.
+func (h *Handler) enrolService(r *http.Request) (*webauthn.Service, error) {
+	if h.tenants == nil {
+		return h.service, nil
+	}
+	if identity := auth.GetIdentity(r.Context()); identity != nil {
+		return h.tenants.For(r.Context(), identity.TenantID)
+	}
+	if tenantID := r.Header.Get(HeaderTenantID); tenantID != "" {
+		return h.tenants.For(r.Context(), tenantID)
+	}
+	return h.service, nil
 }
 
 // NewHandler creates a new WebAuthn HTTP handler.
@@ -112,6 +152,7 @@ func (h *Handler) BeginRegistration(w http.ResponseWriter, r *http.Request) {
 //
 // Response: WebAuthn PublicKeyCredentialCreationOptions
 // Header: X-Session-Id (session identifier for FinishRegistration)
+// Header: X-Tenant-Id (the identity's tenant, when tenants are routed)
 func (h *Handler) BeginAddCredential(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, ErrorCodeInvalidRequest, "method not allowed")
@@ -130,19 +171,28 @@ func (h *Handler) BeginAddCredential(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	options, sessionID, err := h.service.BeginAddCredential(r.Context(), acct)
+	svc, err := h.enrolService(r)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+	options, sessionID, err := svc.BeginAddCredential(r.Context(), acct)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
 	}
 
 	w.Header().Set(HeaderSessionID, sessionID)
+	if h.tenants != nil && identity.TenantID != "" {
+		w.Header().Set(HeaderTenantID, identity.TenantID)
+	}
 	h.writeJSON(w, http.StatusOK, options)
 }
 
 // FinishRegistration handles POST /registration/finish
 //
 // Header: X-Session-Id (from BeginRegistration)
+// Header: X-Tenant-Id (from BeginAddCredential, optional)
 // Request body: Attestation response from authenticator
 // Response: AuthResponse with token and user ID
 func (h *Handler) FinishRegistration(w http.ResponseWriter, r *http.Request) {
@@ -164,7 +214,12 @@ func (h *Handler) FinishRegistration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, user, err := h.service.FinishRegistrationPair(r.Context(), sessionID, response)
+	svc, err := h.enrolService(r)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+	pair, user, err := svc.FinishRegistrationPair(r.Context(), sessionID, response)
 	if err != nil {
 		h.handleServiceError(w, err)
 		return
@@ -205,11 +260,15 @@ func (h *Handler) BeginLogin(w http.ResponseWriter, r *http.Request) {
 		// Allow empty body for discoverable credentials
 		req = BeginLoginRequest{}
 	}
+	svc, err := h.loginService(r, req.TenantID)
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
 
 	var (
 		options   *protocol.CredentialAssertion
 		sessionID string
-		err       error
 	)
 	switch {
 	case req.UserID != "":
@@ -218,11 +277,11 @@ func (h *Handler) BeginLogin(w http.ResponseWriter, r *http.Request) {
 			h.writeError(w, http.StatusBadRequest, ErrorCodeInvalidRequest, "invalid user ID encoding")
 			return
 		}
-		options, sessionID, err = h.service.BeginLoginForHandle(r.Context(), userID)
+		options, sessionID, err = svc.BeginLoginForHandle(r.Context(), userID)
 	case req.Email != "":
-		options, sessionID, err = h.service.BeginLoginForEmail(r.Context(), req.Email)
+		options, sessionID, err = svc.BeginLoginForEmail(r.Context(), req.Email)
 	default:
-		options, sessionID, err = h.service.BeginLogin(r.Context(), nil)
+		options, sessionID, err = svc.BeginLogin(r.Context(), nil)
 	}
 	if err != nil {
 		h.handleServiceError(w, err)
@@ -260,7 +319,12 @@ func (h *Handler) FinishLogin(w http.ResponseWriter, r *http.Request) {
 	// The session records whether the ceremony is discoverable or
 	// user-identified, and which account it is for; no caller-supplied user
 	// ID is consulted.
-	pair, user, err := h.service.FinishLoginPair(r.Context(), sessionID, nil, response)
+	svc, err := h.loginService(r, "")
+	if err != nil {
+		h.handleServiceError(w, err)
+		return
+	}
+	pair, user, err := svc.FinishLoginPair(r.Context(), sessionID, nil, response)
 	if err != nil {
 		h.handleLoginFinishError(w, err)
 		return

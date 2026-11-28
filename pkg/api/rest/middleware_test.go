@@ -272,6 +272,26 @@ func TestNewCORSMiddleware(t *testing.T) {
 			t.Errorf("CORS must not carry the removed X-User-Id header: allow %q, expose %q", allow, expose)
 		}
 	})
+
+	t.Run("Permits and exposes the WebAuthn tenant header", func(t *testing.T) {
+		middleware := NewCORSMiddleware(&CORSOptions{AllowedOrigins: []string{"*"}})(handler)
+
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/webauthn/login/finish", nil)
+		req.Header.Set("Origin", "https://app.example")
+		req.Header.Set("Access-Control-Request-Headers", "X-Session-Id, X-Tenant-Id")
+		w := httptest.NewRecorder()
+
+		middleware.ServeHTTP(w, req)
+
+		allow := w.Header().Get("Access-Control-Allow-Headers")
+		expose := w.Header().Get("Access-Control-Expose-Headers")
+		if !strings.Contains(allow, webauthnhttp.HeaderTenantID) {
+			t.Errorf("Access-Control-Allow-Headers missing %q: %q", webauthnhttp.HeaderTenantID, allow)
+		}
+		if !strings.Contains(expose, webauthnhttp.HeaderTenantID) {
+			t.Errorf("Access-Control-Expose-Headers missing %q: %q", webauthnhttp.HeaderTenantID, expose)
+		}
+	})
 }
 
 func TestContentTypeMiddleware(t *testing.T) {

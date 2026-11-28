@@ -121,7 +121,8 @@ func (s *Service) BeginAuthentication(ctx context.Context, req *pb.BeginAuthenti
 		return nil, status.Error(codes.Unavailable, "xkms service not initialized")
 	}
 	resp, cErr := svc.BeginAuthentication(ctx, &transport.BeginAuthenticationRequest{
-		Email: req.Email,
+		Email:    req.Email,
+		TenantID: req.TenantId,
 	})
 	if cErr != nil {
 		if webauthn.IsSessionLimit(cErr) {
@@ -159,6 +160,7 @@ func (s *Service) FinishAuthentication(ctx context.Context, req *pb.FinishAuthen
 		SessionID:     req.SessionId,
 		Email:         req.Email,
 		AssertionJSON: req.AssertionJson,
+		TenantID:      req.TenantId,
 	})
 	if cErr != nil {
 		if errors.Is(cErr, xkms.ErrNotConfigured) {

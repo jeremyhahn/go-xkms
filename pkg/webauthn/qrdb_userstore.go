@@ -138,6 +138,11 @@ func (s *qrdbUserStore) GetByID(ctx context.Context, userID []byte) (User, error
 	if err != nil {
 		return nil, mapNotFound(err)
 	}
+	// A handle names an account in one tenant: another tenant's account is
+	// not found on this RP, exactly like an unknown handle (go-xkms#2319).
+	if u.TenantID != s.tenantID {
+		return nil, ErrUserNotFound
+	}
 	return s.materialize(ctx, u)
 }
 

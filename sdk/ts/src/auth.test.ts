@@ -150,6 +150,26 @@ describe('AuthClient WebAuthn ceremonies', () => {
     expect(call.body).toMatchObject({ rawId: 'AQ' });
   });
 
+  it('registration finish sends the begin tenant as X-Tenant-Id', async () => {
+    const fake = newFakeFetch({ body: { token: 't', user_id: 'u' } });
+    const c = client(fake);
+    const cred = {
+      id: 'c',
+      rawId: 'AQ',
+      type: 'public-key',
+      response: { clientDataJSON: 'Ag', attestationObject: 'Aw' },
+      clientExtensionResults: {},
+    } as AttestationCredentialJSON;
+    await c.auth.webAuthnRegisterFinish('sess-1', cred, 'tenant-b');
+    const call = fake.calls[0]!;
+    expect(call.headers['X-Session-Id']).toBe('sess-1');
+    expect(call.headers['X-Tenant-Id']).toBe('tenant-b');
+
+    const plain = newFakeFetch({ body: { token: 't', user_id: 'u' } });
+    await client(plain).auth.webAuthnRegisterFinish('sess-1', cred);
+    expect(plain.calls[0]!.headers['X-Tenant-Id']).toBeUndefined();
+  });
+
   it('add-credential begin rides the token provider and captures X-Session-Id', async () => {
     const fake = newFakeFetch({
       body: optionsEnvelope,
@@ -164,6 +184,14 @@ describe('AuthClient WebAuthn ceremonies', () => {
     expect(call.url).toBe(`${BASE}/api/v1/webauthn/credentials/begin`);
     expect(call.headers['Authorization']).toBe('Bearer live-token');
     expect(call.body).toBeUndefined();
+    expect(start.tenantId).toBeUndefined();
+
+    const tenantFake = newFakeFetch({
+      body: optionsEnvelope,
+      headers: { 'X-Session-Id': 'sess-add', 'X-Tenant-Id': 'tenant-b' },
+    });
+    const tenantStart = await client(tenantFake, () => 'live-token').auth.webAuthnAddCredentialBegin();
+    expect(tenantStart.tenantId).toBe('tenant-b');
   });
 
   it('add-credential begin propagates a 401 as XkmsApiError', async () => {
@@ -194,6 +222,16 @@ describe('AuthClient WebAuthn ceremonies', () => {
     expect(fake.calls[0]?.body).toEqual({});
   });
 
+  it('login begin posts the login tenant_id in the body', async () => {
+    const fake = newFakeFetch({
+      body: optionsEnvelope,
+      headers: { 'X-Session-Id': 'sess-4' },
+    });
+    const c = client(fake);
+    await c.auth.webAuthnBeginLogin({ email: 'a@example.com', tenant_id: 'tenant-b' });
+    expect(fake.calls[0]?.body).toEqual({ email: 'a@example.com', tenant_id: 'tenant-b' });
+  });
+
   it('login begin defaults sessionId to "" when the header is absent', async () => {
     const fake = newFakeFetch({ body: optionsEnvelope });
     const c = client(fake);
@@ -217,5 +255,24 @@ describe('AuthClient WebAuthn ceremonies', () => {
     const call = fake.calls[0]!;
     expect(call.headers['X-Session-Id']).toBe('sess-2');
     expect(call.headers['X-User-Id']).toBeUndefined();
+  });
+
+  it('login finish sends the login tenant as X-Tenant-Id', async () => {
+    const fake = newFakeFetch({ body: { token: 't', refresh_token: 'r', user_id: 'u' } });
+    const c = client(fake);
+    const cred = {
+      id: 'c',
+      rawId: 'AQ',
+      type: 'public-key',
+      response: { clientDataJSON: 'Ag', authenticatorData: 'Aw', signature: 'BA' },
+      clientExtensionResults: {},
+    } as AssertionCredentialJSON;
+    await c.auth.webAuthnFinishLogin('sess-2', cred, 'tenant-b');
+    const withTenant = fake.calls[0]!;
+    expect(withTenant.headers['X-Tenant-Id']).toBe('tenant-b');
+    expect(withTenant.headers['X-Session-Id']).toBe('sess-2');
+
+    await c.auth.webAuthnFinishLogin('sess-2', cred);
+    expect(fake.calls[1]!.headers['X-Tenant-Id']).toBeUndefined();
   });
 });

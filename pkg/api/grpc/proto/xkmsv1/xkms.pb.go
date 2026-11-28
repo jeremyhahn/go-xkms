@@ -25151,7 +25151,10 @@ type BeginAuthenticationRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// email is the canonical tenant-unique login key of the account whose
 	// credentials are challenged.
-	Email         string `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
+	Email string `protobuf:"bytes,1,opt,name=email,proto3" json:"email,omitempty"`
+	// tenant_id is the tenant whose accounts the login is scoped to
+	// (go-xkms#2319, ruling 1234); empty means the system tenant.
+	TenantId      string `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -25189,6 +25192,13 @@ func (*BeginAuthenticationRequest) Descriptor() ([]byte, []int) {
 func (x *BeginAuthenticationRequest) GetEmail() string {
 	if x != nil {
 		return x.Email
+	}
+	return ""
+}
+
+func (x *BeginAuthenticationRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
 	}
 	return ""
 }
@@ -25254,6 +25264,10 @@ type FinishAuthenticationRequest struct {
 	// email is the login key of the account whose credentials are asserted.
 	Email         string `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
 	AssertionJson string `protobuf:"bytes,3,opt,name=assertion_json,json=assertionJson,proto3" json:"assertion_json,omitempty"`
+	// tenant_id is the tenant whose accounts the login is scoped to, the
+	// tenant the ceremony began in (go-xkms#2319, ruling 1234); empty means
+	// the system tenant.
+	TenantId      string `protobuf:"bytes,4,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -25305,6 +25319,13 @@ func (x *FinishAuthenticationRequest) GetEmail() string {
 func (x *FinishAuthenticationRequest) GetAssertionJson() string {
 	if x != nil {
 		return x.AssertionJson
+	}
+	return ""
+}
+
+func (x *FinishAuthenticationRequest) GetTenantId() string {
+	if x != nil {
+		return x.TenantId
 	}
 	return ""
 }
@@ -29100,18 +29121,20 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12#\n" +
 	"\rcredential_id\x18\x02 \x01(\tR\fcredentialId\x12\x14\n" +
 	"\x05token\x18\x03 \x01(\tR\x05token\x12\x18\n" +
-	"\amessage\x18\x04 \x01(\tR\amessage\"2\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"O\n" +
 	"\x1aBeginAuthenticationRequest\x12\x14\n" +
-	"\x05email\x18\x01 \x01(\tR\x05email\"_\n" +
+	"\x05email\x18\x01 \x01(\tR\x05email\x12\x1b\n" +
+	"\ttenant_id\x18\x02 \x01(\tR\btenantId\"_\n" +
 	"\x1bBeginAuthenticationResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
-	"\foptions_json\x18\x02 \x01(\tR\voptionsJson\"y\n" +
+	"\foptions_json\x18\x02 \x01(\tR\voptionsJson\"\x96\x01\n" +
 	"\x1bFinishAuthenticationRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x14\n" +
 	"\x05email\x18\x02 \x01(\tR\x05email\x12%\n" +
-	"\x0eassertion_json\x18\x03 \x01(\tR\rassertionJson\"\x84\x01\n" +
+	"\x0eassertion_json\x18\x03 \x01(\tR\rassertionJson\x12\x1b\n" +
+	"\ttenant_id\x18\x04 \x01(\tR\btenantId\"\x84\x01\n" +
 	"\x1cFinishAuthenticationResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05token\x18\x02 \x01(\tR\x05token\x12\x1a\n" +

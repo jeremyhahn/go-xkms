@@ -15,6 +15,8 @@ package webauthn
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"time"
 
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -92,8 +94,54 @@ type Config struct {
 	// Service.BeginRegistration.
 	AllowPublicRegistration *bool `yaml:"allow_public_registration,omitempty" json:"allow_public_registration,omitempty" mapstructure:"allow_public_registration"`
 
+	// TenantHosts maps an RP host (an origin's host, as in RPOrigins) to the
+	// tenant whose accounts sign in there (go-xkms#2319, ruling 1234). A
+	// login on a mapped host is scoped to that tenant; a request naming a
+	// different tenant on that host is answered as an unknown tenant.
+	TenantHosts map[string]string `yaml:"tenant_hosts,omitempty" json:"tenant_hosts,omitempty" mapstructure:"tenant_hosts"`
+
 	// Debug enables debug logging.
 	Debug bool `yaml:"debug" json:"debug" mapstructure:"debug"`
+}
+
+// validateTenantHosts checks every tenant host names a tenant and is the
+// host of one of RPOrigins.
+func (c *Config) validateTenantHosts() error {
+	for host, tenant := range c.TenantHosts {
+		if tenant == "" {
+			return &errs.Message{Msg: fmt.Sprintf("tenant host %s names no tenant", host)}
+		}
+		if !c.isOriginHost(host) {
+			return &errs.Message{Msg: fmt.Sprintf("tenant host %s is not the host of an RP origin", host)}
+		}
+	}
+	return nil
+}
+
+func (c *Config) isOriginHost(host string) bool {
+	for _, origin := range c.RPOrigins {
+		u, err := url.Parse(origin)
+		if err == nil && u.Host == host {
+			return true
+		}
+	}
+	return false
+}
+
+// TenantForHost returns the tenant mapped to the request host, matching the
+// host as given and without its port.
+func (c *Config) TenantForHost(host string) (string, bool) {
+	if c == nil || len(c.TenantHosts) == 0 || host == "" {
+		return "", false
+	}
+	if tenant, ok := c.TenantHosts[host]; ok {
+		return tenant, true
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		tenant, ok := c.TenantHosts[h]
+		return tenant, ok
+	}
+	return "", false
 }
 
 // PublicRegistrationAllowed reports whether BeginRegistration may create an
@@ -149,7 +197,7 @@ func (c *Config) Validate() error {
 		return &errs.Message{Msg: fmt.Sprintf("invalid authenticator attachment: %s", c.AuthenticatorAttachment)}
 	}
 
-	return nil
+	return c.validateTenantHosts()
 }
 
 // SetDefaults sets default values for unset configuration fields.

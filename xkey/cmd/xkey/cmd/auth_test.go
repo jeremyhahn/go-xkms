@@ -195,6 +195,10 @@ func TestAuthLoginCmd_Flags(t *testing.T) {
 	flag := authLoginCmd.Flags().Lookup("server")
 	assert.NotNil(t, flag, "login command should have --server flag")
 	assert.Equal(t, "", flag.DefValue)
+
+	tenant := authLoginCmd.Flags().Lookup("tenant")
+	require.NotNil(t, tenant, "login command should have --tenant flag")
+	assert.Equal(t, "", tenant.DefValue, "the default login tenant is the server's system tenant")
 }
 
 func TestAuthLoginCmd_PIVFlags(t *testing.T) {
@@ -1246,6 +1250,7 @@ func newAuthLoginCmd(t *testing.T, out *bytes.Buffer) *cobra.Command {
 	cmd.Flags().String("server", "", "")
 	cmd.Flags().String("email", "alice@example.com", "")
 	cmd.Flags().String("tls-ca", "", "")
+	cmd.Flags().String("tenant", "", "")
 	addPINFlags(cmd)
 	cmd.SetOut(out)
 	cmd.SetContext(t.Context())
@@ -1583,6 +1588,61 @@ func TestRunAuthLogin_ObtainsAndStoresToken(t *testing.T) {
 
 	assert.Contains(t, out.String(), "Token stored")
 	assert.True(t, ceremony.closed)
+}
+
+// runTenantLogin runs a WebAuthn login with the given --tenant value
+// (empty: flag unset) and returns the fake client with the recorded requests.
+func runTenantLogin(t *testing.T, tenant string) *fakeAuthClient {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+
+	const serverURL = "https://xkms.example.com:8443"
+	registerLoginServer(t, serverURL)
+
+	client := &fakeAuthClient{
+		beginAuthenticationResp: &transport.BeginAuthenticationResponse{
+			SessionID:   "login-session",
+			OptionsJSON: `{"publicKey":{"challenge":"Y2hhbGxlbmdl","rpId":"xkms.example.com"}}`,
+		},
+		finishAuthenticationResp: &transport.FinishAuthenticationResponse{
+			Success: true,
+			Token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." +
+				"eyJpc3MiOiJ4a21zLmV4YW1wbGUuY29tIiwic3ViIjoiYWxpY2UiLCJleHAiOjQ4NzE1MTIwMDB9." +
+				"c2lnbmF0dXJl",
+			Username: "alice",
+		},
+	}
+	ceremony := &fakeCeremony{assertJSON: []byte(`{"id":"cred-123"}`)}
+	installAuthDoubles(t, client, ceremony, nil)
+
+	var out bytes.Buffer
+	cmd := newAuthLoginCmd(t, &out)
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "server", serverURL))
+	require.NoError(t, setFlagForTest(t, cmd.Flags(), "email", "alice@example.com"))
+	if tenant != "" {
+		require.NoError(t, setFlagForTest(t, cmd.Flags(), "tenant", tenant))
+	}
+
+	require.NoError(t, runAuthLogin(cmd, nil))
+	require.NotNil(t, client.beginAuthenticationReq)
+	require.NotNil(t, client.finishAuthenticationReq)
+	return client
+}
+
+func TestRunAuthLogin_TenantNamesLoginTenantOnBeginAndFinish(t *testing.T) {
+	client := runTenantLogin(t, "tenant-b")
+
+	assert.Equal(t, "tenant-b", client.beginAuthenticationReq.TenantID,
+		"--tenant must name the login tenant on BeginAuthentication")
+	assert.Equal(t, "tenant-b", client.finishAuthenticationReq.TenantID,
+		"--tenant must name the login tenant on FinishAuthentication")
+}
+
+func TestRunAuthLogin_NoTenantLeavesServerDefault(t *testing.T) {
+	client := runTenantLogin(t, "")
+
+	assert.Empty(t, client.beginAuthenticationReq.TenantID, "without --tenant the server picks the tenant")
+	assert.Empty(t, client.finishAuthenticationReq.TenantID, "without --tenant the server picks the tenant")
 }
 
 // TestRunAuthLogin_ServerRejectsAssertion verifies a rejected assertion is a

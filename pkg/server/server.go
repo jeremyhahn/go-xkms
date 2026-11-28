@@ -42,6 +42,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"
@@ -245,6 +246,10 @@ type Server struct {
 	// between the REST browser ceremony and the SDK ceremony (via
 	// XKMSService.SetWebAuthn). It is non-nil only when WebAuthn is enabled.
 	webauthnService *webauthn.Service
+
+	// webauthnTenants routes passkey login to the relying party of the
+	// tenant a request names (go-xkms#2319); its System is webauthnService.
+	webauthnTenants *webauthn.TenantRouter
 
 	// Authorization. rbacAuthorizer is the single qrdb-backed authorizer that
 	// gates every transport (REST, gRPC, QUIC).
@@ -934,8 +939,12 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.webauthnService != nil {
 			svc.SetWebAuthn(s.webauthnService)
 		}
+		if s.webauthnTenants != nil {
+			svc.SetWebAuthnTenants(s.webauthnTenants)
+		}
 		if s.passwordStore != nil && s.qrdbClient != nil {
 			svc.SetUserClients(s.qrdbClient.Users(), s.qrdbClient.Roles())
+			svc.SetCeremonyUsers(s.ceremonyUsers)
 		}
 		if s.pkcs11StateStore != nil {
 			svc.SetPKCS11StateStore(s.pkcs11StateStore)
@@ -1537,6 +1546,33 @@ func (s *Server) initializeWebAuthnService() error {
 		return &ErrServiceInit{Service: "webauthn service", Err: err}
 	}
 	s.webauthnService = svc
+	// Tenant-aware login (go-xkms#2319): every known tenant gets its own
+	// relying party, built on first use; the tenant lookup reads the
+	// composed XKMSService, so a login before composition sees no tenant.
+	router, err := rest.BuildWebAuthnTenantRouter(rest.WebAuthnTenantRouterParams{
+		Service: rest.WebAuthnServiceParams{
+			Config:      s.webauthnConfig,
+			QRDBClient:  ds.Client(),
+			DAOFactory:  ds.DAOFactory(),
+			TenantID:    webAuthnSystemTenant,
+			TokenIssuer: s.tokenIssuer,
+			Logger:      s.logger,
+			AuditLogger: s.auditLogger,
+		},
+		System: svc,
+		TenantExists: func(ctx context.Context, tenantID string) (bool, error) {
+			x := s.XKMSService()
+			if x == nil {
+				return false, nil
+			}
+			return x.WebAuthnTenantExists(ctx, tenantID)
+		},
+		TenantUsers: s.ceremonyUsers,
+	})
+	if err != nil {
+		return &ErrServiceInit{Service: "webauthn tenant router", Err: err}
+	}
+	s.webauthnTenants = router
 	s.logger.Info("WebAuthn service initialized", "rp_id", s.webauthnConfig.RPID)
 	return nil
 }
@@ -1667,6 +1703,22 @@ func (n nodeCertUsers) UserByCertThumbprint(ctx context.Context, thumbprint stri
 		return nil, ErrQRDBNodeNotServing
 	}
 	return users.UserByCertThumbprint(ctx, thumbprint)
+}
+
+// ceremonyUsers returns the tenant-confined user client the login and
+// invitation ceremonies of tenantID use; nil without an embedded node.
+func (s *Server) ceremonyUsers(tenantID string) qrdbtransport.UserClient {
+	if s.qrdbNode == nil || s.qrdbClient == nil {
+		return nil
+	}
+	node := s.qrdbNode
+	return auth.NewCeremonyUsers(tenantID, func() auth.CeremonyUserService {
+		users := node.UserService()
+		if users == nil {
+			return nil
+		}
+		return users
+	}, s.qrdbClient.Users())
 }
 
 // initializeKeyVersionStore builds the key-version record store through
@@ -2591,6 +2643,11 @@ func (s *Server) startWebAuthnSessionSweeper() {
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
+		if s.webauthnTenants != nil {
+			// Sweeps the system, decoy and every cached tenant service.
+			s.webauthnTenants.SweepSessions(s.ctx, webauthn.DefaultSessionSweepInterval)
+			return
+		}
 		s.webauthnService.SweepSessions(s.ctx, webauthn.DefaultSessionSweepInterval)
 	}()
 }
@@ -2774,6 +2831,7 @@ func (s *Server) buildRESTConfig() (*rest.Config, error) {
 	if s.webauthnConfig != nil {
 		restConfig.WebAuthnConfig = s.webauthnConfig
 		restConfig.WebAuthnService = s.webauthnService
+		restConfig.WebAuthnTenants = s.webauthnTenants
 		s.logger.Info("WebAuthn enabled for REST server",
 			"rp_id", s.webauthnConfig.RPID)
 	}
