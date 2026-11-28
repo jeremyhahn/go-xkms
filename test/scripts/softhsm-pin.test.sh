@@ -121,6 +121,59 @@ PATH="$FETCHBIN:$PATH" SOFTHSM_ARCHIVE="$WORK/bogus.tar.gz" sh "$SCRIPT" >/dev/n
 eq "curl is never called" "" "$(cat "$CURL_LOG")"
 eq "wget is never called" "" "$(cat "$WORK/called")"
 
+section "without curl, wget falls back to codeload and is held to the pin"
+# An isolated PATH with no curl: only the tools the script needs up to the
+# checksum check, a wget that records each call's arguments, refuses the
+# github.com archive URL (exit 8, a server error) and serves a bogus body from
+# any other URL, and tar and make that only record that they were called.
+WGETBIN="$WORK/wgetbin"
+mkdir -p "$WGETBIN"
+for tool in mktemp rm cp sha256sum cut cat nproc; do
+	if p=$(command -v "$tool"); then ln -s "$p" "$WGETBIN/$tool"; fi
+done
+cp "$FAKEBIN/tar" "$FAKEBIN/make" "$WGETBIN/"
+cat >"$WGETBIN/wget" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$WGET_LOG"
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	-O) out=$2; shift ;;
+	http*) url=$1 ;;
+	esac
+	shift
+done
+case "$url" in
+*github.com/softhsm/SoftHSMv2/archive/*) exit 8 ;;
+esac
+printf 'not the SoftHSM release\n' >"$out"
+EOF
+chmod +x "$WGETBIN/wget"
+export WGET_LOG="$WORK/wget-args"
+: >"$WGET_LOG"
+: >"$WORK/called"
+shbin=$(command -v sh)
+out=$(PATH="$WGETBIN" "$shbin" "$SCRIPT" 2>&1)
+rc=$?
+first=$(sed -n 1p "$WGET_LOG")
+second=$(sed -n 2p "$WGET_LOG")
+eq "the isolated PATH has no curl" "" "$(PATH="$WGETBIN" command -v curl)"
+case "$first" in
+*"https://github.com/softhsm/SoftHSMv2/archive/refs/tags/${version}.tar.gz"*) ok "wget first fetches the github.com archive" ;;
+*) no "wget first fetches the github.com archive" "github.com archive URL" "$first" ;;
+esac
+case "$second" in
+*"https://codeload.github.com/softhsm/SoftHSMv2/tar.gz/refs/tags/${version}"*) ok "a failed wget fetch falls back to codeload" ;;
+*) no "a failed wget fetch falls back to codeload" "codeload URL" "$second" ;;
+esac
+eq "a bogus wget fallback archive exits 1" 1 "$rc"
+case "$out" in
+*"pinned ${pinned}"*) ok "the wget fallback archive is held to the pinned checksum" ;;
+*) no "the wget fallback archive is held to the pinned checksum" "pinned ${pinned}" "$out" ;;
+esac
+eq "nothing was extracted or built from the wget fallback" "" "$(cat "$WORK/called")"
+
 section "usage"
 out=$(sh "$SCRIPT" /usr /extra 2>&1)
 rc=$?
