@@ -3055,7 +3055,11 @@ jobs:
     # ubuntu-latest, or the bigdisk pool when the hosted pool is full. The
     # guard keeps ubuntu-latest when preflight was skipped or failed, and the
     # gate then fails on its own. Replaces CA m2475 (2h)'s bigdisk routing.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}   # v1.48
+    # DS-10438 (Tenant Agent 2026-11-24 03:31Z, ruling 617): on github.com the gate
+    # of a push to main or a same-repo pull request runs on the bigdisk pool, and a
+    # fork's pull request on ubuntu-latest. Other events keep the v1.48 `runner`
+    # routing. The gate builds nothing; its one step reads the needs results.
+    runs-on: ${{ github.server_url != 'https://github.com' && 'ci-gate' || ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (startsWith(github.event_name, 'pull_request') && github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","linux","x64","bigdisk"]') || startsWith(github.event_name, 'pull_request') && 'ubuntu-latest' || fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') }}   # v1.48, DS-10438
     # v1.29.3: on a schedule run the schedule guard decides. `busy` skips the
     # gate, so `CI / CI Gate (schedule)` posts `skipped` (Gitea 1.27.1 posts a
     # skipped job as `skipped`, not `success`), never a green nightly. Every
