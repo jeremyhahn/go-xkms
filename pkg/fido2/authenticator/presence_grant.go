@@ -90,6 +90,28 @@ func (a *Authenticator) consumePresenceGrant(ctx context.Context) bool {
 	return ok && cid == g.channel && a.grantNow().Before(g.expires)
 }
 
+// hasPresenceGrant reports whether a live grant exists for the command's
+// channel, without consuming it.
+func (a *Authenticator) hasPresenceGrant(ctx context.Context) bool {
+	a.grantMu.Lock()
+	defer a.grantMu.Unlock()
+	g := a.presenceGrant
+	if g == nil {
+		return false
+	}
+	cid, ok := ctaphidChannelFrom(ctx)
+	return ok && cid == g.channel && a.grantNow().Before(g.expires)
+}
+
+// requestIntentPresence is the user intent check before PIN_REQUIRED: a live
+// Selection grant satisfies it and is kept for the operation after the PIN.
+func (a *Authenticator) requestIntentPresence(ctx context.Context, rpID, rpName, userName, operation string) error {
+	if a.hasPresenceGrant(ctx) {
+		return nil
+	}
+	return a.askUserPresence(ctx, rpID, rpName, userName, operation)
+}
+
 // dropForeignPresenceGrant clears the grant when a command arrives from any
 // channel but the one it is bound to, or arrives without a channel.
 func (a *Authenticator) dropForeignPresenceGrant(ctx context.Context) {

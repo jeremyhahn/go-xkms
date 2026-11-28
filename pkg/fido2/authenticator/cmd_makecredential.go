@@ -316,7 +316,7 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 							slog.String("user", req.User.Name),
 						)
 					}
-					if err := a.requestUserPresence(ctx, req.RP.ID, req.RP.Name, req.User.Name, "register"); err != nil {
+					if err := a.requestIntentPresence(ctx, req.RP.ID, req.RP.Name, req.User.Name, "register"); err != nil {
 						debugLog("[MAKECRED] user intent check denied: %v", err)
 						if a.logger != nil {
 							a.logger.Info("MakeCredential user intent check denied, returning OperationDenied",
