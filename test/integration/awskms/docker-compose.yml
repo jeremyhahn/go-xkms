@@ -24,7 +24,7 @@ services:
   test:
     build:
       context: ../../..
-      dockerfile: test/integration/awskms/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
     depends_on:
@@ -35,7 +35,16 @@ services:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_REGION=us-east-1
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
+    command: ["sh", "-c", "echo 'Waiting for Floci to be ready...'; while ! curl -sf http://floci:4566/_floci/health > /dev/null; do sleep 1; done; echo 'Floci is ready, running tests...'; go test -v -tags='integration awskms codec_cbor codec_json codec_msgpack gms_pure_go' ./test/integration/awskms/..."]
+
+volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are

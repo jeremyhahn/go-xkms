@@ -1,0 +1,19 @@
+# The shared suite images, built once by `make integration-images`.
+services:
+  suite:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.suite
+      secrets:
+        - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
+  suite-softhsm:
+    build:
+      context: ../..
+      dockerfile: test/integration/Dockerfile.suite
+      target: softhsm
+    image: go-xkms-integration-suite-softhsm:${XKMS_IMAGE_TAG:-latest}
+
+secrets:
+  gomodauth:
+    file: ../../build/docker/devcontainer/gomodauth.env

@@ -24,7 +24,7 @@ services:
   test:
     build:
       context: ../../..
-      dockerfile: test/integration/gcpkms/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
     depends_on:
@@ -33,7 +33,16 @@ services:
     environment:
       - GOOGLE_CLOUD_PROJECT=test-project
       - GCPKMS_EMULATOR_ENDPOINT=floci-gcp:4588
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
+    command: ["sh", "-c", "echo 'Waiting for Floci GCP to be ready...'; while ! curl -sf http://floci-gcp:4588/health > /dev/null; do sleep 1; done; echo 'Floci GCP is ready, running tests...'; go test -v -tags='integration gcpkms codec_cbor codec_json codec_msgpack gms_pure_go' ./test/integration/gcpkms/..."]
+
+volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are

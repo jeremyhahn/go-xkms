@@ -47,7 +47,7 @@ func TestBootstrapRecipePrintsServerLogOnFailure(t *testing.T) {
 
 	var runLine string
 	for _, l := range strings.Split(recipe, "\n") {
-		if strings.Contains(l, "run --build --rm test") {
+		if strings.Contains(l, " run ") && strings.HasSuffix(strings.TrimSpace(l), "--rm test") {
 			runLine = l
 			break
 		}

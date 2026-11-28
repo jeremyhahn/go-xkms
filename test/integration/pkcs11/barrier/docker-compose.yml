@@ -30,7 +30,7 @@ services:
   test:
     build:
       context: ../../../..
-      dockerfile: test/integration/pkcs11/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
     depends_on:
@@ -39,7 +39,16 @@ services:
     environment:
       - TPM2_SIMULATOR_HOST=tpm-simulator
       - TPM2_SIMULATOR_PORT=2421
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
+
+volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are

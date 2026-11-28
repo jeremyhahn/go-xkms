@@ -1,0 +1,68 @@
+# Shared test-runner image for the compose integration suites. Each suite's
+# compose `test` service runs its own `go test` command in it, so one build
+# serves pkcs8, pkcs11, pkcs11/barrier, tpm2, awskms, gcpkms, azurekv, vault,
+# quantum, frost, storage and bootstrap.
+
+# SoftHSM 2.7.0 from its pinned, checksum-verified release
+# (scripts/build-softhsm.sh) instead of Debian's 2.6.1, which answers an AES-GCM
+# tag mismatch with the ambiguous CKR_GENERAL_ERROR so PKCS#11 tamper could not
+# be classified as types.ErrSealedDataAuthentication (go-xkms#1418).
+FROM golang:1.27.4-bookworm AS softhsm
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
+    autoconf automake libtool libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/build-softhsm.sh /build/build-softhsm.sh
+RUN DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
+
+FROM golang:1.27.4-bookworm
+
+# The union of the apt packages the per-suite images installed.
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y \
+    ca-certificates \
+    curl \
+    wget \
+    git \
+    netcat-openbsd \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    tcpdump \
+    tpm2-tools \
+    libtss2-dev \
+    libicu-dev \
+    libusb-1.0-0-dev \
+    libudev-dev \
+    libcbor-dev \
+    libhidapi-dev \
+    libpcsclite-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# SoftHSM 2.7.0: /usr/lib/softhsm/libsofthsm2.so, softhsm2-util, /etc/softhsm.
+COPY --from=softhsm /build/softhsm-install/ /
+
+ENV GOTOOLCHAIN=auto
+ENV GOWORK=off
+ENV CGO_ENABLED=1
+
+# The suites' working_dir is /app or /workspace: both name the same tree.
+WORKDIR /app
+RUN ln -s /app /workspace && mkdir -p /root/.cache/go-build
+
+# Bake the source into the image rather than bind-mounting the checkout: on a
+# CI runner the docker daemon resolves bind-mount sources on its own host, not
+# in the job container that holds the checkout.
+COPY go.mod go.sum ./
+COPY sdk/go/go.mod sdk/go/go.sum ./sdk/go/
+COPY xkey/go.mod xkey/go.sum ./xkey/
+
+# In-house modules resolve from Gitea tags (dependency-resolution.md §6). The
+# fetch token arrives as a BuildKit secret, never a build arg or ENV, mounted
+# on tmpfs for this RUN alone and never becoming a layer. Optional by
+# design: with no secret supplied these modules resolve from the public
+# proxy once tags are mirrored (§7).
+RUN --mount=type=secret,id=gomodauth \
+    set -eu; \
+    if [ -f /run/secrets/gomodauth ]; then . /run/secrets/gomodauth; fi; \
+    go mod download
+
+COPY . .
