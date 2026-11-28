@@ -38,7 +38,6 @@ func TestValidateRejectsMTLSAdminWithoutClientAuth(t *testing.T) {
 			c.Auth.Composite = &CompositeAuthConfig{Methods: []string{"jwt", "mtls"}}
 		}},
 		{"type mtls", func(c *Config) { c.Auth.Type = "mtls" }},
-		{"mtls flag", func(c *Config) { c.Auth.Type = "jwt"; c.Auth.MTLS = true }},
 	}
 	for _, tc := range cases {
 		for _, ca := range []string{"none", "", "Verify", " verify", "REQUEST", "optional"} {

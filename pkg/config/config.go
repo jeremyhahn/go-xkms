@@ -441,14 +441,11 @@ type AuthConfig struct {
 }
 
 // usesMTLS reports whether the auth chain accepts mTLS client-certificate
-// identities: type mtls, the mtls flag, or a composite chain that lists
-// mtls or leaves its methods at the default.
+// identities: type mtls, or a composite chain that lists mtls or leaves its
+// methods at the default; the mtls flag alone selects no authenticator.
 func (a AuthConfig) usesMTLS() bool {
 	if !a.Enabled {
 		return false
-	}
-	if a.MTLS {
-		return true
 	}
 	switch strings.ToLower(strings.TrimSpace(a.Type)) {
 	case "mtls":
