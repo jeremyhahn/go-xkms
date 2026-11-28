@@ -301,12 +301,10 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	}
 	metaKey := metadataPath(keyID)
 	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
-		// Roll back the key blob so a failed generation does not leave an
-		// orphaned key that blocks regenerating under the same ID, and drop
-		// any metadata record already stored under the ID (a stale record of
-		// a missing blob) so the next key of this ID cannot inherit it
-		// (#2231). Best effort: the metadata write just failed.
-		_ = b.deleteKeyMetadata(ctx, keyID)
+		// Drop stale metadata, then the blob; keep the blob if the metadata cleanup fails.
+		if metaErr := b.deleteKeyMetadata(ctx, keyID); metaErr != nil {
+			return nil, errors.Join(&errs.Wrapped{Msg: "failed to store metadata", Err: err}, fmt.Errorf("rollback of key %s stopped: %w", keyID, metaErr))
+		}
 		if delErr := storage.DeleteKey(ctx, b.storage, keyID); delErr != nil {
 			return nil, &errs.Affix{Prefix: "failed to store metadata: ", Err: err, Suffix: fmt.Sprintf(" (rollback of key %s also failed: %v)", keyID, delErr)}
 		}
@@ -364,24 +362,22 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 
 	keyID := attrs.ID()
 
-	// The metadata record goes first and the blob second, so an interrupted
-	// delete leaves either both records or a blob without metadata, never a
-	// metadata record without its blob: a retry finds the blob and finishes
-	// the job, and no later key of the same identifier inherits an orphaned
-	// tenant or Exportable flag (#2231). The record is removed even when the
-	// blob is already missing, which also clears an orphan an earlier,
-	// blob-first delete left behind.
-	if err := b.deleteKeyMetadata(ctx, keyID); err != nil {
-		return err
+	// Blob first, ownership record second; a retry tolerates a missing blob.
+	blobErr := storage.DeleteKey(ctx, b.storage, keyID)
+	blobMissing := errors.Is(blobErr, storage.ErrNotFound)
+	if blobErr != nil && !blobMissing {
+		return &errs.Wrapped{Msg: "failed to delete key", Err: blobErr}
 	}
 
-	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
-		}
-		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
+	metaErr := b.storage.Delete(ctx, metadataPath(keyID))
+	metaMissing := errors.Is(metaErr, storage.ErrNotFound)
+	if metaErr != nil && !metaMissing {
+		return &errs.Wrapped{Msg: "failed to delete key metadata", Err: metaErr}
 	}
 
+	if blobMissing && metaMissing {
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
+	}
 	return nil
 }
 

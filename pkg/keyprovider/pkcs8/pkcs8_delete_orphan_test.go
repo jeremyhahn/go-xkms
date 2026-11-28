@@ -160,8 +160,7 @@ func TestGenerateKey_RollbackRemovesStaleMetadata(t *testing.T) {
 	}
 }
 
-// A failed blob delete must keep the ownership record, so the key stays
-// listed for its tenant and a retried DeleteKey removes both records.
+// A failed blob delete keeps the ownership record, and a retry removes both.
 func TestDeleteKey_FailedBlobDeleteKeepsOwnership(t *testing.T) {
 	be, keyStorage := newOrphanTestBackend(t)
 	ctx := context.Background()
@@ -196,8 +195,7 @@ func TestDeleteKey_FailedBlobDeleteKeepsOwnership(t *testing.T) {
 	}
 }
 
-// When the rollback cannot remove a stale metadata record, it keeps the blob
-// and reports both failures, so no metadata record is left without its blob.
+// A rollback whose metadata cleanup fails keeps the blob and reports both errors.
 func TestGenerateKey_RollbackStopsWhenMetadataCleanupFails(t *testing.T) {
 	be, keyStorage := newOrphanTestBackend(t)
 	ctx := context.Background()
