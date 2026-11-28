@@ -54,7 +54,13 @@ func (s *phoneSigner) Public() crypto.PublicKey {
 // resulting signature. The rand and opts parameters are unused because the
 // phone's secure hardware controls the signing process. The digest is the
 // pre-hashed data to sign.
-func (s *phoneSigner) Sign(_ io.Reader, digest []byte, _ crypto.SignerOpts) ([]byte, error) {
+func (s *phoneSigner) Sign(_ io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+	// The phone signs pure ML-DSA over the message itself (#2405); a
+	// pre-hashed (HashML-DSA) request is not part of the protocol.
+	if _, isMLDSA := mldsaParameters(s.algorithm); isMLDSA && opts != nil && opts.HashFunc() != 0 {
+		return nil, ErrUnsupportedAlgorithm
+	}
+
 	params := pairingproto.LocalSignParams{
 		KeyID:     s.keyID,
 		Data:      digest,

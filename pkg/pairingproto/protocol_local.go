@@ -49,7 +49,8 @@ const (
 
 // LocalGenerateKeyParams contains parameters for local.generateKey.
 // Algorithm accepts: "ES256", "ES384", "ES512", "RS256", "RS384",
-// "RS512", "AES128", "AES256", "HMAC-SHA256", "HMAC-SHA512".
+// "RS512", "AES128", "AES256", "HMAC-SHA256", "HMAC-SHA512", "ML-DSA-44",
+// "ML-DSA-65", "ML-DSA-87".
 type LocalGenerateKeyParams struct {
 	KeyID                    string `json:"keyId"`
 	Algorithm                string `json:"algorithm"`
@@ -63,7 +64,25 @@ type LocalGenerateKeyParams struct {
 	// phone refuses exportable asymmetric keys (hardware-backing is required
 	// for asymmetric keys on a security key).
 	Exportable bool `json:"exportable,omitempty"`
+	// KeyBacking asks the phone for a hardware- or software-backed key
+	// (KeyBackingHardware or KeyBackingSoftware). Empty lets the phone pick.
+	// The phone accepts it for ML-DSA keys (#2405).
+	KeyBacking string `json:"keyBacking,omitempty"`
 }
+
+// ML-DSA (FIPS 204) algorithm names on the local.* wire (#2405). The phone
+// signs pure ML-DSA: local.sign carries the message, not a digest.
+const (
+	AlgorithmMLDSA44 = "ML-DSA-44"
+	AlgorithmMLDSA65 = "ML-DSA-65"
+	AlgorithmMLDSA87 = "ML-DSA-87"
+)
+
+// KeyBacking values for LocalGenerateKeyParams.KeyBacking.
+const (
+	KeyBackingHardware = "hardware"
+	KeyBackingSoftware = "software"
+)
 
 // LocalGenerateKeyResult contains the result of local.generateKey.
 type LocalGenerateKeyResult struct {
@@ -334,12 +353,15 @@ type LocalAttestDeviceResult struct {
 type LocalGetCapabilitiesResult struct {
 	Version             string   `json:"version"`
 	DeviceName          string   `json:"deviceName"`
-	SupportedAlgorithms []string `json:"supportedAlgorithms"` // ["ES256", "ES384", "ES512", "RS256", ...]
+	SupportedAlgorithms []string `json:"supportedAlgorithms"` // ["ES256", "ES384", "ES512", "RS256", "ML-DSA-65", ...]
 	StrongBoxAvailable  bool     `json:"strongBoxAvailable"`
 	MaxKeys             int      `json:"maxKeys"`
 	CurrentKeyCount     int      `json:"currentKeyCount"`
 	SupportedFormats    []string `json:"supportedFormats"` // ["der", "pem", "ssh", "cose"]
 	AttestationSupport  bool     `json:"attestationSupport"`
+	// HardwareAlgorithms lists the SupportedAlgorithms the phone can back
+	// with hardware (#2405). An older phone omits it.
+	HardwareAlgorithms []string `json:"hardwareAlgorithms,omitempty"`
 }
 
 // Fido2CredentialInfo contains metadata about a FIDO2 credential for discovery.

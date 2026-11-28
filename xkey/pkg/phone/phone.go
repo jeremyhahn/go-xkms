@@ -452,7 +452,10 @@ func (b *PhoneKeyBackend) HandlesUserPresenceFor(backendID xkms.BackendType) boo
 // Capabilities returns the backend capabilities.
 func (b *PhoneKeyBackend) Capabilities() keybackend.FIDO2KeyCapabilities {
 	return keybackend.FIDO2KeyCapabilities{
-		SupportedAlgorithms:     []int{pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512},
+		SupportedAlgorithms: []int{
+			pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512,
+			coseAlgMLDSA44, coseAlgMLDSA65, coseAlgMLDSA87,
+		},
 		SupportsExport:          false, // Keys never leave the phone's secure element
 		SupportsImport:          false, // Cannot import keys to phone
 		SupportsAttestation:     false, // Phone provides its own attestation
@@ -1292,9 +1295,19 @@ func shortCredID(credIDHex string) string {
 }
 
 // isAlgorithmSupported checks if the algorithm is supported.
+// COSE ids of the ML-DSA (FIPS 204) keys the phone generates (#2405). They
+// equal pkg/pairingproto COSEAlgMLDSA44/65/87; sdk/go/pairingproto, which
+// this package imports, does not carry them yet.
+const (
+	coseAlgMLDSA44 = -48
+	coseAlgMLDSA65 = -49
+	coseAlgMLDSA87 = -50
+)
+
 func (b *PhoneKeyBackend) isAlgorithmSupported(algorithm int) bool {
 	switch algorithm {
-	case pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512:
+	case pairingproto.COSEAlgES256, pairingproto.COSEAlgES384, pairingproto.COSEAlgES512,
+		coseAlgMLDSA44, coseAlgMLDSA65, coseAlgMLDSA87:
 		return true
 	default:
 		return false
