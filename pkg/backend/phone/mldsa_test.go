@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
@@ -200,5 +201,52 @@ func TestBackend_GenerateKey_MLDSA_SignVerify(t *testing.T) {
 	// Pure ML-DSA signs the message: a pre-hash option is refused.
 	if _, err := signer.Sign(nil, msg, crypto.SHA256); !errors.Is(err, ErrUnsupportedAlgorithm) {
 		t.Errorf("Sign with SHA256 opts err = %v, want ErrUnsupportedAlgorithm", err)
+	}
+}
+
+func TestBackend_GenerateKey_MLDSA_ParameterSetMismatch(t *testing.T) {
+	_, der44 := mldsaTestKey(t, mldsa.MLDSA44())
+	_, der87 := mldsaTestKey(t, mldsa.MLDSA87())
+
+	tests := []struct {
+		name  string
+		der   []byte
+		label string
+	}{
+		{name: "ML-DSA-44 key labelled ML-DSA-44", der: der44, label: "ML-DSA-44"},
+		{name: "ML-DSA-44 key labelled ML-DSA-87", der: der44, label: "ML-DSA-87"},
+		{name: "ML-DSA-87 key labelled ML-DSA-44", der: der87, label: "ML-DSA-44"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sender := &mockSender{
+				sendFunc: func(ctx context.Context, req *pairingproto.Request) (*pairingproto.Response, error) {
+					var p pairingproto.LocalGenerateKeyParams
+					decodeParams(t, req, &p)
+					return mockSuccessResponse(pairingproto.LocalGenerateKeyResult{
+						KeyID: p.KeyID, PublicKeyDER: tt.der, Algorithm: tt.label,
+					}), nil
+				},
+			}
+			b := newTestBackend(t, sender)
+			key, err := b.GenerateKey(context.Background(), mldsaAttrs("pq-key", types.QuantumAlgorithmMLDSA87))
+			if err == nil {
+				t.Fatalf("GenerateKey(ML-DSA-87) = %T, want error", key)
+			}
+		})
+	}
+}
+
+func TestBackend_Capabilities_MLDSA(t *testing.T) {
+	b := newTestBackend(t, &mockSender{})
+	caps := b.Capabilities()
+	if !caps.QuantumSigning {
+		t.Error("QuantumSigning = false, want true")
+	}
+	want := []types.QuantumAlgorithm{
+		types.QuantumAlgorithmMLDSA44, types.QuantumAlgorithmMLDSA65, types.QuantumAlgorithmMLDSA87,
+	}
+	if !slices.Equal(caps.KeyAlgorithms.MLDSA, want) {
+		t.Errorf("KeyAlgorithms.MLDSA = %v, want %v", caps.KeyAlgorithms.MLDSA, want)
 	}
 }
