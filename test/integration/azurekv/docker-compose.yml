@@ -2,7 +2,7 @@ services:
   test:
     build:
       context: ../../..
-      dockerfile: test/integration/azurekv/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
     environment:
@@ -10,7 +10,16 @@ services:
       - AZURE_TENANT_ID=test-tenant
       - AZURE_CLIENT_ID=test-client
       - AZURE_CLIENT_SECRET=test-secret
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
+    command: ["sh", "-c", "echo 'Running Azure Key Vault integration tests with mock client...'; go test -v -tags='integration azurekv codec_cbor codec_json codec_msgpack gms_pure_go' ./test/integration/azurekv/..."]
+
+volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are

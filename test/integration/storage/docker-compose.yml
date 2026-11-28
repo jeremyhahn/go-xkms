@@ -3,15 +3,13 @@ services:
   test:
     build:
       context: ../../..
-      dockerfile: test/integration/storage/Dockerfile
-      args:
-        # libicu-dev/libusb-1.0-0-dev: unconditional cgo deps of the module
-        # graph itself (dolthub/go-icu-regex, google/gousb via go-qrdb), not
-        # gated by any tag here -- needed for any CGO_ENABLED=1 build.
-        EXTRA_APT_PACKAGES: "build-essential libicu-dev libusb-1.0-0-dev"
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
     command: >
@@ -25,10 +23,13 @@ services:
   test-file:
     build:
       context: ../../..
-      dockerfile: test/integration/storage/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=0
     # gms_pure_go selects go-mysql-server's non-cgo regex engine; without it
@@ -46,10 +47,13 @@ services:
   test-memory:
     build:
       context: ../../..
-      dockerfile: test/integration/storage/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=0
     # gms_pure_go: see test-file's identical comment above.
@@ -65,17 +69,14 @@ services:
   test-hardware-pkcs11:
     build:
       context: ../../..
-      dockerfile: test/integration/storage/Dockerfile
-      args:
-        # libicu-dev/libusb-1.0-0-dev: see the "test" service's comment --
-        # unconditional cgo deps of the module graph, needed for any
-        # CGO_ENABLED=1 build regardless of tags.
-        EXTRA_APT_PACKAGES: "build-essential libicu-dev libusb-1.0-0-dev"
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
     volumes:
       - softhsm-tokens:/var/lib/softhsm/tokens
+      - gocache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
       - SOFTHSM2_CONF=/app/test/integration/storage/softhsm2.conf
@@ -95,15 +96,13 @@ services:
   test-hardware-tpm2:
     build:
       context: ../../..
-      dockerfile: test/integration/storage/Dockerfile
-      args:
-        # libicu-dev/libusb-1.0-0-dev: see the "test" service's comment --
-        # unconditional cgo deps of the module graph, needed for any
-        # CGO_ENABLED=1 build regardless of tags.
-        EXTRA_APT_PACKAGES: "build-essential libtss2-dev libicu-dev libusb-1.0-0-dev"
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
       - TPM2_SIMULATOR_HOST=tpm-simulator
@@ -134,8 +133,9 @@ services:
   softhsm-init:
     build:
       context: ../../..
-      dockerfile: test/integration/storage/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       target: softhsm
+    image: go-xkms-integration-suite-softhsm:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - softhsm-tokens:/var/lib/softhsm/tokens
     environment:
@@ -193,6 +193,9 @@ networks:
 
 volumes:
   softhsm-tokens:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are

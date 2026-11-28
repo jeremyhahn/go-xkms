@@ -2,19 +2,26 @@ services:
   test:
     build:
       context: ../../..
-      dockerfile: test/integration/pkcs11/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
     environment:
       - PKCS11_MODULE=/usr/lib/softhsm/libsofthsm2.so
       - PKCS11_TOKEN_LABEL=test-token
       - PKCS11_PIN=1234
+      - SOFTHSM2_CONF=/etc/softhsm/softhsm2.conf
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     volumes:
       - softhsm-data:/var/lib/softhsm
+      - gocache:/root/.cache/go-build
     working_dir: /app
+    command: ["sh", "-c", "echo 'Initializing SoftHSM2...'; softhsm2-util --init-token --slot 0 --label 'test-token' --so-pin 1234 --pin 1234; echo 'SoftHSM2 is ready, running tests...'; go test -v -tags='integration pkcs11 codec_cbor codec_json codec_msgpack gms_pure_go' ./test/integration/pkcs11"]
 
 volumes:
   softhsm-data:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are

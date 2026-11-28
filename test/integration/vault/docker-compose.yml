@@ -27,7 +27,7 @@ services:
   test:
     build:
       context: ../../..
-      dockerfile: test/integration/vault/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
     depends_on:
@@ -37,7 +37,16 @@ services:
       - VAULT_ADDR=http://vault:8200
       - VAULT_TOKEN=root
       - VAULT_SKIP_VERIFY=true
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
+    command: ["sh", "-c", "echo 'Waiting for Vault to be ready...'; while ! curl -sf http://vault:8200/v1/sys/health > /dev/null; do sleep 1; done; echo 'Vault is ready!'; echo 'Enabling Transit engine...'; curl -X POST -H 'X-Vault-Token: root' -d '{\"type\":\"transit\"}' http://vault:8200/v1/sys/mounts/transit; echo ''; echo 'Transit engine setup complete!'; echo 'Running tests...'; go test -v -tags='integration vault codec_cbor codec_json codec_msgpack gms_pure_go' ./test/integration/vault/..."]
+
+volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are

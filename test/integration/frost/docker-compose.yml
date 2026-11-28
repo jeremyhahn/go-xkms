@@ -2,7 +2,7 @@ services:
   frost-test:
     build:
       context: ../../..
-      dockerfile: test/integration/frost/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
     environment:
@@ -16,13 +16,21 @@ services:
       # The xkmsctl frost share verbs encrypt their wrapping key under this
       # passphrase (go-xkms#1324); the CLI subprocesses inherit it.
       - XKMS_FROST_PASSPHRASE=frost-integration-passphrase
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /workspace
+    volumes:
+      - gocache:/root/.cache/go-build
     command: >
       go test -v -tags="integration frost codec_cbor codec_json codec_msgpack"
       -timeout 30m
       ./test/integration/frost/...
     networks:
       - frost-test-network
+
+volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 networks:
   frost-test-network:

@@ -2,7 +2,7 @@ services:
   quantum-test:
     build:
       context: ../../..
-      dockerfile: test/integration/quantum/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
     environment:
@@ -12,13 +12,21 @@ services:
       - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${FORGE_MODULE_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
       - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}
       - GO111MODULE=on
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /workspace
+    volumes:
+      - gocache:/root/.cache/go-build
     command: >
       go test -v -tags="integration codec_cbor codec_json codec_msgpack"
       -timeout 30m
       ./test/integration/quantum/...
     networks:
       - quantum-test-network
+
+volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 networks:
   quantum-test-network:

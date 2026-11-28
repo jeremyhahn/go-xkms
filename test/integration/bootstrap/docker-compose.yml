@@ -109,9 +109,10 @@ services:
   test:
     build:
       context: ../../..
-      dockerfile: test/integration/bootstrap/Dockerfile.test
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       xkms-server:
         condition: service_healthy
@@ -119,6 +120,7 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      - gocache:/root/.cache/go-build
       # The first-boot administrator's mTLS pair, which xkmsd writes into
       # datastore.path: the admin API the suite calls requires authentication.
       - xkms-data:/data:ro
@@ -160,9 +162,10 @@ services:
   xkey-truststrap-test:
     build:
       context: ../../..
-      dockerfile: test/integration/bootstrap/Dockerfile.test
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     depends_on:
       xkms-server:
         condition: service_healthy
@@ -170,6 +173,7 @@ services:
         condition: service_started
     volumes:
       - xkms-certs:/etc/xkms/certs:ro
+      - gocache:/root/.cache/go-build
       # The first-boot administrator's mTLS pair, which xkmsd writes into
       # datastore.path: the admin API the suite calls requires authentication.
       - xkms-data:/data:ro
@@ -191,6 +195,9 @@ services:
     command: ["/workspace/test/integration/bootstrap/scripts/run-xkey-truststrap-tests.sh"]
 
 volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
   xkms-data:
     driver: local
   xkms-certs:

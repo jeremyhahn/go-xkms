@@ -2,10 +2,19 @@ services:
   test:
     build:
       context: ../../..
-      dockerfile: test/integration/pkcs8/Dockerfile
+      dockerfile: test/integration/Dockerfile.suite
       secrets:
         - gomodauth
+    image: go-xkms-integration-suite:${XKMS_IMAGE_TAG:-latest}
     working_dir: /app
+    volumes:
+      - gocache:/root/.cache/go-build
+    command: ["go", "test", "-v", "-tags=integration pkcs8 codec_cbor codec_json codec_msgpack gms_pure_go", "./test/integration/pkcs8/..."]
+
+volumes:
+  gocache:
+    external: true
+    name: ${XKMS_GOCACHE_VOLUME:-go-xkms-gocache-latest}
 
 # Staged by `make stage-gomodauth` (dependency-resolution.md §6) into the
 # gitignored build/docker/devcontainer/gomodauth.env; empty when no Gitea credentials are
