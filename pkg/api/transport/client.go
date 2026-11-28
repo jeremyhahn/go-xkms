@@ -721,6 +721,7 @@ type Client interface {
 	CredentialManagementService
 	BootstrapService
 	InviteService
+	AttestationVerdictService
 }
 
 // InviteService redeems administrator-issued account-activation

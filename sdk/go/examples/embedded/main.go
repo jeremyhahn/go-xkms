@@ -218,6 +218,21 @@ func (m *MockXKMSService) GetInvite(ctx context.Context, req *xkms.GetInviteRequ
 	return nil, xkms.ErrNotSupported
 }
 
+// ListAttestationVerdicts returns no verdicts.
+func (m *MockXKMSService) ListAttestationVerdicts(_ context.Context, _ *xkms.AttestationVerdictRequest) (*xkms.ListAttestationVerdictsResponse, error) {
+	return &xkms.ListAttestationVerdictsResponse{}, nil
+}
+
+// GetLatestAttestationVerdict returns an empty verdict.
+func (m *MockXKMSService) GetLatestAttestationVerdict(_ context.Context, _ *xkms.AttestationVerdictRequest) (*xkms.AttestationVerdict, error) {
+	return &xkms.AttestationVerdict{}, nil
+}
+
+// ReattestDevice returns an empty verdict.
+func (m *MockXKMSService) ReattestDevice(_ context.Context, _ *xkms.AttestationVerdictRequest) (*xkms.AttestationVerdict, error) {
+	return &xkms.AttestationVerdict{}, nil
+}
+
 func (m *MockXKMSService) BeginInviteRegistration(ctx context.Context, req *xkms.BeginInviteRegistrationRequest) (*xkms.BeginInviteRegistrationResponse, error) {
 	return nil, xkms.ErrNotSupported
 }

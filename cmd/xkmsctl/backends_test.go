@@ -404,6 +404,18 @@ func (m *mockBackendsClient) GetInvite(ctx context.Context, req *client.GetInvit
 	return nil, client.ErrNotSupported
 }
 
+func (m *mockBackendsClient) ListAttestationVerdicts(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockBackendsClient) GetLatestAttestationVerdict(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (m *mockBackendsClient) ReattestDevice(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
 func (m *mockBackendsClient) BeginInviteRegistration(ctx context.Context, req *client.BeginInviteRegistrationRequest) (*client.BeginInviteRegistrationResponse, error) {
 	return nil, client.ErrNotSupported
 }

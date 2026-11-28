@@ -340,6 +340,27 @@ func (m *mockService) GetInvite(_ context.Context, _ *transport.GetInviteRequest
 	return &transport.GetInviteResponse{}, nil
 }
 
+func (m *mockService) ListAttestationVerdicts(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockService) GetLatestAttestationVerdict(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (m *mockService) ReattestDevice(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	if m.shouldFail {
+		return nil, errMock
+	}
+	return &transport.AttestationVerdict{}, nil
+}
+
 func (m *mockService) BeginInviteRegistration(_ context.Context, _ *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
 	if m.shouldFail {
 		return nil, errMock

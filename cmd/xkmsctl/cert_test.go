@@ -287,6 +287,18 @@ func (m *mockCertClient) GetInvite(ctx context.Context, req *client.GetInviteReq
 	return nil, client.ErrNotSupported
 }
 
+func (m *mockCertClient) ListAttestationVerdicts(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockCertClient) GetLatestAttestationVerdict(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (m *mockCertClient) ReattestDevice(_ context.Context, _ *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
 func (m *mockCertClient) BeginInviteRegistration(ctx context.Context, req *client.BeginInviteRegistrationRequest) (*client.BeginInviteRegistrationResponse, error) {
 	return nil, client.ErrNotSupported
 }

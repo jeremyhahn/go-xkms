@@ -21,6 +21,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
@@ -334,7 +337,7 @@ func TestBuilders_RejectNilDependencies(t *testing.T) {
 // feature's other dependency — the CA's for a CA configuration, the TPM policy
 // registry's for a TPM2 backend.
 func TestDatabases_FollowTheSuppliedDependencies(t *testing.T) {
-	always := []string{keyversion.DatabaseName, keypolicy.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName}
+	always := []string{keyversion.DatabaseName, keypolicy.DatabaseName, sshrecords.DatabaseName, staticpw.DatabaseName, truststore.DatabaseName, appraisal.DatabaseName}
 	assert.Equal(t, always, Databases(Deps{}))
 	assert.Equal(t, append(always, certstore.DatabaseName), Databases(Deps{CA: hostdeps.NewCAConfig("Root")}))
 	assert.Equal(t, append(always, tpmpolicy.DatabaseName, tpmstore.DatabaseName), Databases(Deps{TPMBackend: &tpm2backend.Backend{}}))
@@ -485,4 +488,56 @@ func TestBuildTrustRootStore(t *testing.T) {
 	assert.Equal(t, FeatureTrustRoots, buildErr.Feature)
 	var unavailable *dao.DatabaseUnavailableError
 	assert.ErrorAs(t, err, &unavailable)
+}
+
+// wireSpySource counts evidence fetches and fails each one.
+type wireSpySource struct{ calls int }
+
+var errWireEvidence = errors.New("caller evidence source reached")
+
+func (s *wireSpySource) Collect(context.Context, string, string, []byte) (*appraisal.AppraiseQuoteRequest, error) {
+	s.calls++
+	return nil, errWireEvidence
+}
+
+type wireAppraiser struct{}
+
+func (wireAppraiser) AppraiseQuote(context.Context, string, *appraisal.AppraiseQuoteRequest) (*appraisal.AttestationResult, error) {
+	return nil, errors.New("not reached")
+}
+
+// TestStoresWire_KeepsConfiguredAttestationEngine: Wire never replaces an
+// engine/store pair the caller configured with its store-only default.
+func TestStoresWire_KeepsConfiguredAttestationEngine(t *testing.T) {
+	callerStore, err := continuous.NewStore(continuous.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	source := &wireSpySource{}
+	engine, err := continuous.NewEngine(continuous.Config{Store: callerStore, Source: source, Appraiser: wireAppraiser{}})
+	require.NoError(t, err)
+	svc := &xkms.XKMSService{}
+	svc.SetContinuousAttestation(engine, callerStore)
+
+	composed, err := continuous.NewStore(continuous.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	(&Stores{Verdicts: composed}).Wire(svc)
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{TenantID: "tenant-a"})
+	_, err = svc.ReattestDevice(ctx, &transport.AttestationVerdictRequest{DeviceID: "device-1"})
+	require.NotErrorIs(t, err, xkms.ErrNotConfigured)
+	assert.Equal(t, 1, source.calls, "the caller's evidence source was not reached")
+}
+
+// TestStoresWire_InstallsStoreOnlyVerdictsWhenUnconfigured: with no caller
+// engine, Wire serves the composed verdicts and re-attestation stays off.
+func TestStoresWire_InstallsStoreOnlyVerdictsWhenUnconfigured(t *testing.T) {
+	composed, err := continuous.NewStore(continuous.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
+	require.NoError(t, err)
+	svc := &xkms.XKMSService{}
+	(&Stores{Verdicts: composed}).Wire(svc)
+
+	ctx := auth.WithIdentity(context.Background(), &auth.Identity{TenantID: "tenant-a"})
+	_, err = svc.ListAttestationVerdicts(ctx, &transport.AttestationVerdictRequest{DeviceID: "device-1"})
+	require.NotErrorIs(t, err, xkms.ErrNotConfigured)
+	_, err = svc.ReattestDevice(ctx, &transport.AttestationVerdictRequest{DeviceID: "device-1"})
+	require.ErrorIs(t, err, xkms.ErrNotConfigured)
 }

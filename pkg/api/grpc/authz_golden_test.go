@@ -179,13 +179,18 @@ var goldenRPCPermissions = map[string]string{
 	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family.
 	// Changing a binding is bind; reading one or resolving a repository's
 	// key is get.
-	"SetSigningKeyBinding":     "attestation_signing_keys:bind",
-	"GetSigningKeyBinding":     "attestation_signing_keys:get",
-	"ListSigningKeyBindings":   "attestation_signing_keys:list",
-	"DeleteSigningKeyBinding":  "attestation_signing_keys:bind",
-	"ResolveSigningKey":        "attestation_signing_keys:get",
-	"PeerAttestationChallenge": "peer_attestation:challenge",
-	"SubmitPeerAttestation":    "peer_attestation:submit",
+	"SetSigningKeyBinding":    "attestation_signing_keys:bind",
+	"GetSigningKeyBinding":    "attestation_signing_keys:get",
+	"ListSigningKeyBindings":  "attestation_signing_keys:list",
+	"DeleteSigningKeyBinding": "attestation_signing_keys:bind",
+	"ResolveSigningKey":       "attestation_signing_keys:get",
+	// Continuous attestation verdicts (go-xkms#2088), always the caller's
+	// tenant.
+	"ListAttestationVerdicts":     "attestation_verdicts:list",
+	"GetLatestAttestationVerdict": "attestation_verdicts:get",
+	"ReattestDevice":              "attestation_verdicts:create",
+	"PeerAttestationChallenge":    "peer_attestation:challenge",
+	"SubmitPeerAttestation":       "peer_attestation:submit",
 	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode
 	// is a cross-tenant permission xkms declares).
 	"GetTenantTPMMode": "tenants:read",

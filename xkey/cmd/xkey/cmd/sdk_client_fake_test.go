@@ -345,6 +345,18 @@ func (b *baseSDKClient) GetInvite(ctx context.Context, req *transport.GetInviteR
 	return nil, errNotImplemented
 }
 
+func (b *baseSDKClient) ListAttestationVerdicts(context.Context, *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (b *baseSDKClient) GetLatestAttestationVerdict(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (b *baseSDKClient) ReattestDevice(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
 func (b *baseSDKClient) BeginInviteRegistration(ctx context.Context, req *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
 	return nil, errNotImplemented
 }

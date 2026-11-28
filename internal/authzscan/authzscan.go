@@ -213,6 +213,7 @@ func Constants() map[string]string {
 		"ResourceAttestationReferenceValues": auth.ResourceAttestationReferenceValues,
 		"ResourceAttestationVerifier":        auth.ResourceAttestationVerifier,
 		"ResourceAttestationSigningKeys":     auth.ResourceAttestationSigningKeys,
+		"ResourceAttestationVerdicts":        auth.ResourceAttestationVerdicts,
 
 		"ActionSign":               auth.ActionSign,
 		"ActionVerify":             auth.ActionVerify,

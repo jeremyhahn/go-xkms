@@ -121,6 +121,7 @@ func TestBuild_NoDependenciesLeavesEveryFeatureOffWithTypedReasons(t *testing.T)
 		FeatureOIDCCredentials: "barrier registry",
 		FeatureInvite:          "storage",
 		FeatureTrustRoots:      "DAO factory",
+		FeatureVerdicts:        "DAO factory",
 	}, missing)
 
 	assert.Nil(t, st.PasswordStore)

@@ -296,6 +296,18 @@ func (m *mockPIVClient) FinishAuthentication(_ context.Context, _ *transport.Fin
 func (m *mockPIVClient) GetInvite(_ context.Context, _ *transport.GetInviteRequest) (*transport.GetInviteResponse, error) {
 	return nil, errMockNotImplemented
 }
+
+func (m *mockPIVClient) ListAttestationVerdicts(context.Context, *transport.AttestationVerdictRequest) (*transport.ListAttestationVerdictsResponse, error) {
+	return &transport.ListAttestationVerdictsResponse{}, nil
+}
+
+func (m *mockPIVClient) GetLatestAttestationVerdict(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
+
+func (m *mockPIVClient) ReattestDevice(context.Context, *transport.AttestationVerdictRequest) (*transport.AttestationVerdict, error) {
+	return &transport.AttestationVerdict{}, nil
+}
 func (m *mockPIVClient) BeginInviteRegistration(_ context.Context, _ *transport.BeginInviteRegistrationRequest) (*transport.BeginInviteRegistrationResponse, error) {
 	return nil, errMockNotImplemented
 }

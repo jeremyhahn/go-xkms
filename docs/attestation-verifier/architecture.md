@@ -404,6 +404,60 @@ certificate chains to.
   verbs are served on REST, gRPC, Unix, QUIC, MCP and embedded; see
   [`api.md`](api.md#repository-signing-keys).
 
+## Continuous attestation
+
+A device appraised once, at enrollment, says nothing about the device an
+hour later. `pkg/attestation/continuous` re-attests enrolled devices and
+publishes each verdict (docs/SPEC.md:81). The xkms service serves its
+verdicts on REST, gRPC, the Unix socket and MCP (below); QUIC and
+compose wiring are later work.
+
+- **On demand.** `Engine.Reattest` (pkg/attestation/continuous/engine.go:119)
+  draws a fresh 32-byte nonce, asks the `EvidenceSource` for a quote over it,
+  sets the request's nonce to the one it issued, and appraises the evidence
+  with `Appraiser.AppraiseQuote` (pkg/attestation/appraisal/verifier.go:528).
+- **On a schedule.** `Engine.Run` (pkg/attestation/continuous/engine.go:196)
+  makes one `Pass` (pkg/attestation/continuous/engine.go:168) per `Interval`
+  tick of an injected `Ticker`: every enrolled device of every tenant the
+  `Inventory` lists, once. Tests drive the ticker by hand; nothing sleeps.
+- **No silent skip.** A failed collection, a failed appraisal call or
+  evidence that fails appraisal is still a `Verdict`
+  (pkg/attestation/continuous/engine.go:45) with `Verified=false` and a
+  `Cause` (pkg/attestation/continuous/engine.go:142).
+- **Stored per tenant.** `Store.SaveVerdict`
+  (pkg/attestation/continuous/store.go:72) keeps every verdict in the
+  `attestation_verdicts` DAO of the appraisal database, keyed under the
+  tenant's scope prefix like the appraisal records;
+  `Store.ListVerdicts` (pkg/attestation/continuous/store.go:88) and
+  `Store.LatestVerdict` (pkg/attestation/continuous/store.go:121) read one
+  device of one tenant only.
+- **Published.** Every `Publisher` receives each stored verdict. What a
+  consumer does with it (admit, quarantine, remediate, disconnect) is
+  outside xkms; this package names no consumer.
+- **Served as verbs.** `XKMSService.SetContinuousAttestation`
+  (pkg/xkms/servicer_attestation_verdicts.go:34) wires an engine and its
+  store. `ListAttestationVerdicts` (:56), `GetLatestAttestationVerdict`
+  (:70) and `ReattestDevice` (:79) always act for `callerTenant(ctx)`
+  (pkg/xkms/tenant_binding.go:65); the request
+  (pkg/api/transport/types_attestation_verdicts.go) names only the device.
+  With no store wired every verb is `ErrNotConfigured`; with a store but no
+  engine only `ReattestDevice` is.
+- **On the wire.** REST serves `GET /api/v1/attestation/verdicts?device=`
+  (attestation_verdicts:list), `GET /api/v1/attestation/verdicts/latest?device=`
+  (attestation_verdicts:get) and `POST /api/v1/attestation/verdicts` with
+  `{"device_id": ...}` (attestation_verdicts:create), gated at
+  pkg/api/rest/routes.go:485-487. gRPC, and the Unix socket over the same
+  Service, serves `ListAttestationVerdicts`, `GetLatestAttestationVerdict`
+  and `ReattestDevice` (pkg/api/grpc/service_attestation_verdicts.go) on the
+  same pairs; MCP serves `attestation.verdict.list`, `.latest` and
+  `.reattest` (pkg/api/mcp/server.go:544-546). The gRPC, Unix and MCP client
+  transports implement `transport.AttestationVerdictService`.
+  `apierrors.VerdictClassOf` (pkg/api/apierrors/tables.go:360) maps an
+  `InputError` to 400 (InvalidArgument), a `VerdictNotFoundError` to 404
+  (NotFound), and `ErrNotConfigured` or a `StoreError` to 503 (Unavailable)
+  on every transport. The three permissions are ScopeSelf
+  (pkg/apimodule/module_scopes.go).
+
 ## What this feature deliberately does not do
 
 - **It does not generate attestations.** `AttestKey` and

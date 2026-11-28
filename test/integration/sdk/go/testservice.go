@@ -1434,3 +1434,18 @@ func (*TestXKMSService) DeleteSigningKeyBinding(context.Context, *xkms.DeleteAtt
 func (*TestXKMSService) ResolveSigningKey(context.Context, *xkms.ResolveAttestationSigningKeyRequest) (*xkms.AttestationSigningKeyResolution, error) {
 	return nil, nil
 }
+
+// ListAttestationVerdicts is not served by the integration stub.
+func (*TestXKMSService) ListAttestationVerdicts(context.Context, *xkms.AttestationVerdictRequest) (*xkms.ListAttestationVerdictsResponse, error) {
+	return nil, ErrNotImplemented
+}
+
+// GetLatestAttestationVerdict is not served by the integration stub.
+func (*TestXKMSService) GetLatestAttestationVerdict(context.Context, *xkms.AttestationVerdictRequest) (*xkms.AttestationVerdict, error) {
+	return nil, ErrNotImplemented
+}
+
+// ReattestDevice is not served by the integration stub.
+func (*TestXKMSService) ReattestDevice(context.Context, *xkms.AttestationVerdictRequest) (*xkms.AttestationVerdict, error) {
+	return nil, ErrNotImplemented
+}

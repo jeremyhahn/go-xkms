@@ -202,6 +202,18 @@ func (s *stubClient) FinishAuthentication(context.Context, *FinishAuthentication
 func (s *stubClient) GetInvite(context.Context, *GetInviteRequest) (*GetInviteResponse, error) {
 	panic("stub")
 }
+
+func (s *stubClient) ListAttestationVerdicts(context.Context, *AttestationVerdictRequest) (*ListAttestationVerdictsResponse, error) {
+	return &ListAttestationVerdictsResponse{}, nil
+}
+
+func (s *stubClient) GetLatestAttestationVerdict(context.Context, *AttestationVerdictRequest) (*AttestationVerdict, error) {
+	return &AttestationVerdict{}, nil
+}
+
+func (s *stubClient) ReattestDevice(context.Context, *AttestationVerdictRequest) (*AttestationVerdict, error) {
+	return &AttestationVerdict{}, nil
+}
 func (s *stubClient) BeginInviteRegistration(context.Context, *BeginInviteRegistrationRequest) (*BeginInviteRegistrationResponse, error) {
 	panic("stub")
 }

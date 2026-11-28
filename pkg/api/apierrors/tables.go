@@ -19,6 +19,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/continuous"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
@@ -341,6 +342,36 @@ var SigningKeySentinelClasses = []SentinelClass{
 // SigningKeyClassOf classifies an error of the repository signing-key verbs.
 func SigningKeyClassOf(err error) (Class, bool) {
 	return ClassOf(SigningKeySentinelClasses, err)
+}
+
+// VerdictSentinelClasses classifies the sentinel errors of the continuous
+// attestation verdict verbs (pkg/xkms ListAttestationVerdicts,
+// GetLatestAttestationVerdict, ReattestDevice, go-xkms#2088): a server
+// without a verdict store, or without an engine for a re-attest, has
+// nothing to answer with.
+var VerdictSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+}
+
+// VerdictClassOf classifies an error of the continuous attestation verdict
+// verbs. pkg/attestation/continuous reports typed errors, not sentinels: an
+// InputError is the caller's, a VerdictNotFoundError means the device has
+// no verdict yet, and a StoreError or ConfigError is the server's.
+func VerdictClassOf(err error) (Class, bool) {
+	var (
+		inputErr    *continuous.InputError
+		notFoundErr *continuous.VerdictNotFoundError
+		storeErr    *continuous.StoreError
+	)
+	switch {
+	case errors.As(err, &inputErr):
+		return ClassInvalidArgument, true
+	case errors.As(err, &notFoundErr):
+		return ClassNotFound, true
+	case errors.As(err, &storeErr):
+		return ClassUnavailable, true
+	}
+	return ClassOf(VerdictSentinelClasses, err)
 }
 
 // TypedClass classifies a typed error: Match reports whether an error's
