@@ -202,6 +202,10 @@ func (e *ErrStorageCreate) Error() string {
 type QRDBNodeError struct {
 	Stage string
 	Err   error
+	// Resealed is set only for StageBootAfterSealedWindow: true when qrdb
+	// re-sealed the barrier on the boot-completion failure (go-qrdb
+	// v0.51.0-alpha's completeClusteredBoot calls SealWholeNode).
+	Resealed bool
 }
 
 // Error returns the error message.
