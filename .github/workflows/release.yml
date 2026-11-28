@@ -716,7 +716,7 @@ jobs:
       # leg completes the release instead of breaking the rest of it.
       - name: Upload release assets
         env:
-          RELEASE_API: ${{ github.server_url }}/api/v1
+          RELEASE_API: ${{ github.api_url }}
           RELEASE_REPO: ${{ github.repository }}
           RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -1200,7 +1200,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      RELEASE_API: ${{ github.server_url }}/api/v1
+      RELEASE_API: ${{ github.api_url }}
       RELEASE_REPO: ${{ github.repository }}
       RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -1359,7 +1359,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      RELEASE_API: ${{ github.server_url }}/api/v1
+      RELEASE_API: ${{ github.api_url }}
       RELEASE_REPO: ${{ github.repository }}
       RELEASE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
