@@ -61,6 +61,66 @@ case "$out" in
 esac
 eq "nothing was fetched, extracted or built" "" "$(cat "$WORK/called")"
 
+section "the download retries every HTTP error and falls back to codeload"
+# A PATH whose curl records each call's arguments, refuses the github.com
+# archive URL as an HTTP error (exit 22) and serves a bogus body from any
+# other URL; tar, make and wget only record that they were called.
+FETCHBIN="$WORK/fetchbin"
+mkdir -p "$FETCHBIN"
+cp "$FAKEBIN/tar" "$FAKEBIN/make" "$FAKEBIN/wget" "$FETCHBIN/"
+cat >"$FETCHBIN/curl" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$CURL_LOG"
+out=""
+url=""
+while [ "$#" -gt 0 ]; do
+	case "$1" in
+	-o) out=$2; shift ;;
+	http*) url=$1 ;;
+	esac
+	shift
+done
+case "$url" in
+*github.com/softhsm/SoftHSMv2/archive/*) exit 22 ;;
+esac
+printf 'not the SoftHSM release\n' >"$out"
+EOF
+chmod +x "$FETCHBIN/curl"
+export CURL_LOG="$WORK/curl-args"
+: >"$CURL_LOG"
+: >"$WORK/called"
+out=$(PATH="$FETCHBIN:$PATH" sh "$SCRIPT" 2>&1)
+rc=$?
+first=$(sed -n 1p "$CURL_LOG")
+second=$(sed -n 2p "$CURL_LOG")
+case " $first " in
+*" --retry-all-errors "*) ok "curl retries on any HTTP error" ;;
+*) no "curl retries on any HTTP error" "--retry-all-errors" "$first" ;;
+esac
+retries=$(printf '%s\n' "$first" | sed -n 's/.*--retry \([0-9][0-9]*\).*/\1/p')
+if [ -n "$retries" ] && [ "$retries" -ge 3 ]; then ok "curl retries at least 3 times"; else no "curl retries at least 3 times" "--retry >= 3" "$first"; fi
+case "$first" in
+*"https://github.com/softhsm/SoftHSMv2/archive/refs/tags/${version}.tar.gz"*) ok "the first fetch is the github.com archive" ;;
+*) no "the first fetch is the github.com archive" "github.com archive URL" "$first" ;;
+esac
+case "$second" in
+*"https://codeload.github.com/softhsm/SoftHSMv2/tar.gz/refs/tags/${version}"*) ok "a failed first fetch falls back to codeload" ;;
+*) no "a failed first fetch falls back to codeload" "codeload URL" "$second" ;;
+esac
+eq "a bogus fallback archive exits 1" 1 "$rc"
+case "$out" in
+*"pinned ${pinned}"*) ok "the fallback archive is held to the pinned checksum" ;;
+*) no "the fallback archive is held to the pinned checksum" "pinned ${pinned}" "$out" ;;
+esac
+eq "nothing was extracted or built from the fallback" "" "$(cat "$WORK/called")"
+
+section "SOFTHSM_ARCHIVE skips every download"
+: >"$CURL_LOG"
+: >"$WORK/called"
+PATH="$FETCHBIN:$PATH" SOFTHSM_ARCHIVE="$WORK/bogus.tar.gz" sh "$SCRIPT" >/dev/null 2>&1
+eq "curl is never called" "" "$(cat "$CURL_LOG")"
+eq "wget is never called" "" "$(cat "$WORK/called")"
+
 section "usage"
 out=$(sh "$SCRIPT" /usr /extra 2>&1)
 rc=$?

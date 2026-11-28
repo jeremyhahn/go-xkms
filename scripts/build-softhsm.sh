@@ -44,11 +44,13 @@
 # take its sha256sum as SOFTHSM_SHA256, and confirm the new release still
 # answers a GCM tag mismatch with a code ciphertextRejections lists
 # (pkg/backend/pkcs11/ciphertext_rejection.go).
+# SOFTHSM_FALLBACK_URL (codeload) follows SOFTHSM_VERSION and serves the same archive.
 set -eu
 
 SOFTHSM_VERSION=2.7.0
 SOFTHSM_SHA256=be14a5820ec457eac5154462ffae51ba5d8a643f6760514d4b4b83a77be91573
 SOFTHSM_URL="https://github.com/softhsm/SoftHSMv2/archive/refs/tags/${SOFTHSM_VERSION}.tar.gz"
+SOFTHSM_FALLBACK_URL="https://codeload.github.com/softhsm/SoftHSMv2/tar.gz/refs/tags/${SOFTHSM_VERSION}"
 
 if [ "$#" -gt 1 ]; then
 	echo "usage: build-softhsm.sh [PREFIX]" >&2
@@ -64,9 +66,11 @@ archive="${work}/softhsm-${SOFTHSM_VERSION}.tar.gz"
 if [ -n "${SOFTHSM_ARCHIVE:-}" ]; then
 	cp "${SOFTHSM_ARCHIVE}" "${archive}"
 elif command -v curl >/dev/null 2>&1; then
-	curl -fsSL --retry 3 -o "${archive}" "${SOFTHSM_URL}"
+	curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${archive}" "${SOFTHSM_URL}" ||
+		curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 -o "${archive}" "${SOFTHSM_FALLBACK_URL}"
 else
-	wget -q -O "${archive}" "${SOFTHSM_URL}"
+	wget -q -O "${archive}" "${SOFTHSM_URL}" ||
+		wget -q -O "${archive}" "${SOFTHSM_FALLBACK_URL}"
 fi
 
 if ! echo "${SOFTHSM_SHA256}  ${archive}" | sha256sum -c - >/dev/null 2>&1; then
