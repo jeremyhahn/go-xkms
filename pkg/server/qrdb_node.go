@@ -265,6 +265,10 @@ func (s *Server) initEmbeddedQRDBNode() error {
 
 	// The TrustedCA as the cluster CA (Key A), bound once initializeCA runs.
 	nodeOpts = append(nodeOpts, s.clusterCAKeyProviderOptions()...)
+	// Each tenant's login CA (Key B) from its tenant-scoped xkms key, under
+	// the same condition as the cluster CA, and only when the operator opted
+	// in (the WithTenantLoginCAKeys construction option).
+	nodeOpts = append(nodeOpts, s.tenantCAKeyProviderOptions()...)
 
 	// newQRDBNode is build-tag specific: the default (!raft) build hosts a
 	// standalone node; the -tags raft build hosts a clustered node when
@@ -306,7 +310,7 @@ func (s *Server) initEmbeddedQRDBNode() error {
 			s.barrier = registry.SystemBarrier()
 		}
 		if svcNode := node.Services(); svcNode != nil {
-			s.tenantService = svcNode.Tenant
+			s.adoptTenantService(svcNode.Tenant)
 			s.tenantStores = svcNode.StoreResolver
 		}
 		s.logger.Info("adopted the qrdb node barrier (single barrier; data plane encrypted at rest)")

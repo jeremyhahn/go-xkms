@@ -267,6 +267,9 @@ type Server struct {
 	// tenantStores resolves each tenant's system-database store, behind that
 	// tenant's barrier; nil without a node seal.
 	tenantStores qrdbsdk.TenantStoreResolver
+	// tenantCAKeys is the tenant login CA key factory wired into the node
+	// (nil when it is not); the tenant service is wrapped to provision it.
+	tenantCAKeys *tenantCAKeyFactory
 
 	// nodeSealEnabled indicates the qrdb node's barrier is engaged:
 	// Datastore.Mode=="standalone" && Barrier.Enabled. When true, the node
@@ -469,6 +472,13 @@ type Server struct {
 	// the admin surface) supplies its own ServiceModule this way instead of
 	// xkms hosting a second embedded node.
 	extraModules []qrdbsdk.ServiceModule
+
+	// tenantLoginCAKeys and tenantLoginCAFencedHolders are set only by the
+	// construction options WithTenantLoginCAKeys and
+	// withTenantLoginCAFencedHolders (tenant_ca_keyprovider.go); there is
+	// no config setting for either.
+	tenantLoginCAKeys          bool
+	tenantLoginCAFencedHolders []string
 
 	// attestedCallerPolicy is the embedder's attested-caller gate policy, set
 	// via WithAttestedCallerPolicy. attestation.peer_gate decides whether a
@@ -891,7 +901,7 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// It is idempotent, so every start and every node of a cluster runs it, and
 	// it is fatal: a daemon whose bootstrap did not happen surfaces later as an
 	// unexplained authentication failure rather than as the missing bootstrap.
-	if err := s.runFirstBoot(ctx); err != nil {
+	if err := s.provisionTenantCAKeysThenFirstBoot(ctx); err != nil {
 		cancel()
 		s.closeBackends()
 		return nil, &ErrServiceInit{Service: "first-boot", Err: err}

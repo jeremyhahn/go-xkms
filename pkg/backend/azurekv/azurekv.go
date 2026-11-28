@@ -405,7 +405,10 @@ func (b *Backend) Save(attrs *types.KeyAttributes, data []byte, extension types.
 }
 
 // Delete removes all data associated with a key identified by its attributes.
-// For Azure Key Vault, this deletes the key and removes metadata.
+// For Azure Key Vault, this deletes the key, then removes its metadata. A key
+// Key Vault no longer has (a 404) counts as deleted, so Delete is
+// idempotent. Any other Key Vault failure is returned and the metadata kept:
+// the key stays discoverable through ListKeys until it is really gone.
 func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 	if attrs == nil {
 		return &errs.Message{Msg: "attributes cannot be nil"}
@@ -416,19 +419,17 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 		return err
 	}
 
-	// Remove metadata. A missing entry is not an error here (Delete is
-	// idempotent): storage.DeleteKey's ErrNotFound is swallowed exactly
-	// like the Key Vault client's DeleteKey error below.
-	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return &errs.Wrapped{Msg: "failed to remove key metadata", Err: err}
+	if _, err := b.client.DeleteKey(ctx, attrs.CN, nil); err != nil {
+		var respErr *azcore.ResponseError
+		if !errors.As(err, &respErr) || respErr.StatusCode != http.StatusNotFound {
+			return &errs.Wrapped{Msg: "failed to delete key", Err: err}
+		}
 	}
 
-	// Delete key from Azure Key Vault
-	_, err := b.client.DeleteKey(ctx, attrs.CN, nil)
-	if err != nil {
-		// If key doesn't exist, that's okay (idempotent operation)
-		// We still removed the metadata above
-		return nil
+	// The key is gone: remove its metadata. A missing entry is not an
+	// error here (Delete is idempotent).
+	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return &errs.Wrapped{Msg: "failed to remove key metadata", Err: err}
 	}
 
 	return nil

@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 
@@ -261,26 +262,113 @@ func (b *Backend) Delete(attrs *types.KeyAttributes) error {
 		return err
 	}
 
-	// Remove metadata. A missing entry is not an error here (Delete is
-	// idempotent): storage.DeleteKey's ErrNotFound is swallowed exactly
-	// like ScheduleKeyDeletion's below.
-	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return &errs.Wrapped{Msg: "failed to remove key metadata", Err: err}
+	// Resolve the alias target first, but release the alias only after the
+	// key is pending deletion: for a CN without metadata the alias is the
+	// key's only reference, so deleting it before a scheduling failure (or
+	// a stop between the two calls) would orphan a still-enabled key.
+	keyID, ownsAlias, err := b.resolveAlias(ctx, attrs.CN, keyID)
+	if err != nil {
+		return err
 	}
 
-	// Schedule key deletion in KMS (7 day minimum waiting period)
+	// Schedule key deletion in KMS (7 day minimum waiting period).
+	// Only "already gone" outcomes (the key does not exist, or it is
+	// already pending deletion) count as success; any other failure
+	// (access denial, outage) is returned and the metadata is kept, so the
+	// still-enabled key stays discoverable through ListKeys.
 	pendingWindowInDays := int32(7)
 
 	_, err = b.client.ScheduleKeyDeletion(ctx, &kms.ScheduleKeyDeletionInput{
 		KeyId:               aws.String(keyID),
 		PendingWindowInDays: &pendingWindowInDays,
 	})
-	if err != nil {
-		// If key doesn't exist, that's okay (idempotent operation)
-		// We still removed the metadata above
-		return nil
+	if err != nil && !isKeyAlreadyGone(err) {
+		return &errs.Wrapped{Msg: "failed to schedule KMS key deletion", Err: err}
 	}
 
+	// KMS keeps an alias pointing at a pending-deletion key, and getKeyID
+	// resolves a CN without metadata through it, so a reused CN would hit
+	// KMSInvalidStateException for the whole waiting period: release it.
+	if ownsAlias {
+		// Re-check the target: never release an alias that moved to
+		// another key while this one was being scheduled.
+		if _, still, err := b.resolveAlias(ctx, attrs.CN, keyID); err != nil {
+			return err
+		} else if still {
+			if err := b.deleteAlias(ctx, attrs.CN); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Remove metadata. A missing entry is not an error here (Delete is
+	// idempotent).
+	if err := storage.DeleteKey(ctx, b.config.KeyStorage, attrs.CN); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return &errs.Wrapped{Msg: "failed to remove key metadata", Err: err}
+	}
+
+	return nil
+}
+
+// isKeyAlreadyGone reports whether a ScheduleKeyDeletion error means the key
+// no longer needs deleting: it does not exist, or it is already pending
+// deletion.
+func isKeyAlreadyGone(err error) bool {
+	var notFound *awstypes.NotFoundException
+	if errors.As(err, &notFound) {
+		return true
+	}
+	var invalidState *awstypes.KMSInvalidStateException
+	if errors.As(err, &invalidState) {
+		return strings.Contains(strings.ToLower(invalidState.ErrorMessage()), "pending deletion")
+	}
+	return false
+}
+
+// resolveAlias reports whether alias/<cn> targets keyID, the key Delete is
+// about to schedule for deletion, and returns the key ID to schedule (the
+// alias's target when keyID is the alias itself). An alias that targets
+// another key (a newer generation's) is not owned and is left in place. A
+// missing alias is not owned; any other lookup failure is returned.
+func (b *Backend) resolveAlias(ctx context.Context, cn, keyID string) (string, bool, error) {
+	target, arn, found, err := b.describeAlias(ctx, cn)
+	if err != nil || !found {
+		return keyID, false, err
+	}
+	if keyID == fmt.Sprintf("alias/%s", cn) {
+		return target, true, nil
+	}
+	return keyID, keyID == target || keyID == arn, nil
+}
+
+// describeAlias resolves alias/<cn> to its target key ID and ARN. found is
+// false when the alias does not exist.
+func (b *Backend) describeAlias(ctx context.Context, cn string) (target, arn string, found bool, err error) {
+	aliasName := fmt.Sprintf("alias/%s", cn)
+	described, err := b.client.DescribeKey(ctx, &kms.DescribeKeyInput{KeyId: aws.String(aliasName)})
+	if err != nil {
+		var notFound *awstypes.NotFoundException
+		if errors.As(err, &notFound) {
+			return "", "", false, nil
+		}
+		return "", "", false, &errs.Wrapped{Msg: "failed to resolve KMS key alias", Err: err}
+	}
+	if described == nil || described.KeyMetadata == nil || described.KeyMetadata.KeyId == nil {
+		return "", "", false, nil
+	}
+	return aws.ToString(described.KeyMetadata.KeyId), aws.ToString(described.KeyMetadata.Arn), true, nil
+}
+
+// deleteAlias deletes alias/<cn> after its key went pending deletion. A
+// missing alias is success; any other failure is returned, since a kept
+// alias blocks the CN.
+func (b *Backend) deleteAlias(ctx context.Context, cn string) error {
+	if _, err := b.client.DeleteAlias(ctx, &kms.DeleteAliasInput{AliasName: aws.String(fmt.Sprintf("alias/%s", cn))}); err != nil {
+		var notFound *awstypes.NotFoundException
+		if !errors.As(err, &notFound) {
+			return &errs.Wrapped{Msg: "failed to delete KMS key alias", Err: err}
+		}
+	}
 	return nil
 }
 
@@ -832,6 +920,14 @@ func (b *Backend) Signer(ctx context.Context, attrs *types.KeyAttributes) (crypt
 		KeyId: aws.String(keyID),
 	})
 	if err != nil {
+		// Only KMS's NotFoundException (no key behind the alias or ID) is
+		// absence; any other failure stays a lookup failure, so a caller
+		// that provisions on absence never generates over a key it could
+		// not read.
+		var notFound *awstypes.NotFoundException
+		if errors.As(err, &notFound) {
+			return nil, &errs.Detail{Err: backend.ErrKeyNotFound, Detail: fmt.Sprintf("failed to get public key: %v", err)}
+		}
 		return nil, &errs.Wrapped{Msg: "failed to get public key", Err: err}
 	}
 

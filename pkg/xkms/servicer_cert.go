@@ -89,6 +89,9 @@ func (s *XKMSService) SaveCertificate(ctx context.Context, req *transport.SaveCe
 	if err = validation.ValidateKeyReference(req.KeyID); err != nil {
 		return &ErrKeyIDParse{Err: err}
 	}
+	if reservedErr := refuseReservedKey(req.KeyID); reservedErr != nil {
+		return reservedErr
+	}
 
 	cert, err := certFromPEM(req.CertificatePEM)
 	if err != nil {
@@ -118,6 +121,9 @@ func (s *XKMSService) DeleteCertificate(ctx context.Context, backendName, keyID 
 
 	if err = validation.ValidateKeyReference(keyID); err != nil {
 		return &ErrKeyIDParse{Err: err}
+	}
+	if reservedErr := refuseReservedKey(keyID); reservedErr != nil {
+		return reservedErr
 	}
 
 	if delErr := b.DeleteCert(ctx, keyID); delErr != nil {
@@ -221,6 +227,9 @@ func (s *XKMSService) SaveCertificateChain(ctx context.Context, req *transport.S
 
 	if err = validation.ValidateKeyReference(req.KeyID); err != nil {
 		return &ErrKeyIDParse{Err: err}
+	}
+	if reservedErr := refuseReservedKey(req.KeyID); reservedErr != nil {
+		return reservedErr
 	}
 
 	if len(req.ChainPEM) == 0 {
