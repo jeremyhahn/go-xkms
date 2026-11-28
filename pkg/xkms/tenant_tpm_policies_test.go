@@ -97,6 +97,14 @@ func TestTenantTPMPolicies_BranchUpdate(t *testing.T) {
 	require.ErrorIs(t, err, tpmpolicy.ErrNoReferenceSigner, "the branch update is the service's, which trusts no signer here")
 }
 
+// TestTPMPolicyUpdateRefusesUnsignedLiveCapture pins SPEC tpm-policies:
+// UpdatePolicy updates one named branch from a signed CoRIM, so a request
+// with neither a branch nor reference values (the old live re-capture) is
+// refused before the policy service runs, and nothing is re-approved.
+// An update without a branch is a re-approval, refused for a policy with a
+// pcr condition: TestTenantTPMPolicies_ReapprovesAPolicyWithoutAPCRCondition
+// (tpm_simulator) covers it, as creating a policy needs a TPM.
+
 // TestParseTPMObjectKind proves the API's object kinds map to the policy
 // service's, "" meaning a key, and any other kind is a typed error.
 func TestParseTPMObjectKind(t *testing.T) {

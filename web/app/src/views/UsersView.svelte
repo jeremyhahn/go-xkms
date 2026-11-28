@@ -118,7 +118,7 @@
           <tr>
             <td>{u.username}</td>
             <td>{u.display_name ?? "—"}</td>
-            <td>{u.role ?? "—"}</td>
+            <td>{u.roles?.join(", ") || "—"}</td>
             <td>{u.enabled ? "yes" : "no"}</td>
             <td class="text-right">
               {#if u.enabled}

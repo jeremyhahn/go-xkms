@@ -20,14 +20,21 @@ package cmd
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
@@ -46,12 +53,16 @@ func localSimTPMPolicies(t *testing.T, dataDir string) (*localtpm.Host, *slog.Lo
 	cfg := xkms.DefaultTPMConfig
 	require.NoError(t, xkmstest.EnrollPlatformSRK(opened.TPM(), &cfg))
 
+	// The signer comes from the data directory the way the CLI loads it.
+	params, err := localTPMPolicyParams(logger, dataDir, "", true)
+	require.NoError(t, err)
 	local, err := localtpm.Open(localtpm.Params{
-		TPM:       opened.TPM(),
-		Keys:      opened.Keys(),
-		DataDir:   dataDir,
-		OpenStore: openEngineStore,
-		Logger:    logger,
+		TPM:             opened.TPM(),
+		Keys:            opened.Keys(),
+		DataDir:         dataDir,
+		OpenStore:       openEngineStore,
+		Logger:          logger,
+		ReferenceSigner: params.ReferenceSigner,
 	})
 	require.NoError(t, err)
 	session := &localtpm.Host{Policies: local, Device: opened}
@@ -90,6 +101,40 @@ func TestTPMPolicyCommands_LocalModeLifecycle(t *testing.T) {
 
 	_, err = runTPMPolicyCommand(t, runTPMPolicyDelete, "boot")
 	require.NoError(t, err)
+}
+
+// TestTPMPolicyCommands_LocalSignedBranchUpdate proves xKey local mode
+// approves an expected platform change: with the trusted reference signer
+// in the data directory, update --branch --reference-values applies a CoRIM
+// that signer signed, and one signed by another key is refused.
+func TestTPMPolicyCommands_LocalSignedBranchUpdate(t *testing.T) {
+	dataDir := t.TempDir()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	writeReferenceSigner(t, dataDir, key)
+	localSimTPMPolicies(t, dataDir)
+	withTPMPolicyFlags(t, "23", "sha256", false, false)
+
+	_, err = runTPMPolicyCommand(t, runTPMPolicyCreate, "boot")
+	require.NoError(t, err)
+
+	next := sha256.Sum256([]byte("bootloader-v2"))
+	writeCoRIM := func(name string, signer *ecdsa.PrivateKey) string {
+		corimBytes, serr := appraisaltest.SignCoRIM(map[uint32][]byte{23: next[:]}, signer, nil)
+		require.NoError(t, serr)
+		path := filepath.Join(t.TempDir(), name)
+		require.NoError(t, os.WriteFile(path, corimBytes, 0o600))
+		return path
+	}
+
+	other, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	_, err = runTPMPolicyBranchUpdate(t, "branch-1", writeCoRIM("untrusted.corim", other))
+	require.Error(t, err, "a CoRIM from an untrusted signer must be refused")
+
+	out, err := runTPMPolicyBranchUpdate(t, "branch-1", writeCoRIM("boot.corim", key))
+	require.NoError(t, err)
+	assert.Contains(t, out, "approved: yes")
 }
 
 func TestTPMPolicyAutoUnseal_LocalSealsTheBarrierCredential(t *testing.T) {

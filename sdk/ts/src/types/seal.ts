@@ -28,26 +28,39 @@ export interface SealRequest {
 /** Mirrors pkg/api/rest/types.go SealResponse. */
 export interface SealResponse {
   backend: string;
-  ciphertext: Base64;
+  /** null for a TPM2 sealed object, which travels in tpm_public/tpm_private. */
+  ciphertext: Base64 | null;
   nonce?: Base64;
   tag?: Base64;
   metadata?: Record<string, Base64>;
   key_id?: string;
   /** The sealing key version; absent for a TPM2 sealed object. Pass it back on unseal. */
   key_version?: number;
+  /** The TPM2 sealed object's public area. Pass it back on unseal. */
+  tpm_public?: Base64;
+  /** The TPM2 sealed object's private area. Pass it back on unseal. */
+  tpm_private?: Base64;
+  /** An envelope-sealing backend's wrapped data-encryption key. Pass it back on unseal. */
+  wrapped_dek?: Base64;
 }
 
 /** Mirrors pkg/api/rest/types.go UnsealRequest. */
 export interface UnsealRequest {
   backend: string;
   key_id?: string;
-  ciphertext: Base64;
+  /** Omitted for a TPM2 sealed object. */
+  ciphertext?: Base64;
   nonce?: Base64;
   tag?: Base64;
   aad?: Base64;
   metadata?: Record<string, Base64>;
   /** The sealing key version the seal reported; omitted tries every enabled version. */
   key_version?: number;
+  tpm_public?: Base64;
+  tpm_private?: Base64;
+  wrapped_dek?: Base64;
+  /** The TPM2 sealed object's authorization value, as given on seal. */
+  password?: string;
 }
 
 /** Mirrors pkg/api/rest/types.go UnsealResponse. */

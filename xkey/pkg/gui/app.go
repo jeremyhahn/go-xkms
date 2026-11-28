@@ -2726,13 +2726,21 @@ func (a *App) ensureLocalTPMPolicies() {
 	if tpm == nil || factory == nil {
 		return
 	}
+	// The trusted reference-value signer verifies signed branch updates;
+	// an unreadable or invalid file leaves those updates refused.
+	signer, err := localtpm.LoadReferenceSigner(a.dataDir)
+	if err != nil {
+		a.log.Warn("TPM policies: reference signer unavailable", "file", localtpm.ReferenceSignerFile, "error", err)
+		signer = nil
+	}
 	local, err := localtpm.Open(localtpm.Params{
-		TPM:       tpm,
-		Keys:      factory.KeyBackend(),
-		DataDir:   a.dataDir,
-		OpenStore: a.openStore,
-		Lock:      a.tpmAccessor.Lock,
-		Logger:    a.log,
+		TPM:             tpm,
+		Keys:            factory.KeyBackend(),
+		DataDir:         a.dataDir,
+		OpenStore:       a.openStore,
+		Lock:            a.tpmAccessor.Lock,
+		Logger:          a.log,
+		ReferenceSigner: signer,
 	})
 	if err != nil {
 		a.log.Warn("TPM policies: local service unavailable", "error", err)

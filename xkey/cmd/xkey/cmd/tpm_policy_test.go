@@ -16,8 +16,13 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -31,6 +36,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/localtpm"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 )
@@ -231,6 +237,10 @@ func TestTPMPolicyUpdate_FromReferenceValues(t *testing.T) {
 	assert.Contains(t, out, "Branch:       name=next;pcr=sha256:7")
 	assert.Contains(t, out, fmt.Sprintf("(no id), sha256 %x", digest))
 
+	out, err = runTPMPolicyCommand(t, runTPMPolicyVerify, "boot")
+	require.NoError(t, err)
+	assert.Contains(t, out, fmt.Sprintf("  Reference: (no id), sha256 %x", digest), "verify prints the branch reference")
+
 	_, err = runTPMPolicyBranchUpdate(t, "", path)
 	assert.ErrorIs(t, err, xkms.ErrTPMPolicyBranchUpdate, "reference values without a branch")
 	_, err = runTPMPolicyBranchUpdate(t, "branch-1", path)
@@ -381,6 +391,49 @@ func TestOpenLocalTPMPolicies_FailsWithoutATPM(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	_, err := openLocalTPMPolicies(logger, t.TempDir(), filepath.Join(t.TempDir(), "no-such-tpm"), false)
 	assert.ErrorIs(t, err, ErrLocalTPMPoliciesOpenFailed)
+}
+
+// writeReferenceSigner writes key's public key as the trusted reference
+// signer file in dataDir.
+func writeReferenceSigner(t *testing.T, dataDir string, key *ecdsa.PrivateKey) {
+	t.Helper()
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
+	data := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, localtpm.ReferenceSignerFile), data, 0o600))
+}
+
+// TestLocalTPMPolicyParams_CarriesTheTrustedReferenceSigner proves the local
+// policy service the CLI opens trusts the signer named in the data
+// directory, so a signed branch update can verify in xKey local mode.
+func TestLocalTPMPolicyParams_CarriesTheTrustedReferenceSigner(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	dir := t.TempDir()
+
+	params, err := localTPMPolicyParams(logger, dir, "", true)
+	require.NoError(t, err)
+	assert.Nil(t, params.ReferenceSigner, "no signer file configures no signer")
+
+	writeReferenceSigner(t, dir, key)
+	params, err = localTPMPolicyParams(logger, dir, "", true)
+	require.NoError(t, err)
+	require.NotNil(t, params.ReferenceSigner)
+	assert.True(t, key.PublicKey.Equal(params.ReferenceSigner.PublicKey))
+	assert.Equal(t, dir, params.DataDir)
+	assert.True(t, params.UseSimulator)
+}
+
+// TestOpenLocalTPMPolicies_RefusesAnInvalidReferenceSigner proves a signer
+// file that names no key fails the open rather than silently trusting none.
+func TestOpenLocalTPMPolicies_RefusesAnInvalidReferenceSigner(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, localtpm.ReferenceSignerFile), []byte("not a key"), 0o600))
+	_, err := openLocalTPMPolicies(logger, dir, "", true)
+	assert.ErrorIs(t, err, ErrLocalTPMPoliciesOpenFailed)
+	assert.ErrorIs(t, err, localtpm.ErrReferenceSignerInvalid)
 }
 
 func TestTryBarrierPolicyAutoUnseal_FailsWithoutATPM(t *testing.T) {

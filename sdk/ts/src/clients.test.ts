@@ -297,7 +297,7 @@ describe('SshClient', () => {
     await c.ssh.verifyKnownHost('db1', {
       scope: 'user',
       owner: 'alice',
-      fingerprint: 'SHA256:x',
+      public_key: 'ssh-ed25519 AAAA',
     });
     expect(fake.calls[4]?.url).toBe(`${BASE}/xkms/v1/ssh/known-hosts/db1/verify`);
 

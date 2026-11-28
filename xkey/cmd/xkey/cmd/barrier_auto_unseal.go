@@ -34,11 +34,29 @@ var ErrLocalTPMPoliciesOpenFailed = errors.New("tpm policy: failed to open the l
 // registry under dataDir: the same service, over the same stores, as the
 // xKey GUI's local mode.
 func openLocalTPMPolicies(logger *slog.Logger, dataDir, device string, useSimulator bool) (*localtpm.Host, error) {
-	host, err := localtpm.OpenHost(tpmDeviceParams(logger, dataDir, device, useSimulator), openEngineStore)
+	params, err := localTPMPolicyParams(logger, dataDir, device, useSimulator)
+	if err != nil {
+		return nil, &SentinelCauseError{Sentinel: ErrLocalTPMPoliciesOpenFailed, Cause: err}
+	}
+	host, err := localtpm.OpenHost(params, openEngineStore)
 	if err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrLocalTPMPoliciesOpenFailed, Cause: err}
 	}
 	return host, nil
+}
+
+// localTPMPolicyParams are the local policy service's device parameters:
+// the TPM device and the trusted reference-value signer named by
+// localtpm.ReferenceSignerFile in dataDir, so signed branch updates
+// (xkey tpm policy update --branch --reference-values) verify locally.
+func localTPMPolicyParams(logger *slog.Logger, dataDir, device string, useSimulator bool) (localtpm.DeviceParams, error) {
+	params := tpmDeviceParams(logger, dataDir, device, useSimulator)
+	signer, err := localtpm.LoadReferenceSigner(dataDir)
+	if err != nil {
+		return params, err
+	}
+	params.ReferenceSigner = signer
+	return params, nil
 }
 
 // openEngineStore opens the store rooted at dir with the storage engine the

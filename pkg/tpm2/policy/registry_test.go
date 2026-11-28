@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"strings"
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -208,6 +209,37 @@ func TestRegistry_NodesOwnTheirRecords(t *testing.T) {
 	require.NoError(t, err, "deleting node 1's policy must leave node 2's")
 	_, err = nodeB.PolicyOf(ctx, "acme", "sealed/s")
 	require.NoError(t, err)
+}
+
+// TestRegistry_RecordKeysCarryTheNode proves each node's scope, policy and
+// assignment records are keyed "<node>/<tenant root>...", so the node's
+// identity is in the natural key and two nodes never share a key.
+func TestRegistry_RecordKeysCarryTheNode(t *testing.T) {
+	factory := testutil.NewMemoryDAOFactory()
+	nodeA, err := NewRegistry(factory, 1)
+	require.NoError(t, err)
+	nodeB, err := NewRegistry(factory, 2)
+	require.NoError(t, err)
+
+	keys := func(r *Registry) []string {
+		root, _, err := r.tenantRoot("acme")
+		require.NoError(t, err)
+		policy, _, err := r.policyKey("acme", "boot")
+		require.NoError(t, err)
+		assignment, _, err := r.assignmentKey("acme", "sealed/s")
+		require.NoError(t, err)
+		return []string{root, policy, assignment}
+	}
+	a, b := keys(nodeA), keys(nodeB)
+	for i := range a {
+		require.True(t, strings.HasPrefix(a[i], "1/"), "node 1 key %q", a[i])
+		require.True(t, strings.HasPrefix(b[i], "2/"), "node 2 key %q", b[i])
+		assert.Equal(t, strings.TrimPrefix(a[i], "1/"), strings.TrimPrefix(b[i], "2/"),
+			"the keys differ only in the node")
+		assert.Contains(t, a[i], "acme")
+	}
+	assert.True(t, strings.HasSuffix(a[1], "boot"))
+	assert.True(t, strings.HasSuffix(a[2], "sealed/s"))
 }
 
 // TestNewRegistry_RefusesAFactoryWithoutTheDatabase proves the registry is

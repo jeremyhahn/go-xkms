@@ -1,0 +1,1 @@
+- **Web console Certificate Binding view.** A new screen at `#/users/cert-bindings` (nav "Certificate Binding" under Certificates & CA, shown with users:update) lists a user's credentials and binds a client certificate thumbprint with a not-after date to the user, so an operator can set the user up for certificate (PIV / mTLS) login from the console.

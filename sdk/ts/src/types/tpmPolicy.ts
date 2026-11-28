@@ -50,9 +50,29 @@ export interface TPMPolicyCondition {
  * conditions, at most one of each type.
  */
 export interface TPMPolicyBranch {
+  /**
+   * The branch's name within its policy. A create request may omit it; the
+   * branch is then named branch-N, N its position counted from 1.
+   */
+  name?: string;
   conditions: TPMPolicyCondition[];
   /** Whether the branch holds an approval; reported on a policy only. */
   approved?: boolean;
+  /**
+   * The signed reference values the branch was last updated from; absent
+   * when its values were captured from the live PCRs. Reported on a policy only.
+   */
+  reference?: TPMPolicyReference;
+}
+
+/** Mirrors pkg/api/transport/types.go TPMPolicyReference. */
+export interface TPMPolicyReference {
+  /** The CoRIM's identifier, profile and signer; each absent when it omits it. */
+  id?: string;
+  profile?: string;
+  signer?: string;
+  /** SHA-256 digest of the signed CoRIM. */
+  digest: Base64;
 }
 
 /** Mirrors pkg/api/transport/types.go TPMPolicy: an OR of branches. */
@@ -98,6 +118,19 @@ export interface TPMPolicyListResponse {
 }
 
 /**
+ * The signed branch form of a PCR-policy update; mirrors the branch and
+ * reference_values fields of pkg/api/transport/types.go
+ * TPMPolicyUpdateRequest. The server refuses an update of a policy with a
+ * pcr condition unless both are set.
+ */
+export interface TPMPolicyBranchUpdate {
+  /** The name of the branch whose PCR values are replaced. */
+  branch: string;
+  /** Base64 of the COSE_Sign1 signed CoRIM carrying the branch's reference values. */
+  reference_values: string;
+}
+
+/**
  * Mirrors pkg/api/transport/types.go TPMPolicyDeleteRequest. Deletion is
  * refused (409) while any object is assigned to the policy.
  */
@@ -108,12 +141,16 @@ export interface TPMPolicyDeleteRequest {
 
 /** Mirrors pkg/api/transport/types.go TPMPolicyBranchVerification. */
 export interface TPMPolicyBranchVerification {
+  /** The branch's name. */
+  name: string;
   /** True when the branch's pcr condition, if any, still holds its values. */
   match: boolean;
   /** PCR indices that no longer match, ascending. */
   mismatched?: number[];
   /** Whether the branch's approval is current. */
   approved: boolean;
+  /** The signed reference values the branch is approved for; absent when captured live. */
+  reference?: TPMPolicyReference;
 }
 
 /**

@@ -16,6 +16,7 @@ package xkms
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 
@@ -103,20 +104,29 @@ func (t *TenantTPMPolicies) TPMPolicyGet(ctx context.Context, req *transport.TPM
 	return t.policyOp(ctx, req, (*tpmpolicy.Service).Policy)
 }
 
-// TPMPolicyUpdate re-captures a policy's PCR values and re-approves it at the
-// scope's next epoch. No object is re-keyed.
+// TPMPolicyUpdate updates one named branch of a policy from signed reference
+// values (a CoRIM) and re-approves it at the scope's next epoch. A request
+// without both the branch and its reference values (an unsigned live
+// re-capture) is refused with ErrTPMPolicyBranchUpdate. No object is re-keyed.
 func (t *TenantTPMPolicies) TPMPolicyUpdate(ctx context.Context, req *transport.TPMPolicyUpdateRequest) (*transport.TPMPolicy, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
-	if (req.Branch == "") != (len(req.ReferenceValues) == 0) {
+	var (
+		p   *tpmpolicy.Policy
+		err error
+	)
+	switch {
+	case req.Branch == "" && len(req.ReferenceValues) == 0:
+		// No reference values: only a policy without a pcr condition is
+		// re-approved; one with a pcr condition needs a signed named branch.
+		p, err = t.svc.ReapprovePolicy(ctx, t.tenant, req.Name)
+		if errors.Is(err, tpmpolicy.ErrPCRConditionNeedsReference) {
+			return nil, ErrTPMPolicyBranchUpdate
+		}
+	case req.Branch == "" || len(req.ReferenceValues) == 0:
 		return nil, ErrTPMPolicyBranchUpdate
-	}
-	var p *tpmpolicy.Policy
-	var err error
-	if req.Branch == "" {
-		p, err = t.svc.UpdatePolicy(ctx, t.tenant, req.Name)
-	} else {
+	default:
 		p, err = t.svc.UpdateBranch(ctx, t.tenant, req.Name, req.Branch, req.ReferenceValues)
 	}
 	if err != nil {

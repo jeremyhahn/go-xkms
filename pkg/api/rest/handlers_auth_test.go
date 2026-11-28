@@ -630,3 +630,22 @@ func TestCapabilityFlags_Cluster(t *testing.T) {
 		assert.False(t, server.capabilityFlags()["cluster"])
 	})
 }
+
+func TestCapabilityFlags_TrustRoots(t *testing.T) {
+	t.Run("trust root handlers wired", func(t *testing.T) {
+		server := &Server{trustRootHandlers: NewTrustRootHandlers(nil)}
+		assert.True(t, server.capabilityFlags()["trust_roots"])
+	})
+
+	t.Run("no trust root handlers", func(t *testing.T) {
+		server, err := NewServer(&Config{
+			Authenticator: auth.NewNoOpAuthenticator(),
+			Backends:      map[string]xkms.Backend{"test": newMockKeyStore()},
+		})
+		require.NoError(t, err)
+		flags := server.capabilityFlags()
+		value, ok := flags["trust_roots"]
+		assert.True(t, ok, "trust_roots key must be present")
+		assert.False(t, value)
+	})
+}

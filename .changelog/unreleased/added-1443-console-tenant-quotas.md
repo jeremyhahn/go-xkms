@@ -1,0 +1,1 @@
+- **Web console Tenant Quotas view.** `#/tenants/quotas` (Identity & Access, shown when tenants are wired and the identity holds `tenants:set_quotas`) sets a tenant's whole quota set through PUT `/api/v1/tenants/{tenantID}/quotas`, sending an empty field as 0, and shows the quotas the server stored.

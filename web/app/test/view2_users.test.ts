@@ -48,7 +48,7 @@ function user(over: Partial<UserInfo> = {}): UserInfo {
     id: "1",
     username: "alice",
     display_name: "Alice Admin",
-    role: "admin",
+    roles: ["admin"],
     enabled: true,
     created_at: "2026-01-01T00:00:00Z",
     ...over,

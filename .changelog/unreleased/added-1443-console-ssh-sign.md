@@ -1,0 +1,1 @@
+Web console: an SSH Sign view at `#/ssh/sign` signs a UTF-8 or base64 message with a stored SSH key through `POST /xkms/v1/ssh/keys/{scope}/{owner}/{name}/sign` and shows the signature format, blob and rest; the private key stays on the server, and the nav entry needs `ssh:write` and the ssh capability (#1443).

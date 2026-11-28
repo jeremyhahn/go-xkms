@@ -1,0 +1,1 @@
+- **TypeScript SDK signed PCR-policy update.** `tpmPolicies.update(name, tenantId, { branch, reference_values })` sends the branch and the base64 COSE_Sign1 signed CoRIM its reference values come from (the new `TPMPolicyBranchUpdate` type, mirroring `TPMPolicyUpdateRequest`), which the server requires to update a policy with a pcr condition.
