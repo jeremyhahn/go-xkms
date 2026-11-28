@@ -36,7 +36,7 @@ import (
 
 	wire "github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 	"github.com/quic-go/quic-go/http3"
 )
 
@@ -183,7 +183,7 @@ func (t *Transport) buildTLSConfig() (*tls.Config, error) {
 		// and both callbacks must pass.
 		if t.config.SPKIPin != "" {
 			tlsConfig.VerifyConnection = chainVerifyConnection(
-				tlsConfig.VerifyConnection, spki.VerifyConnection(t.config.SPKIPin))
+				tlsConfig.VerifyConnection, bootstrap.SPKIPinVerifyConnection(t.config.SPKIPin))
 		}
 
 		return tlsConfig, nil
@@ -218,7 +218,7 @@ func (t *Transport) buildTLSConfig() (*tls.Config, error) {
 
 	// SPKI pin verification
 	if t.config.SPKIPin != "" {
-		tlsConfig = spki.PinTLSConfig(tlsConfig, t.config.SPKIPin)
+		tlsConfig = bootstrap.PinTLSConfig(tlsConfig, t.config.SPKIPin)
 	}
 
 	return tlsConfig, nil

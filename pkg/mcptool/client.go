@@ -62,8 +62,8 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
+	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
 )
 
 // endpointPath is the Streamable HTTP path the unified qrdb MCP server
@@ -343,7 +343,7 @@ func (c *Client) buildTLSConfig() (*tls.Config, error) {
 	}
 
 	if c.config.SPKIPin != "" {
-		tlsConfig = spki.PinTLSConfig(tlsConfig, c.config.SPKIPin)
+		tlsConfig = bootstrap.PinTLSConfig(tlsConfig, c.config.SPKIPin)
 	}
 
 	return tlsConfig, nil

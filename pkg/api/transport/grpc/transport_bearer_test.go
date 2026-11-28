@@ -34,9 +34,9 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/metadata"
 
+	"github.com/jeremyhahn/go-truststrap/pkg/spkipin"
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
-	"github.com/jeremyhahn/go-xkms/pkg/crypto/spki"
 )
 
 // authRecordingServer records the authorization metadata of each Health
@@ -152,8 +152,7 @@ func TestConnect_UntrustedServerIsRefused(t *testing.T) {
 // chains to no CA the client holds: the SPKI pin is the trust anchor (#794).
 func TestConnect_SPKIPinTrustsServerWithoutCA(t *testing.T) {
 	addr, leaf := tlsServerLeaf(t, &authRecordingServer{})
-	pin, err := spki.ComputePin(leaf)
-	require.NoError(t, err)
+	pin := spkipin.ComputeSPKIPin(leaf)
 
 	tr, err := New(transport.WithAddress(addr), transport.WithSPKIPin(pin))
 	require.NoError(t, err)
