@@ -226,6 +226,27 @@ func (s *DAOStore) List(ctx context.Context, sc scope.Scope, owner string) ([]*K
 	return out, nil
 }
 
+// ImportLegacy upserts a key the pre-DAO sealed-KV store wrote: rel is its
+// old key below the tenant root and data its JSON. It is the per-record step
+// of the SSH store migrator (pkg/ssh/migrate) and returns the
+// records.Table.Import errors.
+func (s *DAOStore) ImportLegacy(ctx context.Context, rel string, data []byte) error {
+	return s.table.Import(ctx, rel, data, checkLegacy)
+}
+
+// checkLegacy refuses a pre-DAO key whose public key does not parse or that
+// holds neither material nor a backend reference, as Put does.
+func checkLegacy(e *records.Entity[envelope]) error {
+	k, err := entityToKeyMetaOnly(e)
+	if err != nil {
+		return err
+	}
+	if len(e.Body.MaterialPEM) == 0 && !k.IsBackendBacked() {
+		return &NilInputError{Field: "key.Material"}
+	}
+	return nil
+}
+
 // notFound returns the *KeyNotFoundError of (sc, owner, name), identified
 // by the key's "<scope>/<owner>/<name>" ID. The components were validated by
 // RecordPath, so the ID is well-formed.
