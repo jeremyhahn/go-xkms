@@ -26,7 +26,7 @@ func TestCITemplateV151Note(t *testing.T) {
 }
 
 // TestCITemplateV153MainEventGroup pins ci.yml v1.53 (handbook 88c10e76,
-// ruling 1087), under v1.62's header (its runner selection, handbook
+// ruling 1087), under v1.63's header (its runner selection, handbook
 // 1ad68ab8, b18e6499 and 1bea157, ruling 1137): main runs share one concurrency group per event, so a newer
 // main run cancels the older run, except a push to main, which v1.61 groups by its sha; a schedule run keeps its repository group
 // and every other ref keeps github.ref. CI Gate runs on !cancelled() off
@@ -39,7 +39,8 @@ func TestCITemplateV153MainEventGroup(t *testing.T) {
 		t.Fatalf("read %s: %v", ciWorkflow, err)
 	}
 	for _, want := range []*regexp.Regexp{
-		regexp.MustCompile(`\A# ci-template: v1\.62 pool overflow \+ v1\.61 main-push group on v1\.59 runner selection on v1\.34\.1 \+ v1\.42 hermetic gate \(customized\)\n`),
+		regexp.MustCompile(`\A# ci-template: v1\.63 main-only runner label \+ v1\.62 pool overflow \+ v1\.61 main-push group on v1\.59 runner selection on v1\.34\.1 \+ v1\.42 hermetic gate \(customized\)\n`),
+		regexp.MustCompile(`(?m)^# v1\.63 \(`),
 		regexp.MustCompile(`(?m)^# v1\.62 \(`),
 		regexp.MustCompile(`(?m)^# v1\.61 \(`),
 		regexp.MustCompile(`(?m)^# v1\.60 \(handbook 1bea157, #123\): `),
