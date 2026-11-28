@@ -1099,7 +1099,7 @@ jobs:
             done
             if [ "$mainok" = 1 ]; then
               echo "::notice::runner selection: a push to main with CI_MAIN_RUNNER_LABEL=$ML and CI_MAIN_RUNNER_LABEL_DOCKER=$MLD set; this run's jobs run on the main-only runners, which no pull request job can take, and no count is made (ci-template v1.63)"
-              emit "$(selfhosted "$ML")" "$(selfhosted "$MLD")" "$(selfhosted "$MLD")"  # go-xkms: runner_integration takes the docker main label
+              emit "$(selfhosted "$ML")" "$(selfhosted "$MLD")" "$(selfhosted "$MLD")"  # go-xkms: runner_integration takes the MLD label
               exit 0
             fi
           fi
