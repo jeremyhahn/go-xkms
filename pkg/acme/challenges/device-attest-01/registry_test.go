@@ -64,6 +64,53 @@ func registryVerifier(t *testing.T, anchors TrustAnchors) *TrustAnchorVerifier {
 	return verifier
 }
 
+// TestApplicationReference covers how finalize obtains the reference the
+// possession request's application evidence must match: the provisioning
+// record's ApplicationReference, re-read from the registry, refused when
+// it is not 32 bytes, and refused when absent (docs/SPEC.md:41).
+func TestApplicationReference(t *testing.T) {
+	leafDER, key := newDICEAlias(t, DICENonce(diceKeyAuth))
+	spki, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	require.NoError(t, err)
+	reference := mustHex(t, vectorApplicationEvidence)
+	verified := &VerifiedAttestation{Format: FormatDICE, KeyAuthorization: diceKeyAuth, LeafDER: leafDER, AttestedSPKI: spki}
+	verifierFor := func(policy DICEPolicy, ref []byte) *TrustAnchorVerifier {
+		return registryVerifier(t, TrustAnchors{DICE: policy, Devices: resolverFunc(func(context.Context, string) (*ProvisionedDevice, error) {
+			return &ProvisionedDevice{DeviceIDKey: spki, ApplicationReference: ref}, nil
+		})})
+	}
+	t.Run("the registered reference is returned", func(t *testing.T) {
+		got, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, reference))
+		require.NoError(t, err)
+		assert.Equal(t, reference, got)
+	})
+	t.Run("a missing reference is refused with the default policy", func(t *testing.T) {
+		got, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, nil))
+		assert.ErrorIs(t, err, ErrPossessionApplicationEvidenceMismatch)
+		assert.Nil(t, got)
+	})
+	for name, ref := range map[string][]byte{
+		"a 31-byte reference": reference[:31],
+		"a 33-byte reference": append(bytes.Clone(reference), 0x00),
+	} {
+		t.Run(name+" makes the record invalid", func(t *testing.T) {
+			_, err := verified.ApplicationReference(context.Background(), verifierFor(DICEPolicy{}, ref))
+			assert.ErrorIs(t, err, ErrProvisioningRecordInvalid)
+			assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
+			assert.ErrorIs(t, verifierFor(DICEPolicy{}, ref).ConfirmRegisteredDevice(context.Background(), nil, "00", spki, nil), ErrProvisioningRecordInvalid)
+		})
+	}
+	t.Run("a non-DICE attestation has no reference", func(t *testing.T) {
+		got, err := (&VerifiedAttestation{Format: FormatTPM}).ApplicationReference(context.Background(), nil)
+		require.NoError(t, err)
+		assert.Nil(t, got)
+	})
+	t.Run("a verifier without a registry is refused", func(t *testing.T) {
+		_, err := verified.ApplicationReference(context.Background(), nil)
+		assert.ErrorIs(t, err, ErrNoDeviceResolver)
+	})
+}
+
 // provisionedFor is a verifier whose registry provisions key as the DeviceID
 // key of the device named diceUeid: the raw-key path.
 func provisionedFor(t *testing.T, key *ecdsa.PrivateKey) *TrustAnchorVerifier {
@@ -307,31 +354,31 @@ func TestConfirmRegisteredDevice(t *testing.T) {
 	spki := spkiOf(t, deviceKey)
 
 	t.Run("an unchanged record confirms", func(t *testing.T) {
-		require.NoError(t, provisionedFor(t, deviceKey).ConfirmRegisteredDevice(ctx, ueid, spki, nil))
+		require.NoError(t, provisionedFor(t, deviceKey).ConfirmRegisteredDevice(ctx, nil, ueid, spki, nil))
 	})
 
 	t.Run("an unchanged DeviceID certificate confirms", func(t *testing.T) {
 		fixture := newDICEFixture(t, nil, true, true, true)
 		v := fixture.verifier(t, DICEPolicy{})
-		require.NoError(t, v.ConfirmRegisteredDevice(ctx, ueid, fixture.deviceID.RawSubjectPublicKeyInfo, nil))
+		require.NoError(t, v.ConfirmRegisteredDevice(ctx, nil, ueid, fixture.deviceID.RawSubjectPublicKeyInfo, nil))
 	})
 
 	t.Run("a withdrawn device is refused", func(t *testing.T) {
 		v := registryVerifier(t, TrustAnchors{Devices: testRegistry{}})
-		err := v.ConfirmRegisteredDevice(ctx, ueid, spki, nil)
+		err := v.ConfirmRegisteredDevice(ctx, nil, ueid, spki, nil)
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 		assert.ErrorIs(t, err, ErrDeviceNotProvisioned)
 	})
 
 	t.Run("a re-keyed device is refused", func(t *testing.T) {
-		err := provisionedFor(t, newP256Key(t)).ConfirmRegisteredDevice(ctx, ueid, spki, nil)
+		err := provisionedFor(t, newP256Key(t)).ConfirmRegisteredDevice(ctx, nil, ueid, spki, nil)
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 		assert.ErrorIs(t, err, ErrAttestedKeyMismatch)
 	})
 
 	t.Run("a DeviceID certificate that no longer parses is refused", func(t *testing.T) {
 		v := registryVerifier(t, TrustAnchors{Devices: testRegistry{ueid: {DeviceIDCertificate: []byte{0x30, 0x00}}}})
-		err := v.ConfirmRegisteredDevice(ctx, ueid, spki, nil)
+		err := v.ConfirmRegisteredDevice(ctx, nil, ueid, spki, nil)
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 		assert.ErrorIs(t, err, ErrProvisioningRecordInvalid)
 	})
@@ -344,15 +391,15 @@ func TestConfirmRegistration(t *testing.T) {
 	require.NoError(t, err)
 
 	t.Run("a device the registry still vouches for confirms", func(t *testing.T) {
-		require.NoError(t, verified.ConfirmRegistration(ctx, provisionedFor(t, deviceKey)))
+		require.NoError(t, verified.ConfirmRegistration(ctx, provisionedFor(t, deviceKey), nil))
 	})
 
 	t.Run("a re-keyed device is refused", func(t *testing.T) {
-		assert.ErrorIs(t, verified.ConfirmRegistration(ctx, provisionedFor(t, newP256Key(t))), ErrDeviceNotAuthorized)
+		assert.ErrorIs(t, verified.ConfirmRegistration(ctx, provisionedFor(t, newP256Key(t)), nil), ErrDeviceNotAuthorized)
 	})
 
 	t.Run("a verifier that cannot consult a registry refuses", func(t *testing.T) {
-		err := verified.ConfirmRegistration(ctx, &mockCA{})
+		err := verified.ConfirmRegistration(ctx, &mockCA{}, nil)
 		assert.ErrorIs(t, err, ErrDeviceNotAuthorized)
 		assert.ErrorIs(t, err, ErrNoDeviceResolver)
 	})
@@ -360,15 +407,15 @@ func TestConfirmRegistration(t *testing.T) {
 	t.Run("a leaf that names no device is refused", func(t *testing.T) {
 		noUeid := newDICEFixture(t, DICENonce(diceKeyAuth), false, true, true)
 		record := &VerifiedAttestation{Format: FormatDICE, KeyAuthorization: diceKeyAuth, LeafDER: noUeid.leafDER, AttestedSPKI: verified.AttestedSPKI}
-		assert.ErrorIs(t, record.ConfirmRegistration(ctx, provisionedFor(t, deviceKey)), ErrDeviceNotAuthorized)
+		assert.ErrorIs(t, record.ConfirmRegistration(ctx, provisionedFor(t, deviceKey), nil), ErrDeviceNotAuthorized)
 	})
 
 	t.Run("no record is refused", func(t *testing.T) {
 		var missing *VerifiedAttestation
-		assert.ErrorIs(t, missing.ConfirmRegistration(ctx, provisionedFor(t, deviceKey)), ErrNoVerifiedAttestation)
+		assert.ErrorIs(t, missing.ConfirmRegistration(ctx, provisionedFor(t, deviceKey), nil), ErrNoVerifiedAttestation)
 	})
 
 	t.Run("a tpm attestation has nothing to confirm", func(t *testing.T) {
-		require.NoError(t, (&VerifiedAttestation{Format: FormatTPM}).ConfirmRegistration(ctx, &mockCA{}))
+		require.NoError(t, (&VerifiedAttestation{Format: FormatTPM}).ConfirmRegistration(ctx, &mockCA{}, nil))
 	})
 }

@@ -112,9 +112,17 @@ type ProvisionedDevice struct {
 	// for the device. When set, the alias certificate's UCCS measurements
 	// claim (273) must carry exactly these bytes, at the challenge and again
 	// at finalization (dice.VerifyOptions.ApplicationReference); a differing
-	// one is dice.ErrApplicationEvidenceMismatch. Nil leaves it unchecked.
+	// one is dice.ErrApplicationEvidenceMismatch. It is also the value the
+	// possession request's measurements must carry at finalize
+	// (VerifiedAttestation.VerifyPossessionCSR), where a device registered
+	// without one is refused. A record whose reference is set with any other
+	// length is refused.
 	ApplicationReference []byte
 }
+
+// ApplicationReferenceSize is the length of a registered application
+// reference: the 32-byte hash-entry value the possession request carries.
+const ApplicationReferenceSize = 32
 
 // DICEPolicy is the policy a DICE alias certificate must meet. Each field is a
 // requirement of dice.VerifyOptions; the zero value is the strictest operational
