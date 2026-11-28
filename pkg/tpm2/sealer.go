@@ -209,7 +209,7 @@ func (tpm *TPM2) Seal(ctx context.Context, data []byte, opts *types.SealOptions)
 	}
 
 	// Call the internal seal operation
-	sealResponse, err := tpm.SealKey(keyAttrs, backend, true)
+	sealResponse, err := tpm.sealKey(ctx, keyAttrs, backend, true)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrSealFailed, Cause: err}
 	}
@@ -383,8 +383,14 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 			return nil, types.SealedDataAuthenticationError("", err)
 		}
 		tpm.logger.Debug("unseal: using provided TPMPublic/TPMPrivate blobs directly")
-		secret, err := tpm.unsealFromBlobs(keyAttrs, backend, sealed.TPMPublic, sealed.TPMPrivate)
+		secret, err := tpm.unsealFromBlobs(ctx, keyAttrs, backend, sealed.TPMPublic, sealed.TPMPrivate)
 		if err != nil {
+			return nil, err
+		}
+		// A context that ended while the call's handles were flushed still
+		// fails it: the secret is wiped, not returned.
+		if err := ctx.Err(); err != nil {
+			enclave.Wipe(secret)
 			return nil, err
 		}
 		return openSealAAD(secret, opts.AAD)
@@ -398,6 +404,10 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 	secret, err := tpm.UnsealKey(keyAttrs, backend)
 	if err != nil {
 		return nil, &errs.Joined{Lead: ErrUnsealFailed, Cause: err}
+	}
+	if err := ctx.Err(); err != nil {
+		enclave.Wipe(secret)
+		return nil, err
 	}
 
 	return openSealAAD(secret, opts.AAD)
@@ -413,10 +423,21 @@ func (tpm *TPM2) SealKey(
 	backend KeyBackend,
 	overwrite bool) (*tpm2.CreateResponse, error) {
 
+	return tpm.sealKey(context.Background(), keyAttrs, backend, overwrite)
+}
+
+// sealKey is SealKey under ctx: a context that ends between TPM commands
+// fails the seal with its error before the key pair is saved.
+func (tpm *TPM2) sealKey(
+	ctx context.Context,
+	keyAttrs *types.KeyAttributes,
+	backend KeyBackend,
+	overwrite bool) (*tpm2.CreateResponse, error) {
+
 	if err := requireSealProtection(keyAttrs); err != nil {
 		return nil, err
 	}
-	return tpm.sealKeyInternal(keyAttrs, backend, overwrite)
+	return tpm.sealKeyInternal(ctx, keyAttrs, backend, overwrite)
 }
 
 // UnsealKey is the internal method that returns sealed data for a keyed hash.

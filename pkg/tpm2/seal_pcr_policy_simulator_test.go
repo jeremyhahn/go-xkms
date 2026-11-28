@@ -1537,7 +1537,7 @@ func TestSealKey_NilParent_Rejected(t *testing.T) {
 	assert.Nil(t, out)
 	assert.ErrorIs(t, err, store.ErrInvalidParentAttributes)
 
-	out, err = h.TPM.unsealFromBlobs(keyAttrs, nil, []byte{0x01}, []byte{0x02})
+	out, err = h.TPM.unsealFromBlobs(context.Background(), keyAttrs, nil, []byte{0x01}, []byte{0x02})
 	assert.Nil(t, out)
 	assert.ErrorIs(t, err, store.ErrInvalidParentAttributes)
 }
@@ -1611,7 +1611,7 @@ func TestUnsealFromBlobs_RoundTripAndTamper(t *testing.T) {
 	pub := resp.OutPublic.Bytes()
 	priv := resp.OutPrivate.Buffer
 
-	got, err := h.TPM.unsealFromBlobs(keyAttrs, nil, pub, priv)
+	got, err := h.TPM.unsealFromBlobs(context.Background(), keyAttrs, nil, pub, priv)
 	require.NoError(t, err, "unsealing from in-memory blobs must round-trip")
 	assert.Equal(t, secret, got)
 
@@ -1619,7 +1619,7 @@ func TestUnsealFromBlobs_RoundTripAndTamper(t *testing.T) {
 	tampered := make([]byte, len(priv))
 	copy(tampered, priv)
 	tampered[0] ^= 0x01
-	out, err := h.TPM.unsealFromBlobs(keyAttrs, nil, pub, tampered)
+	out, err := h.TPM.unsealFromBlobs(context.Background(), keyAttrs, nil, pub, tampered)
 	require.Error(t, err)
 	assert.Nil(t, out)
 
@@ -1629,7 +1629,7 @@ func TestUnsealFromBlobs_RoundTripAndTamper(t *testing.T) {
 	otherResp, err := h.TPM.SealKey(other, h.Backend, true)
 	require.NoError(t, err)
 
-	out, err = h.TPM.unsealFromBlobs(keyAttrs, nil, otherResp.OutPublic.Bytes(), priv)
+	out, err = h.TPM.unsealFromBlobs(context.Background(), keyAttrs, nil, otherResp.OutPublic.Bytes(), priv)
 	require.Error(t, err, "a mismatched public/private pair must not load")
 	assert.Nil(t, out)
 }

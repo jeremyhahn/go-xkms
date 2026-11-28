@@ -1,0 +1,1 @@
+- **TPM-equivalence proof for the enclave provider and cancellation between TPM commands in seal/unseal.** `docs/enclaveprovider/tpm-equivalence.md` maps go-enclave's `backends/tpm` to go-xkms (EQUIVALENT 17, GAP 7, N/A 7), and `pkg/tpm2` Seal and Unseal now return the context's error, persisting nothing and leaving no handle, when the context ends between TPM commands.
