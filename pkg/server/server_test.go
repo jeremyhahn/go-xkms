@@ -876,6 +876,23 @@ func TestServer_InitializeAuthentication_JWT_Success(t *testing.T) {
 	assert.Equal(t, "jwt", server.authenticator.Name())
 }
 
+func TestServer_New_JWTTypeWithMTLSFlagAndNoClientAuth(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	cfg.Auth.Type = "jwt"
+	cfg.Auth.MTLS = true
+	cfg.TLS.ClientAuth = "none"
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, server)
+	defer func() { _ = server.Shutdown() }()
+
+	assert.Equal(t, "jwt", server.authenticator.Name())
+}
+
 // TestServer_InitializeAuthentication_CompositeDerived proves the derived
 // composite chain: with a JWT key configured and TLS off, the chain resolves
 // to the JWT authenticator alone — a real authenticator, never a no-op.

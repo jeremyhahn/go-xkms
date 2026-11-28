@@ -75,3 +75,20 @@ func TestValidateAllowsNoClientAuthWithoutMTLSAdmin(t *testing.T) {
 		t.Fatalf("Validate() with a JWT-only chain: %v", err)
 	}
 }
+
+// auth.type jwt selects only the JWT authenticator, so the mtls flag alone
+// does not make the listener ask for a client certificate.
+func TestValidateAllowsJWTTypeWithMTLSFlagAndNoClientAuth(t *testing.T) {
+	path := filepath.Join("..", "..", "configs", "xkmsd.yaml")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load(%s): %v", path, err)
+	}
+	cfg.Auth.Type = "jwt"
+	cfg.Auth.Composite = nil
+	cfg.Auth.MTLS = true
+	cfg.TLS.ClientAuth = "none"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() with auth.type jwt and auth.mtls true: %v", err)
+	}
+}
