@@ -155,7 +155,7 @@ func (f *qrdbInviteFixture) redeemPIV(cert *x509.Certificate) error {
 	return err
 }
 
-// newInviteQRDBNode starts a standalone qrdb node holding the system\n// tenant, callable as the xkms service principal.
+// newInviteQRDBNode starts a sealed standalone qrdb node, with its login CA and certificate target guard, callable as the xkms service principal.
 func newInviteQRDBNode(t *testing.T) *qrdbnode.Node {
 	t.Helper()
 	ctx := context.Background()
@@ -167,7 +167,8 @@ func newInviteQRDBNode(t *testing.T) *qrdbnode.Node {
 	cfg.Protocols.QUIC = false
 	cfg.Protocols.Unix = false
 	cfg.Protocols.MCP = false
-	cfg.Seal.Enabled = false
+	cfg.Seal.Enabled = true
+	cfg.Seal.Strategy = "none"
 
 	node, err := qrdbnode.NewStandaloneNode(ctx, cfg, nil, serviceprincipal.Option(),
 		qrdbnode.WithAuthorizerWrapper(func(inner qrdbauth.Authorizer) qrdbauth.Authorizer {
@@ -303,11 +304,11 @@ func TestActivateInvitePIV_QRDB_AdminDisableBeforeWriteWins(t *testing.T) {
 	f.hooked.beforeActivate = disable
 
 	err := f.redeemPIV(leaves[0])
-	require.ErrorIs(t, err, ErrInviteUnusable)
 
 	u := f.account(t)
-	assert.Equal(t, string(qrdbsdk.LifecycleDisabled), u.Lifecycle)
+	assert.Equal(t, string(qrdbsdk.LifecycleDisabled), u.Lifecycle, "the activation must not re-activate the disabled account")
 	assert.Empty(t, u.CertBindings, "no certificate is bound to the disabled account")
+	assert.ErrorIs(t, err, ErrInviteUnusable)
 	f.requireNotRedeemed(t)
 }
 
@@ -326,8 +327,7 @@ func TestFinishInviteRegistration_QRDB_AdminDisableBeforeActivateWins(t *testing
 	_, err = f.svc.FinishInviteRegistration(f.ctx, &xkmstransport.FinishInviteRegistrationRequest{
 		TenantID: qrdbInviteTenant, Token: f.token, SessionID: begin.SessionID, AttestationJSON: attestation,
 	})
-	require.ErrorIs(t, err, ErrInviteUnusable)
-
-	assert.Equal(t, string(qrdbsdk.LifecycleDisabled), f.account(t).Lifecycle)
+	assert.Equal(t, string(qrdbsdk.LifecycleDisabled), f.account(t).Lifecycle, "the activation must not overwrite the disable")
+	assert.ErrorIs(t, err, ErrInviteUnusable)
 	f.requireNotRedeemed(t)
 }
