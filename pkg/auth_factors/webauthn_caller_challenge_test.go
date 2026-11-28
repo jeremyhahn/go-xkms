@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/descope/virtualwebauthn"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
 	"github.com/stretchr/testify/require"
 
@@ -74,4 +75,35 @@ func TestWebAuthnFactorVerifier_CallerChallenge(t *testing.T) {
 		var missing *MissingMethodMetadataError
 		require.ErrorAs(t, f.verifyNonce(nil, f.callerAssertion(t, nonce, 11)), &missing)
 	})
+}
+
+// TestWebAuthnFactorVerifier_CallerChallengeRefusesSuspendedAccount proves a
+// valid nonce assertion does not verify once its account is suspended.
+func TestWebAuthnFactorVerifier_CallerChallengeRefusesSuspendedAccount(t *testing.T) {
+	f := newFactorFixture(t, "nonce-suspended@example.com")
+	nonce := []byte("caller-held-nonce-0123456789abcd")
+	f.setStanding(t, qrdbsdk.LifecycleSuspended, nil)
+	require.Error(t, f.verifyNonce(nonce, f.callerAssertion(t, nonce, 5)))
+}
+
+// TestWebAuthnFactorVerifier_CallerChallengeRefusesWithdrawnMethod proves a
+// valid nonce assertion does not verify once WebAuthn leaves the account's
+// AuthMethods.
+func TestWebAuthnFactorVerifier_CallerChallengeRefusesWithdrawnMethod(t *testing.T) {
+	f := newFactorFixture(t, "nonce-withdrawn@example.com")
+	nonce := []byte("caller-held-nonce-0123456789abcd")
+	f.setStanding(t, qrdbsdk.LifecycleActive, []string{"piv"})
+	require.Error(t, f.verifyNonce(nonce, f.callerAssertion(t, nonce, 5)))
+}
+
+// TestWebAuthnFactorVerifier_CallerChallengeSignatureNoMetadata proves a
+// nonce challenge carrying the assertion in Signature needs no MethodMetadata.
+func TestWebAuthnFactorVerifier_CallerChallengeSignatureNoMetadata(t *testing.T) {
+	f := newFactorFixture(t, "nonce-signature@example.com")
+	nonce := []byte("caller-held-nonce-0123456789abcd")
+	require.NoError(t, f.v.Verify(context.Background(), f.factor, qrdbtransport.VerifyChallenge{
+		Type:      qrdbtransport.FactorTypeFIDO2,
+		Nonce:     nonce,
+		Signature: []byte(f.callerAssertion(t, nonce, 5)),
+	}))
 }
