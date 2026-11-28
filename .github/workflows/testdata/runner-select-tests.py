@@ -34,6 +34,12 @@ also fails a case whose curl command line carries the token.
      this repository (a fork, or one since deleted) gets the hosted default
      with a ::notice and no call, even when self-hosted would win; a
      same-repository pull request and a push still balance.
+  O. ci-template v1.62 overflow (Tenant Agent ruling 13:41Z 11-27): a public
+     repository whose oldest queued bigdisk or bigdisk-docker job waited
+     more than WAIT_LIMIT (600 s) goes hosted when the hosted pool has a
+     free slot, even where self-hosted would win on use; a shorter wait, a
+     private repository (or none read), a full hosted pool, and old jobs
+     that are in progress rather than queued keep the v1.60 choice.
 
 Run: python3 -I software/templates/github-actions/testdata/runner-select-tests.py
 """
@@ -120,7 +126,7 @@ def jobs(*js, total=None):
     return json.dumps({"total_count": len(js) if total is None else total, "jobs": list(js)})
 
 
-def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="push", head="", ref="refs/heads/main"):
+def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="push", head="", ref="refs/heads/main", private="false"):
     with tempfile.TemporaryDirectory() as d:
         d = pathlib.Path(d)
         (d / "bin").mkdir()
@@ -139,6 +145,7 @@ def run(resp, server="https://github.com", hs="10", c1="10", c2="10", event="pus
             "SERVER": server, "API": "https://api.github.com/repos/o/r/actions", "RUN_ID": "100",
             "JOB_TOKEN": TOKEN, "HS": hs, "C1": c1, "C2": c2,
             "EVENT": event, "HEAD_REPO": head, "REPO": "o/r", "REF": ref,
+            "PRIVATE": private, "WAIT_LIMIT": "600",
         }
         p = subprocess.run(["bash", "--noprofile", "--norc", "-eo", "pipefail", str(d / "step.sh")],
                            env=env, capture_output=True, text=True, timeout=60)
@@ -189,7 +196,7 @@ case("A1 hosted use lower: hosted",
      ["hosted 2 of CI_HOSTED_SHARE=10", "bigdisk 5 of CI_SELF_HOSTED_BIGDISK=10", "bigdisk-docker 0 of CI_SELF_HOSTED_BIGDISK_DOCKER=10"], ["::warning::"])
 case("A2 self-hosted use lower: self-hosted",
      pool(h=5, s1=2, s2=2), SELF, SELF_D, ["::notice::", "run on the Dells"], ["::warning::"])
-case("A3 equal use: self-hosted (a tie goes self-hosted)",
+case("A3 equal use: self-hosted",
      pool(h=3, s2=3), SELF, SELF_D, ["use hosted 3/10, bigdisk 0/10, bigdisk-docker 3/10"])
 case("A4 equal use by cross-multiplication (2/10 against 4/20): self-hosted",
      pool(h=2, s1=4), SELF, SELF_D, c1="20")
@@ -238,8 +245,8 @@ case("B5 both full, self-hosted queue shorter: self-hosted",
      pool(h=6, hq=4, s1=9, s1q=1), SELF, SELF_D, ["both pools full: hosted 4 queued, self-hosted 1 queued"])
 case("B6 both full, hosted queue shorter: hosted",
      pool(h=10, hq=1, s1=5, s2=8, s2q=2), HOSTED, HOSTED, ["both pools full: hosted 1 queued, self-hosted 2 queued"])
-case("B7 both full, the self-hosted queue counts both kinds (2 against 2, a tie: self-hosted)",
-     pool(h=8, hq=2, s1=8, s1q=1, s2=9, s2q=1), SELF, SELF_D, ["self-hosted 2 queued"])
+case("B7 both full, the self-hosted queue counts both kinds",
+     pool(h=9, hq=1, s1=8, s1q=1, s2=9, s2q=1), HOSTED, HOSTED, ["hosted 1 queued, self-hosted 2 queued"])
 case("B8 both full, equal queues: self-hosted",
      pool(h=12, s1=12), SELF, SELF_D, ["both pools full: hosted 0 queued, self-hosted 0 queued"])
 
@@ -315,29 +322,47 @@ case("E5 a push still balances",
 case("E6 off github.com a fork keeps the forge labels: no call, no fork notice",
      [], HOSTED, HOSTED, ["not github.com"], ["a fork"], calls=0, server="gitea", event="pull_request", head="fork/r")
 
-# G. events the self-hosted runners refuse (v1.60): only a push to main or a
-# pull request selects; every other event gets the hosted default, no call.
-for label, ev, rf in [("a workflow_dispatch on main", "workflow_dispatch", "refs/heads/main"),
-                      ("a workflow_dispatch on a branch", "workflow_dispatch", "refs/heads/row/1-x"),
-                      ("a schedule", "schedule", "refs/heads/main"),
-                      ("a push to a branch other than main", "push", "refs/heads/row/1-x")]:
-    case(f"G {label}: hosted, with a notice, no call",
-         WIN, HOSTED, HOSTED, ["::notice::", f"event {ev} on {rf}", "self-hosted runners refuse"],
-         ["::warning::", "run on the Dells"], calls=0, event=ev, ref=rf)
-case("G a push to main still selects",
-     WIN, SELF, SELF_D, ["run on the Dells"], ["self-hosted runners refuse"], event="push", ref="refs/heads/main")
-case("G a same-repository pull request still selects",
-     WIN, SELF, SELF_D, ["run on the Dells"], ["self-hosted runners refuse"],
-     event="pull_request", head="o/r", ref="refs/pull/7/merge")
-case("G a tie (equal use) goes self-hosted",
-     pool(h=4, s1=4), SELF, SELF_D, ["use hosted 4/10, bigdisk 4/10"])
-case("G both pools full with equal queues goes self-hosted",
-     pool(h=10, hq=1, s1=10, s1q=1), SELF, SELF_D, ["both pools full: hosted 1 queued, self-hosted 1 queued"])
+# G. an event the self-hosted runners refuse (their job-started hook takes a
+# push to main and a same-repository pull request only): hosted, no call,
+# even where self-hosted would win.
+for label, event, ref in (("a schedule", "schedule", "refs/heads/main"),
+                          ("a workflow_dispatch on main", "workflow_dispatch", "refs/heads/main"),
+                          ("a push of another branch", "push", "refs/heads/feature"),
+                          ("a same-repository pull_request_target", "pull_request_target", "refs/heads/main")):
+    case(f"G1 {label}: hosted, no call", WIN, HOSTED, HOSTED,
+         ["::notice::", f"event {event} on {ref}", "which the self-hosted runners refuse"], ["::warning::"],
+         calls=0, event=event, ref=ref, head="o/r")
+case("G2 a quiet schedule run (a tie at 0) stays hosted", pool(), HOSTED, HOSTED,
+     ["self-hosted runners refuse"], calls=0, event="schedule")
+case("G3 a push to main still balances", WIN, SELF, SELF_D, ["run on the Dells"], ref="refs/heads/main")
 
-# H. Integration keeps bigdisk-docker (Tenant order 2026-11-27 17:18Z): on a
-# push to main or a same-repository pull request runner_integration is
-# bigdisk-docker whatever the balance picks or whether a count was read; a
-# fork, a refused event and off github.com keep the hosted default.
+# O. v1.62 overflow: base pool(h=5, s2=2) picks self-hosted on use.
+OLD_D = [jobj(101, "queued", SH, age=900)]
+OLD_1 = [jobj(101, "queued", B1, age=900)]
+case("O1 public, a bigdisk-docker job queued 900 s, hosted 5 of 10: hosted",
+     pool(h=5, s2=2, extra=OLD_D), HOSTED, HOSTED,
+     ["overflow: the oldest queued self-hosted job waited past 600s", "bigdisk-docker 9", "(5 of 10)", "ci-template v1.62"], ["::warning::"])
+case("O2 public, a bigdisk job queued 900 s: hosted",
+     pool(h=5, s2=2, extra=OLD_1), HOSTED, HOSTED, ["overflow:", "oldest queued bigdisk 9"])
+case("O3 public, the oldest queued job waited 500 s: self-hosted",
+     pool(h=5, s2=2, extra=[jobj(101, "queued", SH, age=500)]), SELF, SELF_D, ["run on the Dells"], ["overflow:"])
+case("O4 private repository, 900 s wait: self-hosted (no spend)",
+     pool(h=5, s2=2, extra=OLD_D), SELF, SELF_D, ["run on the Dells"], ["overflow:"], private="true")
+case("O5 visibility not read (PRIVATE empty), 900 s wait: self-hosted",
+     pool(h=5, s2=2, extra=OLD_D), SELF, SELF_D, ["run on the Dells"], ["overflow:"], private="")
+case("O6 hosted full (10 of 10), 900 s wait: self-hosted",
+     pool(h=10, s2=2, extra=OLD_D), SELF, SELF_D, ["the hosted pool is full (10 of 10)"], ["overflow:"])
+case("O7 an old in-progress self-hosted job is no wait: self-hosted",
+     pool(h=5, s2=1, extra=[jobj(101, "in_progress", SH, age=3600)]), SELF, SELF_D, ["oldest queued bigdisk 0s, bigdisk-docker 0s"], ["overflow:"])
+case("O8 an old queued hosted job is no self-hosted wait: self-hosted",
+     pool(h=5, s2=2, extra=[jobj(101, "queued", U, age=3600)]), SELF, SELF_D, ["bigdisk-docker 0s"], ["overflow:"])
+case("O9 a created_at with fractional seconds is read",
+     pool(h=5, s2=2, extra=[dict(jobj(101, "queued", SH), created_at=iso(900)[:-1] + ".250Z")]), HOSTED, HOSTED, ["overflow:"])
+
+# H. Integration keeps bigdisk-docker: on a push to main or a same-repository
+# pull request runner_integration is bigdisk-docker whatever the balance picks
+# or whether a count was read; a fork, a refused event and off github.com keep
+# the hosted default.
 PR = dict(event="pull_request", head="o/r", ref="refs/pull/7/merge")
 for who, ekw in (("a push to main", {}), ("a same-repository pull request", PR)):
     case(f"H {who}, self-hosted picked: Integration on bigdisk-docker",
@@ -350,6 +375,8 @@ for who, ekw in (("a push to main", {}), ("a same-repository pull request", PR))
          [["runs?status=queued", 403, '{"message":"no"}']], HOSTED, HOSTED, ["::warning::"], integ=SELF_D, **ekw)
     case(f"H {who}, a self-hosted capacity unset: Integration still on bigdisk-docker",
          pool(h=10), HOSTED, HOSTED, ["::warning::"], calls=0, integ=SELF_D, c1="", **ekw)
+    case(f"H {who}, overflow to hosted: Integration still on bigdisk-docker",
+         pool(h=5, s2=2, extra=OLD_D), HOSTED, HOSTED, ["overflow:"], integ=SELF_D, **ekw)
 case("H a fork's pull request: Integration hosted, no call",
      WIN, HOSTED, HOSTED, ["a fork"], calls=0, integ=HOSTED, event="pull_request", head="fork/r")
 case("H a pull request whose head repository is gone: Integration hosted",

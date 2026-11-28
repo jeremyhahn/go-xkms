@@ -1,4 +1,18 @@
-# ci-template: v1.60 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# ci-template: v1.63 main-only runner label + v1.62 pool overflow + v1.61 main-push group on v1.59 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# v1.63 (2026-11-28, the Tenant Agent's order at 02:48Z): a push to main no
+# longer queues behind pull request runs on the self-hosted pools. Two
+# repository variables name main-only runner labels:
+# CI_MAIN_RUNNER_LABEL (the non-docker class) and
+# CI_MAIN_RUNNER_LABEL_DOCKER (the docker class). The Infra Department sets
+# both and registers the runner units that carry them. When both are set
+# and match ^[a-z0-9][a-z0-9-]{0,38}$, a push to refs/heads/main on
+# github.com runs preflight on [self-hosted, linux, x64,
+# CI_MAIN_RUNNER_LABEL], and `Balanced runner pool (ruling 1137)` makes no
+# API call and outputs that list as `runner` and the CI_MAIN_RUNNER_LABEL_DOCKER
+# list as `runner_docker`, with a ::notice. Either unset or empty gives the
+# v1.62 (2026-11-27, Tenant Agent order 18:13Z): `Balanced runner pool (ruling 1137)`
+# is the handbook v1.62 step; a public repository whose oldest queued self-hosted
+# job waited past WAIT_LIMIT (600 s) goes hosted when hosted has a free slot.
 # v1.60 (handbook 1bea157, #123): a selection tie goes self-hosted; preflight and the selection go self-hosted only on a push to main or a same-repository pull request.
 # v1.59 (handbook b18e6499, #113): the step `Balanced runner pool (ruling
 # 1137)` is copied from the template at v1.59. A listing short of its
@@ -671,7 +685,9 @@ on:
 # workflow_dispatch run keeps `main-workflow_dispatch`, so neither shares a
 # group with a push run; every other ref keeps github.ref.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || github.ref == 'refs/heads/main' && format('main-{0}', github.event_name) || github.ref }}
+# v1.61 (adopted with v1.62, Tenant Agent order 2026-11-27 18:13Z): a push to
+# main is grouped by its sha, `main-push-{sha}`, and is never cancelled.
+  group: ${{ github.workflow }}-${{ github.event_name == 'schedule' && format('schedule-{0}', github.repository) || github.ref == 'refs/heads/main' && github.event_name == 'push' && format('main-push-{0}', github.sha) || github.ref == 'refs/heads/main' && format('main-{0}', github.event_name) || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -803,7 +819,7 @@ jobs:
     # repository while the bigdisk pool has no online runner for 10 minutes,
     # and unsets it when the pool is back; go-xkms keeps ubuntu-latest as the
     # default when it is unset (ruling 999).
-    runs-on: ${{ github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}   # v1.52
+    runs-on: ${{ github.server_url == 'https://github.com' && github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.CI_MAIN_RUNNER_LABEL && vars.CI_MAIN_RUNNER_LABEL_DOCKER && fromJSON(format('["self-hosted","linux","x64","{0}"]', vars.CI_MAIN_RUNNER_LABEL)) || github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}   # v1.52   # v1.63
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -1001,6 +1017,12 @@ jobs:
       # read (a hosted runner's disk is too small for the integration image
       # build); a fork, an event the self-hosted runners refuse and off
       # github.com keep the hosted default.
+      # v1.63 (Tenant Agent order, 2026-11-28 02:48Z): on a push to
+      # refs/heads/main with CI_MAIN_RUNNER_LABEL and
+      # CI_MAIN_RUNNER_LABEL_DOCKER both set and valid, it makes no call and
+      # outputs [self-hosted, linux, x64, <each label>] with a ::notice.
+      # Unset or empty is v1.62; an invalid value is v1.62 with a ::warning.
+      # Every other event is unchanged. Tests: runner-select-tests.py part F.
       - name: Balanced runner pool (ruling 1137)
         id: runner
         env:
@@ -1013,8 +1035,12 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           JOB_TOKEN: ${{ github.token }}
           HS: ${{ vars.CI_HOSTED_SHARE }}
+          PRIVATE: ${{ github.event.repository.private }}
+          WAIT_LIMIT: 600
           C1: ${{ vars.CI_SELF_HOSTED_BIGDISK }}
           C2: ${{ vars.CI_SELF_HOSTED_BIGDISK_DOCKER }}
+          ML: ${{ vars.CI_MAIN_RUNNER_LABEL }}                # v1.63
+          MLD: ${{ vars.CI_MAIN_RUNNER_LABEL_DOCKER }}        # v1.63
         run: |
           set -uo pipefail
           HOSTED='"ubuntu-latest"'
@@ -1054,6 +1080,29 @@ jobs:
               emit "$HOSTED" "$HOSTED" "$HOSTED"
               exit 0 ;;
           esac
+          # v1.63: a push to main takes the main-only runner units when both
+          # CI_MAIN_RUNNER_LABEL (ML) and CI_MAIN_RUNNER_LABEL_DOCKER (MLD)
+          # are set and valid: no count and no API call. Either unset or
+          # empty: the v1.62 balance below, silently; an invalid value: the
+          # same, with a ::warning naming it. No other event reads them.
+          if [ "$EVENT:$REF" = push:refs/heads/main ]; then
+            mainok=1
+            for v in "CI_MAIN_RUNNER_LABEL=${ML:-}" "CI_MAIN_RUNNER_LABEL_DOCKER=${MLD:-}"; do
+              val=${v#*=}
+              if [ -z "$val" ]; then
+                mainok=0
+              elif ! [[ "$val" =~ ^[a-z0-9][a-z0-9-]{0,38}$ ]]; then
+                mainok=0
+                shown=$(printf '%s' "$val" | tr -c 'A-Za-z0-9._-' '?' | cut -c1-60)
+                echo "::warning::runner selection: ${v%%=*}='$shown' is not a runner label (^[a-z0-9][a-z0-9-]{0,38}\$); this push to main does not use the main-only runners and balances as in v1.62 (ci-template v1.63)"
+              fi
+            done
+            if [ "$mainok" = 1 ]; then
+              echo "::notice::runner selection: a push to main with CI_MAIN_RUNNER_LABEL=$ML and CI_MAIN_RUNNER_LABEL_DOCKER=$MLD set; this run's jobs run on the main-only runners, which no pull request job can take, and no count is made (ci-template v1.63)"
+              emit "$(selfhosted "$ML")" "$(selfhosted "$MLD")" "$(selfhosted "$MLD")"  # go-xkms: runner_integration takes the MLD label
+              exit 0
+            fi
+          fi
           # whole <value>: a whole number above 0, at most 6 digits.
           whole() { [[ "$1" =~ ^[0-9]{1,6}$ ]] && [ "$((10#$1))" -gt 0 ]; }
           whole "$C1" || hosted "CI_SELF_HOSTED_BIGDISK='$C1' is unset, 0 or not a whole number, so no bigdisk job can be placed (the Infra Department sets it)"
@@ -1108,11 +1157,15 @@ jobs:
           done
           # H, S1, S2: hosted, bigdisk (not bigdisk-docker) and bigdisk-docker
           # jobs in progress plus queued; HQ, SQ: the queued hosted and
-          # self-hosted (both kinds) ones. A job of this run is not counted.
-          read -r H S1 S2 HQ SQ < <(jq -rs --argjson run "$RUN_ID" '
+          # self-hosted (both kinds) ones; W1, W2: the seconds the oldest
+          # queued bigdisk and bigdisk-docker job has waited (0 for none,
+          # v1.62). A job of this run is not counted.
+          read -r H S1 S2 HQ SQ W1 W2 < <(jq -rs --argjson run "$RUN_ID" --argjson now "$(date -u +%s)" '
               [.[] | select(.run_id != $run and (.status == "queued" or .status == "in_progress"))
                    | (.labels // []) as $l
                    | {q: (.status == "queued"),
+                      w: ((try (.created_at | sub("\\.[0-9]+"; "") | fromdateiso8601) catch $now) as $c
+                          | if $now > $c then ($now - $c | floor) else 0 end),
                       p: (if ($l | any(. == "self-hosted")) then
                             (if ($l | any(. == "bigdisk-docker")) then "s2"
                              elif ($l | any(. == "bigdisk")) then "s1" else "x" end)
@@ -1120,10 +1173,12 @@ jobs:
                           else "x" end)}] as $j
               | def n(f): $j | map(select(f)) | length;
               [n(.p == "h"), n(.p == "s1"), n(.p == "s2"), n(.p == "h" and .q),
-               n((.p == "s1" or .p == "s2") and .q)]
+               n((.p == "s1" or .p == "s2") and .q),
+               ([$j[] | select(.p == "s1" and .q) | .w] | max // 0),
+               ([$j[] | select(.p == "s2" and .q) | .w] | max // 0)]
               | map(tostring) | join(" ")' "$RUNNER_TEMP/sel-jobs.jsonl") || hosted "the job list could not be counted"
-          [ -n "${SQ:-}" ] || hosted "the job list could not be counted"
-          echo "this repository: hosted $H of CI_HOSTED_SHARE=$HS ($HQ queued); bigdisk $S1 of CI_SELF_HOSTED_BIGDISK=$C1, bigdisk-docker $S2 of CI_SELF_HOSTED_BIGDISK_DOCKER=$C2 ($SQ self-hosted queued)"
+          [ -n "${W2:-}" ] || hosted "the job list could not be counted"
+          echo "this repository: hosted $H of CI_HOSTED_SHARE=$HS ($HQ queued); bigdisk $S1 of CI_SELF_HOSTED_BIGDISK=$C1, bigdisk-docker $S2 of CI_SELF_HOSTED_BIGDISK_DOCKER=$C2 ($SQ self-hosted queued); oldest queued bigdisk ${W1}s, bigdisk-docker ${W2}s"
           # v1.59: a short listing is a lower bound; still choose.
           [ -z "$SHORT" ] || echo "::notice::runner selection: the listing returned fewer entries than its total ($SHORT); the counts are a lower bound and the choice below uses them (ci-template v1.59)"
           pick=hosted hfull=0 sfull=0
@@ -1136,6 +1191,10 @@ jobs:
             pick=self; why="the hosted pool is full ($H of $HS)"
           elif [ "$sfull" = 1 ]; then
             why="the self-hosted pool is full (bigdisk $S1 of $C1, bigdisk-docker $S2 of $C2)"
+          elif [ "${PRIVATE:-}" = false ] && { [ "$W1" -gt "$WAIT_LIMIT" ] || [ "$W2" -gt "$WAIT_LIMIT" ]; }; then
+            # v1.62 overflow: a self-hosted wait past WAIT_LIMIT with a free
+            # hosted slot goes hosted (public repositories, no spend).
+            why="overflow: the oldest queued self-hosted job waited past ${WAIT_LIMIT}s (bigdisk ${W1}s, bigdisk-docker ${W2}s) and hosted has a free slot ($H of $HS) (ci-template v1.62)"
           else
             # self-hosted use, max(S1/C1, S2/C2), at or below hosted use H/HS.
             [ $((S1 * HS)) -le $((H * C1)) ] && [ $((S2 * HS)) -le $((H * C2)) ] && pick=self

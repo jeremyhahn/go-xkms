@@ -7,3 +7,4 @@ self-hosted-runner:
     - bigdisk
     - ci-gate
     - bigdisk
+    - bigdisk-docker
