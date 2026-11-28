@@ -368,7 +368,7 @@ func (m *MockHIDDevice) generateGetAssertionResponse(cid uint32, reqData []byte)
 
 	encoded, err := m.sim.getAssertion(reqData)
 	if err != nil {
-		m.writeCBORError(cid, StatusInvalidParameter)
+		m.writeCBORError(cid, simStatus(err))
 		return
 	}
 	m.writeHIDPackets(cid, encoded)

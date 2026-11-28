@@ -116,6 +116,11 @@ type authenticatorSim struct {
 	// failPINRetries makes the simulator refuse getPINRetries, modelling an
 	// authenticator that will not report the counter.
 	failPINRetries bool
+
+	// checkAllowList makes getAssertion answer CTAP2_ERR_NO_CREDENTIALS when
+	// the allowList names no credential this simulator issued, as a real
+	// authenticator does. Off by default: most tests pass arbitrary IDs.
+	checkAllowList bool
 }
 
 // defaultSimPINRetries is the CTAP 2.1 initial PIN retry budget.
@@ -397,6 +402,11 @@ func (s *authenticatorSim) getAssertion(request []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if s.checkAllowList {
+		if err := s.allowListNamesCredential(req[0x03]); err != nil {
+			return nil, err
+		}
+	}
 
 	encrypted, err := s.hmacSecretExtensionOutput(req[0x04])
 	if err != nil {
@@ -413,6 +423,39 @@ func (s *authenticatorSim) getAssertion(request []byte) ([]byte, error) {
 		0x02: authData,
 		0x03: make([]byte, 64),
 	})
+}
+
+// allowListNamesCredential answers CTAP2_ERR_NO_CREDENTIALS, as a real
+// authenticator does, when the request's allowList (0x03) names no
+// credential this simulator issued. An absent allowList is a
+// discoverable-credential lookup and is accepted.
+func (s *authenticatorSim) allowListNamesCredential(value interface{}) error {
+	if value == nil {
+		return nil
+	}
+	list, ok := value.([]interface{})
+	if !ok {
+		return errSimMalformedInput
+	}
+	for _, entry := range list {
+		var id interface{}
+		switch descriptor := entry.(type) {
+		case map[string]interface{}:
+			id = descriptor["id"]
+		case map[interface{}]interface{}:
+			id = descriptor["id"]
+		default:
+			return errSimMalformedInput
+		}
+		credID, err := simBytes(id)
+		if err != nil {
+			return err
+		}
+		if bytes.Equal(credID, s.credentialID) {
+			return nil
+		}
+	}
+	return &simStatusError{status: StatusNoCredentials, reason: "no allowList credential was issued by this authenticator"}
 }
 
 // hmacSecretExtensionOutput produces the encrypted hmac-secret output for
@@ -565,7 +608,7 @@ func (s *authenticatorSim) respond(payload []byte) []byte {
 		return []byte{StatusInvalidCommand}
 	}
 	if err != nil {
-		return []byte{StatusInvalidParameter}
+		return []byte{simStatus(err)}
 	}
 
 	return append([]byte{StatusOK}, encoded...)
