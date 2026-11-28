@@ -43,4 +43,8 @@ var (
 
 	// ErrNilDAOFactory indicates a nil DAO factory was supplied.
 	ErrNilDAOFactory = errors.New("ssh/profile: nil DAO factory")
+
+	// ErrLegacyRecord indicates a pre-DAO profile record that does not
+	// decode, is not stored under its own ID, or fails validation.
+	ErrLegacyRecord = errors.New("ssh/profile: invalid legacy record")
 )
