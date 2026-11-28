@@ -30,6 +30,9 @@ logging:
 tls:
   enabled: true
   server_cn: "localhost"
+  # The init mTLS administrator needs its certificate requested; "verify"
+  # still lets the browser connect without one (issue #2254).
+  client_auth: verify
 
 # Adaptive: anonymous while zero users exist; the WebAuthn ceremony endpoints
 # stay public so the suite's open sign-up and login work throughout.

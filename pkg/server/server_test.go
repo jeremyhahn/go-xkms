@@ -81,10 +81,13 @@ func createMinimalConfig(t *testing.T) *config.Config {
 		// serves the persisted bootstrap certificate. The defaults layer
 		// turns include_localhost_sans on, so it names localhost: the
 		// authority gRPC uses for a unix target.
+		// client_auth "verify": tests that switch Auth to an mTLS chain
+		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
 			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
+			ClientAuth:           "verify",
 		},
 		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
@@ -870,6 +873,23 @@ func TestServer_InitializeAuthentication_JWT_Success(t *testing.T) {
 	defer func() { _ = server.Shutdown() }()
 
 	assert.NotNil(t, server.authenticator)
+	assert.Equal(t, "jwt", server.authenticator.Name())
+}
+
+func TestServer_New_JWTTypeWithMTLSFlagAndNoClientAuth(t *testing.T) {
+	xkms.Reset()
+	defer xkms.Reset()
+
+	cfg := createMinimalConfig(t)
+	cfg.Auth.Type = "jwt"
+	cfg.Auth.MTLS = true
+	cfg.TLS.ClientAuth = "none"
+
+	server, err := New(cfg)
+	require.NoError(t, err)
+	require.NotNil(t, server)
+	defer func() { _ = server.Shutdown() }()
+
 	assert.Equal(t, "jwt", server.authenticator.Name())
 }
 
@@ -1694,10 +1714,13 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 		// serves the persisted bootstrap certificate. The defaults layer
 		// turns include_localhost_sans on, so it names localhost: the
 		// authority gRPC uses for a unix target.
+		// client_auth "verify": tests that switch Auth to an mTLS chain
+		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
 			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
+			ClientAuth:           "verify",
 		},
 		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},
@@ -2713,10 +2736,13 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 		// serves the persisted bootstrap certificate. The defaults layer
 		// turns include_localhost_sans on, so it names localhost: the
 		// authority gRPC uses for a unix target.
+		// client_auth "verify": tests that switch Auth to an mTLS chain
+		// need the certificate requested (issue #2254).
 		TLS: config.TLSConfig{
 			Enabled:              true,
 			ServerCN:             "localhost",
 			IncludeLocalhostSANs: true,
+			ClientAuth:           "verify",
 		},
 		Auth:      testJWTAuthConfig(t),
 		Datastore: config.DatastoreConfig{Engine: "file", Path: tempDir},

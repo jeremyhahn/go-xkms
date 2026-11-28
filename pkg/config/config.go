@@ -440,6 +440,29 @@ type AuthConfig struct {
 	Session *SessionConfig `yaml:"session,omitempty"`
 }
 
+// usesMTLS reports whether the auth chain accepts mTLS client-certificate
+// identities: type mtls, or a composite chain that lists mtls or leaves its
+// methods at the default; the mtls flag alone selects no authenticator.
+func (a AuthConfig) usesMTLS() bool {
+	if !a.Enabled {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(a.Type)) {
+	case "mtls":
+		return true
+	case "composite":
+		if a.Composite == nil || len(a.Composite.Methods) == 0 {
+			return true
+		}
+		for _, m := range a.Composite.Methods {
+			if strings.EqualFold(strings.TrimSpace(m), "mtls") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // PIVLoginConfig configures the TLS-client-certificate login exchange.
 type PIVLoginConfig struct {
 	// Enabled turns the endpoint on. Requires tls.client_auth to request
@@ -1626,6 +1649,18 @@ func (c *Config) Validate() error {
 	}
 	if !validFormats[strings.ToLower(c.Logging.Format)] {
 		return &errs.Message{Msg: fmt.Sprintf("invalid log format: %s (must be json, text, or console)", c.Logging.Format)}
+	}
+
+	// xkmsd init provisions an mTLS administrator (issue #2254). When TLS is
+	// on and the auth chain accepts mTLS identities, the handshake must ask
+	// for the client certificate, or that administrator is never seen.
+	if c.TLS.Enabled && c.Auth.usesMTLS() {
+		// The listener matches these values exactly; anything else serves NoClientCert.
+		switch c.TLS.ClientAuth {
+		case "request", "require", "verify", "require_and_verify":
+		default:
+			return &errs.Message{Msg: "tls.client_auth must request client certificates when auth accepts mTLS administrators (use \"verify\", \"request\", or \"require_and_verify\")"}
+		}
 	}
 
 	// PIV/mTLS cert login exchanges a TLS-verified client certificate for a
