@@ -3,8 +3,8 @@ FROM golang:1.27.4-bookworm
 ENV GOTOOLCHAIN=auto
 
 # Install ADB for communicating with the Android emulator.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends android-sdk-platform-tools && \
+RUN timeout 300 apt-get update && \
+    timeout 300 apt-get install -y --no-install-recommends android-sdk-platform-tools && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace

@@ -14,7 +14,7 @@
 FROM node:22-bookworm
 
 # Install Playwright system dependencies
-RUN apt-get update && apt-get install -y \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y \
     libnss3 \
     libatk-bridge2.0-0 \
     libdrm2 \

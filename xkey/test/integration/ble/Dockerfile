@@ -15,7 +15,7 @@ ENV GOTOOLCHAIN=auto
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install Go from the official tarball.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     ca-certificates curl \
     && GOVERSION=$(curl -fsSL 'https://go.dev/VERSION?m=text' | head -1) \
     && curl -fsSL "https://go.dev/dl/${GOVERSION}.linux-amd64.tar.gz" | tar -C /usr/local -xz \
@@ -25,7 +25,7 @@ ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
 
 # Runtime: kernel module tools, BlueZ daemon and CLI, D-Bus.
 # Build: toolchain and BlueZ build dependencies for btvirt.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     kmod \
     bluez \
     bluez-tools \
