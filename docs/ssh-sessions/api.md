@@ -70,3 +70,16 @@ signer — it starts a local signing-agent socket and returns argv/env for
 the operator's *own* `ssh` binary to exec against. There is no request or
 response shape to document here; the "API" is the Go function signature
 covered in [`engineering.md`](engineering.md).
+
+## Migrating the pre-DAO session and profile stores
+
+`sdkssh.MigrateLegacyStores(ctx, legacy, daos)`
+(`sdk/go/client/ssh/stores.go:82`) moves the sessions (`ssh/sessions/<id>`),
+profiles (`ssh/profiles/<id>.json`) and folder markers
+(`ssh/profiles/__folders__/<path>`) the pre-DAO stores kept in a sealed-KV
+`storage.Backend` into the DAO catalogs, along with the SSH keys, pins and
+authorized entries (see `../ssh-keys/api.md` §"Migrating the pre-DAO
+stores"). The consumer calls it at store open, before the session and profile
+stores serve requests. Sessions and profiles under a tenant prefix are
+counted as skipped and left in place, because these catalogs have no tenant
+partition. A second call migrates nothing and reports zero.
