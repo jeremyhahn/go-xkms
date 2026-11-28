@@ -604,6 +604,27 @@ func TestGetKeyHandler_Success(t *testing.T) {
 	assert.NotEmpty(t, resp.PublicKeyPEM)
 }
 
+// TestKeyInfoFromTransport_CarriesCurveAndKeySize proves the REST body keeps
+// the curve, RSA modulus size and partition, which the REST and QUIC clients
+// decode into transport.KeyInfo for xkmsctl key get (#2257).
+func TestKeyInfoFromTransport_CarriesCurveAndKeySize(t *testing.T) {
+	ec := keyInfoFromTransport(transport.KeyInfo{KeyID: "ec", Algorithm: "ECDSA", Curve: "P-256", Partition: "signing"})
+	body, err := json.Marshal(ec)
+	require.NoError(t, err)
+	var decoded transport.KeyInfo
+	require.NoError(t, json.Unmarshal(body, &decoded))
+	assert.Equal(t, "P-256", decoded.Curve)
+	assert.Equal(t, "signing", decoded.Partition)
+
+	rsaInfo := keyInfoFromTransport(transport.KeyInfo{KeyID: "rsa", Algorithm: "RSA", KeySize: 3072})
+	body, err = json.Marshal(rsaInfo)
+	require.NoError(t, err)
+	decoded = transport.KeyInfo{}
+	require.NoError(t, json.Unmarshal(body, &decoded))
+	assert.Equal(t, 3072, decoded.KeySize)
+	assert.Empty(t, decoded.Curve)
+}
+
 func TestGetKeyHandler_MissingKeyID(t *testing.T) {
 	ctx := newTestHandlerContext()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/keys/?backend=test", nil)

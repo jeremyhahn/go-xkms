@@ -250,10 +250,7 @@ func getKey(cfg *Config, printer *Printer, keyID string) {
 	}
 
 	// Convert to KeyAttributes for printing
-	attrs := &client.KeyAttributes{
-		CN:      resp.KeyID,
-		KeyType: client.ParseKeyType(resp.KeyType),
-	}
+	attrs := keyAttributesFromInfo(&resp.KeyInfo)
 
 	if err := printer.PrintKeyInfo(attrs); err != nil {
 		handleError(err)

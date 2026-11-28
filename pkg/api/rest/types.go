@@ -73,6 +73,12 @@ type KeyInfo struct {
 	Algorithm    string `json:"algorithm"`
 	Backend      string `json:"backend"`
 	PublicKeyPEM string `json:"public_key_pem,omitempty"`
+	// KeySize is the RSA modulus size in bits; zero for any other key.
+	KeySize int `json:"key_size,omitempty"`
+	// Curve names an ECDSA key's curve ("P-256"); empty for any other key.
+	Curve string `json:"curve,omitempty"`
+	// Partition is the key's storage partition, when it has one.
+	Partition string `json:"partition,omitempty"`
 	// KeyVersion is the key's current version, the one sign and encrypt use.
 	KeyVersion uint32 `json:"key_version,omitempty"`
 }

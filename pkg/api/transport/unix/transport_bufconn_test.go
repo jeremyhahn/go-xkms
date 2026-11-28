@@ -81,8 +81,13 @@ func (s *mockKeystoreServer) ListKeys(_ context.Context, req *pb.ListKeysRequest
 }
 
 func (s *mockKeystoreServer) GetKey(_ context.Context, req *pb.GetKeyRequest) (*pb.GetKeyResponse, error) {
+	if req.KeyId == "rsa-key" {
+		return &pb.GetKeyResponse{
+			Key: &pb.KeyInfo{KeyId: req.KeyId, KeyType: "RSA", Algorithm: "RSA", Backend: req.Backend, KeySize: 3072},
+		}, nil
+	}
 	return &pb.GetKeyResponse{
-		Key:          &pb.KeyInfo{KeyId: req.KeyId, KeyType: "ECDSA", Algorithm: "P-256", Backend: req.Backend},
+		Key:          &pb.KeyInfo{KeyId: req.KeyId, KeyType: "ECDSA", Algorithm: "P-256", Backend: req.Backend, Curve: "P-256", Partition: "signing"},
 		PublicKeyPem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----",
 	}, nil
 }
@@ -602,6 +607,25 @@ func TestGetKey_Connected(t *testing.T) {
 	resp, err := tr.GetKey(context.Background(), "software", "key-1")
 	require.NoError(t, err)
 	assert.Equal(t, "key-1", resp.KeyID)
+}
+
+// TestGetKey_CarriesCurveAndKeySize proves the client keeps the curve, RSA
+// modulus size and partition the server sends, which xkmsctl key get prints
+// (#2257).
+func TestGetKey_CarriesCurveAndKeySize(t *testing.T) {
+	tr, cleanup := newBufconnTransport(t)
+	defer cleanup()
+
+	ec, err := tr.GetKey(context.Background(), "software", "ec-key")
+	require.NoError(t, err)
+	assert.Equal(t, "P-256", ec.Curve)
+	assert.Equal(t, "signing", ec.Partition)
+	assert.Zero(t, ec.KeySize)
+
+	rsaKey, err := tr.GetKey(context.Background(), "software", "rsa-key")
+	require.NoError(t, err)
+	assert.Equal(t, 3072, rsaKey.KeySize)
+	assert.Empty(t, rsaKey.Curve)
 }
 
 func TestDeleteKey_Connected(t *testing.T) {
