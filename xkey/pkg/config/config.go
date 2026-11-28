@@ -141,6 +141,19 @@ type PhoneConfig struct {
 	// enrollment exposes the EK certificate and runs TPM2_ActivateCredential
 	// on the phone's behalf. The TPM is opened from tpm.device.
 	TPMEnrollment bool `yaml:"tpm_enrollment" json:"tpm_enrollment" mapstructure:"tpm_enrollment"`
+
+	// AttestationStatusURL is where the Android attestation certificate
+	// revocation status list every phone attestation chain is checked
+	// against is fetched. Empty means Google's list,
+	// https://android.googleapis.com/attestation/status. The list is kept
+	// as long as its Cache-Control allows; once stale and unfetchable, phone
+	// attestation fails closed.
+	AttestationStatusURL string `yaml:"attestation_status_url" json:"attestation_status_url" mapstructure:"attestation_status_url"`
+
+	// AttestationStatusFile, when set, is a copy of the status list read
+	// instead of fetching AttestationStatusURL, for a host that cannot
+	// reach it. The operator keeps the copy current.
+	AttestationStatusFile string `yaml:"attestation_status_file" json:"attestation_status_file" mapstructure:"attestation_status_file"`
 }
 
 // DeviceConfig holds settings for the `xkey device` command group that carry

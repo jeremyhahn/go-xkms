@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/android"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/dice"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/errs"
@@ -56,6 +57,10 @@ type Verifier struct {
 
 	// embeddedLoader supplies compiled-in manufacturer roots per purpose.
 	embeddedLoader EmbeddedRootsLoader
+
+	// revocation is the Android attestation status list; nil refuses
+	// VerifyAndroidAttestation.
+	revocation android.StatusListSource
 }
 
 // NewVerifier creates a new attestation verifier.

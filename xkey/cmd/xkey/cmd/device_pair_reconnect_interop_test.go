@@ -73,7 +73,7 @@ func TestPairThenReconnectThenReattest_Interop(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
-	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
+	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}
 
 	// The phone: one persistent StrongBox-backed attested key, attested once at
 	// first run under the contract's genesis challenge, AND one persistent
@@ -259,7 +259,7 @@ func TestReconnectRefusesADeviceThatCannotProveLiveness(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	ca := attesttest.NewCA(t, "Trusted Attestation Root")
-	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}
+	trust := &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}
 
 	genuine := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
 	impostor := attesttest.NewDAK(t, ca, attesttest.GenesisChallenge(), xkms.AndroidSecurityLevelStrongBox, attesttest.AttestedBootState())
@@ -449,7 +449,7 @@ func runReattestAgainst(
 		ExpectedDeviceFingerprint: expected,
 	}), "every check that existed before #129 must still pass; that is the point")
 
-	reattestErr := attestation.VerifyReattestation(ctx, init, session, attestation.DeviceBindingFor(*record), &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications()}, logger)
+	reattestErr := attestation.VerifyReattestation(ctx, init, session, attestation.DeviceBindingFor(*record), &xkms.AndroidDeviceTrust{Roots: ca.Pool(), Applications: attesttest.Applications(), Revocation: attesttest.NoRevocations()}, logger)
 
 	return reattestErr
 }
@@ -509,6 +509,8 @@ func TestPairedDeviceBackendConfigCarriesEveryIdentityCheck(t *testing.T) {
 			"a record bound under challenge-response must demand the proof on every surface")
 		assert.NotNil(t, cfg.LiveAttest,
 			"demanding the proof without a verifier is a refusal at connect; both must be set together")
+		assert.NotNil(t, cfg.VerifyUser,
+			"without a verifier every getPinUvAuthTokenUsingUvWithPermissions is refused (ruling 167)")
 		assert.Equal(t, dak.Fingerprint(), cfg.ExpectedDeviceFingerprint,
 			"the stored fingerprint must bind the prologue; none of the five call sites used to set it")
 		assert.Equal(t, remote.PublicBytes(), cfg.ExpectedRemoteStatic)

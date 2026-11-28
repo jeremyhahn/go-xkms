@@ -69,20 +69,6 @@ func (w *captureWriter) signalComplete(fragment []byte) {
 	}
 }
 
-// waitForCompleteMessage blocks until a whole message has been captured or ctx
-// is done, in which case the test fails rather than reassembling a partial
-// message.
-func (w *captureWriter) waitForCompleteMessage(ctx context.Context, t *testing.T) {
-	t.Helper()
-
-	select {
-	case <-w.complete:
-	case <-ctx.Done():
-		t.Fatalf("no complete message was notified: %v (captured %d fragment(s))",
-			ctx.Err(), w.count())
-	}
-}
-
 func (w *captureWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

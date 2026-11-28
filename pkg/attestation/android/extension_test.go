@@ -1429,7 +1429,7 @@ func TestVerifyCertificateChain_SuccessWithIntermediates(t *testing.T) {
 // returns ErrChainTooShort when given an empty chain.
 func TestVerifyCertificateChain_EmptyChain(t *testing.T) {
 	roots := x509.NewCertPool()
-	err := verifyCertificateChain([]*x509.Certificate{}, roots, time.Time{})
+	_, err := verifyCertificateChain([]*x509.Certificate{}, roots, time.Time{})
 	if !errors.Is(err, ErrChainTooShort) {
 		t.Errorf("expected ErrChainTooShort, got: %v", err)
 	}
@@ -1443,9 +1443,12 @@ func TestVerifyCertificateChain_SelfSignedValidChain(t *testing.T) {
 	roots := x509.NewCertPool()
 	roots.AddCert(caCert)
 
-	err := verifyCertificateChain([]*x509.Certificate{caCert}, roots, time.Time{})
+	verified, err := verifyCertificateChain([]*x509.Certificate{caCert}, roots, time.Time{})
 	if err != nil {
-		t.Errorf("verifyCertificateChain() unexpected error: %v", err)
+		t.Fatalf("verifyCertificateChain() unexpected error: %v", err)
+	}
+	if len(verified) != 1 || verified[0][0] != caCert {
+		t.Errorf("verifyCertificateChain() verified chains = %v, want the self-signed root", verified)
 	}
 }
 
@@ -1857,6 +1860,76 @@ func TestParseAuthorizationList_WithOriginAndPurpose(t *testing.T) {
 	}
 }
 
+// mustMarshalExplicitNull encodes [tag] EXPLICIT NULL, the KeyMint form of the
+// boolean-presence tags (noAuthRequired, allowWhileOnBody).
+func mustMarshalExplicitNull(t *testing.T, tag int) []byte {
+	t.Helper()
+	out, err := asn1.Marshal(asn1.RawValue{
+		Class:      asn1.ClassContextSpecific,
+		Tag:        tag,
+		IsCompound: true,
+		Bytes:      asn1.NullBytes,
+	})
+	if err != nil {
+		t.Fatalf("marshal tagged NULL %d: %v", tag, err)
+	}
+	return out
+}
+
+func TestParseAuthorizationList_UserAuthTags(t *testing.T) {
+	userAuthType, err := marshalExplicitInt(tagUserAuthType, UserAuthBiometric)
+	if err != nil {
+		t.Fatalf("marshal tagged userAuthType: %v", err)
+	}
+	authTimeout, err := marshalExplicitInt(tagAuthTimeout, 0)
+	if err != nil {
+		t.Fatalf("marshal tagged authTimeout: %v", err)
+	}
+
+	var elements bytes.Buffer
+	elements.Write(mustMarshalExplicitNull(t, tagNoAuthRequired))
+	elements.Write(userAuthType)
+	elements.Write(authTimeout)
+	elements.Write(mustMarshalExplicitNull(t, tagAllowWhileOnBody))
+	rawVal := asn1.RawValue{FullBytes: wrapAuthorizationListElements(t, elements.Bytes())}
+
+	result := parseAuthorizationList(rawVal)
+	if !result.NoAuthRequired {
+		t.Error("NoAuthRequired = false, want true")
+	}
+	if !result.HasUserAuthType || result.UserAuthType != UserAuthBiometric {
+		t.Errorf("UserAuthType = %d (present %v), want %d (present)", result.UserAuthType, result.HasUserAuthType, UserAuthBiometric)
+	}
+	if !result.HasAuthTimeout || result.AuthTimeout != 0 {
+		t.Errorf("AuthTimeout = %d (present %v), want 0 (present)", result.AuthTimeout, result.HasAuthTimeout)
+	}
+	if !result.AllowWhileOnBody {
+		t.Error("AllowWhileOnBody = false, want true")
+	}
+}
+
+func TestParseAuthorizationList_UserAuthTagsAbsent(t *testing.T) {
+	originTagged, err := marshalExplicitInt(tagOrigin, OriginGenerated)
+	if err != nil {
+		t.Fatalf("marshal tagged origin: %v", err)
+	}
+	rawVal := asn1.RawValue{FullBytes: wrapAuthorizationListElements(t, originTagged)}
+
+	result := parseAuthorizationList(rawVal)
+	if result.NoAuthRequired {
+		t.Error("NoAuthRequired = true on a list without tag 503")
+	}
+	if result.HasUserAuthType {
+		t.Errorf("HasUserAuthType = true (UserAuthType %d) on a list without tag 504", result.UserAuthType)
+	}
+	if result.HasAuthTimeout {
+		t.Errorf("HasAuthTimeout = true (AuthTimeout %d) on a list without tag 505", result.AuthTimeout)
+	}
+	if result.AllowWhileOnBody {
+		t.Error("AllowWhileOnBody = true on a list without tag 506")
+	}
+}
+
 // TestBuildAttestationExtensionWithOptions_RoundTrip verifies that Origin,
 // Purpose and RootOfTrust all survive a build-then-parse round trip inside
 // teeEnforced, and that softwareEnforced stays empty (go-xkms#132).
@@ -1991,6 +2064,107 @@ func TestBuildAttestationExtensionWithOptions_NoApplicationID(t *testing.T) {
 	if desc.SoftwareEnforced.AttestationApplicationID != nil {
 		t.Errorf("softwareEnforced attestationApplicationId = %+v, want none",
 			desc.SoftwareEnforced.AttestationApplicationID)
+	}
+}
+
+// TestParseKeyAttestation_UserAuthenticationFields round-trips the
+// user-authentication tags 503-506 through the builder and the parser, in
+// the list each was encoded into and no other.
+func TestParseKeyAttestation_UserAuthenticationFields(t *testing.T) {
+	extBytes, err := BuildAttestationExtensionWithOptions(
+		3, SecurityLevelTrustedEnvironment, 4, SecurityLevelTrustedEnvironment,
+		[]byte("user-auth"), []byte("unique-id"),
+		&AttestationExtensionOptions{
+			NoAuthRequired:         true,
+			SoftwareNoAuthRequired: true,
+			UserAuthType:           UserAuthTypePassword | UserAuthTypeFingerprint,
+			HasAuthTimeout:         true,
+			AuthTimeout:            30,
+			AllowWhileOnBody:       true,
+		},
+	)
+	if err != nil {
+		t.Fatalf("build extension: %v", err)
+	}
+
+	desc, err := ParseKeyAttestation(makeCertWithExtension(t, extBytes))
+	if err != nil {
+		t.Fatalf("parse extension: %v", err)
+	}
+
+	tee := desc.TeeEnforced
+	if !tee.NoAuthRequired {
+		t.Error("teeEnforced noAuthRequired = false, want true")
+	}
+	if tee.UserAuthType != UserAuthTypePassword|UserAuthTypeFingerprint {
+		t.Errorf("teeEnforced userAuthType = %d, want %d", tee.UserAuthType, UserAuthTypePassword|UserAuthTypeFingerprint)
+	}
+	if !tee.HasAuthTimeout || tee.AuthTimeout != 30 {
+		t.Errorf("teeEnforced authTimeout = %d (present %v), want 30 (present)", tee.AuthTimeout, tee.HasAuthTimeout)
+	}
+	if !tee.AllowWhileOnBody {
+		t.Error("teeEnforced allowWhileOnBody = false, want true")
+	}
+
+	sw := desc.SoftwareEnforced
+	if !sw.NoAuthRequired {
+		t.Error("softwareEnforced noAuthRequired = false, want true")
+	}
+	if sw.UserAuthType != UserAuthTypeNone || sw.HasAuthTimeout || sw.AllowWhileOnBody {
+		t.Errorf("softwareEnforced carries claims it was not given: %+v", sw)
+	}
+}
+
+// TestParseKeyAttestation_UserAuthenticationAbsent checks that a list without
+// tags 503-506 reads as making none of their claims.
+func TestParseKeyAttestation_UserAuthenticationAbsent(t *testing.T) {
+	extBytes, err := BuildAttestationExtensionWithOptions(
+		3, SecurityLevelTrustedEnvironment, 4, SecurityLevelTrustedEnvironment,
+		[]byte("no-user-auth"), []byte("unique-id"),
+		&AttestationExtensionOptions{HasOrigin: true, Origin: OriginGenerated},
+	)
+	if err != nil {
+		t.Fatalf("build extension: %v", err)
+	}
+
+	desc, err := ParseKeyAttestation(makeCertWithExtension(t, extBytes))
+	if err != nil {
+		t.Fatalf("parse extension: %v", err)
+	}
+	tee := desc.TeeEnforced
+	if tee.NoAuthRequired || tee.UserAuthType != UserAuthTypeNone || tee.HasAuthTimeout || tee.AllowWhileOnBody {
+		t.Errorf("teeEnforced reads user-authentication claims it does not carry: %+v", tee)
+	}
+}
+
+// TestParseKeyAttestation_MalformedAuthTimeoutStillPresent checks that an
+// authTimeout whose content is not an INTEGER still reads as a timeout claim:
+// treating it as absent would read a timed key as one that needs a fresh
+// authentication on every use.
+func TestParseKeyAttestation_MalformedAuthTimeoutStillPresent(t *testing.T) {
+	body, err := asn1.Marshal([]byte("not-an-integer"))
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	tagged, err := asn1.Marshal(asn1.RawValue{
+		Class: asn1.ClassContextSpecific, Tag: tagAuthTimeout, IsCompound: true, Bytes: body,
+	})
+	if err != nil {
+		t.Fatalf("marshal tag: %v", err)
+	}
+
+	extBytes, err := buildAttestationExtension(3, SecurityLevelTrustedEnvironment, 4,
+		SecurityLevelTrustedEnvironment, []byte("bad-timeout"), []byte("unique-id"), nil, tagged)
+	if err != nil {
+		t.Fatalf("build extension: %v", err)
+	}
+
+	desc, err := ParseKeyAttestation(makeCertWithExtension(t, extBytes))
+	if err != nil {
+		t.Fatalf("parse extension: %v", err)
+	}
+	if !desc.TeeEnforced.HasAuthTimeout {
+		t.Error("teeEnforced authTimeout read as absent, want present")
 	}
 }
 

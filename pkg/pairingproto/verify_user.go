@@ -13,29 +13,46 @@
 
 package pairingproto
 
-import "errors"
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"strconv"
+	"unicode"
+	"unicode/utf8"
+)
 
-// On-demand user verification (owner ruling 167).
+// On-demand user verification (owner rulings 167 and 180).
 //
 // local.verifyUser asks the phone to verify its user NOW and to prove it did.
 // The proof is a signature by a dedicated user-verification key (the UVK): an
 // EC P-256 Android Keystore key generated with
 // setUserAuthenticationRequired(true) and a validity of 0 seconds, so the
 // TEE releases one signature per fresh user authentication and never two. The
-// UVK is a different key from the DAK on purpose: the DAK signs without a
-// prompt, which is what reconnect liveness needs, and a key cannot be both.
+// user authenticates with a strong biometric only. The UVK is a
+// different key from the DAK on purpose: the DAK signs without a prompt,
+// which is what reconnect liveness needs, and a key cannot be both. The phone
+// generates the UVK for AUTH_BIOMETRIC_STRONG alone, never with
+// AUTH_DEVICE_CREDENTIAL: the desktop requires the attested userAuthType to
+// be 2, the biometric alone, and refuses 1 (the device credential) and 3
+// (either) (android.RequireAttestedPerUseUserVerification).
 //
-// The request and the signed transcript reuse protocol version 2 unchanged.
-// The transcript is BuildAttestTranscript with the purpose
-// AttestPurposeVerifyUser, the verifier's fresh nonce, the channel binding
-// each side derives from its own Noise session (AttestChannelBinding), and the
-// fingerprint of the UVK (AttestedKeyFingerprint of the UVK leaf). The
-// purpose is what keeps a verify-user signature apart from a pair or
-// reattest one; the fingerprint is what commits it to the UVK.
+// The request names the relying party the verification is for (RPName), and
+// the signed transcript binds it, as WebAuthn L2 §6.1 binds the RP into
+// authenticator data through rpIdHash: a signature the user gave for one RP
+// does not verify for another. The transcript is BuildVerifyUserTranscript:
+// BuildAttestTranscript with the purpose AttestPurposeVerifyUser, the
+// verifier's fresh nonce, the channel binding each side derives from its own
+// Noise session (AttestChannelBinding) and the fingerprint of the UVK
+// (AttestedKeyFingerprint of the UVK leaf), followed by SHA-256 of the RP
+// name. The purpose is what keeps a verify-user signature apart from a pair
+// or reattest one; the fingerprint is what commits it to the UVK.
 //
 // The result carries the UVK's attestation chain every time, and the desktop
-// verifies it every time, so the desktop learns the key on first use and
-// persists nothing: the pairing record does not change, and the record's
+// verifies it every time, against the Google hardware attestation roots,
+// with the revocation status list checked and no intermediate pinned
+// (ruling 180). So the desktop learns the key on first use and persists
+// nothing: the pairing record does not change, and the record's
 // attestation_protocol_version does not move. A later revision that pins the
 // UVK fingerprint in the pairing record changes the record and must bump that
 // version.
@@ -55,11 +72,37 @@ const (
 	// chain cannot be presented as a UVK chain, nor a UVK chain as a DAK one.
 	// Trailing bytes are reserved for the prover.
 	UserVerificationGenesisChallenge = "xkey-user-verification-v1"
+
+	// VerifyUserRPNameMaxLen bounds LocalVerifyUserParams.RPName, in bytes of
+	// UTF-8. RPName carries the RP ID whole, on the wire and in the
+	// transcript, and an RP ID is a domain (WebAuthn L2 §4), at most 253
+	// bytes in text form (RFC 1035 §2.3.4). The 64-byte truncation WebAuthn
+	// L2 §5.4.1 allows concerns only the displayed name
+	// (VerifyUserRPDisplayMaxLen), never the identifier.
+	VerifyUserRPNameMaxLen = 253
+
+	// VerifyUserRPDisplayMaxLen bounds the RP text the phone shows in its
+	// prompt, in bytes of UTF-8: the 64 bytes WebAuthn L2 §5.4.1 lets an
+	// authenticator truncate an RP entity's name to. VerifyUserRPDisplayName
+	// applies it; the signed transcript still binds the whole RPName.
+	VerifyUserRPDisplayMaxLen = 64
 )
 
-// ErrUserVerificationGenesisChallenge reports a key whose attestation
-// challenge does not begin with UserVerificationGenesisChallenge.
-var ErrUserVerificationGenesisChallenge = errors.New("pairing: attested key was not generated as an xkey user-verification key")
+var (
+	// ErrUserVerificationGenesisChallenge reports a key whose attestation
+	// challenge does not begin with UserVerificationGenesisChallenge.
+	ErrUserVerificationGenesisChallenge = errors.New("pairing: attested key was not generated as an xkey user-verification key")
+
+	// ErrVerifyUserRPName reports an RP name that is empty, longer than
+	// VerifyUserRPNameMaxLen, not UTF-8, or carries a control character.
+	ErrVerifyUserRPName = errors.New("pairing: invalid verify-user RP name")
+)
+
+// VerifyUserFunc runs one local.verifyUser exchange on an established session
+// for the relying party rpName, and returns nil only when the phone proved a
+// fresh user verification for it. channelBinding is the session's
+// AttestChannelBinding.
+type VerifyUserFunc func(ctx context.Context, exchange RPCExchange, channelBinding []byte, rpName string) error
 
 // LocalVerifyUserParams contains parameters for local.verifyUser.
 //
@@ -74,6 +117,12 @@ type LocalVerifyUserParams struct {
 
 	// Nonce is the verifier's fresh 32-byte challenge.
 	Nonce []byte `json:"nonce"`
+
+	// RPName names the relying party the verification is for: the full RP
+	// ID. It is required, and ValidateVerifyUserRPName bounds it. The
+	// transcript binds it whole (BuildVerifyUserTranscript); the phone's
+	// prompt shows VerifyUserRPDisplayName of it.
+	RPName string `json:"rpName"`
 }
 
 // LocalVerifyUserResult contains the result of local.verifyUser.
@@ -103,4 +152,103 @@ type LocalVerifyUserResult struct {
 func VerifyUserVerificationGenesisChallenge(challenge []byte) error {
 	return verifyGenesisPrefix(challenge, UserVerificationGenesisChallenge,
 		ErrUserVerificationGenesisChallenge, "user-verification")
+}
+
+// VerifyUserRPDisplayName returns the RP text the phone's prompt shows for
+// rpName: rpName itself when it fits VerifyUserRPDisplayMaxLen, otherwise its
+// longest prefix within that bound that ends on a UTF-8 boundary. Only the
+// displayed text is bounded; the request and the transcript keep the whole
+// RP name.
+func VerifyUserRPDisplayName(rpName string) string {
+	if len(rpName) <= VerifyUserRPDisplayMaxLen {
+		return rpName
+	}
+	end := VerifyUserRPDisplayMaxLen
+	for end > 0 && !utf8.RuneStart(rpName[end]) {
+		end--
+	}
+	return rpName[:end]
+}
+
+// ValidateVerifyUserRPName checks the RP name of a local.verifyUser request.
+// It must be non-empty, at most VerifyUserRPNameMaxLen bytes of valid UTF-8,
+// and free of control characters, so the name the phone's prompt shows is a
+// single line the desktop chose, not text that forges more of the prompt.
+func ValidateVerifyUserRPName(rpName string) error {
+	if rpName == "" {
+		return &DetailError{Err: ErrVerifyUserRPName, Detail: ": empty"}
+	}
+	if len(rpName) > VerifyUserRPNameMaxLen {
+		return &DetailError{
+			Err: ErrVerifyUserRPName,
+			Detail: ": " + strconv.Itoa(len(rpName)) + " bytes, want at most " +
+				strconv.Itoa(VerifyUserRPNameMaxLen),
+		}
+	}
+	if !utf8.ValidString(rpName) {
+		return &DetailError{Err: ErrVerifyUserRPName, Detail: ": not valid UTF-8"}
+	}
+	for _, r := range rpName {
+		if unicode.IsControl(r) {
+			return &DetailError{Err: ErrVerifyUserRPName, Detail: ": carries a control character"}
+		}
+	}
+	return nil
+}
+
+// BuildVerifyUserTranscript builds the transcript a UVK signs for
+// local.verifyUser:
+//
+//	BuildAttestTranscript(AttestPurposeVerifyUser, nonce, channelBinding, uvkFingerprint)
+//	    || SHA-256(rpName)
+//
+// The RP name hash is a fixed 32 bytes, as rpIdHash is in WebAuthn L2 §6.1
+// authenticator data, so the transcript stays unambiguous without a length
+// prefix.
+func BuildVerifyUserTranscript(rpName string, nonce, channelBinding, uvkFingerprint []byte) ([]byte, error) {
+	if err := ValidateVerifyUserRPName(rpName); err != nil {
+		return nil, err
+	}
+	transcript, err := BuildAttestTranscript(AttestPurposeVerifyUser, nonce, channelBinding, uvkFingerprint)
+	if err != nil {
+		return nil, err
+	}
+	rpNameHash := sha256.Sum256([]byte(rpName))
+	return append(transcript, rpNameHash[:]...), nil
+}
+
+// The phone-side refusals of local.verifyUser (#1712), each its own code so
+// the desktop can tell them apart. A cancelled prompt is
+// ErrorCodeUserCancelled.
+const (
+	// ErrorCodeVerifyUserNotEnrolled means the phone has no strong biometric
+	// enrolled, so it cannot verify its user: a device credential alone does
+	// not count, since the UVK is biometric-only.
+	ErrorCodeVerifyUserNotEnrolled = -32041
+
+	// ErrorCodeVerifyUserLockout means the phone has locked user
+	// authentication out after too many failed attempts.
+	ErrorCodeVerifyUserLockout = -32042
+
+	// ErrorCodeNotPaired means the phone holds no pairing with the desktop
+	// that sent the request.
+	ErrorCodeNotPaired = -32043
+)
+
+// MapVerifyUserRPCError maps the phone's RPC error answering local.verifyUser
+// to a typed error: a refusal code to its own sentinel, any other code as
+// MapRPCError does.
+func MapVerifyUserRPCError(rpcErr *RPCError) error {
+	if rpcErr == nil {
+		return nil
+	}
+	switch rpcErr.Code {
+	case ErrorCodeVerifyUserNotEnrolled:
+		return ErrUserVerificationNotEnrolled
+	case ErrorCodeVerifyUserLockout:
+		return ErrUserVerificationLockout
+	case ErrorCodeNotPaired:
+		return ErrNotPaired
+	}
+	return MapRPCError(rpcErr)
 }

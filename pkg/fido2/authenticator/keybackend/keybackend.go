@@ -15,6 +15,7 @@
 package keybackend
 
 import (
+	"context"
 	"crypto/x509"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -54,9 +55,10 @@ type FIDO2KeyCapabilities struct {
 	// succeeds, the UV flag should be set in the authenticator response even
 	// without a pinUvAuthParam from the platform.
 	//
-	// It is NOT a standalone user verification method: the authenticator
-	// cannot ask the backend to verify a user on demand, so it never mints a
-	// pinUvAuthToken on the strength of this capability (#1145).
+	// It is NOT a standalone user verification method, so the authenticator
+	// never mints a pinUvAuthToken on the strength of this capability
+	// (#1145). A backend that can verify a user on demand implements
+	// UserVerifier as well (ruling 167).
 	//
 	// For a backend that aggregates others (CompositeBackend) it is true only
 	// when every member verifies, so it never over-claims; the UV flag on a
@@ -173,4 +175,34 @@ type FIDO2AttestingKeyBackend interface {
 
 	// AttestationCertificateChain returns the attestation certificate chain.
 	AttestationCertificateChain() ([]*x509.Certificate, error)
+}
+
+// UserVerifier is implemented by a key backend that can verify the user on
+// demand, as a ceremony of its own outside any key operation: the built-in
+// user verification method behind getPinUvAuthTokenUsingUvWithPermissions
+// (CTAP 2.1 §6.5.5.7.3, ruling 167). The authenticator detects it on its key
+// backend and mints a pinUvAuthToken only after VerifyUser returns nil.
+type UserVerifier interface {
+	// VerifyUser verifies the user now and returns nil only if the user was
+	// verified for this call. An error that wraps
+	// ErrUserVerificationUnavailable means no decision could be reached,
+	// and the user was neither verified nor refused; any other error is a
+	// failed verification. rpID is
+	// the relying party the gated token is scoped to, so the user is shown
+	// who is asking; it is empty when the requested permissions are not
+	// RP-scoped (CTAP 2.1 §6.5.5.7.3).
+	VerifyUser(ctx context.Context, rpID string) error
+}
+
+// UserVerificationAvailability is implemented by a UserVerifier whose
+// on-demand verification depends on its configuration or its peer: a phone
+// backend with no verifier configured, or paired with a phone that signs but
+// does not implement local.verifyUser, implements UserVerifier and still
+// cannot verify a user. UserVerificationAvailable reports whether VerifyUser
+// can reach a decision now; when it returns false the authenticator treats
+// the backend as having no UserVerifier, so it neither advertises uv nor
+// serves getPinUvAuthTokenUsingUvWithPermissions (ruling 167). A UserVerifier
+// that does not implement it is always available.
+type UserVerificationAvailability interface {
+	UserVerificationAvailable() bool
 }
