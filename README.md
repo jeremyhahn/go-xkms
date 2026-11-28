@@ -366,7 +366,7 @@ The canonical `XKMS_*` environment variables (`XKMS_SO_PIN`, `XKMS_USER_PIN`,
 xkmsd --config xkmsd.yaml
 
 # Or via systemd (after installing service files)
-sudo systemctl start xkms
+sudo systemctl start xkmsd
 ```
 
 `--config` defaults to `/etc/xkms/xkmsd.yaml` when not given. If the daemon

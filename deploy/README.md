@@ -24,15 +24,13 @@ This directory contains service configuration files for deploying go-xkms as a s
 
 ## Configuration
 
-Create the configuration directory and file:
+The service runs as the `xkms` user, which must be able to read
+`/etc/xkms/xkmsd.yaml`, so the configuration is installed as
+`root:xkms` mode `0640` once that user exists (step 1 of the systemd or
+OpenRC installation below installs the directory `0750 root:xkms` and the
+file from `configs/xkmsd.yaml`).
 
-```bash
-sudo mkdir -p /etc/xkms
-sudo cp configs/config.yaml /etc/xkms/config.yaml
-sudo chmod 640 /etc/xkms/config.yaml
-```
-
-Edit `/etc/xkms/config.yaml` to match your environment. See the main documentation for configuration options.
+Edit `/etc/xkms/xkmsd.yaml` to match your environment. See the main documentation for configuration options.
 
 ## systemd (Debian, Ubuntu, RHEL, Fedora, Arch, etc.)
 
@@ -59,9 +57,16 @@ Edit `/etc/xkms/config.yaml` to match your environment. See the main documentati
    sudo chmod 700 /var/lib/xkms/keys
    ```
 
-2. Install the service file:
+   Then install the configuration, readable by the xkms group:
    ```bash
-   sudo cp deploy/systemd/xkms.service /etc/systemd/system/
+   sudo install -d -m 0750 -o root -g xkms /etc/xkms
+   sudo install -m 0640 -o root -g xkms configs/xkmsd.yaml /etc/xkms/xkmsd.yaml
+   ```
+
+2. Install the service file (`configs/xkmsd.service` is the one xkmsd unit;
+   it runs `xkmsd --config /etc/xkms/xkmsd.yaml`):
+   ```bash
+   sudo cp configs/xkmsd.service /etc/systemd/system/
    sudo systemctl daemon-reload
    ```
 
@@ -76,22 +81,22 @@ Edit `/etc/xkms/config.yaml` to match your environment. See the main documentati
 
 ```bash
 # Enable service to start on boot
-sudo systemctl enable xkms
+sudo systemctl enable xkmsd
 
 # Start the service
-sudo systemctl start xkms
+sudo systemctl start xkmsd
 
 # Check status
-sudo systemctl status xkms
+sudo systemctl status xkmsd
 
 # View logs
-sudo journalctl -u xkms -f
+sudo journalctl -u xkmsd -f
 
 # Reload configuration (sends HUP signal)
-sudo systemctl reload xkms
+sudo systemctl reload xkmsd
 
 # Stop the service
-sudo systemctl stop xkms
+sudo systemctl stop xkmsd
 ```
 
 ## OpenRC (Alpine Linux, Gentoo)
@@ -100,9 +105,9 @@ sudo systemctl stop xkms
 
 1. Create the xkms user and directories:
    ```bash
-   # Create user
-   sudo adduser -S -D -H -h /var/lib/xkms -s /sbin/nologin -G xkms xkms
+   # Create group and user
    sudo addgroup -S xkms
+   sudo adduser -S -D -H -h /var/lib/xkms -s /sbin/nologin -G xkms xkms
 
    # Create directories
    sudo mkdir -p /var/lib/xkms/{keys,certs}
@@ -111,6 +116,10 @@ sudo systemctl stop xkms
    sudo chown -R xkms:xkms /var/lib/xkms /var/log/xkms /run/xkms
    sudo chmod 750 /var/lib/xkms /var/log/xkms
    sudo chmod 700 /var/lib/xkms/keys
+
+   # Install the configuration, readable by the xkms group
+   sudo install -d -m 0750 -o root -g xkms /etc/xkms
+   sudo install -m 0640 -o root -g xkms configs/xkmsd.yaml /etc/xkms/xkmsd.yaml
    ```
 
 2. Install the init script:
@@ -118,6 +127,8 @@ sudo systemctl stop xkms
    sudo cp deploy/openrc/xkms /etc/init.d/
    sudo chmod 755 /etc/init.d/xkms
    ```
+   The script starts xkmsd in `/var/lib/xkms`, so relative paths in
+   `xkmsd.yaml` (`xkms-data/...`) resolve under `/var/lib/xkms`.
 
 3. Install the configuration file:
    ```bash
@@ -209,7 +220,7 @@ for exactly which handler records which metric).
 
 Both the embedded xkmsd ACME server and the standalone TrustedCA expose
 these metrics on a `/metrics` endpoint - xkmsd's already-configured metrics
-server (`metrics.enabled`/`metrics.port`/`metrics.path` in `config.yaml`)
+server (`metrics.enabled`/`metrics.port`/`metrics.path` in `xkmsd.yaml`)
 gathers the ACME registry alongside its own, so there is one endpoint to
 scrape, not two.
 
@@ -255,7 +266,7 @@ its own copy (`metrics.RegisterRuntimeCollectors`, called once from
 1. Check the logs:
    ```bash
    # systemd
-   sudo journalctl -u xkms -e
+   sudo journalctl -u xkmsd -e
 
    # OpenRC
    sudo cat /var/log/xkms/xkms.log
@@ -263,7 +274,7 @@ its own copy (`metrics.RegisterRuntimeCollectors`, called once from
 
 2. Verify configuration:
    ```bash
-   sudo -u xkms xkmsd -config /etc/xkms/config.yaml -version
+   sudo -u xkms xkmsd --config /etc/xkms/xkmsd.yaml -version
    ```
 
 3. Check file permissions:

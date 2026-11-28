@@ -3,13 +3,20 @@ Description=xKMS Daemon - Unified Key Management Service
 Documentation=https://github.com/jeremyhahn/go-xkms
 After=network-online.target
 Wants=network-online.target
+# Optional hardware security module daemons
+After=tpm2-abrmd.service pcscd.service
 
 [Service]
 Type=simple
 User=xkms
 Group=xkms
 
-# Main service
+# Optional XKMS_* settings (deploy/README.md)
+EnvironmentFile=-/etc/xkms/environment
+
+# Main service; relative config paths (xkms-data/...) resolve under the
+# state directory
+WorkingDirectory=/var/lib/xkms
 ExecStart=/usr/bin/xkmsd --config /etc/xkms/xkmsd.yaml
 
 # Reload configuration on SIGHUP
