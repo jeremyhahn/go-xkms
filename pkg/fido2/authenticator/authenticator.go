@@ -609,6 +609,10 @@ func (a *Authenticator) ProcessCBORWithContext(ctx context.Context, cmd byte, da
 		return a.errorResponseFromError(err), err
 	}
 
+	// A completed credential operation ends the grant, prompted or not.
+	if cmd == CmdMakeCredential || cmd == CmdGetAssertion {
+		a.clearPresenceGrant()
+	}
 	return response, nil
 }
 
