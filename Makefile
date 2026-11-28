@@ -2896,10 +2896,14 @@ devcontainer-server-build:
 # rebuilt softhsm, swtpm and xkms-server each time. The images carry the
 # per-run XKMS_IMAGE_TAG, so clean-run-images removes them after the run.
 .PHONY: integration-images
-## integration-images: Build the softhsm, swtpm and xkms-server compose images once for integration-test
+## integration-images: Build the devcontainer, shared suite, challenges, bootstrap and api images once for integration-test
 integration-images:
 	@$(MAKE) --no-print-directory stage-gomodauth
 	$(DOCKER_COMPOSE) build softhsm swtpm xkms-server
+	$(SUITE_COMPOSE) build suite
+
+# The shared suite image every compose suite's `test` service runs in.
+SUITE_COMPOSE := $(call compose,suite) -f $(CURDIR)/test/integration/compose.suite.yml
 
 .PHONY: devcontainer-server-up
 ## devcontainer-server-up: Start the compose xkms-server service and wait for its Unix socket
