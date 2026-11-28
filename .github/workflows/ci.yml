@@ -1884,8 +1884,13 @@ jobs:
       # The suite also runs against a live xkmsd in compose.
       XKMS_COMPOSE_SERVER: "1"
       # <<< CUSTOMIZE
+    # #2307 (ruling 978): each step has its own timeout-minutes, so a stalled
+    # step (a hung image fetch) fails fast instead of holding the runner for
+    # the job's 180. The values are conservative, about 2x a typical run or
+    # more, pending measured step durations.
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        timeout-minutes: 10
 
       # v1.21.1 (Company Agent m605 item 8): mask the forge credentials before
       # any other step. The runner injects them as plain environment
@@ -1893,6 +1898,7 @@ jobs:
       # and the token sits inside GIT_CONFIG_KEY_0's URL, so it is masked alone
       # as well.
       - name: Mask the forge credentials
+        timeout-minutes: 2
         run: |
           for v in GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0; do
             val=${!v:-}
@@ -1907,13 +1913,16 @@ jobs:
       # this step's env, since Actions prints a step's env unredacted before
       # the step runs; an internal registry is a secret, never a variable.
       - name: Mask the LAN addresses
+        timeout-minutes: 2
         run: scripts/ci-mask-lan.sh
 
       - name: Reap stale CI stacks
+        timeout-minutes: 15
         run: scripts/reap-stale-ci-stacks.sh "$CI_STACK_PREFIX"
 
       # v1.29: the Alpine package index checksum (as in ci-images).
       - name: Read the Alpine package index
+        timeout-minutes: 10
         run: |
           APK_BASE_IMAGES=$(. scripts/tool-pins.sh && printf '%s' "$GO_IMAGE")
           export APK_BASE_IMAGES
@@ -1922,6 +1931,7 @@ jobs:
 
       # v1.23: the content-addressed integration image (as in the image job).
       - name: Name the integration image
+        timeout-minutes: 15
         run: echo "IT_IMAGE=$(make -s it-image)" >> "$GITHUB_ENV"
 
       # v1.23: a lease on the integration image (from a Codex review). A
@@ -1932,6 +1942,7 @@ jobs:
       # removes the lease; one a dead job leaves behind is a stale container,
       # which the reap step removes after the job timeout like any other.
       - name: Lease the integration image
+        timeout-minutes: 5
         run: |
           if docker image inspect "$IT_IMAGE" >/dev/null 2>&1; then
             lease="${CI_STACK_PREFIX}lease-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
@@ -1941,6 +1952,7 @@ jobs:
       # CUSTOMIZE: host tuning the suite needs goes here, as in the test job.
 
       - name: Write the module credential file
+        timeout-minutes: 2
         run: |
           umask 077
           : > "$RUNNER_TEMP/gomodauth.env"
@@ -1949,15 +1961,18 @@ jobs:
           done
 
       - name: make integration-test (integration image)
+        timeout-minutes: 150
         run: make integration-test MODULE_ENV_FILE="$RUNNER_TEMP/gomodauth.env" IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       # Ruling 888: no image this run built carries a private address in its
       # history or config, whatever the suite's result.
       - name: Check the images carry no private address
+        timeout-minutes: 20
         if: ${{ !cancelled() && runner.environment != 'github-hosted' }}
         run: make check-run-images IT_IMAGE="$IT_IMAGE"
 
       - name: Tear down
+        timeout-minutes: 10
         if: always()
         run: |
           rm -f "$RUNNER_TEMP/gomodauth.env"
@@ -1969,10 +1984,12 @@ jobs:
       # clean-test-containers removes the per-suite stacks, and
       # devcontainer-clean the devcontainer project it leaves.
       - name: Tear down the integration stacks
+        timeout-minutes: 15
         if: always()
         run: make clean-test-containers IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" CLEAN_RUN_IMAGES=1
 
       - name: Tear down the devcontainer
+        timeout-minutes: 10
         if: always()
         run: make devcontainer-clean IT_PROJECT="$IT_PROJECT"
       # <<< CUSTOMIZE

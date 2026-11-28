@@ -7,7 +7,7 @@ ENV GOTOOLCHAIN=auto
 ENV GOWORK=off
 
 # Install minimal build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 

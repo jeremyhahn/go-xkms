@@ -11,7 +11,7 @@ LABEL description="CI environment for go-xkms with all linters, security scanner
 ENV GOTOOLCHAIN=auto
 
 # Install build essentials and required packages
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
     opensc \
@@ -46,8 +46,8 @@ RUN sh /tmp/build-softhsm.sh && rm /tmp/build-softhsm.sh
 # Install Node.js for the web UI suites. `make test` runs test-web, which
 # no-ops when npm is missing — without Node here the SPA, SDK, and svelte-auth
 # tests would silently skip in CI instead of gating it.
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
-    apt-get install -y --no-install-recommends nodejs && \
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | timeout 300 bash - && \
+    timeout 300 apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
 
 # Install golangci-lint from source (must be built with Go 1.27.4+ to support go 1.27.4 projects)
