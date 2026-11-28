@@ -111,7 +111,7 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.Aut
 	// MethodMetadata["user_handle_b64"] wins out; otherwise we derive the
 	// handle from factor.UserID so the assertion is scoped to the owning
 	// user rather than relying solely on the discoverable-credential flow.
-	if challenge.MethodMetadata == nil {
+	if challenge.MethodMetadata == nil && len(challenge.Nonce) == 0 {
 		return &MissingMethodMetadataError{Field: "session_id"}
 	}
 	sessionID := challenge.MethodMetadata["session_id"]
@@ -194,6 +194,14 @@ func (v *WebAuthnFactorVerifier) verifyNonce(ctx context.Context, factor *qrdbsd
 	}
 	if stored == nil {
 		return &CredentialMismatchError{}
+	}
+	owner, err := v.service.GetUser(ctx, stored.UserID)
+	if err != nil {
+		return &SignatureVerifyError{Reason: "webauthn assertion verification failed"}
+	}
+	// The owning account must still be active with WebAuthn among its AuthMethods.
+	if xkmswebauthn.CheckAccountStanding(owner) != nil {
+		return &SignatureVerifyError{Reason: "webauthn assertion verification failed"}
 	}
 	cfg := v.service.Config()
 	requireUV := challenge.MethodMetadata["user_verification"] == "required" ||
