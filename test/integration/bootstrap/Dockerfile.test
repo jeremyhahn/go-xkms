@@ -4,7 +4,7 @@ ENV GOTOOLCHAIN=auto
 # Base deps for the bootstrap protocol tests (truststrap package) plus
 # CGO headers required when the xkey TrustService integration test
 # transitively pulls in xkey/pkg/gui/services (USB/HID/CBOR/PKCS11).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     ca-certificates \
     wget \
     pkg-config \
