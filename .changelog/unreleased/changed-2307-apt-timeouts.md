@@ -1,0 +1,1 @@
+- Every apt fetch in every Dockerfile runs under `timeout` (300 s; 600 s for `playwright install --with-deps`), and every Integration CI step has its own conservative `timeout-minutes`, so a hung image-build fetch fails its step instead of stalling the run (#2307).

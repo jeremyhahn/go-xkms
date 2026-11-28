@@ -9,7 +9,7 @@ FROM golang:1.27.4-bookworm AS builder
 ENV GOTOOLCHAIN=auto
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
     tzdata \
@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The xkms binary itself needs no SoftHSM to build: PKCS#11 modules are
 # dlopen()ed at run time.
 COPY scripts/build-softhsm.sh /build/build-softhsm.sh
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     autoconf automake libtool libssl-dev && \
     rm -rf /var/lib/apt/lists/* && \
     DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
@@ -87,8 +87,8 @@ LABEL org.opencontainers.image.description="Unified xkms server with all protoco
 LABEL org.opencontainers.image.vendor="go-xkms"
 
 # Install runtime dependencies
-RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get upgrade -y && \
+    timeout 300 apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
     libusb-1.0-0 \
