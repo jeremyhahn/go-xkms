@@ -1300,6 +1300,12 @@ type PhoneConfig struct {
 	// PhoneStaticKey is the hex-encoded Noise static public key of the paired phone
 	PhoneStaticKey string `yaml:"phone_static_key"`
 
+	// Tenant and DeviceID name the phone's record in the device registry
+	// (pkg/devicereg). In backend mode go-xkms accepts the phone only while
+	// that record is active and its identity key is PhoneStaticKey.
+	Tenant   string `yaml:"tenant"`
+	DeviceID string `yaml:"device_id"`
+
 	// RequestTimeout is the per-operation timeout for JSON-RPC requests to the phone.
 	// If zero, the phone backend applies its default (30s).
 	RequestTimeout time.Duration `yaml:"request_timeout"`

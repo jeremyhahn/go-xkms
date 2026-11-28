@@ -61,6 +61,11 @@ var (
 
 	ErrPhoneConfigNil = errors.New("server: phone backend configuration is not set")
 
+	// ErrPhoneDeviceRefused indicates the phone has no active device-registry
+	// record bound to its key (unpaired, revoked, or a different key), so
+	// backend mode does not accept it.
+	ErrPhoneDeviceRefused = errors.New("server: phone device is not an active paired device")
+
 	// ErrPhoneBackendCreate indicates the phone backend could not be created.
 	ErrPhoneBackendCreate = errors.New("server: failed to create phone backend")
 

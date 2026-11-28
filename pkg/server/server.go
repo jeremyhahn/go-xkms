@@ -58,6 +58,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/crypto/aead"
 	"github.com/jeremyhahn/go-xkms/pkg/datastore"
+	"github.com/jeremyhahn/go-xkms/pkg/devicereg"
 	"github.com/jeremyhahn/go-xkms/pkg/escrow"
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/kmip" // registers the "kmip" escrow agent factory
 	_ "github.com/jeremyhahn/go-xkms/pkg/escrow/xkms" // registers the "xkms" escrow agent factory
@@ -480,6 +481,11 @@ type Server struct {
 	// peerEvidenceDAOs, published once the datastore opens.
 	peerGate         *peergate.Gate
 	peerEvidenceDAOs atomic.Pointer[qrdbsdk.DAOFactory]
+
+	// deviceRegistry is the backend-mode device registry RegisterPhoneBackend
+	// verifies a phone against; opened on the datastore at first use.
+	// Guarded by mu.
+	deviceRegistry *devicereg.Registry
 
 	// restListener, when non-nil, is handed to the REST transport so it
 	// serves a pre-bound listener (loopback launcher: 127.0.0.1:0) instead of
