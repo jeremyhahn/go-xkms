@@ -1,0 +1,1 @@
+- **`make release-alpha` checks for its tools before it starts.** `scripts/release-alpha.sh` now confirms git, go, curl, jq and the shell tools it runs are on `PATH` before its first git command, so a host without jq is refused with a message naming it instead of pushing the release branch and opening the pull request it then cannot report.

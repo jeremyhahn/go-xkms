@@ -503,7 +503,7 @@ func TestValidateTCGTPMManufacturer(t *testing.T) {
 // placement an endorse-01 client uses to ask for the code to be recorded.
 func TestTCGTPMManufacturerFromCSR_ReadsSubjectAltNameDirectoryName(t *testing.T) {
 	const manufacturer = "id:49465800"
-	san, err := BuildSubjectAltName(pkix.Name{CommonName: "lab-node-5-ek"}, nil, nil, nil, nil, nil,
+	san, err := BuildSubjectAltName(pkix.Name{CommonName: "node-01-ek"}, nil, nil, nil, nil, nil,
 		[]pkix.Name{tpmManufacturerDirectoryName(manufacturer)})
 	if err != nil {
 		t.Fatalf("BuildSubjectAltName: %v", err)
@@ -538,7 +538,7 @@ func createTestCSRWithExtensions(t *testing.T, extensions []pkix.Extension) *x50
 		t.Fatalf("generate key: %v", err)
 	}
 	der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
-		Subject:         pkix.Name{CommonName: "lab-node-5-ek"},
+		Subject:         pkix.Name{CommonName: "node-01-ek"},
 		ExtraExtensions: extensions,
 	}, key)
 	if err != nil {
