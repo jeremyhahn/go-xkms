@@ -182,6 +182,11 @@ func (m *mockRoleClient) ReconcileBuiltInRoles(ctx context.Context, req *qrdbtra
 	return nil, errors.New("not used")
 }
 
+// ReconcileBuiltInRolesAllTenants is not exercised by these tests.
+func (m *mockRoleClient) ReconcileBuiltInRolesAllTenants(context.Context) (*qrdbtransport.ReconcileAllTenantsRolesResponse, error) {
+	return nil, errors.New("not used")
+}
+
 // singleStoreResolver resolves every tenant to the same backing KVStore —
 // enough for a unit test's invite store, which does not exercise the
 // per-tenant routing or barrier isolation qrdb's own tests already cover.

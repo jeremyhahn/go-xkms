@@ -123,13 +123,20 @@ func (c *Controller) Seal() error {
 func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 	ctx := context.Background()
 
+	// go-qrdb checks the current passphrase before it re-wraps the root key,
+	// so the old credentials are needed whether or not the barrier is sealed.
+	oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
+	if credErr != nil {
+		return credErr
+	}
+	defer func() {
+		if oldCreds.Secret != nil {
+			err = errors.Join(err, oldCreds.Secret.Destroy())
+		}
+	}()
+
 	wasSealed := c.barrier.IsSealed()
 	if wasSealed {
-		oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
-		if credErr != nil {
-			return credErr
-		}
-		defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
 		unsealErr := c.barrier.Unseal(ctx, oldCreds)
 		if isUninitialized(unsealErr) {
 			return nil // no barrier yet; first login will key it to the new PIN
@@ -148,8 +155,13 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		}
 		return credErr
 	}
-	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
-	if changeErr := c.barrier.ChangePassword(ctx, newCreds); changeErr != nil {
+	defer func() {
+		// An empty passphrase yields credentials with no secret to destroy.
+		if newCreds.Secret != nil {
+			err = errors.Join(err, newCreds.Secret.Destroy())
+		}
+	}()
+	if changeErr := c.barrier.ChangePassword(ctx, oldCreds, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {
 				return errors.Join(changeErr, sealErr)

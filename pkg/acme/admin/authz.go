@@ -108,7 +108,11 @@ func (g *PermissionGate) Authorize(ctx context.Context, resource, action string,
 		return auth.ErrUnauthenticated
 	}
 
-	if err := g.authorizer.Authorize(ctx, identity, resource, action); err != nil {
+	err := g.authorizer.Authorize(ctx, identity, resource, action)
+	if err == nil && adminRoleExcluded(resource, action) {
+		err = g.authorizeWithoutAdminRole(ctx, identity, resource, action)
+	}
+	if err != nil {
 		args := append([]any{
 			slog.String("subject", identity.Subject),
 			slog.String("tenant", identity.TenantID),
@@ -124,6 +128,37 @@ func (g *PermissionGate) Authorize(ctx context.Context, resource, action string,
 		slog.String("subject", identity.Subject),
 		slog.String("resource", resource),
 		slog.String("action", action))
+	return nil
+}
+
+// errAdminRoleExcluded denies a permission the built-in admin role does not carry on the admin plane.
+var errAdminRoleExcluded = errors.New("acme admin: the admin role cannot create or update roles")
+
+// adminRoleExcluded reports whether the built-in admin role is kept from the permission.
+func adminRoleExcluded(resource, action string) bool {
+	return resource == auth.ResourceRoles && (action == auth.ActionCreate || action == auth.ActionUpdate)
+}
+
+// authorizeWithoutAdminRole authorizes the identity on its roles other than the built-in admin role.
+func (g *PermissionGate) authorizeWithoutAdminRole(ctx context.Context, identity *auth.Identity, resource, action string) error {
+	adminID := qrdbsdk.SystemRoleID(identity.TenantID, qrdbsdk.RoleNameAdmin)
+	others := make([]string, 0, len(identity.Roles))
+	for _, r := range identity.Roles {
+		if r != qrdbsdk.RoleNameAdmin && r != adminID {
+			others = append(others, r)
+		}
+	}
+	if len(others) == len(identity.Roles) {
+		return nil
+	}
+	if len(others) == 0 {
+		return errAdminRoleExcluded
+	}
+	stripped := *identity
+	stripped.Roles = others
+	if err := g.authorizer.Authorize(ctx, &stripped, resource, action); err != nil {
+		return errAdminRoleExcluded
+	}
 	return nil
 }
 

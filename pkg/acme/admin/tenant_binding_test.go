@@ -53,12 +53,22 @@ func callerCtx(tenantID string) context.Context {
 		UserID:   "admin@" + tenantID,
 		Username: "admin@" + tenantID,
 		TenantID: tenantID,
-		Roles:    []string{qrdbsdk.RoleNameAdmin},
+		Roles:    []string{qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameAdmin)},
 	})
 }
 
 // platformCtx returns a context carrying an administrator of the reserved
 // system tenant: the platform scope that may address every tenant.
+// officerCtx is the tenant's security officer, the role that may create roles in it.
+func officerCtx(tenantID string) context.Context {
+	return withUser(context.Background(), &AuthenticatedUser{
+		UserID:   "so@" + tenantID,
+		Username: "so@" + tenantID,
+		TenantID: tenantID,
+		Roles:    []string{qrdbsdk.SystemRoleID(tenantID, qrdbsdk.RoleNameSO)},
+	})
+}
+
 func platformCtx() context.Context {
 	return callerCtx(qrdbsdk.SystemTenantID)
 }
@@ -87,23 +97,24 @@ type bindingFixture struct {
 
 func newBindingFixture(t *testing.T) *bindingFixture {
 	t.Helper()
-	svc := newTenantAwareTestService(t)
+	svc, node := newFirstBootTenantAwareTestService(t)
 	ctx := platformCtx()
 	f := &bindingFixture{svc: svc}
 
 	for _, id := range []string{boundTenantA, boundTenantB} {
 		_, err := svc.CreateTenant(ctx, CreateTenantRequest{ID: id, Name: id})
 		require.NoError(t, err)
+		require.NoError(t, node.ProvisionTenant(id))
 	}
 
 	var err error
-	f.roleA, err = svc.CreateTenantRole(ctx, boundTenantA, &db.CreateRoleRequest{Name: "role-a", Permissions: []string{"kv:get"}})
+	f.roleA, err = svc.CreateTenantRole(officerCtx(boundTenantA), boundTenantA, &db.CreateRoleRequest{Name: "role-a", Permissions: []string{"keys:get"}})
 	require.NoError(t, err)
-	f.roleB, err = svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"kv:get"}})
+	f.roleB, err = svc.CreateTenantRole(officerCtx(boundTenantB), boundTenantB, &db.CreateRoleRequest{Name: "role-b", Permissions: []string{"keys:get"}})
 	require.NoError(t, err)
-	f.userA, err = svc.CreateTenantUser(ctx, boundTenantA, &db.CreateUserRequest{Username: "user-a", Name: "User A", Email: "user-a@example.com"})
+	f.userA, err = svc.CreateTenantUser(callerCtx(boundTenantA), boundTenantA, &db.CreateUserRequest{Username: "user-a", Name: "User A", Email: "user-a@example.com"})
 	require.NoError(t, err)
-	f.userB, err = svc.CreateTenantUser(ctx, boundTenantB, &db.CreateUserRequest{Username: "user-b", Name: "User B", Email: "user-b@example.com"})
+	f.userB, err = svc.CreateTenantUser(callerCtx(boundTenantB), boundTenantB, &db.CreateUserRequest{Username: "user-b", Name: "User B", Email: "user-b@example.com"})
 	require.NoError(t, err)
 
 	eab, err := svc.CreateTenantEAB(ctx, boundTenantB, CreateEABRequest{Purpose: "account-binding"})
@@ -158,12 +169,12 @@ func TestTenantBinding_ForeignTenantRefusedAsNotFound(t *testing.T) {
 			return err
 		},
 		"create role": func() error {
-			_, err := svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "planted", Permissions: []string{"kv:get"}})
+			_, err := svc.CreateTenantRole(ctx, boundTenantB, &db.CreateRoleRequest{Name: "planted", Permissions: []string{"keys:get"}})
 			return err
 		},
 		"get role": func() error { _, err := svc.GetTenantRole(ctx, boundTenantB, f.roleB.ID); return err },
 		"update role": func() error {
-			_, err := svc.UpdateTenantRole(ctx, boundTenantB, &db.UpdateRoleRequest{ID: f.roleB.ID, Permissions: []string{"kv:put"}})
+			_, err := svc.UpdateTenantRole(ctx, boundTenantB, &db.UpdateRoleRequest{ID: f.roleB.ID, Permissions: []string{"keys:create"}})
 			return err
 		},
 		"delete role": func() error { return svc.DeleteTenantRole(ctx, boundTenantB, f.roleB.ID) },
@@ -200,7 +211,7 @@ func TestTenantBinding_ForeignTenantRefusedAsNotFound(t *testing.T) {
 	assert.Equal(t, entities.TenantStatusActive, info.Status)
 	role, err := svc.GetTenantRole(pctx, boundTenantB, f.roleB.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"kv:get"}, role.Permissions)
+	assert.Equal(t, []string{"keys:get"}, role.Permissions)
 	user, err := svc.GetTenantUser(pctx, boundTenantB, userBID)
 	require.NoError(t, err)
 	assert.Equal(t, "User B", user.Name)
@@ -241,7 +252,7 @@ func TestTenantBinding_ForeignRoleAndUserUnderOwnTenant(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			_, err := svc.GetTenantRole(ctx, boundTenantA, f.roleB.ID)
 			assert.ErrorIs(t, err, ErrRoleNotFound)
-			_, err = svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleB.ID, Permissions: []string{"kv:put"}})
+			_, err = svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleB.ID, Permissions: []string{"keys:create"}})
 			assert.ErrorIs(t, err, ErrRoleNotFound)
 			assert.ErrorIs(t, svc.DeleteTenantRole(ctx, boundTenantA, f.roleB.ID), ErrRoleNotFound)
 
@@ -256,7 +267,7 @@ func TestTenantBinding_ForeignRoleAndUserUnderOwnTenant(t *testing.T) {
 	pctx := platformCtx()
 	role, err := svc.GetTenantRole(pctx, boundTenantB, f.roleB.ID)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"kv:get"}, role.Permissions)
+	assert.Equal(t, []string{"keys:get"}, role.Permissions)
 	user, err := svc.GetTenantUser(pctx, boundTenantB, userBID)
 	require.NoError(t, err)
 	assert.Equal(t, "User B", user.Name)
@@ -293,9 +304,9 @@ func TestTenantBinding_TenantCallerManagesOwnTenant(t *testing.T) {
 	require.NoError(t, err)
 	assertTenantStatusUnsupported(t, svc.UpdateTenantStatus(ctx, boundTenantA, entities.TenantStatusActive))
 
-	role, err := svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleA.ID, Permissions: []string{"kv:put"}})
+	role, err := svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleA.ID, Permissions: []string{"keys:create"}})
 	require.NoError(t, err)
-	assert.Equal(t, []string{"kv:put"}, role.Permissions)
+	assert.Equal(t, []string{"keys:create"}, role.Permissions)
 	user, err := svc.UpdateTenantUser(ctx, boundTenantA, &db.UpdateUserRequest{ID: f.userA.ID, Name: "Renamed A"})
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed A", user.Name)

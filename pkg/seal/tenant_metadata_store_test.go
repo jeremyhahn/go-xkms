@@ -57,3 +57,42 @@ func TestTenantMetadataStore_PassesThroughValueAndOtherErrors(t *testing.T) {
 	assert.ErrorIs(t, err, sentinel)
 	assert.NotErrorIs(t, err, qrdbsdk.ErrSecretNotFound)
 }
+
+// fakeBackendCAS is a StorageBackend with the two-result CompareAndSwap the
+// system barrier exposes.
+type fakeBackendCAS struct {
+	qrdbsdk.StorageBackend
+	swapped        bool
+	err            error
+	key            string
+	expect, setVal []byte
+}
+
+func (f *fakeBackendCAS) CompareAndSwap(_ context.Context, key string, expect, set []byte) (bool, error) {
+	f.key, f.expect, f.setVal = key, expect, set
+	return f.swapped, f.err
+}
+
+func TestTenantMetadataStore_ForwardsCompareAndSwap(t *testing.T) {
+	ctx := context.Background()
+	fake := &fakeBackendCAS{swapped: true}
+	store := tenantMetadataStore{fake}
+
+	swapped, err := store.CompareAndSwap(ctx, "tenant/a", []byte("old"), []byte("new"))
+	require.NoError(t, err)
+	assert.True(t, swapped)
+	assert.Equal(t, "tenant/a", fake.key)
+	assert.Equal(t, []byte("old"), fake.expect)
+	assert.Equal(t, []byte("new"), fake.setVal)
+
+	sentinel := errors.New("backend down")
+	_, err = tenantMetadataStore{&fakeBackendCAS{err: sentinel}}.CompareAndSwap(ctx, "k", nil, nil)
+	assert.ErrorIs(t, err, sentinel)
+}
+
+func TestTenantMetadataStore_CompareAndSwapUnsupported(t *testing.T) {
+	store := tenantMetadataStore{fakeBackendGet{}}
+	swapped, err := store.CompareAndSwap(context.Background(), "k", []byte("a"), []byte("b"))
+	assert.False(t, swapped)
+	assert.ErrorIs(t, err, storage.ErrCompareAndSwapUnsupported)
+}

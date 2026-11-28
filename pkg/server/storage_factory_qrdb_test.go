@@ -39,7 +39,9 @@ import (
 func newQRDBTestServer(t *testing.T) *Server {
 	t.Helper()
 
+	// The qrdb barrier seals under the node context that New would set.
 	s := &Server{
+		ctx: context.Background(),
 		config: &config.Config{
 			Datastore: config.DatastoreConfig{Path: t.TempDir()},
 		},

@@ -87,7 +87,7 @@ func newCAInstanceBundler(caInstance caInstanceProvider) (*tlsCABundler, error) 
 }
 
 // bootstrapCABundle is the provider go-qrdb serves GET /v1/ca/bootstrap from
-// (qrdbsdk.WithBootstrapCABundle): qrdb owns the one route, xkmsd supplies
+// (qrdbserver.WithBootstrapCABundle): qrdb owns the one route, xkmsd supplies
 // its CA bundle -- the bundler Start computes, read per request. Before
 // Start has computed one it reports ErrBootstrapCABundleUnavailable.
 func (s *Server) bootstrapCABundle(context.Context) ([]byte, error) {
