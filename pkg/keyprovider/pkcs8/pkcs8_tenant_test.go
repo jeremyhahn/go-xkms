@@ -409,8 +409,8 @@ func TestDeleteKey_MetadataDeleteFailurePropagates(t *testing.T) {
 		t.Fatalf("GenerateKey failed: %v", err)
 	}
 
-	// Fail only the metadata delete: the key blob is removed first, so failing
-	// every delete would abort before the record is reached.
+	// Fail only the metadata delete: it runs before the blob delete, so the
+	// failure must surface and leave the key in place for a retry.
 	be.storage = &metaDeleteFailStorage{Backend: keyStorage}
 
 	if err := be.DeleteKey(ctx, attrs); err == nil {

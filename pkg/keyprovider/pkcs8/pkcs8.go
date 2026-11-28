@@ -301,8 +301,10 @@ func (b *PKCS8Backend) GenerateKey(ctx context.Context, attrs *types.KeyAttribut
 	}
 	metaKey := metadataPath(keyID)
 	if err := b.storage.Put(ctx, metaKey, metadataBytes); err != nil {
-		// Roll back the key blob so a failed generation does not leave an
-		// orphaned key that blocks regenerating under the same ID.
+		// Drop stale metadata, then the blob; keep the blob if the metadata cleanup fails.
+		if metaErr := b.deleteKeyMetadata(ctx, keyID); metaErr != nil {
+			return nil, errors.Join(&errs.Wrapped{Msg: "failed to store metadata", Err: err}, fmt.Errorf("rollback of key %s stopped: %w", keyID, metaErr))
+		}
 		if delErr := storage.DeleteKey(ctx, b.storage, keyID); delErr != nil {
 			return nil, &errs.Affix{Prefix: "failed to store metadata: ", Err: err, Suffix: fmt.Sprintf(" (rollback of key %s also failed: %v)", keyID, delErr)}
 		}
@@ -359,20 +361,23 @@ func (b *PKCS8Backend) DeleteKey(ctx context.Context, attrs *types.KeyAttributes
 	}
 
 	keyID := attrs.ID()
-	if err := storage.DeleteKey(ctx, b.storage, keyID); err != nil {
-		if errors.Is(err, storage.ErrNotFound) {
-			return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
-		}
-		return &errs.Wrapped{Msg: "failed to delete key", Err: err}
+
+	// Blob first, ownership record second; a retry tolerates a missing blob.
+	blobErr := storage.DeleteKey(ctx, b.storage, keyID)
+	blobMissing := errors.Is(blobErr, storage.ErrNotFound)
+	if blobErr != nil && !blobMissing {
+		return &errs.Wrapped{Msg: "failed to delete key", Err: blobErr}
 	}
 
-	// Remove the metadata record so a deleted key leaves no orphaned tenant or
-	// Exportable flag behind for a future key of the same identifier to
-	// inherit.
-	if err := b.deleteKeyMetadata(ctx, keyID); err != nil {
-		return err
+	metaErr := b.storage.Delete(ctx, metadataPath(keyID))
+	metaMissing := errors.Is(metaErr, storage.ErrNotFound)
+	if metaErr != nil && !metaMissing {
+		return &errs.Wrapped{Msg: "failed to delete key metadata", Err: metaErr}
 	}
 
+	if blobMissing && metaMissing {
+		return &errs.Detail{Err: backend.ErrKeyNotFound, Detail: keyID}
+	}
 	return nil
 }
 
