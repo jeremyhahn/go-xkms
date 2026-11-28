@@ -111,11 +111,11 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.Aut
 	// MethodMetadata["user_handle_b64"] wins out; otherwise we derive the
 	// handle from factor.UserID so the assertion is scoped to the owning
 	// user rather than relying solely on the discoverable-credential flow.
-	if challenge.MethodMetadata == nil {
+	if challenge.MethodMetadata == nil && len(challenge.Nonce) == 0 {
 		return &MissingMethodMetadataError{Field: "session_id"}
 	}
 	sessionID := challenge.MethodMetadata["session_id"]
-	if sessionID == "" {
+	if sessionID == "" && len(challenge.Nonce) == 0 {
 		return &MissingMethodMetadataError{Field: "session_id"}
 	}
 
@@ -149,6 +149,9 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.Aut
 	if userID == nil && factor.UserID != 0 {
 		userID = xkmswebauthn.HandleFromUserID(factor.UserID)
 	}
+	if sessionID == "" {
+		return v.verifyNonce(ctx, factor, challenge, userID, parsed)
+	}
 
 	// FinishLogin verifies the assertion signature, RP id/origin, and sign
 	// counter against the stored credential and consumes the session. A nil
@@ -170,6 +173,49 @@ func (v *WebAuthnFactorVerifier) Verify(ctx context.Context, factor *qrdbsdk.Aut
 //
 // tenantID scopes per-tenant RP configuration; for a single-RP service it is
 // advisory. An empty hint drives the discoverable-credential flow.
+// verifyNonce verifies an assertion over challenge.Nonce with the factor's stored credential.
+func (v *WebAuthnFactorVerifier) verifyNonce(ctx context.Context, factor *qrdbsdk.AuthFactor, challenge qrdbtransport.VerifyChallenge, userID []byte, parsed *protocol.ParsedCredentialAssertionData) error {
+	if !bytes.Equal(parsed.RawID, factor.Credential) {
+		return &CredentialMismatchError{}
+	}
+	if userID == nil {
+		userID = parsed.Response.UserHandle
+	}
+	creds, err := v.service.GetCredentials(ctx, userID)
+	if err != nil {
+		return err
+	}
+	var stored *xkmswebauthn.Credential
+	for _, c := range creds {
+		if bytes.Equal(c.ID, factor.Credential) {
+			stored = c
+			break
+		}
+	}
+	if stored == nil {
+		return &CredentialMismatchError{}
+	}
+	owner, err := v.service.GetUser(ctx, stored.UserID)
+	if err != nil {
+		return &SignatureVerifyError{Reason: "webauthn assertion verification failed"}
+	}
+	// The owning account must still be active with WebAuthn among its AuthMethods.
+	if xkmswebauthn.CheckAccountStanding(owner) != nil {
+		return &SignatureVerifyError{Reason: "webauthn assertion verification failed"}
+	}
+	cfg := v.service.Config()
+	requireUV := challenge.MethodMetadata["user_verification"] == "required" ||
+		(cfg != nil && cfg.UserVerification == "required")
+	_, err = v.service.VerifyAssertion(ctx, &xkmswebauthn.AssertionVerification{
+		Challenge:               challenge.Nonce,
+		RequireUserPresence:     true,
+		RequireUserVerification: requireUV,
+		Credential:              stored,
+		Assertion:               parsed,
+	})
+	return err
+}
+
 func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID string, factorType qrdbtransport.FactorType, hint string) ([]byte, map[string]string, time.Time, error) {
 	if v == nil || v.service == nil {
 		return nil, nil, time.Time{}, &NilServiceError{Adapter: "webauthn"}
@@ -178,16 +224,20 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 		return nil, nil, time.Time{}, &qrdbsdk.FactorTypeUnsupportedError{Type: string(factorType)}
 	}
 
-	// A non-empty hint (username/email) scopes the ceremony to that user's
+	// A non-empty hint (username or email) scopes the ceremony to that user's
 	// credentials; otherwise nil requests a discoverable-credential ceremony.
+	// The hint is tried as an email first and then as a username, so an email
+	// login is never shadowed and a user without an email is found too.
 	// An account that may not log in (xkmswebauthn.CheckAccountStanding) is
 	// treated exactly like an unknown hint, so the ceremony's shape does not
 	// reveal its state; Verify refuses it regardless (go-xkms#1298).
 	var userID []byte
-	if hint != "" {
-		if u, uErr := v.service.GetUserByEmail(ctx, hint); uErr == nil && u != nil && xkmswebauthn.CheckAccountStanding(u) == nil {
-			userID = u.WebAuthnID()
-		}
+	u, err := v.resolveHint(ctx, hint)
+	if err != nil {
+		return nil, nil, time.Time{}, err
+	}
+	if u != nil && xkmswebauthn.CheckAccountStanding(u) == nil {
+		userID = u.WebAuthnID()
 	}
 
 	options, sessionID, err := v.service.BeginLogin(ctx, userID)
@@ -203,6 +253,31 @@ func (v *WebAuthnFactorVerifier) BeginChallenge(ctx context.Context, tenantID st
 		"options":    string(optionsJSON),
 	}
 	return []byte(options.Response.Challenge), meta, time.Time{}, nil
+}
+
+// resolveHint returns the user a login hint names, looking it up as an
+// email and then, only when no account has that email, as a username. It
+// returns nil for an empty hint or one that resolves to nobody, and the
+// lookup error for any failure other than not found.
+func (v *WebAuthnFactorVerifier) resolveHint(ctx context.Context, hint string) (xkmswebauthn.User, error) {
+	if hint == "" {
+		return nil, nil
+	}
+	u, err := v.service.GetUserByEmail(ctx, hint)
+	if err == nil && u != nil {
+		return u, nil
+	}
+	if err != nil && !errors.Is(err, xkmswebauthn.ErrUserNotFound) {
+		return nil, err
+	}
+	u, err = v.service.GetUserByUsername(ctx, hint)
+	if err == nil && u != nil {
+		return u, nil
+	}
+	if err != nil && !errors.Is(err, xkmswebauthn.ErrUserNotFound) {
+		return nil, err
+	}
+	return nil, nil
 }
 
 // Compile-time interface assertion. The qrdb embedded transport's

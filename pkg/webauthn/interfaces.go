@@ -30,6 +30,10 @@ type UserStore interface {
 	// Returns ErrUserNotFound if the user does not exist.
 	GetByEmail(ctx context.Context, email string) (User, error)
 
+	// GetByUsername retrieves a user by their username.
+	// Returns ErrUserNotFound if the user does not exist.
+	GetByUsername(ctx context.Context, username string) (User, error)
+
 	// Create creates a new user with the given email and display name.
 	// Returns the created user with its assigned ID.
 	Create(ctx context.Context, email, displayName string) (User, error)
@@ -104,6 +108,11 @@ type CredentialStore interface {
 	// Update updates an existing credential (e.g., sign counter, last used).
 	// Returns ErrCredentialNotFound if the credential does not exist.
 	Update(ctx context.Context, cred *Credential) error
+
+	// UpdateSignCount updates cred only while the stored sign counter still
+	// equals checked, in one conditional write; otherwise it returns
+	// ErrCredentialUpdateConflict and writes nothing.
+	UpdateSignCount(ctx context.Context, cred *Credential, checked uint32) error
 
 	// Delete removes a credential by its ID.
 	// Returns ErrCredentialNotFound if the credential does not exist.

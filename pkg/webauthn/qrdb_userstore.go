@@ -163,6 +163,24 @@ func (s *qrdbUserStore) GetByEmail(ctx context.Context, email string) (User, err
 	return s.materialize(ctx, u)
 }
 
+// GetByUsername looks up a user by the tenant-scoped username. A user created
+// without an email (the first-boot admin) is reachable only this way
+// (go-xkms #1759).
+func (s *qrdbUserStore) GetByUsername(ctx context.Context, username string) (User, error) {
+	if username == "" {
+		return nil, ErrUserNotFound
+	}
+	callCtx, err := s.callContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	u, err := s.users.GetUserByUsername(callCtx, s.tenantID, username)
+	if err != nil {
+		return nil, mapNotFound(err)
+	}
+	return s.materialize(ctx, u)
+}
+
 // Create creates a new user in the configured tenant.
 //
 // The email and display name are fields OF the qrdb record. They used to be

@@ -1,0 +1,1 @@
+- The WebAuthn qrdb factor's `BeginChallenge` resolves its hint as a username as well as an email, so a user without an email (the first-boot admin) gets its credentials in `allowCredentials` (#1759).

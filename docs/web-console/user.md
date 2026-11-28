@@ -77,6 +77,8 @@ Source: `UIConfig` (`pkg/config/config.go:612`), `CORSConfig`
 `attestation_roots` together with `allow_unattested`
 (`pkg/config/config.go:1651`).
 
+Every token's `kid` header is the SPKI key ID of the signing key ([WebAuthn API](../webauthn/api.md#publishing-the-session-signing-key-jwks)).
+
 ## If the daemon refuses to start
 
 `xkmsd` is secure-by-default: it refuses to start when encryption-at-rest

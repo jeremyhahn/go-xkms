@@ -55,6 +55,10 @@ func (s *faultyUserStore) GetByEmail(ctx context.Context, email string) (User, e
 	return s.inner.GetByEmail(ctx, email)
 }
 
+func (s *faultyUserStore) GetByUsername(ctx context.Context, username string) (User, error) {
+	return s.inner.GetByUsername(ctx, username)
+}
+
 func (s *faultyUserStore) Create(ctx context.Context, email, displayName string) (User, error) {
 	if s.createErr != nil {
 		return nil, s.createErr
@@ -110,6 +114,10 @@ func (s *faultyCredStore) GetByCredentialID(ctx context.Context, credID []byte) 
 
 func (s *faultyCredStore) Update(ctx context.Context, cred *Credential) error {
 	return s.inner.Update(ctx, cred)
+}
+
+func (s *faultyCredStore) UpdateSignCount(ctx context.Context, cred *Credential, checked uint32) error {
+	return s.inner.UpdateSignCount(ctx, cred, checked)
 }
 
 func (s *faultyCredStore) Delete(ctx context.Context, credID []byte) error {

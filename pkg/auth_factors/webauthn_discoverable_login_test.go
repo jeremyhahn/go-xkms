@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -27,6 +28,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbtransport "github.com/jeremyhahn/go-qrdb/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil/webauthntest"
 	xkmswebauthn "github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
@@ -291,5 +293,152 @@ func TestWebAuthnFactorVerifier_BeginChallenge_HintForAccountNotInGoodStanding(t
 	f.setStanding(t, qrdbsdk.LifecycleActive, []string{"piv"})
 	if got := allowed(email); len(got) != 0 {
 		t.Fatalf("webauthn-withdrawn account hint advertised %d credentials, want 0", len(got))
+	}
+}
+
+// TestWebAuthnFactorVerifier_BeginChallenge_UsernameHint covers the
+// first-boot admin: a user with a username and no email. Its username hint
+// must scope the ceremony to its credentials, as an email hint does for a
+// user that has one (go-xkms#1759).
+func TestWebAuthnFactorVerifier_BeginChallenge_UsernameHint(t *testing.T) {
+	ctx := context.Background()
+	client, _, err := testutil.NewQRDBFakeClient()
+	if err != nil {
+		t.Fatalf("fake qrdb client: %v", err)
+	}
+	stores := webauthntest.NewStoresFor(t, client.Users())
+	svc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
+		Config: &xkmswebauthn.Config{
+			RPID:          "localhost",
+			RPDisplayName: "test",
+			RPOrigins:     []string{"https://localhost"},
+		},
+		UserStore:       stores.Users,
+		SessionStore:    xkmswebauthn.NewMemorySessionStore(),
+		CredentialStore: stores.Credentials,
+	})
+	if err != nil {
+		t.Fatalf("webauthn service: %v", err)
+	}
+	v, err := NewWebAuthnFactorVerifier(svc)
+	if err != nil {
+		t.Fatalf("verifier: %v", err)
+	}
+
+	enroll := func(req *qrdbtransport.CreateUserRequest, credID string) {
+		t.Helper()
+		req.TenantID = webauthntest.TenantID
+		if _, err := client.Users().CreateUser(ctx, req); err != nil {
+			t.Fatalf("CreateUser(%q): %v", req.Username, err)
+		}
+		user, err := stores.Users.GetByUsername(ctx, req.Username)
+		if err != nil {
+			t.Fatalf("GetByUsername(%q): %v", req.Username, err)
+		}
+		cred := &xkmswebauthn.Credential{ID: []byte(credID), UserID: user.WebAuthnID(), PublicKey: []byte("pk")}
+		if err := stores.Credentials.Save(ctx, cred); err != nil {
+			t.Fatalf("save credential: %v", err)
+		}
+	}
+	enroll(&qrdbtransport.CreateUserRequest{Username: "admin", WithoutEmailLoginKey: true}, "admin-cred")
+	enroll(&qrdbtransport.CreateUserRequest{Username: "bob", Email: "bob@example.com"}, "bob-cred")
+	enroll(&qrdbtransport.CreateUserRequest{Username: "carol", Email: "carol@example.com"}, "carol-cred")
+	// A second account whose username equals carol's email must not shadow carol's email login.
+	enroll(&qrdbtransport.CreateUserRequest{Username: "carol@example.com", WithoutEmailLoginKey: true}, "shadow-cred")
+
+	allowed := func(hint string) []string {
+		t.Helper()
+		_, meta, _, err := v.BeginChallenge(ctx, "system", qrdbtransport.FactorTypeFIDO2, hint)
+		if err != nil {
+			t.Fatalf("BeginChallenge(%q): %v", hint, err)
+		}
+		var options protocol.CredentialAssertion
+		if err := json.Unmarshal([]byte(meta["options"]), &options); err != nil {
+			t.Fatalf("decode options: %v", err)
+		}
+		ids := make([]string, 0, len(options.Response.AllowedCredentials))
+		for _, c := range options.Response.AllowedCredentials {
+			ids = append(ids, string(c.CredentialID))
+		}
+		return ids
+	}
+
+	tests := []struct {
+		hint string
+		want []string
+	}{
+		{hint: "admin", want: []string{"admin-cred"}},
+		{hint: "bob", want: []string{"bob-cred"}},
+		{hint: "bob@example.com", want: []string{"bob-cred"}},
+		{hint: "carol@example.com", want: []string{"carol-cred"}},
+		{hint: "carol", want: []string{"carol-cred"}},
+		{hint: "nobody", want: []string{}},
+		{hint: "nobody@example.com", want: []string{}},
+	}
+	for _, tt := range tests {
+		if got := allowed(tt.hint); !reflect.DeepEqual(got, tt.want) {
+			t.Errorf("hint %q advertised %q, want %q", tt.hint, got, tt.want)
+		}
+	}
+}
+
+// emailFaultUserStore fails every email lookup with err.
+type emailFaultUserStore struct {
+	xkmswebauthn.UserStore
+	err error
+}
+
+func (s *emailFaultUserStore) GetByEmail(context.Context, string) (xkmswebauthn.User, error) {
+	return nil, s.err
+}
+
+func TestWebAuthnFactorVerifier_BeginChallenge_EmailLookupFailureDoesNotFallBackToUsername(t *testing.T) {
+	ctx := context.Background()
+	client, _, err := testutil.NewQRDBFakeClient()
+	if err != nil {
+		t.Fatalf("fake qrdb client: %v", err)
+	}
+	stores := webauthntest.NewStoresFor(t, client.Users())
+	errTransport := errors.New("credential store unavailable")
+	svc, err := xkmswebauthn.NewService(xkmswebauthn.ServiceParams{
+		Config: &xkmswebauthn.Config{
+			RPID:          "localhost",
+			RPDisplayName: "test",
+			RPOrigins:     []string{"https://localhost"},
+		},
+		UserStore:       &emailFaultUserStore{UserStore: stores.Users, err: errTransport},
+		SessionStore:    xkmswebauthn.NewMemorySessionStore(),
+		CredentialStore: stores.Credentials,
+	})
+	if err != nil {
+		t.Fatalf("webauthn service: %v", err)
+	}
+	v, err := NewWebAuthnFactorVerifier(svc)
+	if err != nil {
+		t.Fatalf("verifier: %v", err)
+	}
+	for _, req := range []*qrdbtransport.CreateUserRequest{
+		{Username: "carol", Email: "carol@example.com"},
+		{Username: "carol@example.com", WithoutEmailLoginKey: true},
+	} {
+		req.TenantID = webauthntest.TenantID
+		if _, err := client.Users().CreateUser(ctx, req); err != nil {
+			t.Fatalf("CreateUser(%q): %v", req.Username, err)
+		}
+	}
+	shadow, err := stores.Users.GetByUsername(ctx, "carol@example.com")
+	if err != nil {
+		t.Fatalf("GetByUsername: %v", err)
+	}
+	if err := stores.Credentials.Save(ctx, &xkmswebauthn.Credential{ID: []byte("shadow-cred"), UserID: shadow.WebAuthnID(), PublicKey: []byte("pk")}); err != nil {
+		t.Fatalf("save credential: %v", err)
+	}
+
+	_, meta, _, err := v.BeginChallenge(ctx, "system", qrdbtransport.FactorTypeFIDO2, "carol@example.com")
+	if !errors.Is(err, errTransport) {
+		t.Fatalf("BeginChallenge err = %v, want the email lookup error", err)
+	}
+	if meta != nil {
+		t.Fatalf("a failed email lookup returned ceremony options %v", meta)
 	}
 }

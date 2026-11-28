@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -41,7 +42,21 @@ type WebAuthnRegistrationOptions struct {
 	UserName                string
 	UserDisplayName         string
 	RequireUserVerification bool
-	Timeout                 time.Duration
+
+	// RequireResidentKey demands a client-side discoverable credential
+	// (CTAP2 MakeCredential option "rk"): true for the Relying Party's
+	// residentKey "required" (WebAuthn Level 2 §5.4.4) or the legacy
+	// requireResidentKey member. Registration fails if the authenticator
+	// cannot store one.
+	RequireResidentKey bool
+
+	// PreferResidentKey is residentKey "preferred" (§5.4.6): request a
+	// discoverable credential when the authenticator supports one, and fall
+	// back to a non-discoverable credential when it lacks support or its
+	// resident storage is full.
+	PreferResidentKey bool
+
+	Timeout time.Duration
 
 	// PIN is the authenticator's CTAP2 PIN. An authenticator with a PIN set
 	// refuses MakeCredential outright (CTAP2_ERR_PIN_REQUIRED) unless the
@@ -317,6 +332,7 @@ func ParseWebAuthnRegistrationOptions(optionsJSON []byte, origin string) (WebAut
 
 	challenge := make([]byte, len(opts.Challenge))
 	copy(challenge, opts.Challenge)
+	requireRK, preferRK := residentKeyRequirement(opts.AuthenticatorSelection)
 
 	return WebAuthnRegistrationOptions{
 		Challenge:               challenge,
@@ -327,8 +343,34 @@ func ParseWebAuthnRegistrationOptions(optionsJSON []byte, origin string) (WebAut
 		UserName:                opts.User.Name,
 		UserDisplayName:         opts.User.DisplayName,
 		RequireUserVerification: opts.AuthenticatorSelection.UserVerification == protocol.VerificationRequired,
+		RequireResidentKey:      requireRK,
+		PreferResidentKey:       preferRK,
 		Timeout:                 time.Duration(opts.Timeout) * time.Millisecond,
 	}, nil
+}
+
+// residentKeyRequirement maps the Relying Party's authenticatorSelection
+// onto (required, preferred) per WebAuthn Level 2 §5.4.4: residentKey takes
+// precedence; the Level 1 requireResidentKey member is honoured when
+// residentKey is absent.
+func residentKeyRequirement(sel protocol.AuthenticatorSelection) (required, preferred bool) {
+	switch sel.ResidentKey {
+	case protocol.ResidentKeyRequirementRequired:
+		return true, false
+	case protocol.ResidentKeyRequirementPreferred:
+		return false, true
+	case protocol.ResidentKeyRequirementDiscouraged:
+		return false, false
+	}
+	return sel.RequireResidentKey != nil && *sel.RequireResidentKey, false
+}
+
+// residentKeyRefused reports whether a MakeCredential failure is the
+// authenticator declining a discoverable credential, which "preferred" may
+// retry without.
+func residentKeyRefused(err error) bool {
+	return errors.Is(err, ctapStatusErrors[StatusKeyStoreFull]) ||
+		errors.Is(err, ctapStatusErrors[StatusUnsupportedOption])
 }
 
 // decodeWebAuthnUserHandle extracts the WebAuthn user handle bytes from the
@@ -398,6 +440,13 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 		defer func() { h.config.Timeout = originalTimeout }()
 	}
 
+	rk := opts.RequireResidentKey
+	if !rk && opts.PreferResidentKey {
+		if info, ierr := auth.GetInfo(); ierr == nil && info != nil {
+			rk = info.Options["rk"]
+		}
+	}
+
 	req := &MakeCredentialRequest{
 		ClientDataHash: clientDataHash[:],
 		RP: RelyingParty{
@@ -411,14 +460,18 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 		},
 		PubKeyCredParams: makeCredentialPubKeyParams(),
 		Options: AuthenticatorOptions{
+			RK: rk,
 			UV: opts.RequireUserVerification,
 		},
 	}
 
-	if opts.PIN != nil {
+	authorize := func() error {
+		if opts.PIN == nil {
+			return nil
+		}
 		param, protocol, perr := auth.AuthorizeWithPIN(opts.PIN, clientDataHash[:])
 		if perr != nil {
-			return nil, perr
+			return perr
 		}
 		req.PinUVAuthParam = param
 		req.PinUVAuthProtocol = protocol
@@ -428,10 +481,22 @@ func (h *FIDO2Handler) RegisterWebAuthn(opts WebAuthnRegistrationOptions) (*WebA
 		// BUILT-IN verification method, so a PIN-only key answers uv:true with
 		// CTAP2_ERR_INVALID_OPTION even as it verifies the user by PIN.
 		req.Options.UV = false
+		return nil
+	}
+	if err := authorize(); err != nil {
+		return nil, err
 	}
 
 	h.logger.Printf("Please touch your security key to register...")
 	resp, err := auth.MakeCredential(req)
+	if err != nil && rk && !opts.RequireResidentKey && residentKeyRefused(err) {
+		req.Options.RK = false
+		if aerr := authorize(); aerr != nil {
+			return nil, aerr
+		}
+		h.logger.Printf("Resident credential unavailable; touch your security key again to register...")
+		resp, err = auth.MakeCredential(req)
+	}
 	if err != nil {
 		return nil, &errs.Wrapped{Msg: "fido2: MakeCredential failed", Err: err}
 	}

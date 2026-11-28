@@ -222,6 +222,10 @@ func (s *faultingUserStore) GetByEmail(ctx context.Context, email string) (User,
 	return nil, errUserStoreFault
 }
 
+func (s *faultingUserStore) GetByUsername(ctx context.Context, username string) (User, error) {
+	return nil, errUserStoreFault
+}
+
 func (s *faultingUserStore) GetByID(ctx context.Context, userID []byte) (User, error) {
 	return nil, errUserStoreFault
 }

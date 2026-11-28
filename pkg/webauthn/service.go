@@ -785,6 +785,15 @@ func (s *Service) GetUserByEmail(ctx context.Context, email string) (User, error
 	return s.users.GetByEmail(ctx, email)
 }
 
+// GetUserByUsername retrieves a user by their username.
+func (s *Service) GetUserByUsername(ctx context.Context, username string) (User, error) {
+	if !s.configured {
+		return nil, ErrNotConfigured
+	}
+
+	return s.users.GetByUsername(ctx, username)
+}
+
 // GetCredentials retrieves all credentials for a user.
 func (s *Service) GetCredentials(ctx context.Context, userID []byte) ([]*Credential, error) {
 	if !s.configured {
