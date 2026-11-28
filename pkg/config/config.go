@@ -307,6 +307,12 @@ func (c *Config) CredentialsBarrierStrategySupported() bool {
 // xkmsd --host flag, in that ascending precedence.
 const DefaultServerHost = ""
 
+// DefaultMCPPort is the port the MCP server listens on when server.mcp_port is
+// not set. It matches the SDK's DefaultMCPAddress (localhost:9444), so a stock
+// node serves MCP where a client with no MCP address dials. It differs from the
+// trust-bootstrap Noise default (8445).
+const DefaultMCPPort = 9444
+
 // ServerConfig contains server-level settings
 type ServerConfig struct {
 	// Host is the bind host shared by every network listener xkmsd opens

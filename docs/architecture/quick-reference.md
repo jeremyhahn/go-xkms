@@ -21,12 +21,12 @@ when it is embedded with a zero port or no address.
 | REST | `server.rest_port` | 8443 | 8443 (`pkg/api/rest/server.go:281`) |
 | HTTP/3 (QUIC) | — | on `rest_port` | — |
 | gRPC | `server.grpc_port` | 9443 | none |
-| MCP | `server.mcp_port` | 8445 | SDK dials `localhost:9444` (`sdk/go/options.go:33`) |
+| MCP | `server.mcp_port` | 9444 | 9444 (`DefaultMCPPort`, `pkg/config/config.go`); SDK dials `localhost:9444` (`sdk/go/options.go:33`) |
 | Noise | `server.noise_port` (`pkg/config/config.go:321`) | 8447 in `configs/xkmsd-local.yaml:10` | 8445 (`DefaultNoisePort`, `pkg/trust/bootstrap/bootstrap.go:103`) |
 | Metrics | `metrics.port` | 9090 | none |
 
-The SDK's MCP default (9444) differs from the shipped `mcp_port` (8445):
-point the client at the configured port.
+MCP uses one port, 9444, in the shipped configs, the config default and the
+SDK; it does not collide with the Noise default (8445).
 
 ## API surfaces
 
@@ -68,7 +68,7 @@ server:
   host: "127.0.0.1"
   rest_port: 8443
   grpc_port: 9443
-  mcp_port: 8445
+  mcp_port: 9444
 
 protocols:
   unix: true

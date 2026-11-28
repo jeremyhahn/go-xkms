@@ -121,7 +121,7 @@ it.
 | export refused | the key is not `exportable`, or is `sensitive` | it cannot be exported; this is not recoverable |
 | `keystore: security officer PIN required` / `user PIN required` | a hardware backend has not been unlocked | supply `--so-pin` / `--pkcs11-pin`, or set the PIN first |
 | everything returns "sealed" | the barrier is closed | unseal it — see the sealing and barrier guide |
-| connection refused on 8445 vs 9444 | the MCP port disagreement | set the port explicitly on both sides; see `api.md` §Port conflicts |
+| MCP connection refused | the server's `mcp_port` is not 9444, the SDK default | point the client at the configured port; see `api.md` §Port conflicts |
 | `operation not supported by this protocol` | you are on the USB transport | that channel carries the phone path only |
 
 ## Where to go next

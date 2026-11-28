@@ -186,7 +186,7 @@ services:
       - KEYSTORE_REST_URL=https://xkms-server:8443
       - KEYSTORE_GRPC_ADDR=xkms-server:9443
       - KEYSTORE_QUIC_URL=https://xkms-server:8444
-      - KEYSTORE_MCP_ADDR=xkms-server:8445
+      - KEYSTORE_MCP_ADDR=xkms-server:9444
       - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
       # PKCS#11 module configuration
       - PKCS11_MODULE=/workspace/build/lib/libxkms_pkcs11.so
@@ -291,7 +291,7 @@ services:
       - "${XKMS_HOST_REST_PORT:-0}:8443"    # REST API
       - "${XKMS_HOST_GRPC_PORT:-0}:9443"    # gRPC
       - "${XKMS_HOST_QUIC_PORT:-0}:8444"    # QUIC
-      - "${XKMS_HOST_MCP_PORT:-0}:8445"     # MCP
+      - "${XKMS_HOST_MCP_PORT:-0}:9444"     # MCP
       - "${XKMS_HOST_METRICS_PORT:-0}:9090" # Metrics
     volumes:
       - xkms-data:/data
