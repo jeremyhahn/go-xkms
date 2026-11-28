@@ -409,11 +409,6 @@ type Config struct {
 	// Default: 30 seconds
 	UserPresenceTimeout time.Duration `yaml:"user-presence-timeout" json:"user_presence_timeout" mapstructure:"user-presence-timeout"`
 
-	// DisplayName names this authenticator in user presence prompts
-	// (UserPresenceRequest.AuthenticatorName). Empty means
-	// DefaultAuthenticatorDisplayName.
-	DisplayName string `yaml:"display-name" json:"display_name" mapstructure:"display-name"`
-
 	// RequireUserPresence controls whether physical touch is required even when
 	// PIN verification has been performed. When true, behaves like hardware
 	// authenticators (YubiKey) that require touch for every operation.

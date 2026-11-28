@@ -515,12 +515,11 @@ func (a *Authenticator) askUserPresence(ctx context.Context, rpID, rpName, userN
 	}
 
 	req := &UserPresenceRequest{
-		RPID:              rpID,
-		RPName:            rpName,
-		UserName:          userName,
-		Operation:         operation,
-		AuthenticatorName: a.displayName(),
-		Timeout:           a.config.UserPresenceTimeout,
+		RPID:      rpID,
+		RPName:    rpName,
+		UserName:  userName,
+		Operation: operation,
+		Timeout:   a.config.UserPresenceTimeout,
 	}
 
 	if a.logger != nil {

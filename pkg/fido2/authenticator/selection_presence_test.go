@@ -253,13 +253,12 @@ func TestMakeCredential_EmptyPinUvAuthParam_WaitsForPresence(t *testing.T) {
 
 // Step 3: the prompt names the authenticator, and the relying party when
 // the command carries one.
-func TestSelection_PromptNamesAuthenticatorAndRP(t *testing.T) {
+func TestSelection_PromptNamesRP(t *testing.T) {
 	t.Parallel()
 	h := newSelUPHandler()
 	h.auto.Store(true)
 	auth := newSelectionTestAuthenticator(t, h, func(c *Config) {
 		c.EnablePIN = true
-		c.DisplayName = "xkey test key"
 	})
 
 	resp, err := auth.ProcessCBOR(CmdSelection, nil)
@@ -268,28 +267,15 @@ func TestSelection_PromptNamesAuthenticatorAndRP(t *testing.T) {
 	sel := h.lastRequest(t)
 	require.Equal(t, PresenceOperationSelect, sel.Operation)
 	require.Empty(t, sel.RPID, "Selection carries no relying party")
-	require.Equal(t, "xkey test key", sel.AuthenticatorName)
 
 	resp, _ = auth.ProcessCBOR(CmdMakeCredential, selMakeCredentialData(t, true))
 	require.Equal(t, byte(StatusPINNotSet), resp[0])
 	mc := h.lastRequest(t)
 	require.Equal(t, "test.example.com", mc.RPID)
 	require.Equal(t, "Test RP", mc.RPName)
-	require.Equal(t, "xkey test key", mc.AuthenticatorName)
 }
 
 // Step 3: without a configured display name the prompt still names xkey.
-func TestSelection_PromptDefaultAuthenticatorName(t *testing.T) {
-	t.Parallel()
-	h := newSelUPHandler()
-	h.auto.Store(true)
-	auth := newSelectionTestAuthenticator(t, h, nil)
-
-	_, err := auth.ProcessCBOR(CmdSelection, nil)
-	require.NoError(t, err)
-	require.Equal(t, DefaultAuthenticatorDisplayName, h.lastRequest(t).AuthenticatorName)
-}
-
 // Step 4: one approved touch at Selection satisfies the next MakeCredential
 // on the same CTAPHID channel within the window, once.
 func TestSelection_GrantSatisfiesNextMakeCredential(t *testing.T) {

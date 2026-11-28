@@ -11,10 +11,6 @@ import (
 // authenticatorSelection (CTAP 2.1 §6.9).
 const PresenceOperationSelect = "select"
 
-// DefaultAuthenticatorDisplayName names the authenticator in a presence
-// prompt when Config.DisplayName is empty.
-const DefaultAuthenticatorDisplayName = "xkey"
-
 // SelectionPresenceWindow is how long an approved authenticatorSelection
 // satisfies the presence check of the next MakeCredential or GetAssertion
 // on the same CTAPHID channel.
@@ -138,13 +134,6 @@ func presenceEndsGrant(err error) bool {
 // browser runs after choosing an authenticator, never reset or token init.
 func grantableOperation(operation string) bool {
 	return operation == "register" || operation == "authenticate"
-}
-
-func (a *Authenticator) displayName() string {
-	if a.config != nil && a.config.DisplayName != "" {
-		return a.config.DisplayName
-	}
-	return DefaultAuthenticatorDisplayName
 }
 
 // waitForSelectionPresence asks for user presence for a selection (Selection
