@@ -7,6 +7,7 @@ package authenticator
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
 	"sync"
@@ -380,6 +381,93 @@ func TestSelection_GrantSatisfiesNextMakeCredential(t *testing.T) {
 		require.Equal(t, int32(3), h.calls.Load(), "a cancelled Selection leaves no grant")
 	})
 
+}
+
+// selPINMakeCredentialData sets a PIN and a live pinUvAuthToken on auth and
+// returns a discoverable MakeCredential request authorized by that token.
+func selPINMakeCredentialData(t *testing.T, auth *Authenticator) []byte {
+	t.Helper()
+	pinHash := sha256.Sum256([]byte("123456"))
+	auth.SyncPINHash(pinHash[:PINHashSize])
+	pinToken := make([]byte, 32)
+	for i := range pinToken {
+		pinToken[i] = byte(i)
+	}
+	auth.pinState.protocol = livePinTokenGrant(pinToken, PINPermissionMakeCredential|PINPermissionGetAssertion)
+
+	clientDataHash := sha256.Sum256([]byte("selection"))
+	mac := hmac.New(sha256.New, pinToken)
+	mac.Write(clientDataHash[:])
+	params := map[int]interface{}{
+		0x01: clientDataHash[:],
+		0x02: map[string]interface{}{"id": "test.example.com", "name": "Test RP"},
+		0x03: map[string]interface{}{"id": []byte{0x01, 0x02, 0x03}, "name": "testuser"},
+		0x04: []map[string]interface{}{{"type": "public-key", "alg": -7}},
+		0x07: map[string]bool{"rk": true},
+		0x08: mac.Sum(nil)[:16],
+		0x09: 1,
+	}
+	data, err := cbor.Marshal(params)
+	require.NoError(t, err)
+	return data
+}
+
+// TestSelection_GrantEndsWithCredentialOperation checks that a credential
+// operation that needed no prompt still ends the Selection grant, so a later
+// GetAssertion on the channel asks for presence itself.
+func TestSelection_GrantEndsWithCredentialOperation(t *testing.T) {
+	t.Parallel()
+	h := newSelUPHandler()
+	h.auto.Store(true)
+	auth := newSelectionTestAuthenticator(t, h, func(c *Config) {
+		c.EnablePIN = true
+		c.RequireUserPresence = false
+	})
+	ctx := WithCTAPHIDChannel(context.Background(), 0x01000001)
+
+	resp, err := auth.ProcessCBORWithContext(ctx, CmdSelection, nil)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+
+	resp, err = auth.ProcessCBORWithContext(ctx, CmdMakeCredential, selPINMakeCredentialData(t, auth))
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, int32(1), h.calls.Load(), "a PIN-authorized MakeCredential needs no prompt")
+
+	clientDataHash := sha256.Sum256([]byte("assertion"))
+	gaData, err := cbor.Marshal(map[int]interface{}{0x01: "test.example.com", 0x02: clientDataHash[:]})
+	require.NoError(t, err)
+	resp, err = auth.ProcessCBORWithContext(ctx, CmdGetAssertion, gaData)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, int32(2), h.calls.Load(), "GetAssertion must not use the Selection grant")
+}
+
+// TestSelection_IntentCheckKeepsGrant checks that the intent check before
+// PIN_REQUIRED leaves the Selection grant to the operation after the PIN.
+func TestSelection_IntentCheckKeepsGrant(t *testing.T) {
+	t.Parallel()
+	h := newSelUPHandler()
+	h.auto.Store(true)
+	auth := newSelectionTestAuthenticator(t, h, func(c *Config) {
+		c.EnablePIN = true
+		c.RequireUserPresence = true
+		c.EnableUserIntentCheck = true
+	})
+	ctx := WithCTAPHIDChannel(context.Background(), 0x01000001)
+	pinData := selPINMakeCredentialData(t, auth)
+
+	resp, err := auth.ProcessCBORWithContext(ctx, CmdSelection, nil)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+
+	resp, _ = auth.ProcessCBORWithContext(ctx, CmdMakeCredential, selMakeCredentialData(t, false))
+	require.Equal(t, byte(StatusPINRequired), resp[0])
+
+	resp, err = auth.ProcessCBORWithContext(ctx, CmdMakeCredential, pinData)
+	require.NoError(t, err)
+	require.Equal(t, byte(StatusOK), resp[0])
+	require.Equal(t, int32(1), h.calls.Load(), "the Selection touch must cover the whole flow")
 }
 
 // --- CTAPHID transport helpers -------------------------------------------
