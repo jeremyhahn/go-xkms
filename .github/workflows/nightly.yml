@@ -17,11 +17,15 @@
 
 name: Nightly
 
-# Manual only (#1483): no cron trigger. A timer-driven run on the shared
-# runners competes with every PR and train for the same slots; whoever needs
-# the nightly suite dispatches it.
+# Scheduled (#2349). Owner order (2026-11-22): "the nightlys shouldnt require
+# any manual executiion, it should be getting run automatically!" This
+# supersedes the 2026-10-11 no-schedule rule for the Nightly workflow only. The
+# slot is `25 4 * * *` (04:25 UTC), the go-xkms slot after worker-image at
+# 03:00, 20 minutes apart; workflow_dispatch stays for on-demand runs.
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '25 4 * * *'
 
 permissions:
   contents: read
