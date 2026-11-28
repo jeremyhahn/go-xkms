@@ -49,6 +49,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/mcp"
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
@@ -363,6 +364,16 @@ type Server struct {
 	// keyVersions is the key-version record store. See
 	// initializeKeyVersionStore.
 	keyVersions *keyversion.Store
+
+	// trustRoots is the persisted, purpose-classified trust-root store:
+	// served as the trust_roots module verbs and appraised over by the
+	// attestation verifiers. See initializeTrustRootStore.
+	trustRoots *truststore.DAOStore
+
+	// peerTrustRoots publishes trustRoots to the attested-caller gate's
+	// anchor source, which runs on the node's goroutines and is built
+	// before the store opens.
+	peerTrustRoots atomic.Pointer[truststore.DAOStore]
 
 	// keyPolicies is the key-policy record store. See
 	// initializeKeyPolicyStore.
@@ -837,6 +848,13 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		return nil, &ErrServiceInit{Service: "key version store", Err: err}
 	}
 
+	// Initialize the persisted trust-root store
+	if err := s.initializeTrustRootStore(); err != nil {
+		cancel()
+		s.closeBackends()
+		return nil, &ErrServiceInit{Service: "trust root store", Err: err}
+	}
+
 	// Initialize the key-policy record store
 	if err := s.initializeKeyPolicyStore(); err != nil {
 		cancel()
@@ -974,7 +992,11 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// attestation-gated CSR signing fails closed, so a broken anchor
 		// configuration is fatal at startup rather than silently permissive.
 		if s.config.Attestation != nil {
-			verifiers, attErr := s.config.Attestation.Verifiers()
+			var roots truststore.PurposeLister
+			if s.trustRoots != nil {
+				roots = s.trustRoots
+			}
+			verifiers, attErr := s.config.Attestation.Verifiers(roots)
 			if attErr != nil {
 				cancel()
 				s.closeBackends()
@@ -1033,6 +1055,7 @@ func (s *Server) composedStores() *compose.Stores {
 		CA:              s.ca,
 		TPMPolicies:     s.tpmPolicies,
 		KeyVersions:     s.keyVersions,
+		TrustRoots:      s.trustRoots,
 		KeyPolicies:     s.keyPolicies,
 		OIDCCredentials: s.oidcCredentials,
 	}
@@ -1685,6 +1708,24 @@ func (s *Server) initializeKeyVersionStore() error {
 	}
 	s.keyVersions = store
 	s.logger.Info("xkms feature on", "feature", compose.FeatureKeyVersions)
+	return nil
+}
+
+// initializeTrustRootStore builds the persisted trust-root store
+// (compose.BuildTrustRootStore, the path an embedding host's module takes)
+// over the truststore.DatabaseName database.
+func (s *Server) initializeTrustRootStore() error {
+	daos, err := s.daoFactory(truststore.DatabaseName)
+	if err != nil {
+		return err
+	}
+	store, err := compose.BuildTrustRootStore(daos)
+	if err != nil {
+		return &ErrStorageCreate{Resource: "trust root storage", Err: err}
+	}
+	s.trustRoots = store
+	s.peerTrustRoots.Store(store)
+	s.logger.Info("xkms feature on", "feature", compose.FeatureTrustRoots)
 	return nil
 }
 

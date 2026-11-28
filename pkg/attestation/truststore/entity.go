@@ -29,6 +29,13 @@ type TrustCertEntity struct {
 	PEM         string    `json:"pem"`
 	Source      string    `json:"source"`
 	AddedAt     time.Time `json:"added_at"`
+	// ConfigSeeded records that the attestation config file lists this
+	// root, whatever Source first added it: removing it leaves a tombstone
+	// so the next config import does not add it back.
+	ConfigSeeded bool `json:"config_seeded"`
+	// Removed marks a removed config root's tombstone. Only Delete sets
+	// it; no import option reaches it.
+	Removed bool `json:"removed"`
 }
 
 // EntityID returns the entity's unique identifier.

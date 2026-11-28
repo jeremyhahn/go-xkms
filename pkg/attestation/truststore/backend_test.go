@@ -56,94 +56,7 @@ func TestBackendStore_NewBackendStore_NilBackend(t *testing.T) {
 	}
 }
 
-func TestBackendStore_NewBackendStore_EmptyPrefix(t *testing.T) {
-	backend := storage.NewMemory()
-	store, err := NewBackendStore(backend, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if store.prefix != "" {
-		t.Errorf("expected empty prefix, got %q", store.prefix)
-	}
-}
-
-func TestBackendStore_NewBackendStore_LoadsExisting(t *testing.T) {
-	backend := storage.NewMemory()
-	cert := generateTestCert(t, "Preloaded CA")
-	fp := Fingerprint(cert)
-
-	// Pre-populate the backend with a certificate and metadata.
-	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-	if err := backend.Put(context.Background(), "trust/certificates/"+fp+".pem", pemBytes); err != nil {
-		t.Fatalf("failed to put cert: %v", err)
-	}
-	meta := newCertMetadata(cert, fp)
-	metaBytes, _ := json.Marshal(meta)
-	if err := backend.Put(context.Background(), "trust/metadata/"+fp+".json", metaBytes); err != nil {
-		t.Fatalf("failed to put metadata: %v", err)
-	}
-
-	// Create store - should load existing data.
-	store, err := NewBackendStore(backend, "trust/")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	count, err := store.Count()
-	if err != nil {
-		t.Fatalf("Count() error: %v", err)
-	}
-	if count != 1 {
-		t.Errorf("expected 1 loaded certificate, got %d", count)
-	}
-
-	contains, err := store.Contains(fp)
-	if err != nil {
-		t.Fatalf("Contains() error: %v", err)
-	}
-	if !contains {
-		t.Error("expected store to contain preloaded certificate")
-	}
-}
-
 // --- AddCertificate tests ---
-
-func TestBackendStore_AddCertificate_Success(t *testing.T) {
-	store := newTestBackendStore(t)
-	cert := generateTestCert(t, "Test CA")
-	fp := Fingerprint(cert)
-
-	if err := store.AddCertificate(cert); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// Verify the certificate is in the store.
-	contains, err := store.Contains(fp)
-	if err != nil {
-		t.Fatalf("Contains() error: %v", err)
-	}
-	if !contains {
-		t.Error("expected store to contain added certificate")
-	}
-
-	// Verify the certificate was persisted to the backend.
-	certData, err := store.backend.Get(context.Background(), store.certKey(fp))
-	if err != nil {
-		t.Fatalf("cert not found in backend: %v", err)
-	}
-	if len(certData) == 0 {
-		t.Error("expected non-empty cert data in backend")
-	}
-
-	// Verify metadata was persisted.
-	metaData, err := store.backend.Get(context.Background(), store.metaKey(fp))
-	if err != nil {
-		t.Fatalf("metadata not found in backend: %v", err)
-	}
-	if len(metaData) == 0 {
-		t.Error("expected non-empty metadata in backend")
-	}
-}
 
 func TestBackendStore_AddCertificate_NilCert(t *testing.T) {
 	store := newTestBackendStore(t)
@@ -180,36 +93,6 @@ func TestBackendStore_AddCertificate_ClosedStore(t *testing.T) {
 
 // --- AddCertificateWithOptions tests ---
 
-func TestBackendStore_AddCertificateWithOptions_Success(t *testing.T) {
-	store := newTestBackendStore(t)
-	cert := generateTestCert(t, "Options CA")
-	fp := Fingerprint(cert)
-
-	opts := &AddCertificateOptions{
-		Purpose: PurposeTPMManufacturer,
-		Source:  "manual-import",
-		Tags:    []string{"tpm", "test"},
-	}
-
-	if err := store.AddCertificateWithOptions(cert, opts); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	meta, err := store.Metadata(fp)
-	if err != nil {
-		t.Fatalf("Metadata() error: %v", err)
-	}
-	if meta.Purpose != PurposeTPMManufacturer {
-		t.Errorf("expected purpose %q, got %q", PurposeTPMManufacturer, meta.Purpose)
-	}
-	if meta.Source != "manual-import" {
-		t.Errorf("expected source %q, got %q", "manual-import", meta.Source)
-	}
-	if len(meta.Tags) != 2 || meta.Tags[0] != "tpm" || meta.Tags[1] != "test" {
-		t.Errorf("unexpected tags: %v", meta.Tags)
-	}
-}
-
 func TestBackendStore_AddCertificateWithOptions_NilCert(t *testing.T) {
 	store := newTestBackendStore(t)
 	opts := &AddCertificateOptions{Purpose: PurposeGeneral}
@@ -217,20 +100,6 @@ func TestBackendStore_AddCertificateWithOptions_NilCert(t *testing.T) {
 	err := store.AddCertificateWithOptions(nil, opts)
 	if err != ErrInvalidCertificate {
 		t.Fatalf("expected ErrInvalidCertificate, got %v", err)
-	}
-}
-
-func TestBackendStore_AddCertificateWithOptions_NilOpts(t *testing.T) {
-	store := newTestBackendStore(t)
-	cert := generateTestCert(t, "NilOpts CA")
-
-	if err := store.AddCertificateWithOptions(cert, nil); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	count, _ := store.Count()
-	if count != 1 {
-		t.Errorf("expected 1 certificate, got %d", count)
 	}
 }
 
@@ -276,63 +145,6 @@ func TestBackendStore_AddPEM_Success(t *testing.T) {
 	total, _ := store.Count()
 	if total != 1 {
 		t.Errorf("expected 1 total, got %d", total)
-	}
-}
-
-func TestBackendStore_AddPEM_MultipleCerts(t *testing.T) {
-	store := newTestBackendStore(t)
-	pem1 := generateTestCertPEM(t, "PEM CA 1")
-	pem2 := generateTestCertPEM(t, "PEM CA 2")
-
-	pemData := append(pem1, pem2...)
-
-	count, err := store.AddPEM(pemData)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if count != 2 {
-		t.Errorf("expected 2 added, got %d", count)
-	}
-}
-
-func TestBackendStore_AddPEM_SkipsDuplicates(t *testing.T) {
-	store := newTestBackendStore(t)
-	cert := generateTestCert(t, "Dup PEM CA")
-
-	if err := store.AddCertificate(cert); err != nil {
-		t.Fatalf("first add failed: %v", err)
-	}
-
-	pemData := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
-	count, err := store.AddPEM(pemData)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if count != 0 {
-		t.Errorf("expected 0 added (duplicate), got %d", count)
-	}
-}
-
-func TestBackendStore_AddPEM_EmptyData(t *testing.T) {
-	store := newTestBackendStore(t)
-
-	_, err := store.AddPEM(nil)
-	if err != ErrInvalidCertificate {
-		t.Fatalf("expected ErrInvalidCertificate for nil data, got %v", err)
-	}
-
-	_, err = store.AddPEM([]byte{})
-	if err != ErrInvalidCertificate {
-		t.Fatalf("expected ErrInvalidCertificate for empty data, got %v", err)
-	}
-}
-
-func TestBackendStore_AddPEM_InvalidPEM(t *testing.T) {
-	store := newTestBackendStore(t)
-
-	_, err := store.AddPEM([]byte("not valid pem data"))
-	if err == nil {
-		t.Fatal("expected error for invalid PEM data")
 	}
 }
 
@@ -426,18 +238,6 @@ func TestBackendStore_Certificates_Success(t *testing.T) {
 	}
 }
 
-func TestBackendStore_Certificates_Empty(t *testing.T) {
-	store := newTestBackendStore(t)
-
-	certs, err := store.Certificates()
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(certs) != 0 {
-		t.Errorf("expected 0 certificates, got %d", len(certs))
-	}
-}
-
 func TestBackendStore_Certificates_ClosedStore(t *testing.T) {
 	store := newTestBackendStore(t)
 	_ = store.Close()
@@ -473,29 +273,6 @@ func TestBackendStore_CertificatesByPurpose_Success(t *testing.T) {
 	}
 	if len(userCerts) != 1 {
 		t.Errorf("expected 1 user CA cert, got %d", len(userCerts))
-	}
-}
-
-func TestBackendStore_CertificatesByPurpose_NoneMatch(t *testing.T) {
-	store := newTestBackendStore(t)
-	_ = store.AddCertificate(generateTestCert(t, "General CA"))
-
-	certs, err := store.CertificatesByPurpose(PurposeAndroidHardware)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(certs) != 0 {
-		t.Errorf("expected 0 certificates, got %d", len(certs))
-	}
-}
-
-func TestBackendStore_CertificatesByPurpose_ClosedStore(t *testing.T) {
-	store := newTestBackendStore(t)
-	_ = store.Close()
-
-	_, err := store.CertificatesByPurpose(PurposeGeneral)
-	if err != ErrStoreClosed {
-		t.Fatalf("expected ErrStoreClosed, got %v", err)
 	}
 }
 

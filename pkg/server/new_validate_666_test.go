@@ -56,7 +56,7 @@ func TestNew_EmptyStoragePath_RejectedBeforeAnyFilesystemWrite(t *testing.T) {
 	// initializePINManager's guard.
 	cfg.PIN.Enabled = true
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, srv, "a failed construction must not hand back a partially-built server")
 
@@ -84,7 +84,7 @@ func TestNew_InvalidConfig_RejectedWithTypedError(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Logging.Level = "not-a-real-level"
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, srv)
 
@@ -104,7 +104,7 @@ func TestNew_ValidConfig_Succeeds(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 	defer func() { _ = srv.Shutdown() }()

@@ -14,6 +14,8 @@
 package config
 
 import (
+	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"strings"
@@ -72,7 +74,15 @@ func (a *AttestationConfig) PeerGateMode() (peergate.Mode, error) {
 // configuration. Every declared format must resolve to at least one root
 // certificate; a format that would produce an anchorless verifier is a
 // configuration error rather than a permissive default.
-func (c *AttestationConfig) Verifiers() (map[string]*attestation.Verifier, error) {
+//
+// roots is the persisted, purpose-classified trust-root store; when non-nil
+// every verifier appraises over it (Verifier.BuildTrustPool), so a root
+// installed through the trust_roots verbs is trusted without a config edit.
+// A nil roots leaves the purpose-pooled checks failing closed. When roots
+// is writable (truststore.DAOStore), the config-file roots of a format with
+// a chain purpose are imported into it once (an existing entry, and its
+// quarantine, is kept) and chain appraisal anchors on the store alone.
+func (c *AttestationConfig) Verifiers(roots truststore.PurposeLister) (map[string]*attestation.Verifier, error) {
 	if c == nil {
 		return nil, nil
 	}
@@ -91,16 +101,69 @@ func (c *AttestationConfig) Verifiers() (map[string]*attestation.Verifier, error
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("attestation: trust store for format %q", key), Err: err}
 		}
-		roots, err := store.Certificates()
+		anchors, err := store.Certificates()
 		if err != nil {
 			return nil, &errs.Wrapped{Msg: fmt.Sprintf("attestation: trust store for format %q", key), Err: err}
 		}
-		if len(roots) == 0 {
+		if len(anchors) == 0 {
 			return nil, &errs.Detail{Err: ErrAttestationTrustStoreEmpty, Detail: key}
 		}
 
-		verifiers[key] = attestation.NewVerifier(roots)
+		var opts []attestation.VerifierOption
+		if roots != nil {
+			opts = append(opts, attestation.WithTrustStore(roots, nil))
+			if purpose, ok := formatChainPurpose(key); ok {
+				opts = append(opts, attestation.WithChainPurpose(purpose))
+				if importer, ok := roots.(configRootImporter); ok {
+					if err := importConfigRoots(importer, anchors, purpose); err != nil {
+						return nil, &errs.Wrapped{Msg: fmt.Sprintf("attestation: import config roots for format %q", key), Err: err}
+					}
+					// The store is authoritative from here on: a config
+					// root anchors only through its store entry, so a
+					// quarantine or removal there takes effect.
+					anchors = nil
+				}
+			}
+		}
+		verifiers[key] = attestation.NewVerifier(anchors, opts...)
 	}
 
 	return verifiers, nil
+}
+
+// formatChainPurpose names the persisted trust-root purpose whose roots anchor
+// a format's attestation chains. Formats without one anchor at their
+// configured roots only.
+func formatChainPurpose(format string) (truststore.CertPurpose, bool) {
+	switch {
+	case format == "tpm" || format == "tpm2":
+		return truststore.PurposeTPMManufacturer, true
+	case strings.HasPrefix(format, "android"):
+		return truststore.PurposeAndroidHardware, true
+	}
+	return "", false
+}
+
+// configRootImporter is the writable trust-root store Verifiers migrates
+// config-file roots into (truststore.DAOStore).
+type configRootImporter interface {
+	Add(ctx context.Context, cert *x509.Certificate, opts *truststore.AddCertificateOptions) error
+}
+
+// configRootSource tags the store entries imported from the config file. A
+// removed config root leaves a tombstone in the store, so this import does
+// not bring it back (DAOStore.Delete).
+const configRootSource = truststore.SourceConfig
+
+// importConfigRoots adds each config-file root to the store under purpose,
+// keyed by fingerprint. A root the store already holds keeps its entry and
+// purpose, so an earlier quarantine (PurposeSynced) survives a restart.
+func importConfigRoots(store configRootImporter, roots []*x509.Certificate, purpose truststore.CertPurpose) error {
+	for _, root := range roots {
+		err := store.Add(context.Background(), root, &truststore.AddCertificateOptions{Purpose: purpose, Source: configRootSource})
+		if err != nil && !errors.Is(err, truststore.ErrCertificateExists) {
+			return err
+		}
+	}
+	return nil
 }

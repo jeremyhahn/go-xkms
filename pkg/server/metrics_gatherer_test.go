@@ -39,7 +39,7 @@ func TestServer_MetricsGatherer_IncludesRegisteredGatherer(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 
@@ -71,7 +71,7 @@ func TestServer_MetricsGatherer_NoExtraGatherers(t *testing.T) {
 	defer xkms.Reset()
 
 	cfg := createMinimalConfig(t)
-	srv, err := New(cfg)
+	srv, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 

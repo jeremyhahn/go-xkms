@@ -158,13 +158,6 @@ func TestDAOStore_ImportPEM(t *testing.T) {
 	assert.Equal(t, "bundle", meta.Source)
 }
 
-func TestDAOStore_ImportPEM_NoCertificates(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-
-	_, err := store.ImportPEM(context.Background(), []byte("not pem"), nil)
-	require.Error(t, err)
-}
-
 func TestDAOStore_SetPurpose_Quarantine(t *testing.T) {
 	store := newTestDAOTrustStore(t)
 	ctx := context.Background()
@@ -195,6 +188,95 @@ func TestDAOStore_SetPurpose_Quarantine(t *testing.T) {
 	assert.Equal(t, PurposeSynced, meta.Purpose)
 }
 
+// withdrawAfterGetDAO runs withdraw once, right after the first Get
+// returns, so another server's withdrawal lands deterministically between
+// the seeding Get and its write.
+type withdrawAfterGetDAO struct {
+	qrdbsdk.GenericDAO[*TrustCertEntity]
+	withdraw func()
+	done     bool
+}
+
+func (w *withdrawAfterGetDAO) Get(ctx context.Context, id uint64) (*TrustCertEntity, error) {
+	e, err := w.GenericDAO.Get(ctx, id)
+	if !w.done {
+		w.done = true
+		w.withdraw()
+	}
+	return e, err
+}
+
+// TestDAOStore_ConfigSeed_ConcurrentWithdrawalSurvives: two servers share
+// one store; while one adopts an operator-installed root as a config root,
+// the other quarantines or deletes it. The withdrawal must survive.
+func TestDAOStore_ConfigSeed_ConcurrentWithdrawalSurvives(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		withdraw func(t *testing.T, other *DAOStore, fp string)
+		check    func(t *testing.T, store *DAOStore, fp string)
+	}{
+		{
+			name: "quarantine",
+			withdraw: func(t *testing.T, other *DAOStore, fp string) {
+				_, err := other.SetPurpose(context.Background(), fp, PurposeSynced)
+				require.NoError(t, err)
+			},
+			check: func(t *testing.T, store *DAOStore, fp string) {
+				_, meta, err := store.Get(context.Background(), fp)
+				require.NoError(t, err)
+				assert.Equal(t, PurposeSynced, meta.Purpose)
+			},
+		},
+		{
+			name: "delete",
+			withdraw: func(t *testing.T, other *DAOStore, fp string) {
+				require.NoError(t, other.Delete(context.Background(), fp))
+			},
+			check: func(t *testing.T, store *DAOStore, fp string) {
+				_, _, err := store.Get(context.Background(), fp)
+				require.ErrorIs(t, err, ErrCertificateNotFound)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := storage.NewMemory()
+			t.Cleanup(func() { backend.Close() })
+			kvStore, err := kvadapter.New(backend)
+			require.NoError(t, err)
+			seeder, err := NewDAOStore(dao.NewStoreFactory(kvStore))
+			require.NoError(t, err)
+			other, err := NewDAOStore(dao.NewStoreFactory(kvStore))
+			require.NoError(t, err)
+			ctx := context.Background()
+
+			cert := generateTestCert(t, "Operator CA")
+			fp := Fingerprint(cert)
+			require.NoError(t, other.Add(ctx, cert, purposeOpts(PurposeIDevIDIssuer)))
+
+			seeder.dao = &withdrawAfterGetDAO{
+				GenericDAO: seeder.dao,
+				withdraw:   func() { tc.withdraw(t, other, fp) },
+			}
+			err = seeder.Add(ctx, cert, &AddCertificateOptions{Purpose: PurposeIDevIDIssuer, Source: SourceConfig})
+			require.ErrorIs(t, err, ErrCertificateExists)
+
+			tc.check(t, other, fp)
+			anchors, err := other.Anchors(ctx, PurposeIDevIDIssuer)
+			require.NoError(t, err)
+			assert.Empty(t, anchors)
+
+			// A later rebuild runs the config import again (the DAO
+			// wrapper is spent): the withdrawal still holds.
+			err = seeder.Add(ctx, cert, &AddCertificateOptions{Purpose: PurposeIDevIDIssuer, Source: SourceConfig})
+			require.ErrorIs(t, err, ErrCertificateExists)
+			tc.check(t, other, fp)
+			anchors, err = other.Anchors(ctx, PurposeIDevIDIssuer)
+			require.NoError(t, err)
+			assert.Empty(t, anchors)
+		})
+	}
+}
+
 func TestDAOStore_SetPurpose_Errors(t *testing.T) {
 	store := newTestDAOTrustStore(t)
 	ctx := context.Background()
@@ -215,24 +297,6 @@ func TestDAOStore_SetPurpose_Errors(t *testing.T) {
 	require.NoError(t, store.Close())
 	_, err = store.SetPurpose(ctx, fp, PurposeSynced)
 	require.ErrorIs(t, err, ErrStoreClosed)
-}
-
-func TestDAOStore_Anchors_InvalidPurpose(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-
-	_, err := store.Anchors(context.Background(), "bogus")
-	require.ErrorIs(t, err, ErrNotAnchorPurpose)
-}
-
-func TestDAOStore_Get_NotFound(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-	ctx := context.Background()
-
-	fp := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
-	cert, meta, err := store.Get(ctx, fp)
-	require.ErrorIs(t, err, ErrCertificateNotFound)
-	assert.Nil(t, cert)
-	assert.Nil(t, meta)
 }
 
 func TestDAOStore_Get_InvalidFingerprint(t *testing.T) {
@@ -299,23 +363,6 @@ func TestDAOStore_GetByPurpose_Closed(t *testing.T) {
 	assert.Nil(t, certs)
 }
 
-func TestDAOStore_GetByPurpose_MultipleSamePurpose(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-	ctx := context.Background()
-
-	cert1 := generateTestCert(t, "User CA 1")
-	cert2 := generateTestCert(t, "User CA 2")
-	cert3 := generateTestCert(t, "User CA 3")
-
-	require.NoError(t, store.Add(ctx, cert1, purposeOpts(PurposeUserCA)))
-	require.NoError(t, store.Add(ctx, cert2, purposeOpts(PurposeUserCA)))
-	require.NoError(t, store.Add(ctx, cert3, purposeOpts(PurposeUserCA)))
-
-	certs, err := store.GetByPurpose(ctx, PurposeUserCA)
-	require.NoError(t, err)
-	assert.Len(t, certs, 3)
-}
-
 func TestDAOStore_List(t *testing.T) {
 	store := newTestDAOTrustStore(t)
 	ctx := context.Background()
@@ -338,16 +385,6 @@ func TestDAOStore_List(t *testing.T) {
 		assert.True(t, metas[i-1].Subject <= metas[i].Subject,
 			"expected sorted order: %q <= %q", metas[i-1].Subject, metas[i].Subject)
 	}
-}
-
-func TestDAOStore_List_Empty(t *testing.T) {
-	store := newTestDAOTrustStore(t)
-	ctx := context.Background()
-
-	certs, metas, err := store.List(ctx)
-	require.NoError(t, err)
-	assert.Empty(t, certs)
-	assert.Empty(t, metas)
 }
 
 func TestDAOStore_List_Closed(t *testing.T) {

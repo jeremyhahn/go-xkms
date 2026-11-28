@@ -187,12 +187,18 @@ func xkmsdSupportedSchemes() string {
 // flag when the command declares one, then XKMSD_TLS_CA, then the config's
 // xkmsd.tls_ca_file. cmd may be nil for callers outside a cobra invocation.
 func resolveXKMSdEndpoint(cmd *cobra.Command) (XKMSdEndpoint, error) {
+	return resolveXKMSdEndpointContext(context.Background(), cmd)
+}
+
+// resolveXKMSdEndpointContext is resolveXKMSdEndpoint under ctx: the saved
+// login lookup and its server identity probe end at ctx's deadline.
+func resolveXKMSdEndpointContext(ctx context.Context, cmd *cobra.Command) (XKMSdEndpoint, error) {
 	serverURL := resolveXKMSdURL()
 	if serverURL == "" {
 		return XKMSdEndpoint{}, ErrXKMSdURLRequired
 	}
 
-	return withXKMSdToken(XKMSdEndpoint{
+	return withXKMSdToken(ctx, XKMSdEndpoint{
 		URL:         serverURL,
 		TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
 		TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),
@@ -201,8 +207,8 @@ func resolveXKMSdEndpoint(cmd *cobra.Command) (XKMSdEndpoint, error) {
 }
 
 // withXKMSdToken sets the endpoint's bearer token (see resolveXKMSdToken).
-func withXKMSdToken(endpoint XKMSdEndpoint) (XKMSdEndpoint, error) {
-	token, err := resolveXKMSdToken(endpoint)
+func withXKMSdToken(ctx context.Context, endpoint XKMSdEndpoint) (XKMSdEndpoint, error) {
+	token, err := resolveXKMSdToken(ctx, endpoint)
 	if err != nil {
 		return XKMSdEndpoint{}, err
 	}
@@ -219,7 +225,7 @@ func withXKMSdToken(endpoint XKMSdEndpoint) (XKMSdEndpoint, error) {
 // name (XKMSD_SERVER_NAME, xkmsd.server_name) selects the login. No stored
 // login is no token (the call relies on its mTLS client certificate); an
 // expired one is an error naming the refresh command.
-func resolveXKMSdToken(endpoint XKMSdEndpoint) (string, error) {
+func resolveXKMSdToken(ctx context.Context, endpoint XKMSdEndpoint) (string, error) {
 	if token := strings.TrimSpace(os.Getenv(envXKMSdToken)); token != "" {
 		return token, nil
 	}
@@ -241,7 +247,7 @@ func resolveXKMSdToken(endpoint XKMSdEndpoint) (string, error) {
 	if err != nil {
 		return "", &SentinelCauseError{Sentinel: ErrAuthTokenLoadFailed, Cause: err}
 	}
-	token, err := storedLoginToken(store, endpoint)
+	token, err := storedLoginToken(ctx, store, endpoint)
 	if closeErr := store.Close(); closeErr != nil {
 		err = errors.Join(err, closeErr)
 	}
@@ -250,8 +256,8 @@ func resolveXKMSdToken(endpoint XKMSdEndpoint) (string, error) {
 
 // storedLoginToken picks the endpoint's login from store. An empty store
 // holds no login, so the server is not even identified.
-func storedLoginToken(store tokenstore.TokenStore, endpoint XKMSdEndpoint) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), xkmsdConnectTimeout)
+func storedLoginToken(parent context.Context, store tokenstore.TokenStore, endpoint XKMSdEndpoint) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, xkmsdConnectTimeout)
 	defer cancel()
 	logins, err := store.List(ctx)
 	if err != nil {
@@ -478,7 +484,13 @@ func (e XKMSdEndpoint) Client() (transport.Client, error) {
 // newXKMSdClient resolves the endpoint for cmd and constructs an unconnected
 // transport client. cmd may be nil.
 func newXKMSdClient(cmd *cobra.Command) (transport.Client, error) {
-	endpoint, err := resolveXKMSdEndpoint(cmd)
+	return newXKMSdClientContext(context.Background(), cmd)
+}
+
+// newXKMSdClientContext is newXKMSdClient with endpoint resolution (the
+// saved-login identity probe included) bounded by ctx.
+func newXKMSdClientContext(ctx context.Context, cmd *cobra.Command) (transport.Client, error) {
+	endpoint, err := resolveXKMSdEndpointContext(ctx, cmd)
 	if err != nil {
 		return nil, err
 	}
@@ -490,13 +502,20 @@ func newXKMSdClient(cmd *cobra.Command) (transport.Client, error) {
 // client is closed before returning an error, so a successful call always
 // hands back a client the caller must Close.
 func connectXKMSdClient(cmd *cobra.Command) (transport.Client, error) {
-	client, err := newXKMSdClient(cmd)
+	return connectXKMSdClientContext(context.Background(), cmd)
+}
+
+// connectXKMSdClientContext is connectXKMSdClient under parent: the connect
+// deadline is the earlier of parent's and xkmsdConnectTimeout, so a caller's
+// own timeout (trust bootstrap --timeout) bounds client setup too.
+func connectXKMSdClientContext(parent context.Context, cmd *cobra.Command) (transport.Client, error) {
+	ctx, cancel := context.WithTimeout(parent, xkmsdConnectTimeout)
+	defer cancel()
+
+	client, err := newXKMSdClientContext(ctx, cmd)
 	if err != nil {
 		return nil, err
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), xkmsdConnectTimeout)
-	defer cancel()
 
 	if err := client.Connect(ctx); err != nil {
 		return nil, &SentinelCauseError{Sentinel: ErrXKMSdConnectFailed, Cause: errors.Join(err, client.Close())}

@@ -300,7 +300,7 @@ func sshClientWithHostKeys(cmd *cobra.Command) (sshsdk.Client, sshsdk.HostKeySto
 // reports false when the command runs on the local shared SSH store instead.
 func sshServerEndpoint(cmd *cobra.Command) (XKMSdEndpoint, bool, error) {
 	if server := strings.TrimSpace(commandFlagString(cmd, "server")); server != "" {
-		endpoint, err := withXKMSdToken(XKMSdEndpoint{
+		endpoint, err := withXKMSdToken(context.Background(), XKMSdEndpoint{
 			URL:         server,
 			TLSCAFile:   resolveXKMSdTLSCAFile(cmd),
 			TLSCertFile: strings.TrimSpace(os.Getenv(envXKMSdTLSCert)),

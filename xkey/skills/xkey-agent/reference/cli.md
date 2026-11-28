@@ -2970,9 +2970,13 @@ Usage: `xkey trust install <fingerprint>`
 
 List trusted certificates
 
-Usage: `xkey trust list`
+Usage: `xkey trust list [flags]`
 
 Aliases: ls
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--purpose` | string |  | List only certificates of this purpose (general, tpm-manufacturer, android-hardware, user-ca, bootstrap-ca, idevid-issuer, image-signer, synced) |
 
 ## xkey trust remove
 

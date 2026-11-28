@@ -18,6 +18,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
@@ -781,6 +782,40 @@ func TestResolveXKMSdEndpoint_UsesStoredLoginOfTheServerIdentity(t *testing.T) {
 	endpoint, err := resolveXKMSdEndpoint(nil)
 	require.NoError(t, err)
 	assert.Equal(t, "stored.jwt", endpoint.Token)
+}
+
+// The caller's deadline bounds the saved-login identity probe, not only
+// Connect: with a login saved and no XKMSD_TOKEN, a server whose TLS
+// identity probe stalls ends client setup at the caller's deadline (trust
+// bootstrap --timeout), not after the 30 s connect timeout.
+func TestConnectXKMSdClientContext_StalledLoginProbeEndsAtTheDeadline(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	storeLogin(t, &tokenstore.TokenEntry{
+		ServerURL: "https://stalled.example:1", ServerID: "stalled-id", ServerName: "stalled.example",
+		Token: "stored.jwt", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	xkmsdURL = "https://stalled.example:1"
+
+	orig := probeServerID
+	t.Cleanup(func() { probeServerID = orig })
+	probeServerID = func(ctx context.Context, _ string, _ *tls.Config) (string, error) {
+		<-ctx.Done()
+		return "", ctx.Err()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	client, err := connectXKMSdClientContext(ctx, nil)
+	elapsed := time.Since(start)
+	if client != nil {
+		require.NoError(t, client.Close())
+	}
+
+	require.ErrorIs(t, err, ErrXKMSdConnectFailed, "a stalled identity probe fails the setup")
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the caller's deadline ended the probe")
+	require.Less(t, elapsed, 5*time.Second, "the identity probe outlived the caller's deadline")
 }
 
 func TestResolveXKMSdEndpoint_SameHostOtherCertificateGetsNoLogin(t *testing.T) {

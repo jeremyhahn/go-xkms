@@ -44,6 +44,21 @@ import (
 )
 
 // Test helper to create a minimal valid config
+// newServerWithCleanup builds a Server and registers its Shutdown with the
+// test. A Server that is built and never shut down keeps its in-process qrdb
+// node running: its compaction, retention and reclaim schedulers go on
+// working against a removed t.TempDir() for the rest of the package run, and
+// under -race the piled-up nodes slowed pkg/server past the unit timeout
+// (#1794). Shutdown is latched, so a test that also shuts down is unaffected.
+func newServerWithCleanup(t testing.TB, cfg *config.Config, opts ...Option) (*Server, error) {
+	t.Helper()
+	srv, err := New(cfg, opts...)
+	if srv != nil {
+		t.Cleanup(func() { _ = srv.Shutdown() })
+	}
+	return srv, err
+}
+
 func createMinimalConfig(t *testing.T) *config.Config {
 	t.Helper()
 	tempDir := t.TempDir()
@@ -469,7 +484,7 @@ func TestNew_Success(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -495,7 +510,7 @@ func TestNew_NoBackends(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Backends.Software = nil
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "backend")
 }
@@ -506,7 +521,7 @@ func TestServer_Accessors(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -530,7 +545,7 @@ func TestServer_StartAndShutdown(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -555,7 +570,7 @@ func TestServer_ShutdownWithMetrics(t *testing.T) {
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Path = "/metrics"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	server.SetMetricsListener(newTestMetricsListener(t))
@@ -589,7 +604,7 @@ func TestServer_BuildTLSConfig_Success(t *testing.T) {
 	cfg.TLS.MaxVersion = "TLS1.3"
 	cfg.TLS.ClientAuth = "require"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -623,13 +638,13 @@ func TestServer_BuildTLSConfig_InvalidCert(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.TLS.CertFile = "/nonexistent/cert.pem"
 	cfg.TLS.KeyFile = "/nonexistent/key.pem"
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 
 	// A file that disappears after New fails the REST listener's TLS build.
 	cfg = createMinimalConfig(t)
 	cfg.TLS.CertFile, cfg.TLS.KeyFile, _ = createTestTLSFiles(t)
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	defer func() { _ = server.Shutdown() }()
 
@@ -652,7 +667,7 @@ func TestServer_BuildTLSConfig_InvalidCA(t *testing.T) {
 	cfg.TLS.CAFile = "/nonexistent/ca.pem"
 
 	// Start-up refuses a client CA file it cannot read.
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	var readErr *ErrFileRead
 	require.ErrorAs(t, err, &readErr)
 
@@ -688,7 +703,7 @@ func TestServer_BuildTLSConfig_ClientAuthModes(t *testing.T) {
 			cfg.TLS.KeyFile = keyFile
 			cfg.TLS.ClientAuth = tt.clientAuth
 
-			server, err := New(cfg)
+			server, err := newServerWithCleanup(t, cfg)
 			require.NoError(t, err)
 			require.NotNil(t, server)
 			defer func() { _ = server.Shutdown() }()
@@ -716,7 +731,7 @@ func TestServer_BuildTLSConfig_WithCipherSuites(t *testing.T) {
 		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -738,7 +753,7 @@ func TestServer_BuildTLSConfig_WithClientCAs(t *testing.T) {
 	cfg.TLS.KeyFile = keyFile
 	cfg.TLS.ClientCAs = []string{caFile}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -761,7 +776,7 @@ func TestServer_BuildTLSConfig_InvalidClientCA(t *testing.T) {
 	cfg.TLS.ClientCAs = []string{"/nonexistent/client-ca.pem"}
 
 	// Start-up refuses a client CA file it cannot read.
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	var readErr *ErrFileRead
 	require.ErrorAs(t, err, &readErr)
 
@@ -794,7 +809,7 @@ func TestServer_InitializeAuthentication_Disabled(t *testing.T) {
 			cfg.Auth.Enabled = tt.enabled
 			cfg.Auth.Type = tt.typ
 
-			server, err := New(cfg)
+			server, err := newServerWithCleanup(t, cfg)
 			require.Error(t, err)
 			assert.Nil(t, server)
 			var disabled *ErrAuthenticationDisabled
@@ -813,7 +828,7 @@ func TestServer_InitializeAuthentication_Unknown(t *testing.T) {
 
 	// An unrecognized auth.type is fatal: a typo must not start a server with
 	// authentication silently disabled.
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 
@@ -831,7 +846,7 @@ func TestServer_InitializeAuthentication_JWT_NoPublicKey(t *testing.T) {
 	cfg.Auth.Type = "jwt"
 	cfg.Auth.JWT = nil
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "JWT authentication requires public_key_file")
 }
@@ -864,7 +879,7 @@ func TestServer_InitializeAuthentication_JWT_Success(t *testing.T) {
 		Audience:      []string{"test-audience"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -889,7 +904,7 @@ func TestServer_InitializeAuthentication_CompositeDerived(t *testing.T) {
 		Audience:      []string{"test-audience"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -995,7 +1010,7 @@ func TestServer_InitializeAuthentication_WithWebAuthn(t *testing.T) {
 		RPOrigins:     []string{"https://localhost:8443"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1012,7 +1027,7 @@ func TestServer_Reload_Success(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1036,7 +1051,7 @@ func TestServer_Reload_NoChange(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1071,7 +1086,7 @@ func TestServer_WaitForShutdown(t *testing.T) {
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -1104,7 +1119,7 @@ func TestServer_InitializeHealth(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1155,7 +1170,7 @@ func TestServer_CloseBackends(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -1222,7 +1237,7 @@ func TestServer_InitializeMetrics_Success(t *testing.T) {
 	cfg.Metrics.Port = 19200
 	cfg.Metrics.Path = "/metrics"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1241,7 +1256,7 @@ func TestServer_CreateJWTAuthenticator_NilConfig(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1358,7 +1373,7 @@ func TestServer_CreateJWTAuthenticator_KeyFileWithIssuerAndAudience(t *testing.T
 		Audience:      []string{"xkms"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1389,7 +1404,7 @@ func TestServer_BuildTLSConfig_InvalidCAContent(t *testing.T) {
 	cfg.TLS.CAFile = invalidCAFile
 
 	// Start-up refuses a client CA file that does not parse.
-	_, err = New(cfg)
+	_, err = newServerWithCleanup(t, cfg)
 	var parseErr *ErrCertParse
 	require.ErrorAs(t, err, &parseErr)
 
@@ -1417,7 +1432,7 @@ func TestServer_BuildTLSConfig_InvalidClientCAContent(t *testing.T) {
 	cfg.TLS.ClientCAs = []string{invalidClientCAFile}
 
 	// Start-up refuses a client CA file that does not parse.
-	_, err = New(cfg)
+	_, err = newServerWithCleanup(t, cfg)
 	var parseErr *ErrCertParse
 	require.ErrorAs(t, err, &parseErr)
 
@@ -1440,7 +1455,7 @@ func TestServer_InitializeAuthentication_MTLS_Success(t *testing.T) {
 	cfg.TLS.CertFile = certFile
 	cfg.TLS.KeyFile = keyFile
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1481,7 +1496,7 @@ func TestServer_InitializeAuthentication_CompositeWithJWTKeyFile(t *testing.T) {
 		RPID:    "localhost",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1504,7 +1519,7 @@ func TestServer_InitializeAuthentication_CompositeWithoutJWTConfig(t *testing.T)
 	// key, so the derived chain includes a JWT authenticator over that key.
 	// Startup succeeds without any operator key file.
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1529,7 +1544,7 @@ func TestServer_InitializeAuthentication_CompositeDerivesBothVehicles(t *testing
 	cfg.TLS.CertFile = certFile
 	cfg.TLS.KeyFile = keyFile
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1560,7 +1575,7 @@ func TestServer_InitializeAuthentication_CompositeWebAuthnNoJWTFile(t *testing.T
 		// PublicKeyFile is empty
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1594,7 +1609,7 @@ func TestServer_InitializeAuthentication_CompositeInvalidJWTKey(t *testing.T) {
 
 	// A broken JWT verification key must abort startup: silently degrading to
 	// the no-op authenticator would disable authentication entirely.
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 
@@ -1633,7 +1648,7 @@ func TestServer_InitializeAuthentication_JWTDirect(t *testing.T) {
 		Audience:      []string{"test-audience"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1656,7 +1671,7 @@ func TestServer_InitializeBackends_PKCS8(t *testing.T) {
 		Path:    filepath.Join(tempDir, "pkcs8"),
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1710,7 +1725,7 @@ func TestServer_WithDefaultPKCS8Backend(t *testing.T) {
 		},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1729,7 +1744,7 @@ func TestServer_InitializeKeyStore_InvalidCertPath(t *testing.T) {
 	cfg.Datastore.Path = "/dev/null/invalid"
 
 	// This should fail during keystore initialization
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 }
 
@@ -1741,7 +1756,7 @@ func TestServer_Shutdown_ContextCancellation(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -1767,7 +1782,7 @@ func TestServer_InitializeHealth_MultipleBackends(t *testing.T) {
 		Path:    filepath.Join(tempDir, "pkcs8"),
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1788,7 +1803,7 @@ func TestServer_InitializeMetrics_AlreadyInitialized(t *testing.T) {
 	cfg.Metrics.Port = 19300
 	cfg.Metrics.Path = "/metrics"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1828,7 +1843,7 @@ func TestServer_Start_MetricsInitialization(t *testing.T) {
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Path = "/metrics"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	server.SetMetricsListener(newTestMetricsListener(t))
@@ -1862,7 +1877,7 @@ func TestServer_Reload_AuthChange(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1901,7 +1916,7 @@ func TestServer_BuildTLSConfig_TLS13Only(t *testing.T) {
 	cfg.TLS.MinVersion = "TLS1.3"
 	cfg.TLS.MaxVersion = "TLS1.3"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1921,7 +1936,7 @@ func TestServer_Context(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1946,7 +1961,7 @@ func TestServer_Keystores(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1963,7 +1978,7 @@ func TestServer_Authenticator(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -1985,7 +2000,7 @@ func TestServer_InitializeAuthentication_WebAuthnWithOrigins(t *testing.T) {
 		RPOrigins:     []string{"https://example.com", "https://www.example.com"},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2015,7 +2030,7 @@ func TestServer_InitBackendStubs_NilConfigs(t *testing.T) {
 	cfg.Backends.Vault = nil
 	cfg.Backends.TPM2 = nil
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2038,7 +2053,7 @@ func TestServer_InitBackendStubs_DisabledConfigs(t *testing.T) {
 	cfg.Backends.Vault = &config.VaultConfig{Enabled: false}
 	cfg.Backends.TPM2 = &config.TPM2Config{Enabled: false}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2102,7 +2117,7 @@ func TestServer_HealthCheck_Timeout(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2130,7 +2145,7 @@ func TestServer_Reload_LoggingChanges(t *testing.T) {
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "json"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2167,7 +2182,7 @@ func TestServer_BuildTLSConfig_BothCAAndClientCAs(t *testing.T) {
 	cfg.TLS.CAFile = caFile
 	cfg.TLS.ClientCAs = []string{caFile} // Also add as client CA
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2192,7 +2207,7 @@ func TestServer_BuildTLSConfig_MultipleClientCAs(t *testing.T) {
 	cfg.TLS.KeyFile = keyFile
 	cfg.TLS.ClientCAs = []string{caFile, caFile2}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2220,7 +2235,7 @@ func TestServer_InitializeAuthentication_WebAuthnFullConfig(t *testing.T) {
 		UserVerification:        "required",
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2245,7 +2260,7 @@ func TestServer_InitializeAuthentication_AdaptiveRemoved(t *testing.T) {
 	cfg.Auth.Enabled = true
 	cfg.Auth.Type = "adaptive"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, server)
 	var removed *ErrAdaptiveRemoved
@@ -2279,7 +2294,7 @@ func TestServer_Shutdown_WithAllServers(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -2300,7 +2315,7 @@ func TestServer_HealthCheck_Success(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2329,7 +2344,7 @@ func TestServer_Start_MarksHealthStarted(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2352,7 +2367,7 @@ func TestServer_ReloadLogging_NoChange(t *testing.T) {
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "json"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2373,7 +2388,7 @@ func TestServer_InitializeUserStore_InvalidPath(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Datastore.Path = "/dev/null/nonexistent/path"
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 }
 
@@ -2386,7 +2401,7 @@ func TestServer_InitializeKeyStore_DefaultFallback(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Default = config.DefaultConfig("nonexistent-backend")
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2436,7 +2451,7 @@ func TestServer_InitTPM2Backend_NilConfig(t *testing.T) {
 	cfg := createMinimalConfig(t)
 	cfg.Backends.TPM2 = nil
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2457,7 +2472,7 @@ func TestServer_InitTPM2Backend_DisabledConfig(t *testing.T) {
 		Enabled: false,
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2480,7 +2495,7 @@ func TestServer_InitTPM2Backend_DefaultDevicePath(t *testing.T) {
 	}
 
 	// Will fail because no TPM available, but tests the code path
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	// Expected to fail due to no TPM hardware
 	assert.Error(t, err)
 }
@@ -2495,7 +2510,7 @@ func TestServer_Shutdown_ClosesKeystores(t *testing.T) {
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -2519,7 +2534,7 @@ func TestServer_HealthCheck_BackendCheck(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2554,7 +2569,7 @@ func TestServer_Start_MetricsEnabledMultipleTimes(t *testing.T) {
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Path = "/metrics"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	server.SetMetricsListener(newTestMetricsListener(t))
@@ -2584,7 +2599,7 @@ func TestServer_Start_NilHealthChecker(t *testing.T) {
 	cfg.Protocols.MCP = false
 	cfg.Metrics.Enabled = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -2616,7 +2631,7 @@ func TestServer_CloseBackends_ValidBackends(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -2640,7 +2655,7 @@ func TestServer_Shutdown_CallsXKMSShutdown(t *testing.T) {
 	cfg.Protocols.REST = false
 	cfg.Protocols.GRPC = false
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -2666,7 +2681,7 @@ func TestServer_StartMetrics_Success(t *testing.T) {
 	cfg.Metrics.Enabled = true
 	cfg.Metrics.Path = "/metrics"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	server.SetMetricsListener(newTestMetricsListener(t))
@@ -2730,7 +2745,7 @@ func TestServer_InitializeBackends_PKCS8Only(t *testing.T) {
 		},
 	}
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2749,7 +2764,7 @@ func TestServer_Reload_UpdatesConfig(t *testing.T) {
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "json"
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 	defer func() { _ = server.Shutdown() }()
@@ -2813,7 +2828,7 @@ func TestNew_KeyStoreInitFailure(t *testing.T) {
 	// Set storage path to an invalid location that will fail during keystore init
 	cfg.Datastore.Path = "/dev/null/invalid/path/that/cannot/be/created"
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed")
 }
@@ -2825,7 +2840,7 @@ func TestServer_CloseBackends_Idempotent(t *testing.T) {
 
 	cfg := createMinimalConfig(t)
 
-	server, err := New(cfg)
+	server, err := newServerWithCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, server)
 
@@ -2851,7 +2866,7 @@ func TestServer_InitAuth_Error(t *testing.T) {
 		PublicKeyFile: "/nonexistent/key.pem",
 	}
 
-	_, err := New(cfg)
+	_, err := newServerWithCleanup(t, cfg)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "authentication")
 }
