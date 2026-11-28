@@ -125,6 +125,11 @@ func bindIdentity(ctx context.Context, identity *Identity) (context.Context, *qr
 		tenantID = qrdbsdk.SystemTenantID
 	}
 
+	// The decision is made on the supplied identity, never on one ctx already carries.
+	bound := *identity
+	bound.TenantID = tenantID
+	ctx = qrdbsdk.WithIdentity(ctx, &bound)
+
 	qid := &qrdbtransport.Identity{
 		Subject:  identity.Subject,
 		TenantID: tenantID,

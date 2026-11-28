@@ -919,6 +919,8 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		// made below the route gate (XKMSService.AuthorizeCaller).
 		// A nil Authorizer means RBAC is disabled, as it does there.
 		svc.SetAuthorizer(s.rbacAuthorizer)
+		// Those decisions are audited on the transports' sink.
+		svc.SetAuditLogger(s.auditLogger)
 		// Tenant-scoped client certificates the CA signs carry their
 		// tenant as a SPIFFE SAN in the deployment's trust domain, the
 		// form qrdb's certificate-to-tenant rule reads (go-xkms#1240).
@@ -1564,7 +1566,16 @@ func (s *Server) initializeAuthorization() error {
 	s.logger.Info("Initializing authorization...")
 
 	if s.config.Auth.EnableRBAC && s.qrdbClient != nil {
-		s.rbacAuthorizer = auth.NewAuthorizer(s.qrdbClient.RBAC())
+		// The node's composed authorizer decides on the caller's full
+		// go-qrdb identity (ScopePermissions, RoleBindings); the SDK RBAC
+		// client's projection drops them. It stays the permission lister.
+		var node qrdbsdk.Authorizer
+		if s.qrdbNode != nil {
+			if na := s.qrdbNode.Authorizer(); na != nil {
+				node = na
+			}
+		}
+		s.rbacAuthorizer = newNodeAuthorizer(s.qrdbClient.RBAC(), node)
 		s.logger.Info("RBAC authorization enabled (qrdb-backed)")
 	} else {
 		s.rbacAuthorizer = nil

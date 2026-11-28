@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -61,7 +62,16 @@ func (s *Service) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*p
 		InviteTTLSeconds:     req.InviteTtlSeconds,
 	})
 	if cErr != nil {
-		return nil, status.Error(createUserErrorCode(cErr), cErr.Error())
+		// A denial answers with the gate's own message; the qrdb decision
+		// detail is not the caller's to see (go-xkms#1103).
+		switch code := createUserErrorCode(cErr); code {
+		case codes.PermissionDenied:
+			return nil, status.Error(code, ErrAccessDenied.Error())
+		case codes.Unauthenticated:
+			return nil, status.Error(code, ErrAuthenticationRequired.Error())
+		default:
+			return nil, status.Error(code, cErr.Error())
+		}
 	}
 	return &pb.UserResponse{User: userInfoToProto(resp.User), Invite: inviteInfoToProto(resp.Invite)}, nil
 }
@@ -248,6 +258,15 @@ func (s *Service) ListUserCredentials(ctx context.Context, req *pb.ListUserCrede
 func createUserErrorCode(err error) codes.Code {
 	if errors.Is(err, xkms.ErrEmailRequired) {
 		return codes.InvalidArgument
+	}
+	// The service's users:invite decision is made below the users:create
+	// gate; its refusal is the caller's missing grant, not a server fault.
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		return codes.Unauthenticated
+	}
+	var denied *qrdbsdk.PermissionDeniedError
+	if errors.As(err, &denied) {
+		return codes.PermissionDenied
 	}
 	return codes.Internal
 }

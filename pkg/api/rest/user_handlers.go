@@ -19,8 +19,10 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -68,6 +70,18 @@ func (s *Server) handleCreateUser(w http.ResponseWriter, r *http.Request) {
 		// never succeed and buries a fixable mistake in the server's error rate.
 		if errors.Is(err, xkms.ErrEmailRequired) {
 			writeError(w, err, http.StatusBadRequest)
+			return
+		}
+		// The service's users:invite decision is made below the
+		// users:create gate; its refusal is the caller's missing grant,
+		// answered as the RBAC gate answers its own.
+		if errors.Is(err, auth.ErrUnauthenticated) {
+			writeErrorWithMessage(w, ErrUnauthorized, "Authentication required", http.StatusUnauthorized)
+			return
+		}
+		var denied *qrdbsdk.PermissionDeniedError
+		if errors.As(err, &denied) {
+			writeErrorWithMessage(w, ErrForbidden, "Access denied: insufficient permissions", http.StatusForbidden)
 			return
 		}
 		writeError(w, err, http.StatusInternalServerError)

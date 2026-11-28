@@ -413,6 +413,29 @@ type Module struct {
 	attestedCallerPolicy *peergate.GatePolicy
 	peerGate             *peergate.Gate
 	peerGateWired        atomic.Bool
+
+	// tenantTarget is the host's target-aware authorizer
+	// (SetTenantTargetAuthorizer), the self-built service's default
+	// decider (hostStores). Nil when the host's auth is disabled or the
+	// host hands none over.
+	tenantTarget qrdbsdk.TenantTargetAuthorizer
+
+	// authDisabled is set when the host hands over a nil tenant-target
+	// authorizer, which the contract defines as authentication disabled.
+	authDisabled bool
+}
+
+// Module receives the host's target-aware authorizer.
+var _ qrdbsdk.ModuleTenantTargetAware = (*Module)(nil)
+
+// SetTenantTargetAuthorizer implements qrdbsdk.ModuleTenantTargetAware: the
+// unified server hands over its AuthMiddleware once, before any Register*
+// hook runs. The self-built service decides on it (hostStores), so a
+// delegated caller's grants (ScopePermissions, RoleBindings) count below the
+// host's gate as they do at it.
+func (m *Module) SetTenantTargetAuthorizer(a qrdbsdk.TenantTargetAuthorizer) {
+	m.tenantTarget = a
+	m.authDisabled = a == nil
 }
 
 // Compile-time interface check.

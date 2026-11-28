@@ -99,6 +99,12 @@ func (m *Module) mcpToolHandler(spec xkmsmcp.MethodSpec) mcpserver.ToolHandlerFu
 			return mcpgo.NewToolResultError(
 				"xkms mcp surface is not yet available (server still composing)"), nil
 		}
+		// The self-built service's authorizer and audit sink are wired before any MCP call.
+		if m.selfBuilds() {
+			if x := m.resolve(); x != nil {
+				m.hostStores(x)
+			}
+		}
 
 		paramsJSON := mcpgo.ParseString(req, "params_json", "")
 		var params json.RawMessage

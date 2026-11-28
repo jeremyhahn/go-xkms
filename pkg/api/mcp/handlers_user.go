@@ -20,6 +20,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 	sdkssh "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
@@ -118,6 +119,17 @@ func mapUserError(err error) error {
 
 	if errors.Is(err, ErrUsernameRequired) || errors.Is(err, xkms.ErrEmailRequired) {
 		return &KeyOpError{Code: ErrCodeInvalidParams, Err: err}
+	}
+
+	// A decision the service makes below the method gate (users:invite on
+	// user.create) is the caller's missing grant, answered as the gate
+	// answers its own: the qrdb detail stays out of the response.
+	if errors.Is(err, auth.ErrUnauthenticated) {
+		return &KeyOpError{Code: ErrCodeUnauthorized, Err: auth.ErrUnauthenticated}
+	}
+	var denied *qrdbsdk.PermissionDeniedError
+	if errors.As(err, &denied) {
+		return &KeyOpError{Code: ErrCodeForbidden, Err: ErrPermissionDenied}
 	}
 
 	var notFound *qrdbsdk.UserNotFoundError
