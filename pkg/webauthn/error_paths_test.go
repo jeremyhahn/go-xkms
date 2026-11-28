@@ -116,6 +116,10 @@ func (s *faultyCredStore) Update(ctx context.Context, cred *Credential) error {
 	return s.inner.Update(ctx, cred)
 }
 
+func (s *faultyCredStore) UpdateSignCount(ctx context.Context, cred *Credential, checked uint32) error {
+	return s.inner.UpdateSignCount(ctx, cred, checked)
+}
+
 func (s *faultyCredStore) Delete(ctx context.Context, credID []byte) error {
 	return s.inner.Delete(ctx, credID)
 }

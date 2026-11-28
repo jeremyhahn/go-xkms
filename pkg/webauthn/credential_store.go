@@ -136,6 +136,34 @@ func (s *daoCredentialStore) Update(ctx context.Context, cred *Credential) error
 	return nil
 }
 
+// UpdateSignCount writes cred only if the stored record still carries the
+// sign counter checked, swapping against that exact record.
+func (s *daoCredentialStore) UpdateSignCount(ctx context.Context, cred *Credential, checked uint32) error {
+	if cred == nil || len(cred.ID) == 0 {
+		return ErrInvalidCredential
+	}
+	existing, err := s.get(ctx, cred.ID)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(existing.Credential.UserID, cred.UserID) {
+		return ErrCredentialOwnerMismatch
+	}
+	if existing.Credential.Authenticator.SignCount != checked {
+		return ErrCredentialUpdateConflict
+	}
+	next := newCredentialEntity(cred)
+	next.SetEntityID(existing.EntityID())
+	swapped, err := s.creds.CompareAndSwap(ctx, existing, next)
+	if err != nil {
+		return WrapError("update credential", err)
+	}
+	if !swapped {
+		return ErrCredentialUpdateConflict
+	}
+	return nil
+}
+
 // Delete removes a credential by its ID.
 func (s *daoCredentialStore) Delete(ctx context.Context, credID []byte) error {
 	e, err := s.get(ctx, credID)

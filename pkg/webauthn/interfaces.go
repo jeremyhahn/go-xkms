@@ -109,6 +109,11 @@ type CredentialStore interface {
 	// Returns ErrCredentialNotFound if the credential does not exist.
 	Update(ctx context.Context, cred *Credential) error
 
+	// UpdateSignCount updates cred only while the stored sign counter still
+	// equals checked, in one conditional write; otherwise it returns
+	// ErrCredentialUpdateConflict and writes nothing.
+	UpdateSignCount(ctx context.Context, cred *Credential, checked uint32) error
+
 	// Delete removes a credential by its ID.
 	// Returns ErrCredentialNotFound if the credential does not exist.
 	Delete(ctx context.Context, credID []byte) error

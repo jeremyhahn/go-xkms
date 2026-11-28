@@ -20,6 +20,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -158,9 +159,13 @@ func (s *Service) VerifyAssertion(ctx context.Context, req *AssertionVerificatio
 	}
 
 	if record != nil {
+		checked := record.Authenticator.SignCount
 		record.Authenticator.SignCount = authData.Counter
 		record.LastUsedAt = time.Now().UTC()
-		if err := s.creds.Update(ctx, record); err != nil {
+		if err := s.creds.UpdateSignCount(ctx, record, checked); err != nil {
+			if errors.Is(err, ErrCredentialUpdateConflict) {
+				return 0, NewVerificationError("update credential", err)
+			}
 			return 0, WrapError("update credential", err)
 		}
 	}
