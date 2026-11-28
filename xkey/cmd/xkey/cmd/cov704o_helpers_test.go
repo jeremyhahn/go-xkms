@@ -12,7 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 )

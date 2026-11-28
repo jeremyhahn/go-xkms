@@ -18,8 +18,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // noiseOutsideFIPS reports whether the calling test can run a Noise session in
@@ -30,7 +30,7 @@ import (
 func noiseOutsideFIPS(t *testing.T) bool {
 	t.Helper()
 	_, err := bootstrap.NewNoiseSession(&bootstrap.NoiseSessionConfig{IsInitiator: true})
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported) {
 		return false
 	}
 	require.NoError(t, err)
@@ -45,7 +45,7 @@ func TestNewTCPPairingServer_SurfacesTheX25519Refusal(t *testing.T) {
 	if err != nil {
 		require.ErrorIs(t, err, ErrTCPServerStartFailed)
 	}
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, nil) {
 		return
 	}
 	require.NoError(t, err)

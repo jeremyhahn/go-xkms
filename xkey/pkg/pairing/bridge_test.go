@@ -26,7 +26,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/xkey/internal/tpmpolicyfake"
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"

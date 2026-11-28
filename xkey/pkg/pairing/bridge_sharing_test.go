@@ -19,7 +19,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/stretchr/testify/assert"

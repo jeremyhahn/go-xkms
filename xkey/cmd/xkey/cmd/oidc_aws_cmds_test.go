@@ -29,8 +29,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/oidc"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oidc/aws"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"

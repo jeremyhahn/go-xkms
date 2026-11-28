@@ -108,6 +108,9 @@ var PIVSlotName = pivcert.SlotName
 // ValidatePIVSlot validates a PIV slot value.
 var ValidatePIVSlot = pivcert.ValidateSlot
 
+// PIVStorageError is a PIV certificate store failure; match it with errors.As.
+type PIVStorageError = pivcert.PIVStorageError
+
 // NewPIVStorageError constructs a slot-scoped PIV storage error.
 var NewPIVStorageError = pivcert.NewStorageError
 

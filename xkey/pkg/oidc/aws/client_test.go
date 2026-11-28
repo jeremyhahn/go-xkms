@@ -22,7 +22,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 )
 
 func TestClientConfig_Validate(t *testing.T) {

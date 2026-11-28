@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 const joinTestWait = 5 * time.Second

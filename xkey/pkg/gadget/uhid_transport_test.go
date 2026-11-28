@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/fido2/uhid"
+	"github.com/jeremyhahn/go-xkms/sdk/go/fido2/uhid"
 )
 
 func testLogger() *slog.Logger {

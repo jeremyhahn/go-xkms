@@ -428,6 +428,9 @@ var (
 	// ErrCertificateAlreadyExists indicates a certificate with the same
 	// subject already exists in the certificate store.
 	ErrCertificateAlreadyExists = pkgca.ErrCertificateAlreadyExists
+
+	// ErrCAProfileNotFound indicates no certificate profile is registered under the requested name.
+	ErrCAProfileNotFound = pkgca.ErrProfileNotFound
 )
 
 // ---------------------------------------------------------------------------

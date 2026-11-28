@@ -32,14 +32,14 @@ import (
 	"golang.org/x/crypto/ssh"
 	sshagent "golang.org/x/crypto/ssh/agent"
 
-	"github.com/jeremyhahn/go-xkms/pkg/storage"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	sshclient "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
 )
 
 func setupConsole(t *testing.T) *SSHConsoleService {
 	t.Helper()
 	ctx := context.Background()
-	daos := sshDAOs(t, storage.New())
+	daos := sshDAOs(t, xkms.NewStorageMemory())
 	client, err := sshclient.NewEmbedded(sshclient.EmbeddedOptions{Stores: sshStores(t, daos)})
 	if err != nil {
 		t.Fatalf("NewEmbedded: %v", err)
@@ -133,7 +133,7 @@ func TestSSHConsole_OpenProfileConsole_NotFound(t *testing.T) {
 	svc := setupConsole(t)
 	defer svc.Shutdown()
 
-	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewProfileStore(sshDAOs(t, xkms.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestSSHConsole_OpenProfileConsole_ManagedKey(t *testing.T) {
 	svc := setupConsole(t)
 	defer svc.Shutdown()
 
-	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewProfileStore(sshDAOs(t, xkms.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestSSHConsole_OpenProfileConsole_LocalAliasDelegatesToConfigHost(t *testin
 	svc := setupConsole(t)
 	defer svc.Shutdown()
 
-	store, err := sshclient.NewProfileStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewProfileStore(sshDAOs(t, xkms.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewProfileStore: %v", err)
 	}
@@ -623,7 +623,7 @@ func TestSSHConsole_OpenConsole_ManagedKeyNotFound(t *testing.T) {
 func TestSSHConsole_SessionCRUD(t *testing.T) {
 	svc := setupConsole(t)
 	defer svc.Shutdown()
-	store, err := sshclient.NewConsoleSessionStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewConsoleSessionStore(sshDAOs(t, xkms.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewConsoleSessionStore: %v", err)
 	}
@@ -693,7 +693,7 @@ func TestSSHConsole_Session_StoreNotSet(t *testing.T) {
 func TestSSHConsole_Session_InvalidRecord(t *testing.T) {
 	svc := setupConsole(t)
 	defer svc.Shutdown()
-	store, err := sshclient.NewConsoleSessionStore(sshDAOs(t, storage.New()))
+	store, err := sshclient.NewConsoleSessionStore(sshDAOs(t, xkms.NewStorageMemory()))
 	if err != nil {
 		t.Fatalf("NewConsoleSessionStore: %v", err)
 	}

@@ -22,12 +22,12 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // The tests here run against the process's real FIPS mode. Under
 // GODEBUG=fips140=only each one asserts the typed refusal and then re-runs
-// itself under fips140=off to prove the round trip (fipstest).
+// itself under fips140=off to prove the round trip (xkmstest).
 
 func sha1Credential(t *testing.T) *Credential {
 	t.Helper()
@@ -53,7 +53,7 @@ func sha1Credential(t *testing.T) *Credential {
 // FIPS policy so the failure lands at enrolment rather than on every later use.
 func TestNewGenerator_SHA1(t *testing.T) {
 	g, err := NewGenerator(sha1Credential(t))
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {
@@ -79,7 +79,7 @@ func TestGenerateCounter_SHA1(t *testing.T) {
 	if err != nil && code != "" {
 		t.Errorf("a refused generation returned a code: %q", code)
 	}
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {
@@ -95,7 +95,7 @@ func TestGenerateCounter_SHA1(t *testing.T) {
 // refuse under FIPS, and accept outside it.
 func TestCredential_SHA1Enrolment(t *testing.T) {
 	err := sha1Credential(t).Validate()
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {
@@ -112,7 +112,7 @@ func TestParseURI_SHA1ImportEnrolment(t *testing.T) {
 		t.Fatalf("ParseURI: %v", err)
 	}
 	err = cred.Validate()
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {
@@ -220,7 +220,7 @@ func TestGenerator_FIPSRefusalPrecedesSecretDecode(t *testing.T) {
 		t.Fatal("the secret was decoded before the FIPS gate: a refused request " +
 			"must not put plaintext key material on the heap")
 	}
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if !errors.Is(err, ErrInvalidSecret) {
@@ -441,7 +441,7 @@ func TestStore_SHA1Enrolment(t *testing.T) {
 			t.Fatalf("an approved credential was refused under FIPS: %v", addErr)
 		}
 	}
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {
@@ -481,7 +481,7 @@ func TestStore_SHA1Update(t *testing.T) {
 		t.Fatalf("stored algorithm = %q after a refused update, want %q",
 			stored.Algorithm, AlgorithmSHA256)
 	}
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, ErrAlgorithmNotFIPSApproved) {
 		return
 	}
 	if err != nil {

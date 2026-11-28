@@ -20,8 +20,8 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/attestation/attesttest"
 )
 
@@ -141,7 +141,7 @@ func TestProbeStaticKey_GeneratesAFreshKeyWhenUnset(t *testing.T) {
 	t.Setenv("XKEY_PROBE_STATIC_KEY", "")
 
 	key, err := probeStaticKey()
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, nil) {
 		return
 	}
 	if err != nil {
@@ -162,7 +162,7 @@ func TestProbeStaticKey_LoadsTheSuppliedKey(t *testing.T) {
 	t.Setenv("XKEY_PROBE_STATIC_KEY", " "+b64(raw)+"\n")
 
 	key, err := probeStaticKey()
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, nil) {
 		return
 	}
 	if err != nil {

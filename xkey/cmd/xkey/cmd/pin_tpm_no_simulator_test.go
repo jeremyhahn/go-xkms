@@ -22,12 +22,12 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/tpm2"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 )
 
 // TestOpenTPMModule_SimulatorUnavailable proves that requesting the
 // in-process simulator in a build without TPM simulator support fails with
-// pkg/tpm2.ErrSimulatorNotAvailable, reachable with errors.Is, rather than an
+// xkms.ErrTPMSimulatorNotAvailable, reachable with errors.Is, rather than an
 // untyped error. localtpm's typed errors pass through openTPMModule unwrapped,
 // as TestOpenTPMModule_DeviceNotFound shows for a missing device. This lives
 // behind !tpm_simulator (#985): with the tag present the simulator is compiled
@@ -41,5 +41,5 @@ func TestOpenTPMModule_SimulatorUnavailable(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, tpm)
 	assert.Nil(t, closer)
-	assert.ErrorIs(t, err, tpm2.ErrSimulatorNotAvailable)
+	assert.ErrorIs(t, err, xkms.ErrTPMSimulatorNotAvailable)
 }

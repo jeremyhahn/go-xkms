@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
 )
 
 // TestDirectRequestPathSerializesTheCipherState covers the nonce race on the

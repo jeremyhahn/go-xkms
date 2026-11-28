@@ -24,10 +24,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
-	pkgstorage "github.com/jeremyhahn/go-xkms/pkg/storage"
-	"github.com/jeremyhahn/go-xkms/pkg/types"
-	pkgxkms "github.com/jeremyhahn/go-xkms/pkg/xkms"
+	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/vaulttoken"
 )
 
@@ -35,19 +32,19 @@ import (
 // name holding an EC key keyID, instead of xKey's local key store.
 func useKeyBackend(t *testing.T, name, keyID string) {
 	t.Helper()
-	kp, err := software.NewBackend(&software.Config{KeyStorage: pkgstorage.New()})
+	kp, err := xkms.NewSoftwareBackend(&xkms.SoftwareBackendConfig{KeyStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
-	b, err := pkgxkms.New(&pkgxkms.BackendConfig{Backend: kp, CertStorage: pkgstorage.New()})
+	b, err := xkms.NewServiceBackend(&xkms.ServiceBackendConfig{Backend: kp, CertStorage: xkms.NewStorageMemory()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
-	_, err = b.GenerateECDSA(context.Background(), &types.KeyAttributes{
-		CN: keyID, KeyType: types.KeyTypeEncryption, StoreType: b.Type(),
-		KeyAlgorithm: x509.ECDSA, ECCAttributes: &types.ECCAttributes{Curve: elliptic.P256()},
+	_, err = b.GenerateECDSA(context.Background(), &xkms.KeyAttributes{
+		CN: keyID, KeyType: xkms.KeyTypeEncryption, StoreType: b.Type(),
+		KeyAlgorithm: x509.ECDSA, ECCAttributes: &xkms.ECCAttributes{Curve: elliptic.P256()},
 	})
 	require.NoError(t, err)
 	original := localKeyBackends
 	localKeyBackends = func(*cobra.Command) (vaulttoken.Lookup, error) {
-		return func(n string) (pkgxkms.Backend, error) {
+		return func(n string) (xkms.ServiceBackend, error) {
 			if n == name {
 				return b, nil
 			}
@@ -127,7 +124,7 @@ func TestPasswordVaultKeyFactor_RecoverWithAKey(t *testing.T) {
 	server.lock(t)
 	t.Setenv("XKEY_VAULT_PASSPHRASE", "")
 
-	useKeyBackend(t, "pkcs11", pkgxkms.PivSlotCN(vaulttoken.PIVSlot))
+	useKeyBackend(t, "pkcs11", xkms.PivSlotCN(vaulttoken.PIVSlot))
 	t.Setenv("XKEY_VAULT_RECOVERY_CODE", code)
 	out, _, err = runPasswordCmd(t, "vault", "recover", "--key-factor", "piv", "--key-backend", "pkcs11")
 	require.NoError(t, err)
@@ -167,7 +164,7 @@ func TestVaultPKCS11Token_NoTokenNamedOpensNone(t *testing.T) {
 }
 
 func TestLoginPKCS11Backend_WithoutABackendFails(t *testing.T) {
-	pkgxkms.Reset()
-	t.Cleanup(pkgxkms.Reset)
+	xkms.Reset()
+	t.Cleanup(xkms.Reset)
 	assert.Error(t, loginPKCS11Backend(), "no PKCS#11 backend is running")
 }

@@ -22,8 +22,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
-	"github.com/jeremyhahn/go-xkms/pkg/trust/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 // relayCommand builds a *cobra.Command carrying the same flags
@@ -173,7 +173,7 @@ func pairedRelayCommand(t *testing.T, timeout string) (*cobra.Command, *bytes.Bu
 // returns false; the caller then returns.
 func relayOutsideFIPS(t *testing.T, err error) bool {
 	t.Helper()
-	return fipstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported)
+	return xkmstest.OutsideFIPSAfterRefusal(t, err, bootstrap.ErrNoiseFIPSUnsupported)
 }
 
 // TestRunDeviceRelay_ServesUntilTimeoutInSoftwareMode pins the relay's whole

@@ -31,7 +31,7 @@ The types are in `pkg/backend/backend_importexport.go`:
 
 A backend supports import if it implements `backend.ImportBackend` (`:132`), and
 export if it implements `ExportBackend`. `ImportExportBackend` (`:281`) embeds
-both. `types.Capabilities` reports the halves as `Import` and `Export`, and
+both. `xkmssdk.Capabilities` reports the halves as `Import` and `Export`, and
 `SupportsImportExport()` is true only when both are set
 (`pkg/types/types.go:1670-1705`).
 
@@ -131,15 +131,15 @@ import (
     "crypto/rand"
 
     "github.com/jeremyhahn/go-xkms/pkg/backend"
-    "github.com/jeremyhahn/go-xkms/pkg/types"
+    xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
     "github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
-attrs := &types.KeyAttributes{
+attrs := &xkmssdk.KeyAttributes{
     CN:                 "imported-aes-key",
-    KeyType:            types.KeyTypeEncryption,
-    SymmetricAlgorithm: types.SymmetricAES256GCM,
-    StoreType:          types.StoreAWSKMS,
+    KeyType:            xkmssdk.KeyTypeEncryption,
+    SymmetricAlgorithm: xkmssdk.SymmetricAES256GCM,
+    StoreType:          xkmssdk.StoreAWSKMS,
 }
 
 params, err := xkms.GetImportParameters(ctx, "awskms", attrs, backend.WrappingAlgorithmRSAES_OAEP_SHA_256)

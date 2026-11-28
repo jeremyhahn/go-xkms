@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/oidc"
+	"github.com/jeremyhahn/go-xkms/sdk/go/oidc"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

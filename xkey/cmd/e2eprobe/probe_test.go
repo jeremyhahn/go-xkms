@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jeremyhahn/go-xkms/pkg/pairingproto"
-	"github.com/jeremyhahn/go-xkms/pkg/testing/fipstest"
 	"github.com/jeremyhahn/go-xkms/sdk/go/bootstrap"
+	"github.com/jeremyhahn/go-xkms/sdk/go/pairingproto"
+	"github.com/jeremyhahn/go-xkms/sdk/go/xkmstest"
 )
 
 var errPipeClosed = &MessageError{Msg: "pipe closed"}
@@ -168,7 +168,7 @@ func answerAs(ph *phone) answerFunc {
 func noiseStaticKey(t *testing.T) (key *bootstrap.NoiseStaticKey, ok bool) {
 	t.Helper()
 	key, err := bootstrap.GenerateNoiseStaticKey()
-	if !fipstest.OutsideFIPSAfterRefusal(t, err, nil) {
+	if !xkmstest.OutsideFIPSAfterRefusal(t, err, nil) {
 		return nil, false
 	}
 	if err != nil {
