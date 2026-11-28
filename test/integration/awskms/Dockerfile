@@ -1,6 +1,6 @@
 FROM golang:1.27.4-bookworm
 
-RUN apt-get update && apt-get install -y \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y \
     ca-certificates \
     curl \
     netcat-openbsd \

@@ -3,7 +3,7 @@ FROM golang:1.27.4-bookworm
 # Allow Go to automatically download the required toolchain version
 ENV GOTOOLCHAIN=auto
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     git \
     make \
     gcc \
