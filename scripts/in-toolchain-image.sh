@@ -50,7 +50,7 @@
 # when the job has no quota; IN_IMAGE_CPUS overrides), and the sibling gets
 # --cpus N with GOMAXPROCS=N and GOFLAGS=-p=N. golangci-lint's default
 # concurrency follows the container CPU quota, so lint takes N with no flag.
-# A 4-CPU slot on the Dells gives 4; never a hardcoded number.
+# A 4-CPU runner slot gives 4; never a hardcoded number.
 #
 # v4 (ci-template v1.29.4, Company Agent ruling 261(c); claude-agents #379
 # comment 157032):
@@ -209,11 +209,18 @@ if [ "$network" = bridge ]; then
   # dev-cache ghcr mirror on the LAN first, the public ones after) travel
   # with the stage, so `make security` and `trivy image` fetch the vulnerability
   # and Java databases from the LAN instead of the internet.
+  # TRIVY_INSECURE travels too: a mirror on HTTP or a private CA needs it.
   for v in GOPRIVATE GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0 \
     TRIVY_DB_REPOSITORY TRIVY_JAVA_DB_REPOSITORY TRIVY_INSECURE; do
     if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
   done
 fi
+# make check-public-literals (alone or under make lint-gates) refuses without
+# its pattern input, on every network: the private pattern list and the fork
+# opt-out travel by name only, so the value never reaches the command line.
+for v in RELEASABILITY_PATTERNS PUBLIC_LITERALS_SKIP; do
+  if [ -n "${!v:-}" ]; then args+=(--env "$v"); fi
+done
 
 cleanup() { docker rm -f -v "$name" >/dev/null 2>&1 || true; }
 trap cleanup EXIT

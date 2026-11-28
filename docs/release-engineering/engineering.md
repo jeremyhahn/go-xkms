@@ -29,17 +29,32 @@ and `upload FILE...`, which is idempotent: an asset present with the same
 SHA-256 is left alone, one with a different digest is replaced, one that is
 absent is added. It reads `RELEASE_API`, `RELEASE_REPO`, `RELEASE_TAG` and
 `RELEASE_TOKEN` from the environment, and `DRY_RUN=1` makes `upload` print its
-decisions without changing anything.
+decisions without changing anything. No other setting exists: the forge and
+the upload root are derived from `RELEASE_API` (the root
+`https://api.github.com` is GitHub, uploading to `https://uploads.github.com`;
+any other root is a Gitea, uploading under `RELEASE_API`).
 
 `scripts/check-public-literals.sh` (go-xkms#1030) is the public-release
 readiness gate: it fails with `file:line` output if any file in the tree
 carries a lab-network address, a fleet host name, or an owner workstation
-path. The exact literals are declared once, in the script's own `PATTERN`
-and its header comment — not repeated here, so there is exactly one place to
-keep them current as the fleet changes. It scans with `grep -rIniE`, so
-binary files are skipped automatically (`-I`), and excludes `.git` (file or
-directory, so it works from an ordinary checkout or a worktree), `.claude/`,
-`CLAUDE.md`, `AGENTS.md` and its own source — those are agent-instruction
+path. The literals are private, so the pattern list is an input, never
+written in the repository: `RELEASABILITY_PATTERNS` holds the
+`class<TAB>regex` lines, or `RELEASABILITY_PATTERNS_FILE` names a file holding
+them. With neither set the gate refuses — the script exits 2 and
+`make check-public-literals` (so `make lint-gates` too) exits non-zero with a
+line naming both variables; it never skips and passes, so every caller must
+hand it the list. In CI the three callers (`.github/workflows/ci.yml`: the
+image job's "go-xkms checks" step, "make lint-gates" and "make lint-gates
+(native)") take `RELEASABILITY_PATTERNS` from the Actions secret of that name,
+and `scripts/in-toolchain-image.sh` forwards it into the toolchain container
+by name, never by value. Fork rule, as in the "Releasability (private
+patterns)" step: a push without the secret fails the step; any other run
+without it (a fork pull request) prints a `::notice::` and runs the gates with
+the one explicit opt-out, `PUBLIC_LITERALS_SKIP=fork-pr`, which the Make target
+announces as a skip. Any other `PUBLIC_LITERALS_SKIP` value, the empty one
+included, is refused. It scans tracked files only (`git grep`), reports each
+finding as `path:line` without the matched text, and excludes `.claude/`,
+`CLAUDE.md` and `AGENTS.md` — those are agent-instruction
 files the owner publishes on a separate schedule, not part of the scrub. A fleet
 host name that is also an ordinary word is matched as its exact full host
 name, not a wildcard on the bare word: the bare word appears legitimately
@@ -138,7 +153,8 @@ function of its arguments alone.
 | `changelog_has_heading file version` | `## [version]` at the **start** of a line |
 | `changelog_entries_pending dir` | true when `dir` holds at least one non-`README.md` entry file |
 | `escape_dots s` | BRE-literal dots |
-| `forge_repo_url url` | the forge's web URL for the repository, `<scheme>://<host>[:<port>]/<owner>/<repo>` (no `.git`, no userinfo), from an `ssh://`, scp-like or `http(s)://` remote URL; an SSH remote maps to `http` on `GITEA_HTTP_PORT` (default `3001`); empty for a local path, a `file://` URL, or a path that is not exactly `<owner>/<repo>` |
+| `forge_repo_url url` | the forge's web URL for the repository, `<scheme>://<host>[:<port>]/<owner>/<repo>` (no `.git`, no userinfo), from an `ssh://`, scp-like or `http(s)://` remote URL; an SSH remote maps to `http` on `GITEA_HTTP_PORT` (default `3001`), except that a `github.com` remote of any shape maps to `https://github.com`; empty for a local path, a `file://` URL, or a path that is not exactly `<owner>/<repo>` |
+| `forge_api_url repo` | the repository's REST root from `forge_repo_url`'s output: `https://api.github.com/repos/<owner>/<repo>` for `https://github.com`, otherwise `<origin>/api/v1/repos/<owner>/<repo>` (Gitea) |
 | `json_string s` | `s` as a JSON string literal, `\` and `"` escaped |
 
 Sourcing either script with `RELEASE_ALPHA_LIB=1` defines these and returns

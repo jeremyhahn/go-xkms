@@ -6259,7 +6259,7 @@ func TestEnrollmentConfig_WithPCRSelection(t *testing.T) {
 
 func TestEnrollmentConfig_EnvironmentVariableExpansion(t *testing.T) {
 	// Set test environment variable
-	_ = os.Setenv("TEST_DEVICE_IP", "192.168.100.50")
+	_ = os.Setenv("TEST_DEVICE_IP", "192.0.2.50")
 	defer func() { _ = os.Unsetenv("TEST_DEVICE_IP") }()
 
 	mockTPM := &mockTPMModule{}

@@ -67,7 +67,7 @@ chmod +x "$WORK/bin/docker" "$WORK/bin/trivy"
 run() {
 	rm -rf "$FAKE_STATE"
 	mkdir -p "$FAKE_STATE"
-	OUT=$(cd "$WORK/src" && env -u GOPRIVATE -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
+	OUT=$(cd "$WORK/src" && env -u GOPRIVATE -u RELEASABILITY_PATTERNS -u PUBLIC_LITERALS_SKIP -u GIT_CONFIG_COUNT -u GIT_CONFIG_KEY_0 -u GIT_CONFIG_VALUE_0 \
 		PATH="$WORK/bin:$PATH" IN_IMAGE_CPUS=2 IN_IMAGE_NETWORK=bridge "$@" \
 		"$SCRIPT" toolchain:test trivy image --input it-image.tar --exit-code 1 2>&1)
 	RC=$?
@@ -108,6 +108,30 @@ run IN_IMAGE_SCRATCH=var/tmp
 eq "the script exits 2" "2" "$RC"
 eq "the error names the variable" "IN_IMAGE_SCRATCH must be an absolute path: var/tmp" "$OUT"
 eq "no container was created" "no" "$([ -e "$FAKE_STATE/create.args" ] && echo yes || echo no)"
+
+# --- a bridge stage forwards the three Trivy mirror settings ------------------
+# A runner on an HTTP or privately certified DB mirror sets TRIVY_INSECURE
+# beside the two repositories; dropping it breaks the DB download.
+section "Trivy mirror settings"
+run TRIVY_DB_REPOSITORY=mirror.lan/trivy-db TRIVY_JAVA_DB_REPOSITORY=mirror.lan/trivy-java-db TRIVY_INSECURE=true
+eq "the stage exits 0" "0" "$RC"
+has "TRIVY_DB_REPOSITORY is forwarded" "$FAKE_STATE/create.args" "TRIVY_DB_REPOSITORY"
+has "TRIVY_JAVA_DB_REPOSITORY is forwarded" "$FAKE_STATE/create.args" "TRIVY_JAVA_DB_REPOSITORY"
+has "TRIVY_INSECURE is forwarded" "$FAKE_STATE/create.args" "TRIVY_INSECURE"
+
+# --- the public-literal pattern input reaches the container ----------------
+# make check-public-literals (alone or under make lint-gates) refuses without
+# RELEASABILITY_PATTERNS, and the lint-gates stage runs on network none, so the
+# input and the fork opt-out travel on every network, by name only: the value
+# never appears on the docker command line (CA m417).
+section "public-literal pattern input"
+run IN_IMAGE_NETWORK=none RELEASABILITY_PATTERNS="$(printf 'lab-host\tthrowaway-pattern-value')" PUBLIC_LITERALS_SKIP=fork-pr
+eq "the stage exits 0" "0" "$RC"
+has "RELEASABILITY_PATTERNS is forwarded by name" "$FAKE_STATE/create.args" "RELEASABILITY_PATTERNS"
+has "PUBLIC_LITERALS_SKIP is forwarded by name" "$FAKE_STATE/create.args" "PUBLIC_LITERALS_SKIP"
+eq "the pattern value is not on the docker command line" "no" "$(grep -qF throwaway-pattern-value "$FAKE_STATE/create.args" && echo yes || echo no)"
+run IN_IMAGE_NETWORK=none
+eq "an unset input is not forwarded" "no" "$(grep -qxF RELEASABILITY_PATTERNS "$FAKE_STATE/create.args" && echo yes || echo no)"
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
