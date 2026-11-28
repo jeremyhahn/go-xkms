@@ -1,0 +1,1 @@
+- **xkey keeps the audit records of an upgraded installation.** The barrier audit sink migrates the records the removed local audit store left at `audit/<unix_nano>-<seq>.json` into its hash chain on open, and data-dir initialisation fails when the durable audit sink cannot open, instead of silently auditing to memory only.

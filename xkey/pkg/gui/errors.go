@@ -72,6 +72,12 @@ var (
 	// ErrDataDirAlreadyInit indicates data directory was already initialized.
 	ErrDataDirAlreadyInit = errors.New("gui: data directory already initialized")
 
+	// ErrAuditSinkUnavailable indicates the barrier is unsealed but the
+	// durable audit sink cannot open (broken chain, storage failure, or
+	// another writer holds the chain): data-dir initialisation and startup
+	// stop rather than run without durable auditing.
+	ErrAuditSinkUnavailable = errors.New("gui: durable audit sink unavailable")
+
 	// ErrBarrierStillSealed indicates the barrier is still sealed when an
 	// unseal is required for the operation.
 	ErrBarrierStillSealed = errors.New("gui: barrier is still sealed")

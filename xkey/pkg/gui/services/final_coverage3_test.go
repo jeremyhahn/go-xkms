@@ -66,12 +66,11 @@ func TestFC3_AdminService_GetBackendInfo_AllLocalIDs(t *testing.T) {
 // authorizes the caller first, we test the equivalent logic via the
 // underlying AuditService.ExportEntries.
 func TestFC3_AdminService_ExportAuditLogs_FormatValidation(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 10)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	t.Run("invalid format", func(t *testing.T) {
 		_, err := auditSvc.ExportEntries("yaml", nil)
@@ -79,10 +78,9 @@ func TestFC3_AdminService_ExportAuditLogs_FormatValidation(t *testing.T) {
 	})
 
 	t.Run("no entries", func(t *testing.T) {
-		emptyStore, emptyErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+		emptyStore, emptyErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 		require.NoError(t, emptyErr)
-		emptySvc := NewAuditService(emptyStore)
-		emptySvc.SetContext(context.Background())
+		emptySvc := newAuditReaderService(emptyStore)
 		_, err := emptySvc.ExportEntries("json", nil)
 		assert.ErrorIs(t, err, ErrAuditNoEntries)
 	})
@@ -97,12 +95,11 @@ func TestFC3_AdminService_ExportAuditLogs_FormatValidation(t *testing.T) {
 // TestFC3_AdminService_GetAuditLogs_DelegateWithNilFilter exercises L230-232
 // where GetAuditLogs delegates to AuditService with a nil filter.
 func TestFC3_AdminService_GetAuditLogs_DelegateWithNilFilter(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyAccessed, "tpm2", "key1", true, nil, 5)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	entries, err := auditSvc.GetEntries(nil)
 	require.NoError(t, err)
@@ -112,13 +109,12 @@ func TestFC3_AdminService_GetAuditLogs_DelegateWithNilFilter(t *testing.T) {
 
 // TestFC3_AdminService_GetAuditLogs_DelegateWithFilter exercises the filter path.
 func TestFC3_AdminService_GetAuditLogs_DelegateWithFilter(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 10)
 	store.LogKeyOperation(audit.OpKeyDeleted, "tpm2", "k2", false, errors.New("fail"), 20)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	filter := &AuditFilter{Operation: "key_created"}
 	entries, err := auditSvc.GetEntries(filter)
@@ -130,13 +126,12 @@ func TestFC3_AdminService_GetAuditLogs_DelegateWithFilter(t *testing.T) {
 // TestFC3_AdminService_ExportAuditLogs_JSONMultipleEntries exercises
 // the json.MarshalIndent path at L263.
 func TestFC3_AdminService_ExportAuditLogs_JSONMultipleEntries(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 10)
 	store.LogKeyOperation(audit.OpKeyDeleted, "sw", "k2", true, nil, 5)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	data, err := auditSvc.ExportEntries("json", nil)
 	require.NoError(t, err)

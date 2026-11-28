@@ -63,8 +63,8 @@ func (m *sbMockAuditStore) LogPasswordStoreOperation(audit.OperationType, string
 func (m *sbMockAuditStore) LogUserPresenceEvent(audit.OperationType, string, bool, map[string]any) error {
 	return nil
 }
-func (m *sbMockAuditStore) Count() int                              { return len(m.entries) }
-func (m *sbMockAuditStore) Query(_ audit.QueryFilter) []audit.Entry { return m.entries }
+func (m *sbMockAuditStore) Count() (int, error)                              { return len(m.entries), nil }
+func (m *sbMockAuditStore) Query(_ audit.QueryFilter) ([]audit.Entry, error) { return m.entries, nil }
 
 // sbMockStaticPWStore implements staticpw.Store for password protection tests.
 type sbMockStaticPWStore struct {

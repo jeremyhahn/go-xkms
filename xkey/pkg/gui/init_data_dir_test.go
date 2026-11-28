@@ -34,6 +34,7 @@ package gui
 // an already-initialized sentinel.
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"os"
@@ -67,8 +68,8 @@ func newMinimalApp(t *testing.T) *App {
 	// configDirPath: use a subdir inside xkeyHome so nothing escapes.
 	cfgDir := filepath.Join(xkeyHome, "config")
 
-	auditStore, err := audit.NewBackendStore(xkmssdk.NewStorageMemory(), 100, log)
-	require.NoError(t, err, "audit.NewBackendStore")
+	auditStore, err := audit.NewQRDBStore(xkmssdk.NewQRDBAuditRingBuffer(100))
+	require.NoError(t, err, "audit.NewQRDBStore")
 
 	barrierSvc := services.NewBarrierService(cfgDir, log)
 	pinSvc := services.NewPINService()
@@ -195,6 +196,143 @@ func TestInitializeDataDir_PreSetDataDirSucceeds(t *testing.T) {
 		"initializeDataDir must succeed when dataDir is pre-set but dataDirInit=false")
 	assert.True(t, app.dataDirInit,
 		"dataDirInit must be true after successful initialization")
+}
+
+// TestInitializeDataDir_AuditMovesBehindTheBarrier proves the desktop's audit
+// events are persisted through the barrier once the data directory opens
+// with it unsealed, including the events written before, and that a sink
+// reopened over the same barrier backend reads them back.
+func TestInitializeDataDir_AuditMovesBehindTheBarrier(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+
+	require.NoError(t, app.auditStore.LogServiceEvent(audit.OpServiceStarted, nil))
+	require.NoError(t, app.initializeDataDir())
+	require.True(t, app.auditStore.SealedAtRest())
+	require.NoError(t, app.auditStore.LogKeyOperation(audit.OpKeyCreated, "software", "k1", true, nil, 1))
+	require.NoError(t, app.auditStore.Close())
+
+	be, err := xkmssdk.NewStoragePrefixBackend(app.barrierService.GetBackend(), auditBarrierPrefix)
+	require.NoError(t, err)
+	sink, err := audit.OpenBarrierSink(context.Background(), be, auditRingCapacity)
+	require.NoError(t, err, "reopen the barrier audit sink")
+	defer func() { _ = sink.Close() }()
+	require.NoError(t, sink.VerifyChain(context.Background()))
+	page, err := sink.Query(context.Background(), xkmssdk.QRDBNodeAuditFilter{})
+	require.NoError(t, err)
+	var actions []string
+	for _, ev := range page.Events {
+		actions = append(actions, ev.Action)
+	}
+	assert.Contains(t, actions, string(audit.OpServiceStarted), "pre-init event replayed")
+	assert.Contains(t, actions, string(audit.OpKeyCreated), "post-init event persisted")
+}
+
+// An installation upgraded from the removed BackendStore (Entry JSON at
+// audit/<unix_nano>-<seq>.json in the barrier) opens its durable audit sink
+// and keeps those records.
+func TestInitializeDataDir_AuditMigratesLegacyBackendStoreRecords(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	legacy := []byte(`{"Timestamp":"2024-11-07T17:20:00Z","Operation":"key_created","Backend":"software","KeyID":"legacy-key","Success":true}`)
+	require.NoError(t, app.barrierService.GetBackend().Put(context.Background(), auditBarrierPrefix+"1731000000000000000-1.json", legacy))
+
+	require.NoError(t, app.initializeDataDir())
+	require.True(t, app.auditStore.SealedAtRest(), "the durable sink opened over the legacy records")
+	entries := mustQuery(t, app.auditStore, audit.QueryFilter{})
+	var keyIDs []string
+	for _, e := range entries {
+		keyIDs = append(keyIDs, e.KeyID)
+	}
+	assert.Contains(t, keyIDs, "legacy-key", "the legacy record is kept")
+}
+
+// A barrier whose audit records cannot be opened fails initialisation
+// rather than leaving security operations auditing to memory only.
+func TestInitializeDataDir_AuditSinkFailureFailsInit(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	require.NoError(t, app.barrierService.GetBackend().Put(context.Background(), auditBarrierPrefix+"not-a-record", []byte("x")))
+
+	err := app.initializeDataDir()
+	require.ErrorIs(t, err, ErrAuditSinkUnavailable)
+	assert.False(t, app.auditStore.SealedAtRest())
+	assert.Nil(t, app.staticpwStore, "no store is wired before the audit sink opens")
+	assert.Nil(t, app.oathStore, "no store is wired before the audit sink opens")
+}
+
+// The returning user's start (startupReturningUser's data-dir tail) stops
+// when the durable audit sink cannot open: no post-data-dir startup, so
+// dataReady stays false and no store serves operations without auditing.
+func TestStartDataDirServices_AuditSinkFailureStopsStartup(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	require.NoError(t, app.barrierService.GetBackend().Put(context.Background(), auditBarrierPrefix+"not-a-record", []byte("x")))
+
+	assert.False(t, app.startDataDirServices(), "startup must stop on the audit sink failure")
+	assert.False(t, app.dataReady.Load(), "post-data-dir startup must not run")
+	assert.False(t, app.dataDirInit)
+	assert.Nil(t, app.staticpwStore)
+}
+
+// A second xkey on the same data dir cannot open the same audit chain: the
+// first holds the writer lock, so the second fails initialisation closed.
+func TestInitializeDataDir_SecondAuditWriterOnTheDataDirFailsInit(t *testing.T) {
+	app := newMinimalApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	dir := t.TempDir()
+	app.dataDir = dir
+
+	mem, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	defer func() { _ = mem.Close() }()
+	holder, err := audit.OpenBarrierSink(context.Background(), mem, auditRingCapacity,
+		audit.WithWriterLock(filepath.Join(dir, auditWriterLockFile)))
+	require.NoError(t, err)
+	defer func() { _ = holder.Close() }()
+
+	err = app.initializeDataDir()
+	require.ErrorIs(t, err, ErrAuditSinkUnavailable)
+	require.ErrorIs(t, err, audit.ErrAuditWriterLocked)
+}
+
+// TestApp_ShutdownReleasesTheAuditWriterLock proves a clean exit closes the
+// audit store, so the next launch opens the same chain instead of failing
+// with ErrAuditWriterLocked.
+func TestApp_ShutdownReleasesTheAuditWriterLock(t *testing.T) {
+	app := newWiredApp(t)
+	require.NoError(t, app.barrierService.Initialize("test-password", "passphrase"))
+	dir := t.TempDir()
+	app.dataDir = dir
+	require.NoError(t, app.initializeDataDir())
+	require.True(t, app.auditStore.SealedAtRest())
+
+	app.shutdown(context.Background())
+
+	mem, err := xkmssdk.NewMemoryBackend()
+	require.NoError(t, err)
+	defer func() { _ = mem.Close() }()
+	reopened, err := audit.OpenBarrierSink(context.Background(), mem, auditRingCapacity,
+		audit.WithWriterLock(filepath.Join(dir, auditWriterLockFile)))
+	require.NoError(t, err, "the next launch must get the writer lock")
+	require.NoError(t, reopened.Close())
+}
+
+// TestInitializeDataDir_NoBarrierPersistsNoAudit proves that without a
+// barrier the audit events stay in memory and no audit file is written.
+func TestInitializeDataDir_NoBarrierPersistsNoAudit(t *testing.T) {
+	app := newMinimalApp(t)
+	xkeyHome := t.TempDir()
+	t.Setenv("XKEY_HOME", xkeyHome)
+	app.dataDir = filepath.Join(xkeyHome, "data")
+
+	require.NoError(t, app.initializeDataDir())
+	require.False(t, app.auditStore.SealedAtRest())
+	require.NoError(t, app.auditStore.LogKeyOperation(audit.OpKeyCreated, "software", "k1", true, nil, 1))
+	assert.Equal(t, 1, mustCount(t, app.auditStore), "the event is held in memory")
+	assert.ErrorIs(t, app.auditStore.VerifyChain(context.Background()), audit.ErrChainUnsupported)
+	_, statErr := os.Stat(filepath.Join(app.dataDir, "audit.log"))
+	assert.True(t, os.IsNotExist(statErr), "no plaintext audit file without a barrier")
 }
 
 // TestInitializeDataDir_UnopenableStoresDegrade verifies that, with no

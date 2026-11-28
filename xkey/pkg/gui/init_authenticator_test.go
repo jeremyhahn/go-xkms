@@ -118,7 +118,7 @@ func TestApp_InitializeAuthenticator_AuditsToTheAppAuditStore(t *testing.T) {
 
 	require.NotNil(t, app.authenticatorInstance)
 	require.NoError(t, app.authenticatorInstance.SetInitialPIN([]byte("246813")))
-	seeded := app.auditStore.Query(audit.QueryFilter{Operation: audit.OpPINSeeded})
+	seeded := mustQuery(t, app.auditStore, audit.QueryFilter{Operation: audit.OpPINSeeded})
 	assert.Len(t, seeded, 1, "establishing the FIDO2 PIN is recorded in the GUI's audit store")
 }
 

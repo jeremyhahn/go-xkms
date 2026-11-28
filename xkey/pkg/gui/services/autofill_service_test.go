@@ -77,7 +77,7 @@ func (m *autofillMockBarrier) Seal() error                  { m.unsealed = false
 // newTestAutoFillService creates a fully wired AutoFillService for testing.
 // It populates the static password store with test entries and the OATH
 // store with a test TOTP credential.
-func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore) {
+func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.QRDBStore) {
 	t.Helper()
 
 	// Static password store backed by in-memory storage.
@@ -134,7 +134,7 @@ func newTestAutoFillService(t *testing.T) (*AutoFillService, *audit.BackendStore
 	appLockSvc := NewAppLockService(pinSvc, &autofillMockBarrier{unsealed: true})
 
 	// Audit store.
-	auditStore, auditErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	auditStore, auditErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, auditErr)
 
 	svc := NewAutoFillService(passwordSvc, oathSvc, appLockSvc, auditStore, slog.Default())
@@ -211,7 +211,7 @@ func TestAutoFillService_SetPolicy_Invalid(t *testing.T) {
 }
 
 func TestAutoFillService_SetPolicy_DeniedByEnterprisePolicy(t *testing.T) {
-	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+	auditStore, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 	svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
 	svc.SetEnterprisePolicy(&EnterpriseExtensionPolicy{Enabled: true, UserCanConfigure: false})
@@ -249,7 +249,7 @@ func TestAutoFillService_SearchCredentials_MatchingDomain(t *testing.T) {
 	assert.Equal(t, "github:octocat", results[0].TOTPID)
 
 	// Verify audit log was written.
-	assert.Greater(t, auditStore.Count(), 0)
+	assert.Greater(t, mustCount(t, auditStore), 0)
 }
 
 func TestAutoFillService_SearchCredentials_NoMatch(t *testing.T) {
@@ -331,7 +331,7 @@ func TestAutoFillService_GetCredential(t *testing.T) {
 	assert.Equal(t, "octocat", result.Username)
 	assert.Equal(t, "gh-secret-123", result.Password)
 	assert.Nil(t, result.Assertion, "no assertion when auth disabled")
-	assert.Greater(t, auditStore.Count(), 0)
+	assert.Greater(t, mustCount(t, auditStore), 0)
 }
 
 func TestAutoFillService_GetCredential_EmptyID(t *testing.T) {
@@ -479,7 +479,7 @@ func TestAutoFillService_GetTOTPForDomain(t *testing.T) {
 	assert.Equal(t, 30, totp.Period)
 	assert.Equal(t, "github:octocat", totp.AccountID)
 	assert.Equal(t, "GitHub", totp.Issuer)
-	assert.Greater(t, auditStore.Count(), 0)
+	assert.Greater(t, mustCount(t, auditStore), 0)
 }
 
 func TestAutoFillService_GetTOTPForDomain_NoMatch(t *testing.T) {
@@ -516,7 +516,7 @@ func TestAutoFillService_GetTOTPByID(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, totp.Code)
 	assert.Equal(t, "github:octocat", totp.AccountID)
-	assert.Greater(t, auditStore.Count(), 0)
+	assert.Greater(t, mustCount(t, auditStore), 0)
 }
 
 func TestAutoFillService_GetTOTPByID_EmptyID(t *testing.T) {
@@ -883,11 +883,11 @@ func TestAutoFillService_EnterpriseForceAudit(t *testing.T) {
 
 	// Perform a search. Even with user audit disabled, enterprise ForceAudit
 	// should cause an audit entry to be written.
-	countBefore := auditStore.Count()
+	countBefore := mustCount(t, auditStore)
 	_, err := svc.SearchCredentials("github.com")
 	require.NoError(t, err)
 
-	assert.Greater(t, auditStore.Count(), countBefore,
+	assert.Greater(t, mustCount(t, auditStore), countBefore,
 		"audit store should have new entries from enterprise ForceAudit")
 }
 
@@ -941,7 +941,7 @@ func TestAutoFillService_SetRequireAuthBlockedByEnterprise(t *testing.T) {
 func TestAutoFillService_SaveCredential_Success(t *testing.T) {
 	svc, auditStore := newTestAutoFillService(t)
 
-	countBefore := auditStore.Count()
+	countBefore := mustCount(t, auditStore)
 	result, err := svc.SaveCredential("newsite.com", "newuser", "newpass", "New Site")
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -963,7 +963,7 @@ func TestAutoFillService_SaveCredential_Success(t *testing.T) {
 	assert.True(t, found, "saved credential should appear in password list")
 
 	// Verify audit entry was written.
-	assert.Greater(t, auditStore.Count(), countBefore)
+	assert.Greater(t, mustCount(t, auditStore), countBefore)
 }
 
 func TestAutoFillService_SaveCredential_DefaultTitle(t *testing.T) {
@@ -1053,7 +1053,7 @@ func TestAutoFillService_SaveCredential_NilPasswordService(t *testing.T) {
 func TestAutoFillService_IgnoreDomain_Success(t *testing.T) {
 	svc, auditStore := newTestAutoFillService(t)
 
-	countBefore := auditStore.Count()
+	countBefore := mustCount(t, auditStore)
 	result, err := svc.IgnoreDomain("ignore-me.com")
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -1061,7 +1061,7 @@ func TestAutoFillService_IgnoreDomain_Success(t *testing.T) {
 
 	// Verify the domain is now ignored.
 	assert.True(t, svc.IsIgnoredDomain("ignore-me.com"))
-	assert.Greater(t, auditStore.Count(), countBefore)
+	assert.Greater(t, mustCount(t, auditStore), countBefore)
 }
 
 func TestAutoFillService_IgnoreDomain_CaseInsensitive(t *testing.T) {
@@ -1143,7 +1143,7 @@ func TestAutoFillService_SearchCredentials_RecordsOpAutofillRequested(t *testing
 	_, err := svc.SearchCredentials("github.com")
 	require.NoError(t, err)
 
-	entries := store.Query(audit.QueryFilter{Operation: audit.OpAutofillRequested})
+	entries := mustQuery(t, store, audit.QueryFilter{Operation: audit.OpAutofillRequested})
 	require.Len(t, entries, 1)
 	assert.Equal(t, "github.com", entries[0].Details["domain"])
 }
@@ -1159,7 +1159,7 @@ func TestAutoFillService_SearchCredentials_AppLocked_RecordsOpAutofillDenied(t *
 	_, err := svc.SearchCredentials("github.com")
 	require.ErrorIs(t, err, ErrAutoFillAppLocked)
 
-	entries := store.Query(audit.QueryFilter{Operation: audit.OpAutofillDenied})
+	entries := mustQuery(t, store, audit.QueryFilter{Operation: audit.OpAutofillDenied})
 	require.Len(t, entries, 1)
 	assert.Equal(t, true, entries[0].Details["denied"])
 	assert.Equal(t, string(opAutoFillSearch), entries[0].Details["requested_op"])
@@ -1227,12 +1227,12 @@ func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+			auditStore, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 			require.NoError(t, err)
 			svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
 			svc.SetEnterprisePolicy(tt.policy)
 
-			countBefore := auditStore.Count()
+			countBefore := mustCount(t, auditStore)
 			err = svc.SetEnabled(true)
 
 			if tt.wantErr {
@@ -1240,7 +1240,7 @@ func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
 				var denied *PolicyDeniedError
 				require.ErrorAs(t, err, &denied)
 				assert.Equal(t, "user_can_configure_extension", denied.Field)
-				assert.Greater(t, auditStore.Count(), countBefore, "denial must be audited")
+				assert.Greater(t, mustCount(t, auditStore), countBefore, "denial must be audited")
 			} else {
 				require.NoError(t, err)
 				assert.True(t, svc.IsEnabled())
@@ -1253,7 +1253,7 @@ func TestAutoFillService_SetEnabled_PolicyGate(t *testing.T) {
 // order: the user toggle is applied before the verified policy arrives, and a
 // policy that disables the extension must win over it.
 func TestAutoFillService_IsEnabled_FollowsEnterprisePolicy(t *testing.T) {
-	auditStore, err := audit.NewBackendStore(xkms.NewStorageMemory(), 100, slog.Default())
+	auditStore, err := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, err)
 	svc := NewAutoFillService(nil, nil, nil, auditStore, nil)
 	require.NoError(t, svc.SetEnabled(true))

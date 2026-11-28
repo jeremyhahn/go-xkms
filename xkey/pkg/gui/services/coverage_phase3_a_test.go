@@ -1036,12 +1036,11 @@ func TestP3A_AdminService_ListBackends_LocalDefaults(t *testing.T) {
 }
 
 func TestP3A_AdminService_GetAuditLogs_WithStore(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "key1", true, nil, 10)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	entries, err := auditSvc.GetEntries(nil)
 	require.NoError(t, err)
@@ -1051,37 +1050,35 @@ func TestP3A_AdminService_GetAuditLogs_WithStore(t *testing.T) {
 }
 
 func TestP3A_AdminService_GetAuditLogs_NilStore(t *testing.T) {
-	auditSvc := NewAuditService(nil)
+	auditSvc := newAuditReaderService(nil)
 	entries, err := auditSvc.GetEntries(nil)
 	require.NoError(t, err)
 	assert.Empty(t, entries)
 }
 
 func TestP3A_AdminService_ExportEntries_InvalidFormat(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
-	auditSvc := NewAuditService(store)
+	auditSvc := newAuditReaderService(store)
 	_, err := auditSvc.ExportEntries("yaml", nil)
 	assert.ErrorIs(t, err, ErrAuditInvalidFormat)
 }
 
 func TestP3A_AdminService_ExportEntries_NoEntries(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	_, err := auditSvc.ExportEntries("json", nil)
 	assert.ErrorIs(t, err, ErrAuditNoEntries)
 }
 
 func TestP3A_AdminService_ExportEntries_JSON(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 5)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	data, err := auditSvc.ExportEntries("json", nil)
 	require.NoError(t, err)
@@ -1093,12 +1090,11 @@ func TestP3A_AdminService_ExportEntries_JSON(t *testing.T) {
 }
 
 func TestP3A_AdminService_ExportEntries_CSV(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 5)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	data, err := auditSvc.ExportEntries("csv", nil)
 	require.NoError(t, err)
@@ -1130,7 +1126,7 @@ func TestP3A_AdminService_ExportAuditLogs_InvalidFormat(t *testing.T) {
 func TestP3A_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
 	svc := NewAdminService()
 	svc.SetContext(context.Background())
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	svc.SetAuditStore(store)
 
@@ -1139,13 +1135,12 @@ func TestP3A_AdminService_GetAuditLogs_NonAdmin(t *testing.T) {
 }
 
 func TestP3A_AdminService_AuditFilter_WithOperationFilter(t *testing.T) {
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "sw", "k1", true, nil, 5)
 	store.LogKeyOperation(audit.OpKeyDeleted, "sw", "k2", true, nil, 3)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	filter := &AuditFilter{Operation: "key_created"}
 	entries, err := auditSvc.GetEntries(filter)
@@ -1155,7 +1150,7 @@ func TestP3A_AdminService_AuditFilter_WithOperationFilter(t *testing.T) {
 }
 
 func TestP3A_AdminService_ExportCSV_FormatCorrect(t *testing.T) {
-	auditSvc := NewAuditService(nil)
+	auditSvc := newAuditReaderService(nil)
 
 	entries := []AuditEntry{
 		{

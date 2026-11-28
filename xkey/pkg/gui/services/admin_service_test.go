@@ -68,6 +68,16 @@ func asAuditReader(svc *AdminService) *recordingAuthorizer {
 	return authorizer
 }
 
+// newAuditReaderService returns an AuditService over store whose context
+// carries auditReaderIdentity and whose authorizer grants it audit:read, so
+// tests of the read paths past the authorization check can run.
+func newAuditReaderService(store audit.Store) *AuditService {
+	svc := NewAuditService(store)
+	svc.SetAuthorizer(&recordingAuthorizer{})
+	svc.SetContext(xkms.QRDBWithIdentity(context.Background(), auditReaderIdentity))
+	return svc
+}
+
 func TestAdminService_AuthorizeAuditRead(t *testing.T) {
 	t.Run("caller holding audit:read is allowed", func(t *testing.T) {
 		svc := NewAdminService()
@@ -132,7 +142,7 @@ func TestAdminService_SetAuditStore(t *testing.T) {
 	svc := NewAdminService()
 	assert.Nil(t, svc.auditStore)
 
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	svc.SetAuditStore(store)
 	assert.NotNil(t, svc.auditStore)
@@ -412,7 +422,7 @@ func TestAdminService_GetAuditLogs(t *testing.T) {
 	})
 
 	t.Run("audit reader delegates to the audit store", func(t *testing.T) {
-		store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+		store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 		require.NoError(t, storeErr)
 		store.LogKeyOperation(audit.OpKeyCreated, "software", "admin-key", true, nil, 7)
 
@@ -453,7 +463,7 @@ func TestAdminService_ExportAuditLogs_CSV_NotAuthorized(t *testing.T) {
 // delegation.
 func TestAdminService_ExportAuditLogs_AuditReader(t *testing.T) {
 	newSvc := func(t *testing.T) *AdminService {
-		store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+		store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 		require.NoError(t, storeErr)
 		store.LogKeyOperation(audit.OpKeyCreated, "software", "admin-key", true, nil, 7)
 
@@ -492,12 +502,11 @@ func TestAdminService_ExportAuditLogs_WithStore(t *testing.T) {
 	// This test exercises ExportAuditLogs logic beyond auth check.
 	// Since we can't easily be admin in tests, we test the underlying
 	// AuditService.ExportEntries which ExportAuditLogs delegates to.
-	store, storeErr := audit.NewBackendStore(xkms.NewStorageMemory(), 100, nil)
+	store, storeErr := audit.NewQRDBStore(xkms.NewQRDBAuditRingBuffer(100))
 	require.NoError(t, storeErr)
 	store.LogKeyOperation(audit.OpKeyCreated, "software", "test-key", true, nil, 42)
 
-	auditSvc := NewAuditService(store)
-	auditSvc.SetContext(context.Background())
+	auditSvc := newAuditReaderService(store)
 
 	t.Run("json export", func(t *testing.T) {
 		data, err := auditSvc.ExportEntries("json", nil)
