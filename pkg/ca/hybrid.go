@@ -87,13 +87,20 @@ func (e *HybridVerificationError) Error() string {
 //  5. Re-create the certificate with the classical key (final version with all extensions)
 //
 // Parameters:
-//   - template: The certificate template
+//   - tenantID: The tenant a leaf certificate is issued to. A leaf template
+//     (IsCA false) is stamped with it as Subject-OU[0] through StampTenant,
+//     replacing any OU the template names; an empty tenant on a leaf is
+//     refused with ErrTenantRequired. A CA template for a tenant is stamped
+//     the same way (ruling 1073 (a)); a CA template with an empty tenant is
+//     the system root or an intermediate and keeps its subject.
+//   - template: The certificate template (never modified)
 //   - parent: The issuer certificate (for self-signed, pass template)
 //   - classicalKey: The classical signing key (ECDSA, RSA, or Ed25519)
 //   - quantumKey: The ML-DSA signing key
 //
 // Returns the DER-encoded hybrid certificate or an error.
 func CreateHybridCertificate(
+	tenantID string,
 	template, parent *x509.Certificate,
 	classicalKey crypto.Signer,
 	quantumKey *quantum.MLDSAPrivateKey,
@@ -136,6 +143,27 @@ func CreateHybridCertificate(
 	workingTemplate := *template
 	workingTemplate.ExtraExtensions = make([]pkix.Extension, len(template.ExtraExtensions), len(template.ExtraExtensions)+3)
 	copy(workingTemplate.ExtraExtensions, template.ExtraExtensions)
+
+	// A leaf or tenant CA names its tenant as Subject-OU[0]; the system
+	// hierarchy (a CA template with no tenant) is exempt (ruling 1073 (a)).
+	kind := OwnerOUKindFor("", workingTemplate.IsCA, tenantID)
+	if !kind.Exempt() {
+		subject, raw, err := StampTenant(tenantID, workingTemplate.Subject, workingTemplate.RawSubject)
+		if err != nil {
+			return nil, &HybridCertError{Op: "create", Err: err}
+		}
+		workingTemplate.Subject, workingTemplate.RawSubject = subject, raw
+		// A self-signed leaf names itself as issuer: the issuer must carry the
+		// stamped subject too, without touching the caller's template.
+		if parent == template {
+			stampedParent := *template
+			stampedParent.Subject, stampedParent.RawSubject = subject, raw
+			parent = &stampedParent
+		}
+		if err := CheckOwnerOU(kind, tenantID, subject); err != nil {
+			return nil, &HybridCertError{Op: "create", Err: err}
+		}
+	}
 
 	// Add the quantum alt public key and algorithm extensions
 	workingTemplate.ExtraExtensions = append(workingTemplate.ExtraExtensions, altPubKeyExt, altSigAlgExt)
