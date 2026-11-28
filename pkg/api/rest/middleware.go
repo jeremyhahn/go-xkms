@@ -114,8 +114,8 @@ const corsExposeHeaders = webauthnhttp.HeaderSessionID
 // another origin should enable it.
 type CORSOptions struct {
 	// AllowedOrigins lists the exact origins (scheme://host[:port]) permitted
-	// to make cross-origin requests. The wildcard "*" is honored but reported
-	// as a compliance gap by config.ComplianceGaps.
+	// to make cross-origin requests. Validate (called by NewServer and
+	// apimodule.NewModule) refuses the wildcard "*" and every malformed entry.
 	AllowedOrigins []string
 
 	// AllowCredentials sets Access-Control-Allow-Credentials on allowed

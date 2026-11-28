@@ -14,6 +14,7 @@
 package apimodule
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -180,5 +181,25 @@ func TestRegisterHTTP_CORSDisabled(t *testing.T) {
 		if got := resp.Header.Get("Access-Control-Allow-Origin"); got != "" {
 			t.Fatalf("Allow-Origin = %q with CORS disabled, want none", got)
 		}
+	}
+}
+
+// TestNewModule_RefusesInvalidCORSOrigins pins #2331: NewModule refuses the
+// wildcard and a malformed origin, naming the entry.
+func TestNewModule_RefusesInvalidCORSOrigins(t *testing.T) {
+	for _, origin := range []string{"*", "https://ui.example/path"} {
+		t.Run(origin, func(t *testing.T) {
+			_, err := NewModule(func() *xkms.XKMSService { return nil },
+				WithCORS(&rest.CORSOptions{AllowedOrigins: []string{origin}}))
+			if err == nil {
+				t.Fatalf("NewModule accepted CORS origin %q", origin)
+			}
+			if !errors.Is(err, rest.ErrInvalidCORSOrigin) {
+				t.Fatalf("NewModule error = %v, want ErrInvalidCORSOrigin", err)
+			}
+			if !strings.Contains(err.Error(), `"`+origin+`"`) {
+				t.Fatalf("NewModule error = %v, want it to name %q", err, origin)
+			}
+		})
 	}
 }

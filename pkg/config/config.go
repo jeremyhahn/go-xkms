@@ -590,7 +590,8 @@ type CORSConfig struct {
 	Enabled bool `yaml:"enabled"`
 
 	// AllowedOrigins lists the exact origins (scheme://host[:port]) allowed
-	// to make cross-origin requests.
+	// to make cross-origin requests. The wildcard "*" and malformed entries
+	// are refused at start by rest.CORSOptions.Validate.
 	AllowedOrigins []string `yaml:"allowed_origins"`
 
 	// AllowCredentials sets Access-Control-Allow-Credentials for allowed

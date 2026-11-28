@@ -428,6 +428,9 @@ func NewModule(resolve ServiceResolver, opts ...Option) (*Module, error) {
 	for _, opt := range opts {
 		opt(m)
 	}
+	if err := m.cors.Validate(); err != nil {
+		return nil, err
+	}
 	if err := m.buildAttestedCallerGate(); err != nil {
 		return nil, err
 	}
