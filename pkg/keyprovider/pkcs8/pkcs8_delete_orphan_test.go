@@ -32,12 +32,17 @@ type interruptingStorage struct {
 	storage.Backend
 	failMetaDelete bool
 	failMetaPut    bool
+	failBlobDelete bool
 }
 
 func (s *interruptingStorage) Delete(ctx context.Context, key string) error {
 	if s.failMetaDelete && strings.HasPrefix(key, "meta/") {
 		s.failMetaDelete = false
 		return errors.New("injected interruption on metadata delete")
+	}
+	if s.failBlobDelete && !strings.HasPrefix(key, "meta/") {
+		s.failBlobDelete = false
+		return errors.New("injected interruption on key delete")
 	}
 	return s.Backend.Delete(ctx, key)
 }
@@ -152,5 +157,69 @@ func TestGenerateKey_RollbackRemovesStaleMetadata(t *testing.T) {
 	}
 	if findByCN(t, listed, "stale.com").Exportable {
 		t.Error("the new key inherited the stale record's Exportable flag")
+	}
+}
+
+// A failed blob delete must keep the ownership record, so the key stays
+// listed for its tenant and a retried DeleteKey removes both records.
+func TestDeleteKey_FailedBlobDeleteKeepsOwnership(t *testing.T) {
+	be, keyStorage := newOrphanTestBackend(t)
+	ctx := context.Background()
+
+	attrs := tenantRSAAttrs("tenant-a", "blobfail.com")
+	if _, err := be.GenerateKey(ctx, attrs); err != nil {
+		t.Fatalf("GenerateKey failed: %v", err)
+	}
+	keyID := attrs.ID()
+
+	be.storage = &interruptingStorage{Backend: keyStorage, failBlobDelete: true}
+	if err := be.DeleteKey(ctx, attrs); err == nil {
+		t.Fatal("DeleteKey must report the failed key delete")
+	}
+
+	listed, err := be.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListKeys failed: %v", err)
+	}
+	if got := findByCN(t, listed, "blobfail.com").TenantID; got != "tenant-a" {
+		t.Fatalf("key listed with tenant %q after a failed delete, want tenant-a", got)
+	}
+
+	if err := be.DeleteKey(ctx, attrs); err != nil {
+		t.Fatalf("retried DeleteKey failed: %v", err)
+	}
+	if _, err := keyStorage.Get(ctx, metadataPath(keyID)); err == nil {
+		t.Fatal("a retried DeleteKey left the metadata record behind")
+	}
+	if _, err := storage.GetKey(ctx, keyStorage, keyID); err == nil {
+		t.Fatal("a retried DeleteKey left the key blob behind")
+	}
+}
+
+// When the rollback cannot remove a stale metadata record, it keeps the blob
+// and reports both failures, so no metadata record is left without its blob.
+func TestGenerateKey_RollbackStopsWhenMetadataCleanupFails(t *testing.T) {
+	be, keyStorage := newOrphanTestBackend(t)
+	ctx := context.Background()
+
+	stale := tenantRSAAttrs("tenant-a", "stuck.com")
+	keyID := stale.ID()
+	if err := WriteKeyMetadata(ctx, keyStorage, keyID, stale); err != nil {
+		t.Fatalf("WriteKeyMetadata failed: %v", err)
+	}
+
+	be.storage = &interruptingStorage{Backend: keyStorage, failMetaPut: true, failMetaDelete: true}
+	_, err := be.GenerateKey(ctx, tenantRSAAttrs("tenant-a", "stuck.com"))
+	if err == nil {
+		t.Fatal("GenerateKey must report the failed metadata write")
+	}
+	if !strings.Contains(err.Error(), "metadata delete") {
+		t.Errorf("GenerateKey error %q does not carry the metadata cleanup failure", err)
+	}
+	if _, err := keyStorage.Get(ctx, metadataPath(keyID)); err != nil {
+		t.Fatalf("stale metadata record unexpectedly gone: %v", err)
+	}
+	if _, err := storage.GetKey(ctx, keyStorage, keyID); err != nil {
+		t.Fatal("the rollback deleted the blob while its metadata record remained")
 	}
 }
