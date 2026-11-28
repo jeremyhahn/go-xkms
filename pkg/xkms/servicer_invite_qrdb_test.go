@@ -280,7 +280,7 @@ func TestActivateInvitePIV_QRDB_ConcurrentRedemptionBindsOnce(t *testing.T) {
 	u := f.account(t)
 	assert.Equal(t, string(qrdbsdk.LifecycleActive), u.Lifecycle)
 	require.Len(t, u.CertBindings, 1, "only the winning certificate is bound")
-	var winner int = -1
+	winner := -1
 	for i, err := range errs {
 		if err == nil {
 			winner = i
