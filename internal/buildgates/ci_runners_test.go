@@ -1,0 +1,169 @@
+package buildgates
+
+import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Rulings 833 and 921: CI runs on GitHub's hosted runners first. Every job of
+// every workflow runs on hostedRunner, or on forgeSplit, which is hostedRunner
+// on github.com and a forge label elsewhere; a job that leaves both states why
+// with `# self-hosted: <reason>` in its runs-on line's comment (after another
+// waiver, as the code-review template's review runners put it). ci-images
+// keeps its own form, hostedRunner on github.com and the forge's release and
+// bigdisk labels there (ruling 169). A pool label no online runner serves left Preflight queued
+// for over half an hour (ruling 920); a hosted job never waits on one.
+
+const (
+	hostedRunner     = "ubuntu-latest"
+	selfHostedWaiver = "# self-hosted: "
+)
+
+// forgeSplit is a runs-on that is hostedRunner on github.com and a forge
+// label (group 1) on the forge.
+var forgeSplit = regexp.MustCompile(`^\$\{\{ github\.server_url == 'https://github\.com' && '` + hostedRunner + `' \|\| '([a-z0-9-]+)' \}\}$`)
+
+// selfHostedReason finds the waiver and its reason in a line comment.
+var selfHostedReason = regexp.MustCompile(`(^|\s)# self-hosted: *\S`)
+
+// preflightOverflow is a v1.48 runs-on (ruling 1024): on github.com the job
+// reads the preflight's `runner` or `runner_docker` output, which is
+// hostedRunner unless the hosted pool is full (never for a fork), and on the
+// forge a label (group 3). Ruling 1037: the runners test accepts it.
+var preflightOverflow = regexp.MustCompile(`^\$\{\{ github\.server_url == 'https://github\.com' && fromJSON\(needs\.preflight\.outputs\.(runner|runner_docker)( \|\| '"` + hostedRunner + `"')?\) \|\| '([a-z0-9-]+)' \}\}$`)
+
+// forgeSplitJobs keep, in exactly this form, a runs-on that is hostedRunner
+// on github.com unless the Infra Department's CI_PREFLIGHT_RUNS_ON says
+// otherwise for a same-repository run (ci-template v1.52, ruling 999).
+var forgeSplitJobs = map[string]string{
+	"ci-images": `${{ github.server_url == 'https://github.com' && '` + hostedRunner + `' || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'release' || 'bigdisk' }}`,
+	"preflight": `${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || '` + hostedRunner + `' }}`,
+}
+
+// runnerProblems lists each ci.yml job that is neither on hostedRunner, nor
+// one of forgeSplitJobs in its form, nor waived with a reason.
+func runnerProblems(body []byte) []string {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(body, &doc); err != nil || len(doc.Content) == 0 {
+		return []string{"ci.yml does not parse"}
+	}
+	var jobs *yaml.Node
+	root := doc.Content[0]
+	for i := 0; i+1 < len(root.Content); i += 2 {
+		if root.Content[i].Value == "jobs" {
+			jobs = root.Content[i+1]
+		}
+	}
+	if jobs == nil || len(jobs.Content) == 0 {
+		return []string{"ci.yml has no jobs"}
+	}
+	var problems []string
+	for i := 0; i+1 < len(jobs.Content); i += 2 {
+		name, job := jobs.Content[i].Value, jobs.Content[i+1]
+		var runsOn *yaml.Node
+		for k := 0; k+1 < len(job.Content); k += 2 {
+			if job.Content[k].Value == "runs-on" {
+				runsOn = job.Content[k+1]
+			}
+		}
+		switch {
+		case runsOn == nil:
+			problems = append(problems, "job "+name+" has no runs-on")
+		case runsOn.Kind == yaml.ScalarNode && (runsOn.Value == hostedRunner || forgeSplit.MatchString(runsOn.Value) || preflightOverflow.MatchString(runsOn.Value)):
+		case forgeSplitJobs[name] != "":
+			if runsOn.Value != forgeSplitJobs[name] {
+				problems = append(problems, "job "+name+" runs on "+strconv.Quote(runsOn.Value)+"; want "+strconv.Quote(forgeSplitJobs[name]))
+			}
+		default:
+			c := strings.TrimSpace(runsOn.LineComment)
+			if !selfHostedReason.MatchString(c) {
+				problems = append(problems, "job "+name+" runs on "+strconv.Quote(runsOn.Value)+" without `"+selfHostedWaiver+"<reason>` on its runs-on line; every other job runs on "+hostedRunner+" (rulings 833, 921)")
+			}
+		}
+	}
+	return problems
+}
+
+// workflowFiles lists the workflow files in dir as GitHub discovers them:
+// both the .yml and the .yaml extension.
+func workflowFiles(dir string) ([]string, error) {
+	var files []string
+	for _, ext := range []string{"*.yml", "*.yaml"} {
+		found, err := filepath.Glob(filepath.Join(dir, ext))
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, found...)
+	}
+	return files, nil
+}
+
+func TestWorkflowFilesFindsBothExtensions(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a.yml", "b.yaml", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("jobs: {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files, err := workflowFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range files {
+		names = append(names, filepath.Base(f))
+	}
+	sort.Strings(names)
+	if got := strings.Join(names, ","); got != "a.yml,b.yaml" {
+		t.Fatalf("workflowFiles found %q; want a.yml,b.yaml", got)
+	}
+}
+
+func TestCIJobsRunHostedFirst(t *testing.T) {
+	files, err := workflowFiles(filepath.Join(cachesRoot, ".github", "workflows"))
+	if err != nil || len(files) < 5 {
+		t.Fatalf("found %d workflow files (%v); want every one", len(files), err)
+	}
+	for _, f := range files {
+		rel, _ := filepath.Rel(cachesRoot, f)
+		for _, p := range runnerProblems([]byte(readCacheFile(t, filepath.ToSlash(rel)))) {
+			t.Error(filepath.Base(f) + ": " + p)
+		}
+	}
+	job := func(name, runsOn string) string { return "  " + name + ":\n    runs-on: " + runsOn + "\n" }
+	wf := func(jobs ...string) []byte { return []byte("jobs:\n" + strings.Join(jobs, "")) }
+	good := wf(job("preflight", hostedRunner), job("ci-images", forgeSplitJobs["ci-images"]),
+		job("image", "[self-hosted, linux, x64, bigdisk]  "+selfHostedWaiver+"a stated reason"),
+		job("scope", "${{ github.server_url == 'https://github.com' && '"+hostedRunner+"' || 'bigdisk' }}"),
+		job("review", "codex  # lab-string-ok: a label waiver "+selfHostedWaiver+"a stated reason"),
+		job("build", "${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner) || 'bigdisk' }}"),
+		job("integration", "${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}"),
+		job("ci-gate", `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"ubuntu-latest"') || 'ci-gate' }}`))
+	if p := runnerProblems(good); len(p) != 0 {
+		t.Fatalf("a hosted-first workflow fails: %v", p)
+	}
+	for name, bad := range map[string][]byte{
+		"a pool expression with no reason":       wf(job("preflight", "${{ cond && fromJSON('[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]') || 'ubuntu-latest' }}")),
+		"a pool label with no reason":            wf(job("build", "bigdisk")),
+		"an empty reason":                        wf(job("build", "bigdisk  "+strings.TrimSpace(selfHostedWaiver))),
+		"another comment":                        wf(job("build", "bigdisk  # pool")),
+		"ci-images in another form":              wf(job("ci-images", "bigdisk")),
+		"no runs-on":                             []byte("jobs:\n  build:\n    steps: []\n"),
+		"a review runner with no reason":         wf(job("review", "codex  # lab-string-ok: a label waiver")),
+		"an overflow from another output":        wf(job("build", "${{ github.server_url == 'https://github.com' && fromJSON(needs.other.outputs.runner) || 'bigdisk' }}")),
+		"an overflow with a pool fallback":       wf(job("build", `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner || '"bigdisk"') || 'bigdisk' }}`)),
+		"preflight in another form":              wf(job("preflight", "${{ vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}")),
+		"a split that is the pool on github.com": wf(job("scope", "${{ github.server_url == 'https://github.com' && 'bigdisk' || 'ubuntu-latest' }}")),
+	} {
+		if len(runnerProblems(bad)) == 0 {
+			t.Errorf("%s passed", name)
+		}
+	}
+}
