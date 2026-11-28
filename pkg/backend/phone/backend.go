@@ -214,6 +214,7 @@ func (b *Backend) Capabilities() types.Capabilities {
 		Export:              false,
 		KeyAgreement:        true,
 		Attestation:         true,
+		QuantumSigning:      true,
 		SecurityLevel:       types.SecurityLevelHigh,
 		// The key algorithms of algorithmMapping and the AEADs of
 		// symmetricAlgorithmMapping.
@@ -221,6 +222,9 @@ func (b *Backend) Capabilities() types.Capabilities {
 			RSAKeySizes: []int{types.RSAKeySize2048, types.RSAKeySize3072, types.RSAKeySize4096},
 			ECDSACurves: phoneSupportedCurves,
 			Ed25519:     true,
+			MLDSA: []types.QuantumAlgorithm{
+				types.QuantumAlgorithmMLDSA44, types.QuantumAlgorithmMLDSA65, types.QuantumAlgorithmMLDSA87,
+			},
 			Symmetric: []types.SymmetricAlgorithm{
 				types.SymmetricAES128GCM, types.SymmetricAES192GCM, types.SymmetricAES256GCM,
 				types.SymmetricChaCha20Poly1305, types.SymmetricXChaCha20Poly1305,
