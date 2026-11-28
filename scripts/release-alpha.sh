@@ -198,9 +198,9 @@ max_version() {
 # gates it). $1 must be strictly less than $2; callers only ever pass
 # (CURRENT, NEXT) after version_gt has already confirmed that.
 bump_level() {
-	local cur=${1#v} nxt=${2#v} c1 c2 c3 n1 n2 n3
-	IFS='.' read -r c1 c2 c3 <<<"${cur%-alpha}"
-	IFS='.' read -r n1 n2 n3 <<<"${nxt%-alpha}"
+	local cur=${1#v} nxt=${2#v} c1 c2 n1 n2 _
+	IFS='.' read -r c1 c2 _ <<<"${cur%-alpha}"
+	IFS='.' read -r n1 n2 _ <<<"${nxt%-alpha}"
 	if ((10#$n1 != 10#$c1)); then
 		printf 'major'
 	elif ((10#$n2 != 10#$c2)); then
@@ -347,7 +347,34 @@ forge_repo_url() {
 	path=${path%/}
 	path=${path%.git}
 	[[ -n ${hostport%%:*} && $path == */* && $path != */*/* ]] || return 0
+	# GitHub serves HTTPS on its default port whatever shape the remote
+	# takes; the Gitea SSH-to-HTTP port mapping does not apply to it.
+	if [[ ${hostport%%:*} == github.com ]]; then
+		scheme=https hostport=github.com
+	fi
 	printf '%s://%s/%s' "$scheme" "$hostport" "$path"
+}
+
+# forge_api_url prints the REST root of the repository whose web URL
+# forge_repo_url printed: GitHub serves it on api.github.com with no
+# prefix, Gitea under its own origin at /api/v1.
+forge_api_url() {
+	local repo=$1 base
+	base=${repo%/*/*}
+	if [[ $base == https://github.com ]]; then
+		printf 'https://api.github.com/repos/%s' "${repo#"$base"/}"
+		return 0
+	fi
+	printf '%s/api/v1/repos/%s' "$base" "${repo#"$base"/}"
+}
+
+# pr_html_url prints the pull request's web URL from the forge's JSON response
+# in file $1: the top-level html_url (Gitea links it under /pulls/<n>, GitHub
+# under /pull/<n>). jq parses the response, so its formatting does not matter,
+# and the html_urls of the embedded user and repository objects are never
+# read. Empty when there is none or the response is not JSON.
+pr_html_url() {
+	jq -r '.html_url // empty | strings' "$1" 2>/dev/null || true
 }
 
 # json_string prints $1 as a JSON string literal, escaping the backslash and
@@ -398,6 +425,18 @@ case $BUMP in
 "" | patch | minor | major) ;;
 *) die "--bump must be patch, minor or major (got '$BUMP')" ;;
 esac
+
+# ---------------------------------------------------------------------------
+# Every tool this script runs is checked here, before its first git command,
+# scratch file or forge call. jq matters most: pr_html_url reads the forge's
+# answer only after the branch is pushed and the pull request opened, so a
+# host without it would otherwise publish first and fail to report after.
+# ---------------------------------------------------------------------------
+
+for tool in "$GIT" "$GO" "$CURL" jq mktemp grep sed awk find tr cp mkdir dirname diff rm; do
+	command -v "$tool" >/dev/null 2>&1 ||
+		die "'$tool' is not installed (not on PATH); install it and run again. Nothing was run"
+done
 
 # ---------------------------------------------------------------------------
 # Preconditions that need neither the network nor the fetched tip.
@@ -457,8 +496,7 @@ REMOTE_URL=$($GIT config --get "remote.$REMOTE.url") || die "no git remote named
 FORGE_REPO=$(forge_repo_url "$REMOTE_URL")
 [ -n "$FORGE_REPO" ] ||
 	die "remote '$REMOTE' ($REMOTE_URL) names no forge repository -- it must be an ssh://, scp-like or http(s):// URL ending in <owner>/<repo>"
-FORGE_BASE=${FORGE_REPO%/*/*}
-FORGE_API="$FORGE_BASE/api/v1/repos/${FORGE_REPO#"$FORGE_BASE"/}"
+FORGE_API=$(forge_api_url "$FORGE_REPO")
 [ -n "${FORGE_TOKEN:-}" ] ||
 	die "FORGE_TOKEN is not set -- the release pull request is opened on $FORGE_REPO as the project agent"
 
@@ -715,10 +753,6 @@ code=$(forge_api POST /pulls "$PR_REQUEST") || code=000
 [ "$code" = 201 ] ||
 	die "the forge refused to open the pull request (HTTP $code) although $BRANCH_NAME is pushed. Open it by hand, titled '$RELEASE_TITLE': $FORGE_REPO/compare/$RELEASE_BRANCH...$BRANCH_NAME"
 
-# The response's only html_url under /pulls/ is the pull request's own; the
-# user and repository objects it embeds carry html_urls of their own too.
-PR_URL=$(grep -oE '"html_url":"[^"]*/pulls/[0-9]+"' "$FORGE_RESPONSE") || PR_URL=""
-PR_URL=${PR_URL#*:\"}
-PR_URL=${PR_URL%\"}
+PR_URL=$(pr_html_url "$FORGE_RESPONSE")
 printf 'release-alpha: opened pull request "%s": %s\n' "$RELEASE_TITLE" "${PR_URL:-$FORGE_REPO/pulls}"
 printf 'release-alpha: once that pull request is reviewed and merged, run: make release-tag VERSION=%s\n' "${NEXT#v}"

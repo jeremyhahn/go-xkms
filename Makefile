@@ -284,12 +284,12 @@ GITEA_INSTEADOF_KEY = url.http://x:$(FORGE_MODULE_TOKEN)@$(GITEA_HOST)/jeremyhah
 # the file is LOADED, so it fails a public checkout before any service starts,
 # which is the opposite of the public-resolution path this exists to provide.
 ifneq ($(GIT_CONFIG_KEY_0),)
-GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
 else ifneq ($(and $(FORGE_MODULE_TOKEN),$(GITEA_HOST)),)
-GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := https://github.com/jeremyhahn/
@@ -4087,10 +4087,29 @@ check-insecure-tls:
 	@bash scripts/check-insecure-tls.sh
 
 .PHONY: check-public-literals
-## check-public-literals: Public-release readiness gate -- no lab/fleet/owner literals (go-xkms#1030)
+## check-public-literals: Public-release readiness gate -- no listed internal literal (go-xkms#1030); patterns from RELEASABILITY_PATTERNS or RELEASABILITY_PATTERNS_FILE
+# The pattern list is private, so it is an input: with neither variable set
+# the target refuses (exit 1) rather than pass without checking a literal, so
+# `make lint-gates` and every CI caller must hand it the list; with one set it
+# returns the script's own exit status. The one opt-out is
+# PUBLIC_LITERALS_SKIP=fork-pr, which ci.yml sets only on a pull request whose
+# run has no RELEASABILITY_PATTERNS secret (a fork); the target announces the
+# skip and passes. Any other PUBLIC_LITERALS_SKIP value is refused.
 check-public-literals:
-	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (lab/fleet/owner)...$(RESET)"
-	@bash scripts/check-public-literals.sh
+	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (pattern list from input)...$(RESET)"
+	@if [ -z "$${RELEASABILITY_PATTERNS:-}" ] && [ -z "$${RELEASABILITY_PATTERNS_FILE:-}" ]; then \
+		if [ "$${PUBLIC_LITERALS_SKIP-unset}" = fork-pr ]; then \
+			echo "check-public-literals: skipped -- no pattern input on a pull request without the secret (PUBLIC_LITERALS_SKIP=fork-pr); pushes run the gate"; \
+			exit 0; \
+		fi; \
+		if [ -n "$${PUBLIC_LITERALS_SKIP+set}" ]; then \
+			echo "check-public-literals: refused -- PUBLIC_LITERALS_SKIP accepts only fork-pr" >&2; \
+			exit 1; \
+		fi; \
+		echo "check-public-literals: refused -- no pattern input: set RELEASABILITY_PATTERNS (class<TAB>regex lines) or RELEASABILITY_PATTERNS_FILE (a path to them)" >&2; \
+		exit 1; \
+	fi; \
+	bash scripts/check-public-literals.sh
 
 # GOFLAGS takes one comma-separated -tags value.
 EMPTY :=
