@@ -1509,9 +1509,25 @@ jobs:
       # for any other stage to select. check-skill-reference fails when xkey's
       # SKILL.md cites a command or flag xkey does not have, and
       # check-public-literals keeps internal literals out of the public tree.
+      # It refuses without its private pattern list, which comes from the
+      # RELEASABILITY_PATTERNS secret (in-toolchain-image.sh forwards it by
+      # name). As in the Releasability step: a push without the secret fails;
+      # any other run without it (a fork pull request) notes it and runs the
+      # gates with the one opt-out, PUBLIC_LITERALS_SKIP=fork-pr.
       - name: go-xkms checks (fmt, vet, gate tests, skill reference, public literals)
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        env:
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+          EVENT: ${{ github.event_name }}
         run: |
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$EVENT" = push ]; then
+              echo "::error::RELEASABILITY_PATTERNS is not set; make check-public-literals needs the private pattern file (public-hygiene.md)"
+              exit 1
+            fi
+            echo "::notice::RELEASABILITY_PATTERNS is not available to this run; check-public-literals is skipped (PUBLIC_LITERALS_SKIP=fork-pr), pushes run it"
+            export PUBLIC_LITERALS_SKIP=fork-pr
+          fi
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
             make fmt-check
@@ -1701,7 +1717,21 @@ jobs:
         if: ${{ !cancelled() && runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' && env.TOOLCHAIN_IMAGE != '' }}
         env:
           IN_IMAGE_NETWORK: none   # CUSTOMIZE: bridge when a gate needs the module proxy or a network
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make lint-gates GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+          # >>> CUSTOMIZE (go-xkms): check-public-literals's pattern input, with
+          # the image job's empty-secret rule (push fails, else fork-pr opt-out).
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$EVENT" = push ]; then
+              echo "::error::RELEASABILITY_PATTERNS is not set; make check-public-literals needs the private pattern file (public-hygiene.md)"
+              exit 1
+            fi
+            echo "::notice::RELEASABILITY_PATTERNS is not available to this run; check-public-literals is skipped (PUBLIC_LITERALS_SKIP=fork-pr), pushes run it"
+            export PUBLIC_LITERALS_SKIP=fork-pr
+          fi
+          # <<< CUSTOMIZE
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make lint-gates GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       # The bigdisk pool: the same target, natively. Go from setup-go at
       # GO_VERSION; the gate tools the toolchain image carries, at its pins
@@ -1730,8 +1760,21 @@ jobs:
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
+          # >>> CUSTOMIZE (go-xkms): check-public-literals's pattern input, with
+          # the image job's empty-secret rule (push fails, else fork-pr opt-out).
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+          EVENT: ${{ github.event_name }}
         run: |
           scripts/ci-go-integrity.sh
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$EVENT" = push ]; then
+              echo "::error::RELEASABILITY_PATTERNS is not set; make check-public-literals needs the private pattern file (public-hygiene.md)"
+              exit 1
+            fi
+            echo "::notice::RELEASABILITY_PATTERNS is not available to this run; check-public-literals is skipped (PUBLIC_LITERALS_SKIP=fork-pr), pushes run it"
+            export PUBLIC_LITERALS_SKIP=fork-pr
+          fi
+          # <<< CUSTOMIZE
           make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down

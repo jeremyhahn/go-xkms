@@ -1,0 +1,1 @@
+- **The release workflow talks to the GitHub REST API on GitHub.** release.yml now passes `github.api_url` as `RELEASE_API` to every `scripts/release-assets.sh` call, where `github.server_url/api/v1` made the script treat GitHub as a Gitea forge. `make release-alpha` reads the opened pull request's URL with jq, so a whitespace-formatted forge response no longer drops it.

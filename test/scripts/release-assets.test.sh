@@ -171,5 +171,177 @@ eq "a re-run replaces an existing asset instead of failing on it" "1" "$(grep -c
 false_ "a missing local file is refused" "$SCRIPT" upload "$W/does-not-exist"
 false_ "an unset RELEASE_TOKEN is refused before any request" env -u RELEASE_TOKEN "$SCRIPT" list
 
+# --- stub GitHub --------------------------------------------------------------
+# The same release through the GitHub releases API, which differs from Gitea's
+# on every mutating or private call: the API root has no /api/v1, an upload
+# goes to a separate uploads host with the raw file as the body, an asset is
+# deleted and downloaded by asset id alone (no release id), and a private
+# asset is read from the API with Accept: application/octet-stream (its
+# browser_download_url needs a browser session, so the stub answers it 404).
+# A request on a Gitea-shaped path is logged as WRONG, so it shows in the
+# assertions on the log.
+GH_ASSETS="$STUB/gh-assets"; GH_LOG="$STUB/gh-requests.log"
+mkdir -p "$GH_ASSETS"; : > "$GH_LOG"
+cat > "$STUB/gh-server.py" <<'PY'
+import json, os, sys, urllib.parse
+from http.server import BaseHTTPRequestHandler, HTTPServer
+ASSETS, LOG, TAG = sys.argv[1], sys.argv[2], sys.argv[3]
+def asset_id(name):
+    names = sorted(os.listdir(ASSETS)); return 100 + names.index(name)
+def by_id(aid):
+    for n in sorted(os.listdir(ASSETS)):
+        if asset_id(n) == aid: return n
+    return None
+def log(line): open(LOG, "a").write(line + "\n")
+class H(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def _send(self, code, body=b"", ctype="application/json"):
+        self.send_response(code); self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+    def _auth(self):
+        return self.headers.get("Authorization") == "token stub-token"
+    def _body(self):
+        return self.rfile.read(int(self.headers.get("Content-Length", "0")))
+    def do_GET(self):
+        if not self._auth(): return self._send(401, b'{"message":"Bad credentials"}')
+        u = urllib.parse.urlparse(self.path); base = f"http://{self.headers['Host']}"
+        if u.path == f"/repos/o/r/releases/tags/{TAG}":
+            assets = [{"id": asset_id(n), "name": n, "size": os.path.getsize(os.path.join(ASSETS, n)),
+                       "url": f"{base}/repos/o/r/releases/assets/{asset_id(n)}",
+                       "browser_download_url": f"{base}/dl/{n}"} for n in sorted(os.listdir(ASSETS))]
+            return self._send(200, json.dumps({"id": 1, "tag_name": TAG, "upload_url": f"{base}/uploads/repos/o/r/releases/1/assets{{?name,label}}", "assets": assets}).encode())
+        prefix = "/repos/o/r/releases/assets/"
+        if u.path.startswith(prefix):
+            n = by_id(int(u.path[len(prefix):]))
+            if n is None: return self._send(404, b'{"message":"Not Found"}')
+            if self.headers.get("Accept") == "application/octet-stream":
+                return self._send(200, open(os.path.join(ASSETS, n), "rb").read(), "application/octet-stream")
+            return self._send(200, json.dumps({"id": asset_id(n), "name": n}).encode())
+        log(f"WRONG GET {u.path}")
+        return self._send(404, b'{"message":"Not Found"}')
+    def do_POST(self):
+        if not self._auth(): return self._send(401, b'{"message":"Bad credentials"}')
+        u = urllib.parse.urlparse(self.path); q = urllib.parse.parse_qs(u.query); body = self._body()
+        if u.path == "/uploads/repos/o/r/releases/1/assets" and "name" in q:
+            name = q["name"][0]
+            if self.headers.get("Content-Type") != "application/octet-stream":
+                log(f"WRONG POST {name} {self.headers.get('Content-Type')}")
+                return self._send(415, b'{"message":"Unsupported Media Type"}')
+            open(os.path.join(ASSETS, name), "wb").write(body)
+            log(f"POST {name}")
+            return self._send(201, json.dumps({"id": asset_id(name), "name": name}).encode())
+        log(f"WRONG POST {u.path}")
+        return self._send(404, b'{"message":"Not Found"}')
+    def do_DELETE(self):
+        if not self._auth(): return self._send(401, b'{"message":"Bad credentials"}')
+        u = urllib.parse.urlparse(self.path)
+        prefix = "/repos/o/r/releases/assets/"
+        if u.path.startswith(prefix) and u.path[len(prefix):].isdigit():
+            aid = int(u.path[len(prefix):]); n = by_id(aid)
+            if n is not None:
+                os.remove(os.path.join(ASSETS, n)); log(f"DELETE {aid} {n}")
+                return self._send(204)
+        log(f"WRONG DELETE {u.path}")
+        return self._send(404, b'{"message":"Not Found"}')
+srv = HTTPServer(("127.0.0.1", 0), H)
+print(srv.server_address[1], flush=True)
+srv.serve_forever()
+PY
+python3 "$STUB/gh-server.py" "$GH_ASSETS" "$GH_LOG" v9.9.9-alpha > "$STUB/gh-port" 2> "$STUB/gh-server.err" &
+GSRV=$!
+trap 'kill $SRV $GSRV 2>/dev/null; rm -rf "$STUB"' EXIT
+for _ in $(seq 1 600); do [ -s "$STUB/gh-port" ] && break; sleep 0.1; done
+GPORT=$(cat "$STUB/gh-port")
+if [ -z "$GPORT" ]; then
+    echo "release-assets.test.sh: stub GitHub server did not publish a port within 60s" >&2
+    cat "$STUB/gh-server.err" >&2
+    exit 1
+fi
+# The script reads only RELEASE_API, RELEASE_REPO, RELEASE_TAG, RELEASE_TOKEN
+# and DRY_RUN: the forge and the uploads root follow from RELEASE_API alone,
+# so the GitHub runs below use the real https://api.github.com root. A curl
+# shim first on PATH records every URL the script asks for (CURL_LOG) and
+# sends api.github.com to the stub and uploads.github.com to its /uploads.
+REAL_CURL=$(command -v curl)
+CURL_LOG="$STUB/curl-urls.log"; : > "$CURL_LOG"
+mkdir -p "$STUB/bin"
+cat > "$STUB/bin/curl" <<SH
+#!/usr/bin/env bash
+args=()
+for a in "\$@"; do
+	case "\$a" in
+	https://api.github.com/*) echo "\$a" >> "$CURL_LOG"; a="http://127.0.0.1:${GPORT}\${a#https://api.github.com}" ;;
+	https://uploads.github.com/*) echo "\$a" >> "$CURL_LOG"; a="http://127.0.0.1:${GPORT}/uploads\${a#https://uploads.github.com}" ;;
+	http://*|https://*) echo "\$a" >> "$CURL_LOG" ;;
+	esac
+	args+=("\$a")
+done
+exec "$REAL_CURL" "\${args[@]}"
+SH
+chmod +x "$STUB/bin/curl"
+GH=(env PATH="$STUB/bin:$PATH" RELEASE_API="https://api.github.com")
+while read -r n; do printf 'sha256 of %s\n' "$n" > "$GH_ASSETS/$n"; done < <("$SCRIPT" expected "$V")
+
+section "github: list and verify"
+eq "list sees all 20 through the GitHub API root" "20" "$("${GH[@]}" "$SCRIPT" list | wc -l | tr -d ' ')"
+true_ "a complete release passes verify" "${GH[@]}" "$SCRIPT" verify "$V"
+
+section "only the contracted environment is read"
+STRAY_FORGE=RELEASE_"FORGE"; STRAY_UPLOAD=RELEASE_"UPLOAD_API"
+# The removed forge and upload-root overrides (STRAY_FORGE, STRAY_UPLOAD)
+# are not release settings: set to anything, they change no call. A Gitea root stays Gitea (download from the
+# browser URL under RELEASE_API), a GitHub root stays GitHub.
+true_ "an unknown forge override is ignored, not refused" "${GH[@]}" "${STRAY_FORGE}=bitbucket" "$SCRIPT" list
+OD="$STUB/override-dl"; : > "$CURL_LOG"
+env PATH="$STUB/bin:$PATH" "${STRAY_FORGE}=github" "${STRAY_UPLOAD}=http://127.0.0.1:1/nowhere" "$SCRIPT" download "$OD" '*.sha256' >/dev/null 2>&1
+eq "a Gitea root with a github forge override still downloads all ten checksum files" "10" "$(ls "$OD" 2>/dev/null | wc -l | tr -d ' ')"
+eq "every Gitea call stays under RELEASE_API or its browser URLs" "" "$(grep -v "^http://127.0.0.1:${PORT}/" "$CURL_LOG")"
+true_ "a Gitea download reads the browser URL" grep -q "^http://127.0.0.1:${PORT}/dl/" "$CURL_LOG"
+
+section "github: download by asset id"
+GD="$STUB/gh-dl"; : > "$GH_LOG"
+"${GH[@]}" "$SCRIPT" download "$GD" '*.sha256' >/dev/null 2>&1
+eq "the glob selects the ten checksum files" "10" "$(ls "$GD" 2>/dev/null | wc -l | tr -d ' ')"
+eq "a downloaded file is byte-identical to the asset" "$(cat "$GH_ASSETS/xkmsctl-$V-linux-amd64.sha256")" "$(cat "$GD/xkmsctl-$V-linux-amd64.sha256" 2>/dev/null)"
+eq "no download went to the browser URL" "" "$(cat "$GH_LOG")"
+
+section "github: upload skip / replace / add"
+GW="$STUB/gh-work"; mkdir -p "$GW"
+cp "$GH_ASSETS/xkmsctl-$V-linux-amd64" "$GW/xkmsctl-$V-linux-amd64"   # identical -> skip
+printf 'rebuilt\n' > "$GW/xkmsd-$V-linux-amd64"                        # differs   -> replace
+printf 'master\n' > "$GW/checksums.txt"                                # absent    -> add
+GH_REPLACED_ID=$(python3 -c "import os;n=sorted(os.listdir('$GH_ASSETS'));print(100+n.index('xkmsd-$V-linux-amd64'))")
+: > "$GH_LOG"
+OUT=$(DRY_RUN=1 "${GH[@]}" "$SCRIPT" upload "$GW/xkmsctl-$V-linux-amd64" "$GW/xkmsd-$V-linux-amd64" "$GW/checksums.txt" 2>&1); RC=$?
+eq "dry run succeeds" "0" "$RC"
+eq "dry run changes nothing on the server" "" "$(cat "$GH_LOG")"
+true_ "dry run reports the skip" grep -q "xkmsctl-$V-linux-amd64: already present" <<<"$OUT"
+true_ "dry run reports the replace with the asset id" grep -q "replacing asset $GH_REPLACED_ID" <<<"$OUT"
+true_ "dry run reports the add" grep -q "checksums.txt: absent, uploading" <<<"$OUT"
+: > "$GH_LOG"
+OUT=$("${GH[@]}" "$SCRIPT" upload "$GW/xkmsctl-$V-linux-amd64" "$GW/xkmsd-$V-linux-amd64" "$GW/checksums.txt" 2>&1); RC=$?
+eq "upload succeeds" "0" "$RC"
+eq "identical: no request; differing: DELETE by asset id then POST to uploads; absent: POST to uploads" \
+	"DELETE $GH_REPLACED_ID xkmsd-$V-linux-amd64
+POST xkmsd-$V-linux-amd64
+POST checksums.txt" "$(cat "$GH_LOG")"
+eq "the upload body is the raw file, not a multipart form" "master" "$(cat "$GH_ASSETS/checksums.txt" 2>/dev/null)"
+eq "the replaced asset carries the rebuilt bytes" "rebuilt" "$(cat "$GH_ASSETS/xkmsd-$V-linux-amd64" 2>/dev/null)"
+eq "the release now carries 21 assets" "21" "$("${GH[@]}" "$SCRIPT" list | wc -l | tr -d ' ')"
+: > "$GH_LOG"
+OUT=$("${GH[@]}" "$SCRIPT" upload "$GW/checksums.txt" 2>&1); RC=$?
+eq "a re-run of an uploaded asset succeeds" "0" "$RC"
+eq "a re-run sends nothing: the stored bytes match" "" "$(cat "$GH_LOG")"
+
+section "github: the uploads root follows from RELEASE_API"
+printf 'override\n' > "$GW/override.txt"
+: > "$GH_LOG"; : > "$CURL_LOG"
+OUT=$("${GH[@]}" "${STRAY_FORGE}=gitea" "${STRAY_UPLOAD}=http://127.0.0.1:1/nowhere" "$SCRIPT" upload "$GW/override.txt" 2>&1); RC=$?
+eq "an upload with gitea forge and upload-root overrides set still succeeds" "0" "$RC"
+eq "it reached the GitHub uploads endpoint" "POST override.txt" "$(cat "$GH_LOG")"
+eq "the upload went to uploads.github.com, nowhere else" \
+	"https://uploads.github.com/repos/o/r/releases/1/assets?name=override.txt" \
+	"$(grep -v '^https://api.github.com/' "$CURL_LOG")"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
