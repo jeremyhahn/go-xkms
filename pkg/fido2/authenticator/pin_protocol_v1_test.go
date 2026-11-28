@@ -18,6 +18,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -473,23 +474,47 @@ func TestPINProtocolV1_Decapsulate_InvalidCiphertext(t *testing.T) {
 func TestPINProtocolV1_Decapsulate_InvalidPadding(t *testing.T) {
 	authenticator, _ := setupKeyExchange(t)
 
-	// Create a ciphertext that decrypts to data with invalid padding
-	// We do this by encrypting valid data and then corrupting the last block
-	plaintext := []byte("test data for invalid padding test!")
-	ciphertext, err := authenticator.Encapsulate(plaintext)
-	if err != nil {
-		t.Fatalf("Encapsulate failed: %v", err)
+	// corrupt encrypts plaintext and flips the last byte of the
+	// second-to-last ciphertext block. CBC XORs that block into the last
+	// plaintext block, so XORing it with the known pad byte turns the
+	// decrypted final byte into 0x00, which is never a valid PKCS#7 pad.
+	// Flipping a byte of the last ciphertext block instead randomises the
+	// final plaintext byte and gives a valid 0x01 pad 1 time in 256.
+	corrupt := func(plaintext []byte) []byte {
+		t.Helper()
+		ciphertext, err := authenticator.Encapsulate(plaintext)
+		if err != nil {
+			t.Fatalf("Encapsulate failed: %v", err)
+		}
+		if len(ciphertext) < 2*aesBlockSize {
+			t.Fatalf("ciphertext has %d bytes, need at least two blocks", len(ciphertext))
+		}
+		padByte := byte(aesBlockSize - len(plaintext)%aesBlockSize)
+		ciphertext[len(ciphertext)-aesBlockSize-1] ^= padByte
+		return ciphertext
 	}
 
-	// In CBC, flipping bits in the second-to-last ciphertext block flips the
-	// same bits of the last plaintext block. XOR its last byte with the pad
-	// byte so the decrypted pad byte becomes 0, which is always invalid.
-	padByte := byte(aesBlockSize - len(plaintext)%aesBlockSize)
-	ciphertext[len(ciphertext)-aesBlockSize-1] ^= padByte
-
-	_, err = authenticator.Decapsulate(ciphertext)
-	if err != ErrInvalidPKCS7Padding {
+	plaintext := []byte("test data for invalid padding test!")
+	if _, err := authenticator.Decapsulate(corrupt(plaintext)); !errors.Is(err, ErrInvalidPKCS7Padding) {
 		t.Errorf("expected ErrInvalidPKCS7Padding, got %v", err)
+	}
+
+	// Fresh random plaintext of 16..63 bytes on every iteration (at least
+	// two ciphertext blocks, every pad length 1..16): the padding check
+	// must fail every time.
+	const iterations = 10000
+	lenByte := make([]byte, 1)
+	for i := 0; i < iterations; i++ {
+		if _, err := rand.Read(lenByte); err != nil {
+			t.Fatalf("rand.Read failed: %v", err)
+		}
+		plaintext := make([]byte, aesBlockSize+int(lenByte[0])%(3*aesBlockSize))
+		if _, err := rand.Read(plaintext); err != nil {
+			t.Fatalf("rand.Read failed: %v", err)
+		}
+		if _, err := authenticator.Decapsulate(corrupt(plaintext)); !errors.Is(err, ErrInvalidPKCS7Padding) {
+			t.Fatalf("iteration %d (plaintext %d bytes): expected ErrInvalidPKCS7Padding, got %v", i, len(plaintext), err)
+		}
 	}
 }
 
