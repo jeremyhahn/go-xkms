@@ -1,0 +1,2 @@
+- CI: the three ci.yml callers of `make check-public-literals` pass the `RELEASABILITY_PATTERNS` secret, the toolchain container receives it by name, and a run without the secret fails on push and skips the gate on a fork pull request only through `PUBLIC_LITERALS_SKIP=fork-pr`.
+- Devcontainer and integration Compose files fall back to the caller's `GOPRIVATE` when `GOMODAUTH_GOPRIVATE` is unset.

@@ -251,6 +251,53 @@ eq "a URL nested deeper than owner/repo names no repository" "" \
 	"$(forge_repo_url 'http://192.0.2.50:3000/a/b/go-xkms')"
 eq "a URL with no host names no forge" "" "$(forge_repo_url 'ssh:///jeremyhahn/go-xkms')"
 eq "the empty string names no forge" "" "$(forge_repo_url '')"
+# GitHub (r323: development moved there) serves HTTPS on its default port,
+# whatever shape the remote takes, so no Gitea port mapping applies.
+eq "a GitHub scp-like remote maps to https://github.com" \
+	"https://github.com/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'git@github.com:jeremyhahn/go-xkms.git')"
+eq "a GitHub ssh:// remote maps to https://github.com" \
+	"https://github.com/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'ssh://git@github.com/jeremyhahn/go-xkms.git')"
+eq "a GitHub https remote is kept" \
+	"https://github.com/jeremyhahn/go-xkms" \
+	"$(forge_repo_url 'https://x-access-token:secret@github.com/jeremyhahn/go-xkms.git')"
+
+# --- forge_api_url: the REST root the pull request is opened through ----------
+#
+# Gitea serves its API under the forge's own origin; GitHub serves it on a
+# separate host with no /api/v1 prefix.
+
+section "forge_api_url"
+eq "a Gitea forge's API is under /api/v1/repos" \
+	"http://192.0.2.50:3000/api/v1/repos/jeremyhahn/go-xkms" \
+	"$(forge_api_url 'http://192.0.2.50:3000/jeremyhahn/go-xkms')"
+eq "GitHub's API is api.github.com/repos" \
+	"https://api.github.com/repos/jeremyhahn/go-xkms" \
+	"$(forge_api_url 'https://github.com/jeremyhahn/go-xkms')"
+eq "a non-GitHub host merely containing github.com stays Gitea-shaped" \
+	"https://github.com.example.com/api/v1/repos/jeremyhahn/go-xkms" \
+	"$(forge_api_url 'https://github.com.example.com/jeremyhahn/go-xkms')"
+
+# --- pr_html_url: the pull request the forge says it opened -------------------
+#
+# Gitea links a pull request under /pulls/<n>, GitHub under /pull/<n>; the
+# user and repository objects in either response carry html_urls of their own.
+
+section "pr_html_url"
+PRRESP=$(mktemp)
+printf '{"number":7,"user":{"html_url":"http://192.0.2.50:3000/example-bot"},"html_url":"http://192.0.2.50:3000/jeremyhahn/go-xkms/pulls/7"}' >"$PRRESP"
+eq "a Gitea response yields its /pulls/<n> URL" \
+	"http://192.0.2.50:3000/jeremyhahn/go-xkms/pulls/7" "$(pr_html_url "$PRRESP")"
+printf '{"url":"https://api.github.com/repos/jeremyhahn/go-xkms/pulls/9","html_url":"https://github.com/jeremyhahn/go-xkms/pull/9","number":9,"user":{"html_url":"https://github.com/example-bot"},"head":{"repo":{"html_url":"https://github.com/jeremyhahn/go-xkms"}}}' >"$PRRESP"
+eq "a GitHub response yields its /pull/<n> URL" \
+	"https://github.com/jeremyhahn/go-xkms/pull/9" "$(pr_html_url "$PRRESP")"
+printf '{"user":{"html_url":"https://github.com/example-bot"}}' >"$PRRESP"
+eq "a response with no pull request URL yields nothing" "" "$(pr_html_url "$PRRESP")"
+printf '{\n  "number": 9,\n  "user": {\n    "html_url": "https://github.com/example-bot"\n  },\n  "html_url": "https://github.com/owner/repo/pull/9"\n}\n' >"$PRRESP"
+eq "a whitespace-formatted response yields its /pull/<n> URL" \
+	"https://github.com/owner/repo/pull/9" "$(pr_html_url "$PRRESP")"
+rm -f "$PRRESP"
 
 section "json_string"
 eq "plain text is quoted" '"chore(release): v0.2.0-alpha"' "$(json_string 'chore(release): v0.2.0-alpha')"
@@ -532,6 +579,41 @@ true_ "the refusal names the forge and the HTTP status" \
 eq "a refused real cut created no release branch" "" "$(fxgit "$FXFORGE" branch --list 'release/*')"
 false_ "a refused real cut pushed nothing" \
 	fxgit "$FXFORGE" ls-remote --exit-code --heads dev release/v0.2.0-alpha
+
+# Error handling: pr_html_url reads the forge's answer with jq. A host without
+# jq must be refused before the script runs git, pushes or calls the forge --
+# not after it has pushed a branch and opened a pull request it cannot report.
+# The PATH below is the caller's PATH with every tool but jq on it.
+section "a missing tool is refused before any side effect"
+
+NOJQ="$FXROOT/nojq-bin"
+mkdir -p "$NOJQ"
+IFS=: read -ra PATHDIRS <<<"$PATH"
+for d in "${PATHDIRS[@]}"; do
+	[ -d "$d" ] || continue
+	for f in "$d"/*; do
+		n=${f##*/}
+		[ "$n" != jq ] && [ ! -e "$NOJQ/$n" ] && [ -f "$f" ] && [ -x "$f" ] && ln -s "$f" "$NOJQ/$n"
+	done
+done
+true_ "the fixture PATH has no jq" test ! -e "$NOJQ/jq"
+
+FXNOJQ="$FXROOT/nojq"
+mkfixture "$FXNOJQ" >/dev/null
+fxgit "$FXNOJQ" config user.name test
+fxgit "$FXNOJQ" config user.email test@example.invalid
+fxgit "$FXNOJQ" config commit.gpgsign false
+: >"$GITLOG"
+: >"$CURLLOG"
+OUT=$(PATH="$NOJQ" GIT="$FXROOT/git-wrap" fxrelease "$FXNOJQ" --version 0.2.0-alpha --bump minor)
+RC=$?
+eq "a real cut without jq is refused" "1" "$RC"
+true_ "the refusal names jq" grep -qF "'jq' is not installed" <<<"$OUT"
+eq "no git command ran before the refusal" "" "$(cat "$GITLOG")"
+eq "no forge API call was made before the refusal" "" "$(cat "$CURLLOG")"
+eq "no release branch was created" "" "$(fxgit "$FXNOJQ" branch --list 'release/*')"
+false_ "nothing was pushed" \
+	fxgit "$FXNOJQ" ls-remote --exit-code --heads dev release/v0.2.0-alpha
 
 # Error handling: a malformed entry name must fail the rehearsal, and must
 # fail it without having consumed anything either. The bad entry is pushed to
