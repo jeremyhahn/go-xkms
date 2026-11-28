@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,17 +147,19 @@ func TestTrustDomain(t *testing.T) {
 	assert.Equal(t, "example.org", TrustDomain(cfg))
 }
 
-// The qrdb mTLS authenticator pins the SPIFFE trust domain the CA issues
-// client certificates under, so a SAN under a foreign trust domain is rejected.
-func TestEmbeddedNodeStorageConfig_PinsSPIFFETrustDomain(t *testing.T) {
+// The qrdb node pins the cluster trust domain go-xkms names its cluster with,
+// so a node SAN under a foreign trust domain is rejected. go-qrdb v0.58 dropped
+// the separate SPIFFETrustDomain: tenant SANs carry the tenant ID as their
+// trust domain, and ClusterTrustDomain is the one pinned domain left.
+func TestEmbeddedNodeStorageConfig_PinsClusterTrustDomain(t *testing.T) {
 	qcfg := EmbeddedNodeStorageConfig(&config.Config{}, ResolvedNodeSeal{})
-	assert.Equal(t, DefaultTrustDomain, qcfg.Auth.SPIFFETrustDomain)
+	assert.Equal(t, DefaultTrustDomain, qcfg.Auth.ClusterTrustDomain)
 
 	cfg := &config.Config{Cluster: config.ClusterConfig{
 		RaftEnrollment: config.RaftEnrollmentConfig{TrustDomain: "example.org"},
 	}}
 	qcfg = EmbeddedNodeStorageConfig(cfg, ResolvedNodeSeal{})
-	assert.Equal(t, "example.org", qcfg.Auth.SPIFFETrustDomain)
+	assert.Equal(t, "example.org", qcfg.Auth.ClusterTrustDomain)
 }
 
 // A relative datastore path (the webauthn-browser harness uses
@@ -265,7 +268,7 @@ func TestOpenEmbeddedNode_ExtraNodeAndServerOptionsApplied(t *testing.T) {
 	node, _, err := OpenEmbeddedNode(context.Background(), EmbeddedNodeOptions{
 		Config:             cfg,
 		Logger:             testLogger(),
-		ExtraServerOptions: []qrdbsdk.ServerOption{qrdbsdk.WithAuditLogger(sink)},
+		ExtraServerOptions: []qrdbserver.ServerOption{qrdbserver.WithAuditLogger(sink)},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, node)

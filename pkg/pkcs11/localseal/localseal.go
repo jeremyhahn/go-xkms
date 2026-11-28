@@ -77,7 +77,7 @@ func (c *Controller) Unseal(passphrase []byte) (err error) {
 	if credErr != nil {
 		return credErr
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroySealCredentials(creds)) }()
 
 	if initErr := c.barrier.Initialize(ctx, creds); initErr != nil && !isAlreadyInitialized(initErr) {
 		return initErr
@@ -123,13 +123,16 @@ func (c *Controller) Seal() error {
 func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 	ctx := context.Background()
 
+	// go-qrdb checks the current passphrase on every ChangePassword, so the
+	// old credentials are needed whether or not the barrier is sealed.
+	oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
+	if credErr != nil {
+		return credErr
+	}
+	defer func() { err = errors.Join(err, destroySealCredentials(oldCreds)) }()
+
 	wasSealed := c.barrier.IsSealed()
 	if wasSealed {
-		oldCreds, credErr := seal.CredentialsFor(ctx, oldPassphrase)
-		if credErr != nil {
-			return credErr
-		}
-		defer func() { err = errors.Join(err, oldCreds.Secret.Destroy()) }()
 		unsealErr := c.barrier.Unseal(ctx, oldCreds)
 		if isUninitialized(unsealErr) {
 			return nil // no barrier yet; first login will key it to the new PIN
@@ -148,8 +151,8 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		}
 		return credErr
 	}
-	defer func() { err = errors.Join(err, newCreds.Secret.Destroy()) }()
-	if changeErr := c.barrier.ChangePassword(ctx, newCreds); changeErr != nil {
+	defer func() { err = errors.Join(err, destroySealCredentials(newCreds)) }()
+	if changeErr := c.barrier.ChangePassword(ctx, oldCreds, newCreds); changeErr != nil {
 		if wasSealed {
 			if sealErr := c.barrier.Seal(); sealErr != nil {
 				return errors.Join(changeErr, sealErr)
@@ -162,6 +165,18 @@ func (c *Controller) Rekey(oldPassphrase, newPassphrase []byte) (err error) {
 		return c.barrier.Seal()
 	}
 	return nil
+}
+
+// destroySealCredentials releases creds' secret and returns the release
+// error. Since go-enclave v0.11.1 the secret is an enclave.Sealed interface
+// and CredentialsFor returns the zero credentials (nil Secret) for an empty
+// passphrase, such as an empty new PIN in Rekey; calling
+// creds.Secret.Destroy() on it dereferences nil.
+func destroySealCredentials(creds seal.Credentials) error {
+	if creds.Secret == nil {
+		return nil
+	}
+	return creds.Secret.Destroy()
 }
 
 func isAlreadyInitialized(err error) bool {

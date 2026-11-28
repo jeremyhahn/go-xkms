@@ -22,6 +22,10 @@ import (
 	"github.com/jeremyhahn/go-qrdb/sdk/go/transport/embedded"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbbackend "github.com/jeremyhahn/go-qrdb/sdk/go/backend"
+	qrdbsm "github.com/jeremyhahn/go-qrdb/sdk/go/statemachine"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
+	raftsm "github.com/jeremyhahn/go-quicraft/pkg/sm"
 )
 
 // GUARDED WRITES (PutIfAbsent, CompareAndSwap, CompareAndDelete) ARE
@@ -75,7 +79,7 @@ import (
 // Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
 // above these constructors.
 func NewMemory() (*Backend, error) {
-	store := qrdbsdk.NewMemoryStorage()
+	store := qrdbstorage.NewMemoryStorage()
 	return newEmbedded(store, "memory")
 }
 
@@ -88,7 +92,7 @@ func NewMemory() (*Backend, error) {
 // Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
 // above these constructors.
 func NewFile(path string) (*Backend, error) {
-	store, err := qrdbsdk.NewFileStorage(path)
+	store, err := qrdbstorage.NewFileStorage(path)
 	if err != nil {
 		return nil, &FactoryError{Engine: "file", Err: err}
 	}
@@ -103,8 +107,12 @@ func NewFile(path string) (*Backend, error) {
 // Supports PutIfAbsent, CompareAndSwap and CompareAndDelete; see the note
 // above these constructors.
 func NewPebble(path string) (*Backend, error) {
-	cfg := qrdbsdk.TestPebbleConfig(path)
-	store, err := qrdbsdk.NewPebbleStorage(cfg)
+	cfg := qrdbstorage.TestPebbleConfig(path)
+	// The small-footprint config turns SyncWrites off. The embedded store has
+	// no Raft log in front of it, so every write must reach the Pebble WAL
+	// with fsync before it is acknowledged, or SIGKILL loses it (#2252).
+	cfg.SyncWrites = true
+	store, err := qrdbstorage.NewPebbleStorage(cfg)
 	if err != nil {
 		return nil, &FactoryError{Engine: "pebble", Err: err}
 	}
@@ -130,9 +138,15 @@ func NewPebble(path string) (*Backend, error) {
 // shutdown lands after Close returns, or not at all, and the only trace is an
 // error logged from a goroutine nobody is waiting on. For a key store that is
 // silent data loss.
-func newEmbedded(store qrdbsdk.Storage, engine string) (*Backend, error) {
-	fsm := qrdbsdk.NewFastStateMachine(1, 1, store)
-	host := qrdbsdk.NewLocalBackend(fsm)
+func newEmbedded(store qrdbstorage.Storage, engine string) (*Backend, error) {
+	// The embedded write path applies each entry synchronously through a
+	// DiskBackend: every Put, Delete and guarded write commits as one
+	// storage batch on the calling goroutine before the call returns, so an
+	// acknowledged write survives SIGKILL (#2252). FastStateMachine is not
+	// used here: it acknowledges from its cache and flushes to storage in the
+	// background, so a crash after the ack lost the write.
+	fsm := &syncStateMachine{kv: qrdbsm.NewKVStateMachine(qrdbsm.NewDiskBackend(store))}
+	host := qrdbbackend.NewLocalBackend(fsm)
 	kvSvc := qrdbsdk.NewKVService(host, 1)
 	adminSvc := qrdbsdk.NewAdminService(host)
 
@@ -159,6 +173,28 @@ func newEmbedded(store qrdbsdk.Storage, engine string) (*Backend, error) {
 	kv := client.KV()
 	_, guardedWrites := kv.(transport.GuardedKVClient)
 	return newOwnedBackend(kv, &embeddedCloser{client: client, fsm: fsm, store: store}, guardedWrites), nil
+}
+
+// syncStateMachine adapts a KVStateMachine to the context-taking state machine
+// interface LocalBackend drives. It adds no buffering: Update returns only once
+// the backend has committed every entry's writes to storage.
+type syncStateMachine struct {
+	kv *qrdbsm.KVStateMachine
+}
+
+// Update applies entries synchronously and returns the first storage error.
+func (s *syncStateMachine) Update(_ context.Context, entries []raftsm.Entry, results []raftsm.Result) error {
+	return s.kv.Update(entries, results)
+}
+
+// Lookup reads committed state.
+func (s *syncStateMachine) Lookup(_ context.Context, query interface{}) (interface{}, error) {
+	return s.kv.Lookup(query)
+}
+
+// Close releases the state machine; the storage is closed by embeddedCloser.
+func (s *syncStateMachine) Close(_ context.Context) error {
+	return s.kv.Close()
 }
 
 // embeddedCloser tears down the embedded stack in dependency order: the client

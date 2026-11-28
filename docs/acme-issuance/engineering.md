@@ -382,10 +382,13 @@ descriptions (draft-aaron-acme-profiles; `directory.go:50`, from
   (go-xkms#1096). The admin plane declares no permission of its own: each
   route permission in `admin.Routes()` (`pkg/acme/admin/routes.go:97-174`) is
   a qrdb-registered permission that qrdb
-  places on its built-in roles — Owner holds all of them; Admin holds all but
-  `roles:create`/`roles:update`/`roles:delete`; Operator and Auditor each hold
-  a subset of the read/list permissions (qrdb's placement, not restated by
-  xkms). `cmd/xkmsd/admin_authz_test.go` walks the published router
+  places on its built-in roles — Owner holds all of them; Operator and Auditor
+  each hold a subset of the read/list permissions (qrdb's placement, not
+  restated by xkms). Role mutation is the one xkms rule on top: since go-qrdb
+  v0.58.5 grants Admin `roles:create`/`roles:update`, `PermissionGate.Authorize`
+  (`requiredActions` in `pkg/acme/admin/authz.go`) requires the whole
+  `roles:create`/`roles:update`/`roles:delete` family for any of the three, so
+  role mutation stays SO-only and fails closed for Admin. `cmd/xkmsd/admin_authz_test.go` walks the published router
   and pins all three properties against a first-boot-seeded node.
 - **The admin plane degrades typed, never panics, and never falls back to an
   allow-all authorizer (go-xkms#1075).** `finalizeAdminModule` always

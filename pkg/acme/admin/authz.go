@@ -18,6 +18,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"slices"
 
 	"github.com/gorilla/mux"
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
@@ -108,16 +109,19 @@ func (g *PermissionGate) Authorize(ctx context.Context, resource, action string,
 		return auth.ErrUnauthenticated
 	}
 
-	if err := g.authorizer.Authorize(ctx, identity, resource, action); err != nil {
-		args := append([]any{
-			slog.String("subject", identity.Subject),
-			slog.String("tenant", identity.TenantID),
-			slog.String("resource", resource),
-			slog.String("action", action),
-			slog.String("error", err.Error()),
-		}, attrsToArgs(extra)...)
-		g.logger.WarnContext(ctx, "ACME admin authorization denied", args...)
-		return err
+	for _, act := range requiredActions(resource, action) {
+		if err := g.authorizer.Authorize(ctx, identity, resource, act); err != nil {
+			args := append([]any{
+				slog.String("subject", identity.Subject),
+				slog.String("tenant", identity.TenantID),
+				slog.String("resource", resource),
+				slog.String("action", action),
+				slog.String("required_action", act),
+				slog.String("error", err.Error()),
+			}, attrsToArgs(extra)...)
+			g.logger.WarnContext(ctx, "ACME admin authorization denied", args...)
+			return err
+		}
 	}
 
 	g.logger.DebugContext(ctx, "ACME admin authorization granted",
@@ -125,6 +129,33 @@ func (g *PermissionGate) Authorize(ctx context.Context, resource, action string,
 		slog.String("resource", resource),
 		slog.String("action", action))
 	return nil
+}
+
+// roleMutationActions is the full role-administration family. Role
+// mutation on the ACME admin plane stays with the Security Officer: since
+// go-qrdb v0.58.5 qrdb's built-in Admin role holds roles:create and
+// roles:update but still not roles:delete, so checking only the requested
+// action would let an Admin define or widen a role (and so its own reach).
+// Every role mutation therefore requires the whole family, which the
+// built-in SO holds and Admin does not; a custom role that holds all three
+// still passes, so the rule stays expressed in qrdb permissions, not role
+// names.
+var roleMutationActions = []string{auth.ActionCreate, auth.ActionUpdate, auth.ActionDelete}
+
+// requiredActions returns the actions the caller must hold on resource for
+// action: action first, then, for a role mutation, the rest of
+// roleMutationActions.
+func requiredActions(resource, action string) []string {
+	if resource != auth.ResourceRoles || !slices.Contains(roleMutationActions, action) {
+		return []string{action}
+	}
+	out := []string{action}
+	for _, a := range roleMutationActions {
+		if a != action {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // attrsToArgs widens extra to []any so it can be spread into a slog call

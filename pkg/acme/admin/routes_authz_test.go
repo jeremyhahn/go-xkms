@@ -178,8 +178,21 @@ func TestACMEAdminRoutes_RequestExactPermission(t *testing.T) {
 				rec := httptest.NewRecorder()
 				router.ServeHTTP(rec, requestWithRoles(tc, tc.allowedRole))
 
-				require.Equal(t, []string{tc.resource + ":" + tc.action}, client.requests(),
-					"route %s %s must request exactly one permission", tc.method, tc.path)
+				want := []string{tc.resource + ":" + tc.action}
+				if tc.resource == auth.ResourceRoles {
+					// Role mutation also requires the rest of the
+					// role-administration family (SO-only).
+					switch tc.action {
+					case auth.ActionCreate:
+						want = []string{"roles:create", "roles:update", "roles:delete"}
+					case auth.ActionUpdate:
+						want = []string{"roles:update", "roles:create", "roles:delete"}
+					case auth.ActionDelete:
+						want = []string{"roles:delete", "roles:create", "roles:update"}
+					}
+				}
+				require.Equal(t, want, client.requests(),
+					"route %s %s must request exactly its permissions", tc.method, tc.path)
 			})
 		}
 	}

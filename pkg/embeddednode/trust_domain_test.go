@@ -23,9 +23,10 @@ import (
 
 // TestEmbeddedNodeStorageConfig_OneClusterTrustDomain pins the
 // trust-domain-grammar row: the embedded go-qrdb node uses the trust domain
-// go-xkms names its cluster with, for both its peer identities
+// go-xkms names its cluster with for its peer identities
 // (Auth.ClusterTrustDomain, which go-qrdb stamps into node SANs and pins in
-// clusterkeys) and its tenant principals (Auth.SPIFFETrustDomain). Without
+// clusterkeys). Since go-qrdb v0.58 tenant principals carry the tenant ID as
+// their trust domain, so there is no separate SPIFFETrustDomain. Without
 // ClusterTrustDomain go-qrdb falls back to its own "qrdb.cluster".
 func TestEmbeddedNodeStorageConfig_OneClusterTrustDomain(t *testing.T) {
 	cases := []struct {
@@ -44,8 +45,6 @@ func TestEmbeddedNodeStorageConfig_OneClusterTrustDomain(t *testing.T) {
 			qcfg := EmbeddedNodeStorageConfig(tc.cfg, ResolvedNodeSeal{})
 			assert.Equal(t, TrustDomain(tc.cfg), qcfg.Auth.ClusterTrustDomain)
 			assert.Equal(t, TrustDomain(tc.cfg), qcfg.Auth.EffectiveClusterTrustDomain())
-			assert.Equal(t, TrustDomain(tc.cfg), qcfg.Auth.SPIFFETrustDomain)
-			assert.Equal(t, TrustDomain(tc.cfg), qcfg.Auth.EffectiveSPIFFETrustDomain())
 		})
 	}
 }

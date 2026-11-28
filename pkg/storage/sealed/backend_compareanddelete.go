@@ -117,7 +117,7 @@ func unsealAndCompare(
 // claim it still holds.
 func compareInEnclave(
 	ctx context.Context,
-	enc *enclave.MemoryEnclave,
+	enc enclave.ByteAccess,
 	u types.UnsealerInto,
 	sealed *types.SealedData,
 	expected []byte,
@@ -132,6 +132,13 @@ func compareInEnclave(
 	// damaged or tampered data, and would classify the same fault differently
 	// here than on the empty-plaintext path above.
 	var unsealErr error
+
+	// A nil handle is a destroyed enclave, as it was when this took the
+	// concrete *MemoryEnclave (whose nil receiver reported ErrEnclaveDestroyed);
+	// calling through a nil ByteAccess interface would panic instead.
+	if enc == nil {
+		return false, &errs.Joined{Lead: ErrGuardEnclaveFailed, Cause: enclave.ErrEnclaveDestroyed}
+	}
 
 	if err := enc.WithBytes(func(buf []byte) error {
 		out, err := u.UnsealInto(ctx, buf[:0], sealed, nil)

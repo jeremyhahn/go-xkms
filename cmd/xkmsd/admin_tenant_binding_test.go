@@ -140,9 +140,12 @@ func newTenantBindingFixture(t *testing.T) *tenantBindingFixture {
 	})
 	require.NoError(t, err)
 	f.roleB, err = client.Roles().CreateRole(ctxB, &qrdbtransport.CreateRoleRequest{
-		Name:        "victim-role-1225",
-		TenantID:    bindingTenantB,
-		Permissions: []string{"kv:get"},
+		Name:     "victim-role-1225",
+		TenantID: bindingTenantB,
+		// go-qrdb v0.58 lets a grantor grant only permissions it holds; the
+		// oracle (Admin + SO) holds roles:read, not kv:get. The cross-tenant
+		// updates below send kv:get/kv:put, so an applied one still shows.
+		Permissions: []string{"roles:read"},
 	})
 	require.NoError(t, err)
 	return f
@@ -264,7 +267,7 @@ func TestAdminPlane_TenantCallerCannotReachAnotherTenant(t *testing.T) {
 	assert.Equal(t, "Victim B", gotUser.Name)
 	gotRole, err := f.client.Roles().GetRole(ctxB, f.roleB.ID)
 	require.NoError(t, err, "tenant-b's role must survive a tenant-a caller")
-	assert.Equal(t, []string{"kv:get"}, gotRole.Permissions)
+	assert.Equal(t, []string{"roles:read"}, gotRole.Permissions)
 	roles, err := f.client.Roles().ListRoles(ctxB, &qrdbtransport.ListRolesRequest{TenantID: bindingTenantB})
 	require.NoError(t, err)
 	for _, r := range roles.Roles {

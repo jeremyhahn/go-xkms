@@ -24,6 +24,7 @@ import (
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	clusterenroll "github.com/jeremyhahn/go-qrdb/sdk/go/clusterenroll"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 	"github.com/jeremyhahn/go-xkms/pkg/embeddednode"
@@ -52,8 +53,8 @@ func (e *ErrRaftTLSRead) Unwrap() error { return e.Err }
 // enabled it falls back to a standalone node, so a raft-built binary still runs
 // single-node. The Raft parameters were mapped onto qcfg.Raft by
 // buildXKMSQRDBConfig; the initial membership comes from Cluster.Peers.
-func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbsdk.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
-	res, err := embeddednode.NewNode(s.ctx, &embeddednode.NodeOptions{
+func (s *Server) newQRDBNode(qcfg *qrdbsdk.DaemonConfig, serverOpts []qrdbserver.ServerOption, nodeOpts []qrdbnode.NodeOption) (*qrdbnode.Node, error) {
+	res, err := embeddednode.NewNode(s.qrdbNodeContext(), &embeddednode.NodeOptions{
 		QRDB:             qcfg,
 		Cluster:          s.nodeClusterOptions(),
 		Logger:           s.logger,
