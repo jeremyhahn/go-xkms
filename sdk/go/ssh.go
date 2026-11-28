@@ -73,6 +73,31 @@ const (
 	SSHScopeService = sshscope.Service
 )
 
+// SSHScopeInvalidError reports a scope outside tenant, user and service.
+type SSHScopeInvalidError = sshscope.ScopeInvalidError
+
+// SSHKind is the kind of SSH material a scoped key ID names.
+type SSHKind = sshscope.Kind
+
+// SSH material kinds.
+const (
+	SSHKindKeys           = sshscope.KindKeys
+	SSHKindKnownHosts     = sshscope.KindKnownHosts
+	SSHKindAuthorizedKeys = sshscope.KindAuthorizedKeys
+)
+
+// SSHKindInvalidError reports an unknown SSHKind.
+type SSHKindInvalidError = sshscope.KindInvalidError
+
+// SSHKeyIDMalformedError reports a scoped key ID that does not parse.
+type SSHKeyIDMalformedError = sshscope.KeyIDMalformedError
+
+// SSHBuildKeyID builds the scoped key ID of a named key for an owner.
+var SSHBuildKeyID = sshscope.BuildKeyID
+
+// SSHValidateFilter checks a scope and owner list filter.
+var SSHValidateFilter = sshscope.ValidateFilter
+
 // SSHSession is an established outbound SSH session.
 type SSHSession = sshsession.Session
 
