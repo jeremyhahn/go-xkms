@@ -247,6 +247,21 @@ func TestCredentialHandleGetStrategy_Barrier(t *testing.T) {
 	assert.True(t, resp.AutoUnseal)
 }
 
+// TestCredentialHandleGetStrategy_BackendPINStrategy verifies the strategy
+// endpoint reports the backend PIN strategy (#2262).
+func TestCredentialHandleGetStrategy_BackendPINStrategy(t *testing.T) {
+	svc := credentialServiceOver(credTestService(t))
+	svc.SetBackendPINStrategy(func() string { return "manual" })
+	handlers := NewCredentialHandlers(svc, initTestLogger())
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/credentials/strategy", nil)
+	rec := httptest.NewRecorder()
+	handlers.HandleGetStrategy(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"backend_pin_strategy":"manual"`)
+}
+
 // ---------------------------------------------------------------------------
 // Constructor and error mapping tests
 // ---------------------------------------------------------------------------

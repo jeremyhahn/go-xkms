@@ -415,6 +415,52 @@ func TestSubmitCredential_NonManual_DelegatesToStore(t *testing.T) {
 	}
 }
 
+// TestSubmitCredential_RefusesInternalNamespace proves operators cannot
+// submit a credential into the server's reserved xkms-internal. namespace.
+func TestSubmitCredential_RefusesInternalNamespace(t *testing.T) {
+	const reserved = "xkms-internal.backend-pin-custody.pkcs11-pin"
+	for _, tc := range []struct {
+		name string
+		svc  func(t *testing.T) *Service
+	}{
+		{name: "manual", svc: func(t *testing.T) *Service {
+			svc, err := New(&Config{Strategy: StrategyManual}, nil, nil, testLogger())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			return svc
+		}},
+		{name: "barrier", svc: func(t *testing.T) *Service {
+			svc, err := New(&Config{Strategy: "barrier"}, nil, newTestBarrier(t), testLogger())
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			return svc
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := tc.svc(t)
+			ctx := context.Background()
+			err := svc.SubmitCredential(ctx, reserved, []byte("value"))
+			if err == nil {
+				t.Fatalf("SubmitCredential(%q) succeeded, want a refusal", reserved)
+			}
+			if !errors.Is(err, ErrReservedCredentialName) {
+				t.Fatalf("SubmitCredential(%q) = %v, want ErrReservedCredentialName", reserved, err)
+			}
+			names, err := svc.ListCredentials(ctx)
+			if err != nil {
+				t.Fatalf("ListCredentials: %v", err)
+			}
+			for _, n := range names {
+				if n == reserved {
+					t.Fatalf("ListCredentials contains the reserved name %q", reserved)
+				}
+			}
+		})
+	}
+}
+
 // --- DeleteCredential tests ---
 
 func TestDeleteCredential_Manual(t *testing.T) {

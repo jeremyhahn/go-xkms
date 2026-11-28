@@ -61,6 +61,14 @@ var (
 
 	ErrPhoneConfigNil = errors.New("server: phone backend configuration is not set")
 
+	// ErrBackendPINTPMCustody is matched by every *BackendPINTPMCustodyError.
+	ErrBackendPINTPMCustody = errors.New("server: the backend PIN cannot move into TPM custody")
+
+	// ErrBackendPINNodeKeyBeforeUnseal refuses a Raft transport key on the
+	// PKCS#11 token with a backend PIN strategy other than tpm2: the token
+	// opens before unseal, and only tpm2 releases the PIN then.
+	ErrBackendPINNodeKeyBeforeUnseal = errors.New("server: a Raft key on the PKCS#11 token needs the tpm2 backend PIN strategy")
+
 	// ErrPhoneBackendCreate indicates the phone backend could not be created.
 	ErrPhoneBackendCreate = errors.New("server: failed to create phone backend")
 
@@ -171,6 +179,27 @@ func (e *ErrAdaptiveRemoved) Error() string {
 }
 
 // ErrBackendInit represents a failure to initialize a specific backend.
+// BackendPINTPMCustodyError refuses a tpm2 backend PIN the server cannot
+// move into TPM custody (#2262): tpm2 is never reported while a copy of
+// the PIN outside the TPM recovers it. It matches ErrBackendPINTPMCustody.
+type BackendPINTPMCustodyError struct {
+	Field  string
+	Reason string
+	Err    error
+}
+
+func (e *BackendPINTPMCustodyError) Error() string {
+	msg := fmt.Sprintf("server: backend PIN %s cannot move into TPM custody: %s", e.Field, e.Reason)
+	if e.Err != nil {
+		msg += ": " + e.Err.Error()
+	}
+	return msg
+}
+
+func (e *BackendPINTPMCustodyError) Is(target error) bool { return target == ErrBackendPINTPMCustody }
+
+func (e *BackendPINTPMCustodyError) Unwrap() error { return e.Err }
+
 type ErrBackendInit struct {
 	Backend string
 	Err     error

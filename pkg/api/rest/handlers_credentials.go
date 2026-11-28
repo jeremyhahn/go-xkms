@@ -61,6 +61,9 @@ type CredentialSubmitResponse struct {
 type CredentialStrategyResponse struct {
 	Strategy   string `json:"strategy"`
 	AutoUnseal bool   `json:"auto_unseal"`
+	// BackendPINStrategy is the resolved PKCS#11 backend PIN strategy;
+	// omitted when no PKCS#11 backend is enabled.
+	BackendPINStrategy string `json:"backend_pin_strategy,omitempty"`
 }
 
 // CredentialListResponse is the response for the credential listing endpoint.
@@ -83,6 +86,7 @@ var credentialErrorStatusMap = map[error]int{
 	credentials.ErrCredentialNotFound:         http.StatusNotFound,
 	credentials.ErrCredentialAlreadySubmitted: http.StatusConflict,
 	credentials.ErrInvalidStrategy:            http.StatusBadRequest,
+	credentials.ErrReservedCredentialName:     http.StatusBadRequest,
 	xkms.ErrInvalidEncoding:                   http.StatusBadRequest,
 	xkms.ErrNotConfigured:                     http.StatusServiceUnavailable,
 	// The platform-scope refusal (xkms.TenantBindingError) unwraps to
@@ -157,6 +161,8 @@ func (h *CredentialHandlers) HandleGetStrategy(w http.ResponseWriter, r *http.Re
 	resp := CredentialStrategyResponse{
 		Strategy:   strategy.Strategy,
 		AutoUnseal: strategy.AutoUnseal,
+
+		BackendPINStrategy: strategy.BackendPINStrategy,
 	}
 	writeJSON(w, resp, http.StatusOK)
 }

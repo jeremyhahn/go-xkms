@@ -15,6 +15,12 @@
 
 package server
 
+import (
+	"errors"
+
+	"github.com/jeremyhahn/go-xkms/pkg/types"
+)
+
 // initPKCS11Backend is a stub when PKCS#11 support is not compiled in
 func (s *Server) initPKCS11Backend() error {
 	if s.config.Backends.PKCS11 != nil && s.config.Backends.PKCS11.Enabled {
@@ -22,6 +28,13 @@ func (s *Server) initPKCS11Backend() error {
 	}
 	return nil
 }
+
+// defaultPKCS11PINOpener refuses: PKCS#11 is not compiled in.
+func (s *Server) defaultPKCS11PINOpener(_ []byte) (types.KeyProvider, error) {
+	return nil, errPKCS11NotCompiled
+}
+
+var errPKCS11NotCompiled = errors.New("server: PKCS#11 backend not compiled in (use -tags pkcs11)")
 
 // openPreNodePKCS11Backend opens nothing without PKCS#11 support: a node key
 // on key_backend pkcs11 is then refused (clusterca.ErrNodeKeyBackendNotConfigured).

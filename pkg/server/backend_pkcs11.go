@@ -51,6 +51,16 @@ func (s *Server) initPKCS11Backend() error {
 	return nil
 }
 
+// defaultPKCS11PINOpener opens the PKCS#11 backend with a PIN released by
+// the backend PIN holder (#2262), sealed in a SecretValue for the open.
+func (s *Server) defaultPKCS11PINOpener(pin []byte) (types.KeyProvider, error) {
+	pv, err := types.NewLiteralSecretValue(s.ctx, pin)
+	if err != nil {
+		return nil, err
+	}
+	return s.openPKCS11Backend(pv)
+}
+
 // openPKCS11Backend is the one construction of the configured PKCS#11
 // backend, from backends.pkcs11 and the given token PIN. Its key and
 // certificate metadata live in the shared datastore through
@@ -103,11 +113,32 @@ func (s *Server) openPreNodePKCS11Backend() error {
 	if !s.nodeKeyOnPKCS11() || s.config.Backends.PKCS11 == nil || !s.config.Backends.PKCS11.Enabled {
 		return nil
 	}
+	// The backend PIN policy holds before the token opens: only tpm2
+	// releases the PIN before unseal (resolvePreNodeBackendPIN).
+	if err := s.resolvePreNodeBackendPIN(); err != nil {
+		return err
+	}
 	pin, err := s.releasePreNodePKCS11PIN()
 	if err != nil {
 		return &ErrBackendInit{Backend: "PKCS#11 node key", Err: err}
 	}
 	return s.registerPreNodePKCS11Backend(pin)
+}
+
+// resolvePreNodeBackendPIN resolves the backend PIN strategy before the
+// pre-node PKCS#11 open (a Raft transport key on the token). The token
+// opens before unseal, when only tpm2 can release the PIN: sealed releases
+// it at unseal and manual is refused, so every other strategy stops
+// start-up with ErrBackendPINNodeKeyBeforeUnseal and nothing is persisted.
+// The holder is installed later by resolveBackendPIN, once the barrier
+// exists to register its seal hook.
+func (s *Server) resolvePreNodeBackendPIN() error {
+	strategy, err := s.resolveBackendPINStrategy(true)
+	if err != nil {
+		return err
+	}
+	s.preNodeBackendPIN = strategy
+	return nil
 }
 
 // registerPreNodePKCS11Backend opens the token with the released PIN and

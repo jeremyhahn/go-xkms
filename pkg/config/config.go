@@ -56,6 +56,7 @@ type Config struct {
 	Bootstrap   BootstrapConfig           `yaml:"bootstrap"`
 	Barrier     BarrierConfig             `yaml:"barrier"`
 	PIN         PINConfig                 `yaml:"pin"`
+	BackendPIN  BackendPINConfig          `yaml:"backend_pin"`
 	Credentials CredentialsConfig         `yaml:"credentials"`
 	CA          *ca.MultiIdentityCAConfig `yaml:"ca,omitempty"`
 	ACME        *ACMEConfig               `yaml:"acme,omitempty"`
@@ -1485,6 +1486,10 @@ func (c *Config) ComplianceGaps() []string {
 
 // Validate checks if the configuration is valid
 func (c *Config) Validate() error {
+	if err := c.BackendPIN.Validate(); err != nil {
+		return err
+	}
+
 	// Validate the datastore first: several later checks (network serving,
 	// the credentials "barrier" seal strategy, clustering) read
 	// c.Datastore.Mode and need it already defaulted.

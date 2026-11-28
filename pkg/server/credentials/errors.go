@@ -32,6 +32,11 @@ var ErrInvalidStrategy = errors.New("credentials: invalid seal strategy")
 // already been submitted.
 var ErrCredentialAlreadySubmitted = errors.New("credentials: credential already submitted")
 
+// ErrReservedCredentialName is returned when an operator submits a
+// credential whose name lies in the server's reserved internal namespace
+// (see InternalPrefix).
+var ErrReservedCredentialName = errors.New("credentials: credential name is reserved for the server")
+
 // ErrCredentialNotFound is returned when the requested credential does not
 // exist. It is go-qrdb's sentinel, so every strategy reports the same one.
 var ErrCredentialNotFound = qrdbsdk.ErrCredentialNotFound

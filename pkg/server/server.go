@@ -67,6 +67,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
 	"github.com/jeremyhahn/go-xkms/pkg/metrics"
 	"github.com/jeremyhahn/go-xkms/pkg/oidc/credential"
+	"github.com/jeremyhahn/go-xkms/pkg/pinselect"
 	"github.com/jeremyhahn/go-xkms/pkg/pkcs11state"
 	"github.com/jeremyhahn/go-xkms/pkg/ratelimit"
 	"github.com/jeremyhahn/go-xkms/pkg/seal"
@@ -133,7 +134,34 @@ type Server struct {
 	mu           sync.RWMutex
 	backends     map[string]xkms.Backend
 	keyProviders map[string]types.KeyProvider
-	logger       *slog.Logger
+
+	// backendPIN holds the PKCS#11 backend PIN under the resolved
+	// backend_pin strategy (#2262); nil when no PKCS#11 backend is enabled.
+	backendPIN *pinselect.BackendPIN
+	// preNodeBackendPIN is the backend PIN strategy resolved before the
+	// pre-node PKCS#11 open (a Raft key on the token); resolveBackendPIN
+	// installs it instead of resolving a second time.
+	preNodeBackendPIN pinselect.BackendPINStrategy
+	// backendPINProbe reports (TPM present, barrier available) for the
+	// backend PIN resolution; nil uses the configured backends and barrier.
+	backendPINProbe func() (tpmPresent, barrierAvailable bool)
+	// tpmDeviceProbe reports a TPM 2.0 device on the host whatever
+	// backends.tpm2 says; nil probes the configured and default devices.
+	tpmDeviceProbe func() bool
+	// pkcs11PINOpener opens the PKCS#11 backend with a released PIN; nil
+	// uses the build's PKCS#11 opener.
+	pkcs11PINOpener func(pin []byte) (types.KeyProvider, error)
+	// backendPINCredentials stores the backend PIN credentials; nil uses
+	// the credential service.
+	backendPINCredentials backendPINCredentialStore
+	// backendPINTPMCustody reports the backend PIN in TPM custody: its
+	// credential holds only the TPM-sealed blob.
+	backendPINTPMCustody atomic.Bool
+	// rngBackendPIN holds an active rng.pkcs11.pin beside the key
+	// backend's PIN under the same strategy; nil otherwise.
+	rngBackendPIN           *pinselect.BackendPIN
+	rngBackendPINTPMCustody atomic.Bool
+	logger                  *slog.Logger
 
 	// sshClient is the shared SSH SDK client wired into every transport. It
 	// is built once, lazily, via ensureSSHClient.
@@ -741,9 +769,28 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 	// KMS secret key, Azure Key Vault client secret, Vault token), which
 	// could not resolve here before this reorder. See resolveConfigSecrets
 	// for what this does and does not cover.
+	// The backend PIN policy checks that need no secret run first (#2262):
+	// a refused strategy never waits on a PIN reference resolution cannot
+	// serve. An interrupted TPM custody migration of the PIN is completed
+	// before, so resolution finds credential://name.
+	if err := s.recoverBackendPINCustody(s.ctx); err != nil {
+		abortAfterStorage("backend PIN custody recovery")
+		return nil, &ErrServiceInit{Service: "backend PIN custody recovery", Err: err}
+	}
+	if err := s.backendPINPolicyPreflight(); err != nil {
+		abortAfterStorage("backend PIN strategy")
+		return nil, &ErrServiceInit{Service: "backend PIN strategy", Err: err}
+	}
 	if err := s.resolveConfigSecrets(); err != nil {
 		abortAfterStorage("config secret resolution")
 		return nil, &ErrServiceInit{Service: "config secret resolution", Err: err}
+	}
+
+	// Resolve the backend PIN strategy (#2262) beside the secret registry:
+	// a refused resolution stops start-up (fail closed).
+	if err := s.resolveBackendPIN(); err != nil {
+		abortAfterStorage("backend PIN strategy")
+		return nil, &ErrServiceInit{Service: "backend PIN strategy", Err: err}
 	}
 
 	// Initialize backends
@@ -956,6 +1003,9 @@ func New(cfg *config.Config, opts ...Option) (*Server, error) {
 		if s.tenantService != nil {
 			svc.SetTenantService(s.tenantService)
 		}
+		// The credential strategy status reports the backend PIN strategy
+		// (#2262).
+		svc.SetBackendPINStrategy(s.BackendPINStrategy)
 		// The enrollment-invitation store (go-xkms#1294 part B) is built and
 		// wired through composedStores()/compose.Stores.Wire above, the same
 		// one construction path (pkg/compose.BuildInviteStore) an embedding
@@ -1168,7 +1218,13 @@ func (s *Server) initializeBackends() error {
 		return &ErrBackendInit{Backend: "TPM2", Err: err}
 	}
 
-	if err := s.initPKCS11Backend(); err != nil {
+	// With a backend PIN strategy (#2262) the PKCS#11 backend starts here,
+	// after unseal, with the held PIN (manual waits for UnsealBackendPIN).
+	if s.backendPIN != nil {
+		if err := s.startPKCS11AfterUnseal(); err != nil {
+			return err
+		}
+	} else if err := s.initPKCS11Backend(); err != nil {
 		return &ErrBackendInit{Backend: "PKCS#11", Err: err}
 	}
 
@@ -3685,6 +3741,12 @@ func (s *Server) shutdown() error {
 func (s *Server) closeBackends() {
 	s.closeOIDCCredentials()
 	s.closeTPMPolicies()
+	// Zeroize the held backend PIN first (#2262). Under manual this also
+	// closes the PKCS#11 provider and removes it from keyProviders, so the
+	// loop below never closes it a second time.
+	if err := s.SealBackendPIN(); err != nil {
+		s.logger.Error("Error sealing the backend PIN", slog.Any("error", err))
+	}
 	for name, backend := range s.keyProviders {
 		s.logger.Info("Closing key provider...", "key_provider", name)
 		if err := backend.Close(); err != nil {

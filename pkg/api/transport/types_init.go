@@ -30,4 +30,7 @@ type CredentialSubmitResponse struct {
 type CredentialStrategyResponse struct {
 	Strategy   string `json:"strategy"`
 	AutoUnseal bool   `json:"auto_unseal"`
+	// BackendPINStrategy is the resolved PKCS#11 backend PIN strategy
+	// (sealed or manual); empty when no PKCS#11 backend is enabled.
+	BackendPINStrategy string `json:"backend_pin_strategy,omitempty"`
 }
