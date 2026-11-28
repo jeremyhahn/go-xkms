@@ -168,7 +168,16 @@ printf 200
 // v1.60 (handbook 1bea157): the variable applies only to a push to main or
 // a same-repository pull_request; every other event (workflow_dispatch,
 // schedule, a push to another branch, pull_request_target) stays hosted.
-const preflightRunsOn = "${{ github.server_url == 'https://github.com' && " +
+// v1.63 (the Tenant Agent's order, 2026-11-28 02:48Z): preflightMainClause
+// comes first, so a push to main with CI_MAIN_RUNNER_LABEL and
+// CI_MAIN_RUNNER_LABEL_DOCKER both set runs on the main-only runner; it
+// matches no pull request, so a fork still never reaches a self-hosted pool.
+const preflightMainClause = "github.server_url == 'https://github.com' && " +
+	"github.event_name == 'push' && github.ref == 'refs/heads/main' && " +
+	"vars.CI_MAIN_RUNNER_LABEL && vars.CI_MAIN_RUNNER_LABEL_DOCKER && " +
+	"fromJSON(format('[\"self-hosted\",\"linux\",\"x64\",\"{0}\"]', vars.CI_MAIN_RUNNER_LABEL)) || "
+
+const preflightRunsOn = "${{ " + preflightMainClause + "github.server_url == 'https://github.com' && " +
 	"((github.event_name == 'push' && github.ref == 'refs/heads/main') || " +
 	"(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))" +
 	" && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
@@ -182,10 +191,12 @@ func TestCIPreflightRunsHostedByDefault(t *testing.T) {
 	if j.RunsOn != preflightRunsOn {
 		t.Errorf("%s runs-on = %q, want %q", preflightJob, j.RunsOn, preflightRunsOn)
 	}
-	// No self-hosted label is written into the job: with the variable
-	// unset, or on a fork, the only value it can resolve to is ubuntu-latest.
+	// No self-hosted label is written into the job past the v1.63 main
+	// clause: with the variable unset, or on a fork, the only value it can
+	// resolve to is ubuntu-latest.
+	rest := strings.TrimPrefix(j.RunsOn, "${{ "+preflightMainClause)
 	for _, label := range []string{"self-hosted", "bigdisk"} {
-		if strings.Contains(j.RunsOn, label) {
+		if strings.Contains(rest, label) {
 			t.Errorf("%s runs-on names %q: unset or on a fork it must stay hosted", preflightJob, label)
 		}
 	}
