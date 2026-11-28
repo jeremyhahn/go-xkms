@@ -203,26 +203,41 @@ func TestTenantBinding_ForeignTenantRefusedAsNotFound(t *testing.T) {
 		})
 	}
 
-	// Tenant-b is intact.
+	// Tenant-b is intact. Tenants and EABs are read by the platform; roles
+	// and users by tenant-b's own caller, since go-qrdb's roles:read and
+	// users:read are self-scope.
 	pctx := platformCtx()
 	info, err := svc.GetTenant(pctx, boundTenantB)
 	require.NoError(t, err)
 	assert.Equal(t, boundTenantB, info.Name)
 	assert.Equal(t, entities.TenantStatusActive, info.Status)
-	role, err := svc.GetTenantRole(pctx, boundTenantB, f.roleB.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"keys:get"}, role.Permissions)
-	user, err := svc.GetTenantUser(pctx, boundTenantB, userBID)
-	require.NoError(t, err)
-	assert.Equal(t, "User B", user.Name)
 	_, err = svc.GetTenantEAB(pctx, boundTenantB, f.eabB)
 	require.NoError(t, err)
-	roles, err := svc.ListTenantRoles(pctx, boundTenantB, &db.ListRolesRequest{})
+	bctx := callerCtx(boundTenantB)
+	role, err := svc.GetTenantRole(bctx, boundTenantB, f.roleB.ID)
 	require.NoError(t, err)
-	assert.Len(t, roles.Roles, 1, "no role may be planted in tenant-b")
-	users, err := svc.ListTenantUsers(pctx, boundTenantB, &db.ListUsersRequest{})
+	assert.Equal(t, []string{"keys:get"}, role.Permissions)
+	user, err := svc.GetTenantUser(bctx, boundTenantB, userBID)
 	require.NoError(t, err)
-	assert.Len(t, users.Users, 1, "no user may be planted in tenant-b")
+	assert.Equal(t, "User B", user.Name)
+	roles, err := svc.ListTenantRoles(bctx, boundTenantB, &db.ListRolesRequest{})
+	require.NoError(t, err)
+	for _, r := range roles.Roles {
+		assert.NotEqual(t, "planted", r.Name, "no role may be planted in tenant-b")
+	}
+	users, err := svc.ListTenantUsers(bctx, boundTenantB, &db.ListUsersRequest{})
+	require.NoError(t, err)
+	for _, u := range users.Users {
+		assert.NotEqual(t, "planted", u.Username, "no user may be planted in tenant-b")
+	}
+}
+
+// requireSelfScopeDenied asserts go-qrdb refused a platform caller's
+// cross-tenant role or user operation: roles:* and users:* are self-scope.
+func requireSelfScopeDenied(t *testing.T, err error, op string) {
+	t.Helper()
+	var denied *qrdbsdk.PermissionDeniedError
+	require.ErrorAs(t, err, &denied, op)
 }
 
 // TestTenantBinding_MissingTenantMatchesForeignTenant proves the refusal adds
@@ -248,27 +263,38 @@ func TestTenantBinding_ForeignRoleAndUserUnderOwnTenant(t *testing.T) {
 	svc := f.svc
 	userBID := strconv.FormatUint(f.userB.ID, 10)
 
-	for name, ctx := range map[string]context.Context{"tenant caller": callerCtx(boundTenantA), "platform": platformCtx()} {
-		t.Run(name, func(t *testing.T) {
-			_, err := svc.GetTenantRole(ctx, boundTenantA, f.roleB.ID)
-			assert.ErrorIs(t, err, ErrRoleNotFound)
-			_, err = svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleB.ID, Permissions: []string{"keys:create"}})
-			assert.ErrorIs(t, err, ErrRoleNotFound)
-			assert.ErrorIs(t, svc.DeleteTenantRole(ctx, boundTenantA, f.roleB.ID), ErrRoleNotFound)
+	ctx := callerCtx(boundTenantA)
+	_, err := svc.GetTenantRole(ctx, boundTenantA, f.roleB.ID)
+	assert.ErrorIs(t, err, ErrRoleNotFound)
+	_, err = svc.UpdateTenantRole(ctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleB.ID, Permissions: []string{"keys:create"}})
+	assert.ErrorIs(t, err, ErrRoleNotFound)
+	assert.ErrorIs(t, svc.DeleteTenantRole(ctx, boundTenantA, f.roleB.ID), ErrRoleNotFound)
 
-			_, err = svc.GetTenantUser(ctx, boundTenantA, userBID)
-			assert.ErrorIs(t, err, ErrUserNotFound)
-			_, err = svc.UpdateTenantUser(ctx, boundTenantA, &db.UpdateUserRequest{ID: f.userB.ID, Name: "pwned"})
-			assert.ErrorIs(t, err, ErrUserNotFound)
-			assert.ErrorIs(t, svc.DeleteTenantUser(ctx, boundTenantA, userBID), ErrUserNotFound)
-		})
-	}
+	_, err = svc.GetTenantUser(ctx, boundTenantA, userBID)
+	assert.ErrorIs(t, err, ErrUserNotFound)
+	_, err = svc.UpdateTenantUser(ctx, boundTenantA, &db.UpdateUserRequest{ID: f.userB.ID, Name: "pwned"})
+	assert.ErrorIs(t, err, ErrUserNotFound)
+	assert.ErrorIs(t, svc.DeleteTenantUser(ctx, boundTenantA, userBID), ErrUserNotFound)
 
+	// The platform caller is refused by go-qrdb before any lookup: roles:*
+	// and users:* are self-scope, so tenant-a's IAM is not the platform's.
 	pctx := platformCtx()
-	role, err := svc.GetTenantRole(pctx, boundTenantB, f.roleB.ID)
+	_, err = svc.GetTenantRole(pctx, boundTenantA, f.roleB.ID)
+	requireSelfScopeDenied(t, err, "platform get role")
+	_, err = svc.UpdateTenantRole(pctx, boundTenantA, &db.UpdateRoleRequest{ID: f.roleB.ID, Permissions: []string{"keys:create"}})
+	requireSelfScopeDenied(t, err, "platform update role")
+	requireSelfScopeDenied(t, svc.DeleteTenantRole(pctx, boundTenantA, f.roleB.ID), "platform delete role")
+	_, err = svc.GetTenantUser(pctx, boundTenantA, userBID)
+	requireSelfScopeDenied(t, err, "platform get user")
+	_, err = svc.UpdateTenantUser(pctx, boundTenantA, &db.UpdateUserRequest{ID: f.userB.ID, Name: "pwned"})
+	requireSelfScopeDenied(t, err, "platform update user")
+	requireSelfScopeDenied(t, svc.DeleteTenantUser(pctx, boundTenantA, userBID), "platform delete user")
+
+	bctx := callerCtx(boundTenantB)
+	role, err := svc.GetTenantRole(bctx, boundTenantB, f.roleB.ID)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"keys:get"}, role.Permissions)
-	user, err := svc.GetTenantUser(pctx, boundTenantB, userBID)
+	user, err := svc.GetTenantUser(bctx, boundTenantB, userBID)
 	require.NoError(t, err)
 	assert.Equal(t, "User B", user.Name)
 }
@@ -315,7 +341,9 @@ func TestTenantBinding_TenantCallerManagesOwnTenant(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, boundTenantA, created.TenantID)
 
-	require.NoError(t, svc.DeleteTenantRole(ctx, boundTenantA, f.roleA.ID))
+	// go-qrdb's built-in Admin role lacks roles:delete; the tenant SO holds it.
+	require.Error(t, svc.DeleteTenantRole(ctx, boundTenantA, f.roleA.ID), "Admin must not delete roles")
+	require.NoError(t, svc.DeleteTenantRole(officerCtx(boundTenantA), boundTenantA, f.roleA.ID))
 	require.NoError(t, svc.DeleteTenantUser(ctx, boundTenantA, userAID))
 }
 
@@ -362,10 +390,16 @@ func TestTenantBinding_PlatformReachesEveryTenant(t *testing.T) {
 	ctx := platformCtx()
 
 	assertTenantStatusUnsupported(t, svc.UpdateTenantStatus(ctx, boundTenantB, entities.TenantStatusSuspended))
-	user, err := svc.UpdateTenantUser(ctx, boundTenantB, &db.UpdateUserRequest{ID: f.userB.ID, Name: "Renamed B"})
+
+	// Tenant IAM stays the tenant's own: go-qrdb's roles:* and users:* are
+	// self-scope, so the platform is refused and tenant-b's caller is not.
+	_, err := svc.UpdateTenantUser(ctx, boundTenantB, &db.UpdateUserRequest{ID: f.userB.ID, Name: "Renamed B"})
+	requireSelfScopeDenied(t, err, "platform update user")
+	requireSelfScopeDenied(t, svc.DeleteTenantRole(ctx, boundTenantB, f.roleB.ID), "platform delete role")
+	user, err := svc.UpdateTenantUser(callerCtx(boundTenantB), boundTenantB, &db.UpdateUserRequest{ID: f.userB.ID, Name: "Renamed B"})
 	require.NoError(t, err)
 	assert.Equal(t, "Renamed B", user.Name)
-	require.NoError(t, svc.DeleteTenantRole(ctx, boundTenantB, f.roleB.ID))
+
 	require.NoError(t, svc.DeleteTenant(ctx, boundTenantB))
 	_, err = svc.GetTenant(ctx, boundTenantB)
 	assert.ErrorIs(t, err, ErrTenantNotFound)
