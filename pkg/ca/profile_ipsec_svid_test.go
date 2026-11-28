@@ -73,7 +73,7 @@ func newOverlayFixture(t *testing.T) *overlayFixture {
 		PublicKey: tunnelKey.Public(),
 		NameConstraints: &NameConstraints{
 			Critical:          true,
-			PermittedIPRanges: []*net.IPNet{mustCIDR(t, "10.4.0.0/24"), mustCIDR(t, "fd00:4::/64")},
+			PermittedIPRanges: []*net.IPNet{mustCIDR(t, "198.51.100.0/24"), mustCIDR(t, "fd00:4::/64")},
 		},
 		Validity: 30 * 24 * time.Hour,
 	})
@@ -140,7 +140,7 @@ func TestIssueSubordinateCA_EncodesNameConstraints(t *testing.T) {
 	for _, n := range f.tunnel.PermittedIPRanges {
 		got[n.String()] = true
 	}
-	if !got["10.4.0.0/24"] || !got["fd00:4::/64"] || len(got) != 2 {
+	if !got["198.51.100.0/24"] || !got["fd00:4::/64"] || len(got) != 2 {
 		t.Errorf("PermittedIPRanges = %v", f.tunnel.PermittedIPRanges)
 	}
 	if len(f.svid.PermittedURIDomains) != 1 || f.svid.PermittedURIDomains[0] != testTenant {
@@ -219,7 +219,7 @@ func TestIPsecVTEP_Shape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	csr := csrFor(t, key, "attacker-chosen", []net.IP{net.ParseIP("10.4.0.99")}, nil, []pkix.Extension{csrEvidence})
+	csr := csrFor(t, key, "attacker-chosen", []net.IP{net.ParseIP("198.51.100.99")}, nil, []pkix.Extension{csrEvidence})
 
 	digest := sha256.Sum256([]byte("pcrs"))
 	evidence, err := CreateAttestationEvidenceExtension(AttestationEvidence{
@@ -235,7 +235,7 @@ func TestIPsecVTEP_Shape(t *testing.T) {
 		Signer:          f.tunnelKey,
 		IssuerCert:      f.tunnel,
 		Subject:         &Subject{CommonName: "vtep-7"},
-		SANS:            &SubjectAlternativeNames{IPs: []string{"10.4.0.7", "fd00:4::7"}},
+		SANS:            &SubjectAlternativeNames{IPs: []string{"198.51.100.7", "fd00:4::7"}},
 		ExtraExtensions: []pkix.Extension{evidence},
 	})
 	if err != nil {
@@ -254,7 +254,7 @@ func TestIPsecVTEP_Shape(t *testing.T) {
 	if cert.Subject.CommonName != "vtep-7" {
 		t.Errorf("subject %q taken from the CSR", cert.Subject.CommonName)
 	}
-	if len(cert.IPAddresses) != 2 || !cert.IPAddresses[0].Equal(net.ParseIP("10.4.0.7")) {
+	if len(cert.IPAddresses) != 2 || !cert.IPAddresses[0].Equal(net.ParseIP("198.51.100.7")) {
 		t.Errorf("IPAddresses = %v, want the caller's names only", cert.IPAddresses)
 	}
 	got, ok, err := ParseAttestationEvidenceExtension(cert)
@@ -286,7 +286,7 @@ func TestIPsecVTEP_Refusals(t *testing.T) {
 		return &SignOptions{
 			TenantID: testTenant,
 			Profile:  ProfileNameIPsecVTEP, Signer: f.tunnelKey, IssuerCert: f.tunnel,
-			SANS: &SubjectAlternativeNames{IPs: []string{"10.4.0.7"}},
+			SANS: &SubjectAlternativeNames{IPs: []string{"198.51.100.7"}},
 		}
 	}
 	cases := []struct {
@@ -298,7 +298,7 @@ func TestIPsecVTEP_Refusals(t *testing.T) {
 		{"no caller SANs even though the CSR has them", ec, func(o *SignOptions) { o.SANS = nil }, ErrCallerSANsRequired},
 		{"dns only", ec, func(o *SignOptions) { o.SANS = &SubjectAlternativeNames{DNS: []string{"vtep.example.com"}} }, ErrInvalidSAN},
 		{"uri refused", ec, func(o *SignOptions) { o.SANS.URIs = []string{"spiffe://example.org/x"} }, ErrInvalidSAN},
-		{"unparseable ip", ec, func(o *SignOptions) { o.SANS.IPs = []string{"10.4.0.300"} }, ErrInvalidSAN},
+		{"unparseable ip", ec, func(o *SignOptions) { o.SANS.IPs = []string{"198.51.100.300"} }, ErrInvalidSAN},
 		{"outside the tunnel constraints", ec, func(o *SignOptions) { o.SANS.IPs = []string{"192.0.2.1"} }, ErrNameConstraintViolation},
 		{"tenant spiffe", ec, func(o *SignOptions) { o.SPIFFETrustDomain = "example.org"; o.TenantID = "t1" }, ErrTenantSPIFFEWithCallerSANs},
 		{"above max lifetime", ec, func(o *SignOptions) { o.Validity = 91 * 24 * time.Hour }, ErrValidityExceedsProfile},
@@ -315,7 +315,7 @@ func TestIPsecVTEP_Refusals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := base()
 			tc.mutate(opts)
-			csr := csrFor(t, tc.key, "vtep", []net.IP{net.ParseIP("10.4.0.8")}, nil, nil)
+			csr := csrFor(t, tc.key, "vtep", []net.IP{net.ParseIP("198.51.100.8")}, nil, nil)
 			_, err := f.ca.SignCSR(context.Background(), csr, opts)
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("err = %v, want %v", err, tc.want)

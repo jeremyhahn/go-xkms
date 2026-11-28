@@ -74,7 +74,10 @@ expect_all() {
 RUNNER_KEY='url.http://x:runner-token@forge.example.com/jeremyhahn/.insteadOf'
 TOKEN_KEY='url.http://x:local-token@gitea.example.com/jeremyhahn/.insteadOf'
 VALUE='https://github.com/jeremyhahn/'
-GLOB='github.com/jeremyhahn/*'
+# No in-house default: GOPRIVATE is empty unless the caller sets it, so
+# first-party modules come through proxy.golang.org and sum.golang.org.
+GLOB=''
+CALLER_GLOB='example.com/private/*'
 
 section "compose files under test"
 eq "the devcontainer compose file is covered" "yes" \
@@ -89,7 +92,7 @@ expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" runner
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" runner
 expect_all GOPRIVATE "$GLOB" runner
 eq "runner: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "runner credentials with no FORGE_MODULE_TOKEN (the CI checkout)"
@@ -98,8 +101,8 @@ via_make GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$
 eq "make succeeds" "0" "$?"
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" ci
 
-# The runner's rewrite alone, with no GITEA_HOST, still marks the modules
-# private: make exports GOMODAUTH_GOPRIVATE whenever a runner key is present.
+# The runner's rewrite alone, with no GITEA_HOST, forwards the rewrite and
+# marks nothing private: GOPRIVATE stays the caller's (here, unset).
 section "runner credentials without GITEA_HOST"
 via_make GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$VALUE" \
 	FORGE_MODULE_TOKEN= GITEA_HOST=
@@ -115,7 +118,7 @@ expect_all GIT_CONFIG_COUNT 1 count2
 expect_all GIT_CONFIG_KEY_0 "$RUNNER_KEY" count2
 expect_all GOPRIVATE "$GLOB" count2
 eq "count2: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "FORGE_MODULE_TOKEN and GITEA_HOST compose the rewrite"
@@ -126,7 +129,16 @@ expect_all GIT_CONFIG_KEY_0 "$TOKEN_KEY" token
 expect_all GIT_CONFIG_VALUE_0 "$VALUE" token
 expect_all GOPRIVATE "$GLOB" token
 eq "token: gomodauth secret" \
-	"$(printf 'export GOPRIVATE=github.com/jeremyhahn/*\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$TOKEN_KEY" "$VALUE")" \
+	"$(printf 'export GOPRIVATE=\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$TOKEN_KEY" "$VALUE")" \
+	"$(cat "$WORK/gomodauth.env")"
+
+section "a caller-supplied GOPRIVATE passes through unchanged"
+via_make GOPRIVATE="$CALLER_GLOB" GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="$RUNNER_KEY" GIT_CONFIG_VALUE_0="$VALUE" \
+	FORGE_MODULE_TOKEN= GITEA_HOST=
+eq "make succeeds" "0" "$?"
+expect_all GOPRIVATE "$CALLER_GLOB" caller
+eq "caller: gomodauth secret" \
+	"$(printf 'export GOPRIVATE=%s\nexport GIT_CONFIG_COUNT=1\nexport GIT_CONFIG_KEY_0=%s\nexport GIT_CONFIG_VALUE_0=%s' "$CALLER_GLOB" "$RUNNER_KEY" "$VALUE")" \
 	"$(cat "$WORK/gomodauth.env")"
 
 section "no credentials resolve publicly"
@@ -148,6 +160,15 @@ expect_all GOPRIVATE "$GLOB" direct
 env -i "${GO_CACHE_ENV[@]}" bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
 expect_all GIT_CONFIG_COUNT "" direct-public
 expect_all GOPRIVATE "" direct-public
+# A direct launch keeps the caller's GOPRIVATE when GOMODAUTH_GOPRIVATE (the
+# make-exported value) is unset (Codex #2203 compose.yaml:141); when both are
+# set, GOMODAUTH_GOPRIVATE wins, as make passes the caller's value through it.
+env -i "${GO_CACHE_ENV[@]}" GOPRIVATE="$CALLER_GLOB" \
+	bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
+expect_all GOPRIVATE "$CALLER_GLOB" direct-caller
+env -i "${GO_CACHE_ENV[@]}" GOPRIVATE='example.org/other/*' GOMODAUTH_GOPRIVATE="$CALLER_GLOB" \
+	bash "$PROBE" "$ROOT" "${COMPOSE_FILES[@]}" > "$WORK/probe.out"
+expect_all GOPRIVATE "$CALLER_GLOB" direct-both
 
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

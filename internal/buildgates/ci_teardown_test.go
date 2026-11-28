@@ -3,6 +3,8 @@ package buildgates
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -130,5 +132,194 @@ func TestCITeardownCatchEachMissingTeardown(t *testing.T) {
 			}
 			t.Fatalf("want a problem containing %q, got %q", tc.want, problems)
 		})
+	}
+}
+
+// runImagesFlag asks clean-test-containers to also remove this run's images.
+const runImagesFlag = "CLEAN_RUN_IMAGES=1"
+
+// imageTeardownProblems lists every if: always() clean-test-containers line
+// that does not also remove its run's images, and fails when there is none.
+func imageTeardownProblems(wf workflow) []string {
+	names := make([]string, 0, len(wf.Jobs))
+	for name := range wf.Jobs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var problems []string
+	seen := 0
+	for _, name := range names {
+		for _, step := range wf.Jobs[name].Steps {
+			if !strings.Contains(step.If, "always()") {
+				continue
+			}
+			for _, line := range strings.Split(step.Run, "\n") {
+				if !strings.Contains(line, "make clean-test-containers ") {
+					continue
+				}
+				seen++
+				if !strings.Contains(line, runImagesFlag) {
+					problems = append(problems, fmt.Sprintf("%s: %q does not pass %s", name, strings.TrimSpace(line), runImagesFlag))
+				}
+			}
+		}
+	}
+	if seen == 0 {
+		problems = append(problems, "no if: always() step runs make clean-test-containers")
+	}
+	return problems
+}
+
+// runImageRecipeProblems lists what the clean-test-containers recipe lacks to
+// remove this run's IT_PROJECT images without failing or touching IT_IMAGE.
+func runImageRecipeProblems(recipe string) []string {
+	var problems []string
+	for _, want := range []string{"CLEAN_RUN_IMAGES", "$(IT_PROJECT)", "$(XKMS_IMAGE_TAG)", "$(call run-image-refs", "docker rmi -f", "|| true"} {
+		if !strings.Contains(recipe, want) {
+			problems = append(problems, fmt.Sprintf("clean-test-containers recipe has no %q", want))
+		}
+	}
+	if !strings.Contains(recipe, `= '$(IT_IMAGE)'`) {
+		problems = append(problems, "clean-test-containers recipe does not skip IT_IMAGE")
+	}
+	if strings.Contains(recipe, "docker image ls") {
+		problems = append(problems, "clean-test-containers recipe selects images by name instead of run-image-refs")
+	}
+	if strings.Contains(recipe, "prune") {
+		problems = append(problems, "clean-test-containers recipe prunes the Docker store")
+	}
+	return problems
+}
+
+func TestCITeardownRemovesThisRunsImages(t *testing.T) {
+	data, err := os.ReadFile(ciWorkflow)
+	if err != nil {
+		t.Fatalf("read %s: %v", ciWorkflow, err)
+	}
+	for _, p := range imageTeardownProblems(parseWorkflow(t, data)) {
+		t.Error(p)
+	}
+	mk, err := os.ReadFile(filepath.Join(repoRoot, "Makefile"))
+	if err != nil {
+		t.Fatalf("read %s: %v", filepath.Join(repoRoot, "Makefile"), err)
+	}
+	recipe, ok := makeRecipe(string(mk), "clean-test-containers")
+	if !ok {
+		t.Fatal("Makefile has no clean-test-containers target")
+	}
+	for _, p := range runImageRecipeProblems(recipe) {
+		t.Error(p)
+	}
+}
+
+func TestCITeardownCatchesKeptRunImages(t *testing.T) {
+	kept := strings.Replace(teardownFixture, `clean-test-containers IT_PROJECT="$IT_PROJECT"`, `clean-test-containers IT_PROJECT="$IT_PROJECT" `+runImagesFlag, 1)
+	if got := imageTeardownProblems(parseWorkflow(t, []byte(kept))); len(got) != 0 {
+		t.Fatalf("valid fixture reported %q", got)
+	}
+	if got := imageTeardownProblems(parseWorkflow(t, []byte(teardownFixture))); len(got) == 0 {
+		t.Fatal("teardown without the image flag was not reported")
+	}
+	good := "\t@if [ \"$(CLEAN_RUN_IMAGES)\" = 1 ] && [ -n \"$(IT_PROJECT)\" ] && [ -n \"$(XKMS_IMAGE_TAG)\" ]; then $(call run-image-refs,r=); keep=\"\"; for ref in $$refs; do [ \"$$ref\" = '$(IT_IMAGE)' ] || keep=\"$$keep $$ref\"; done; docker rmi -f $$keep || true; fi\n"
+	if got := runImageRecipeProblems(good); len(got) != 0 {
+		t.Fatalf("valid recipe reported %q", got)
+	}
+	for _, bad := range []string{
+		strings.Replace(good, " || true", "", 1),
+		strings.Replace(good, `[ "$$ref" = '$(IT_IMAGE)' ] || `, "", 1),
+		strings.Replace(good, "docker rmi -f $$keep", "docker image prune -af", 1),
+		strings.Replace(good, "$(call run-image-refs,r=)", "refs=$$(docker image ls)", 1),
+	} {
+		if got := runImageRecipeProblems(bad); len(got) == 0 {
+			t.Errorf("recipe %q was not reported", bad)
+		}
+	}
+}
+
+// fakeDocker answers image listings from IMAGES (one ref per line), logs each
+// removed ref to RMLOG, and succeeds silently on every other command.
+const fakeDocker = `#!/usr/bin/env bash
+case "$1" in
+images|image)
+	if [ "$1" = image ]; then shift; fi
+	case "$1" in
+	rm|rmi) shift; for a in "$@"; do [ "$a" = -f ] || echo "$a" >>"$RMLOG"; done; exit 0;;
+	esac
+	pat=""
+	for a in "$@"; do case "$a" in --filter=reference=*) pat="${a#--filter=reference=}";; esac; done
+	while IFS= read -r ref; do
+		[ -n "$ref" ] || continue
+		if [ -z "$pat" ] || [[ "$ref" == $pat ]]; then echo "$ref"; fi
+	done <"$IMAGES"
+	exit 0;;
+rmi) shift; for a in "$@"; do [ "$a" = -f ] || echo "$a" >>"$RMLOG"; done; exit 0;;
+esac
+exit 0
+`
+
+func TestCITeardownRemovesOnlyOwnedRunImages(t *testing.T) {
+	if _, err := exec.LookPath("make"); err != nil {
+		t.Fatalf("make not on PATH: %v", err)
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(fakeDocker), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const project = "go-xkms-ci-7-1"
+	const itImage = "go-xkms-ci-it:0123456789abcdef"
+	owned := []string{
+		"go-xkms-server:" + project,
+		"go-xkms/cli:" + project,
+		"go-quicbaas-server:" + project,
+	}
+	kept := []string{
+		itImage,
+		"go-xkms-server:" + project + "-soak-1",
+		"go-xkms-server:go-xkms-ci-7-10",
+		"other/tool:" + project,
+		project + "-cache:latest",
+		"registry.example/" + project + "-tool:v1",
+	}
+	images := filepath.Join(dir, "images")
+	if err := os.WriteFile(images, []byte(strings.Join(append(append([]string{}, owned...), kept...), "\n")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rmlog := filepath.Join(dir, "rm.log")
+	cmd := exec.Command("make", "-s", "-C", repoRoot, "clean-test-containers",
+		"IT_PROJECT="+project, "IT_IMAGE="+itImage, "CLEAN_RUN_IMAGES=1", "BUILD_DIR="+filepath.Join(dir, "build"))
+	for _, kv := range os.Environ() {
+		switch strings.SplitN(kv, "=", 2)[0] {
+		case "PATH", "XKMS_IMAGE_TAG", "COMPOSE_RUN_ID", "IT_PROJECT", "IT_IMAGE", "MAKEFLAGS":
+			continue
+		}
+		cmd.Env = append(cmd.Env, kv)
+	}
+	cmd.Env = append(cmd.Env, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"IMAGES="+images, "RMLOG="+rmlog)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("make clean-test-containers: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(rmlog)
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	removed := map[string]bool{}
+	for _, ref := range strings.Fields(string(data)) {
+		removed[ref] = true
+	}
+	for _, ref := range owned {
+		if !removed[ref] {
+			t.Errorf("teardown kept this run's image %s", ref)
+		}
+	}
+	for _, ref := range kept {
+		if removed[ref] {
+			t.Errorf("teardown removed %s, which this run does not own", ref)
+		}
 	}
 }

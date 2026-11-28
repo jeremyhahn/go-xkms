@@ -110,7 +110,7 @@ func TestSDK_OverlayProfilesUnderNameConstrainedSubordinates(t *testing.T) {
 	}
 
 	t.Run("ipsec-vtep", func(t *testing.T) {
-		_, fabric, _ := net.ParseCIDR("10.4.0.0/24")
+		_, fabric, _ := net.ParseCIDR("198.51.100.0/24")
 		tunnelKey := newKey()
 		tunnel, err := subIssuer.IssueSubordinateCA(ctx, &SubordinateCARequest{
 			Subject:         pkix.Name{CommonName: "Tunnel Intermediate"},
@@ -132,7 +132,7 @@ func TestSDK_OverlayProfilesUnderNameConstrainedSubordinates(t *testing.T) {
 			Profile:         ProfileNameIPsecVTEP,
 			Signer:          tunnelKey,
 			IssuerCert:      tunnel,
-			SANS:            &TrustedCASubjectAlternativeNames{IPs: []string{"10.4.0.7"}},
+			SANS:            &TrustedCASubjectAlternativeNames{IPs: []string{"198.51.100.7"}},
 			ExtraExtensions: []pkix.Extension{evidence},
 		})
 		if err != nil {

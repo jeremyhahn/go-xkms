@@ -122,8 +122,11 @@ docker compose -f docker-compose.production.yml down
 
 ### Building Images
 
-Production images embed private `github.com/jeremyhahn/*` Go modules, fetched
-during `go mod download` with the in-house module credential. Each
+Production images fetch their Go modules during `go mod download` through
+proxy.golang.org and sum.golang.org. Private modules are named only by the
+caller's `GOPRIVATE`: the build sets no default, and an empty `GOPRIVATE`
+resolves every module publicly. When the caller names private modules, they
+are fetched with the module credential. Each
 `docker-build-*` Make target stages that credential to a gitignored file via
 `stage-gomodauth` and hands it to BuildKit as a build secret
 (`--secret id=gomodauth`); the Dockerfiles never see it any other way.
