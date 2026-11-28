@@ -42,6 +42,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 	noiseproto "github.com/jeremyhahn/go-truststrap/pkg/noiseproto"
 	noiseboot "github.com/jeremyhahn/go-truststrap/pkg/noiseproto/bootstrap"
 	"github.com/jeremyhahn/go-xkms/pkg/aeadnonce"
@@ -53,6 +54,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/compose"
 	"github.com/jeremyhahn/go-xkms/pkg/config"
@@ -302,6 +304,11 @@ type Server struct {
 	// TrustedCA is not the cluster CA (see trustedCAIsClusterCA).
 	clusterCAKeyProvider *clustercapkg.KeyProvider
 
+	// headSignerProvider signs verifiable-log checkpoints with the CA key;
+	// built with the node, bound to the cluster CA identity of the
+	// TrustedCA once the CA is built (bindCAProviders).
+	headSignerProvider *tlog.HeadSignerProvider
+
 	// tenantService is the node's go-qrdb TenantService, built over the
 	// node's barrier registry with the node seal strategy injected. It owns the
 	// entitlement-gated isolation modes, system-managed auto-unseal, quotas, and
@@ -464,11 +471,11 @@ type Server struct {
 	// extraModules holds additional qrdb ServiceModules to register on the
 	// embedded node's unified server alongside xkms's own module (the "xkms"
 	// ModuleName in pkg/apimodule). Set via WithExtraModules; consumed by
-	// initEmbeddedQRDBNode, which appends them into the same qrdbsdk.WithModule
+	// initEmbeddedQRDBNode, which appends them into the same qrdbserver.WithModule
 	// option list as xkmsModule. A composing binary (e.g. cmd/xkmsd mounting
 	// the admin surface) supplies its own ServiceModule this way instead of
 	// xkms hosting a second embedded node.
-	extraModules []qrdbsdk.ServiceModule
+	extraModules []qrdbserver.ServiceModule
 
 	// attestedCallerPolicy is the embedder's attested-caller gate policy, set
 	// via WithAttestedCallerPolicy. attestation.peer_gate decides whether a
@@ -577,11 +584,11 @@ func WithAuthenticatorDecorator(fn func(auth.Authenticator) auth.Authenticator) 
 // node's unified server, alongside xkms's own "xkms" module. It is additive:
 // the composing binary supplies modules built against its own resolvers (for
 // example an admin-surface module mounted on the unified mTLS listener), and
-// initEmbeddedQRDBNode appends them into the same qrdbsdk.WithModule option
+// initEmbeddedQRDBNode appends them into the same qrdbserver.WithModule option
 // list it builds for the xkms module. Registering a module under a name that
 // collides with an existing one fails node construction, exactly as
-// qrdbsdk.WithModule does for any other duplicate.
-func WithExtraModules(mods ...qrdbsdk.ServiceModule) Option {
+// qrdbserver.WithModule does for any other duplicate.
+func WithExtraModules(mods ...qrdbserver.ServiceModule) Option {
 	return func(s *Server) { s.extraModules = append(s.extraModules, mods...) }
 }
 
@@ -2118,6 +2125,27 @@ func (s *Server) initializeHealth() error {
 // If config.CA is nil, the CA is not configured and initialization is skipped.
 // On first startup (no existing CA data), Init() creates new root/intermediate certificates.
 // On subsequent startups, Load() restores the CA from stored certificates and keys.
+// transparencyLog returns the appender the CA writes its transparency-log
+// entries through: the node's verifiable logs of the system tenant, signed
+// by the key headSignerProvider binds. It is nil, and the CA appends
+// nothing, when the node has no verifiable-log service (built without
+// qrdb_vlog) or no head signer.
+func (s *Server) transparencyLog() tlog.Appender {
+	if s.qrdbClient == nil || s.qrdbNode == nil || s.headSignerProvider == nil {
+		return nil
+	}
+	if svcs := s.qrdbNode.Services(); svcs == nil || svcs.Log == nil {
+		return nil
+	}
+	return tlog.NewNodeAppender(s.qrdbClient, tlog.NodeAppenderConfig{
+		Tenant: qrdbsdk.SystemTenantID,
+		Keys:   s.headSignerProvider,
+		// The CA's log writes are xkms's own, as its storage is: they run
+		// as the node's service principal.
+		Context: s.qrdbNode.ServiceContext,
+	})
+}
+
 func (s *Server) initializeCA() error {
 	if s.config.CA == nil {
 		return nil
@@ -2187,6 +2215,7 @@ func (s *Server) initializeCA() error {
 		Storage:         s.caStorage,
 		BackendForStore: backendForStore,
 		AuditLogger:     s.auditLogger,
+		TransparencyLog: s.transparencyLog(),
 		AdoptCertStore:  s.adoptStagedClusterCACerts,
 		Logger:          s.logger,
 	})
@@ -2198,10 +2227,8 @@ func (s *Server) initializeCA() error {
 
 	// The node was built before the CA, whose stores live in it: bind the
 	// TrustedCA as go-qrdb's cluster CA (Key A) now.
-	if s.clusterCAKeyProvider != nil {
-		if err := s.clusterCAKeyProvider.Bind(trustedCA); err != nil {
-			return &ErrCAInit{Operation: "bind cluster CA", Err: err}
-		}
+	if err := s.bindCAProviders(trustedCA); err != nil {
+		return err
 	}
 
 	cn := s.config.CA.Identity[0].Subject.CommonName

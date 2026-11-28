@@ -2372,7 +2372,7 @@ jobs:
               exit 1
             fi
             rm -f "$probe"
-            TAGS=pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost
+            TAGS=pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost,qrdb_vlog
             go build -tags="$TAGS" -o build/xkmsctl ./cmd/xkmsctl
             go build -tags="$TAGS" -o build/xkmsd ./cmd/xkmsd
             (cd xkey && go build -tags="$TAGS" -o ../build/xkey ./cmd/xkey)
@@ -2414,7 +2414,7 @@ jobs:
             exit 1
           fi
           rm -f "$probe"
-          TAGS=pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost
+          TAGS=pkcs8,tpm2,awskms,gcpkms,azurekv,pkcs11,vault,frost,qrdb_vlog
           go build -tags="$TAGS" -o build/xkmsctl ./cmd/xkmsctl
           go build -tags="$TAGS" -o build/xkmsd ./cmd/xkmsd
           (cd xkey && go build -tags="$TAGS" -o ../build/xkey ./cmd/xkey)
@@ -2904,7 +2904,7 @@ jobs:
             export TFWSIM_DIR=/src/build/agsim
             make agsim
             GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
-              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+              -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost,qrdb_vlog" ./...
           '
 
       # The bigdisk pool (m2475): the same commands natively, as in lint-gates.
@@ -2933,7 +2933,7 @@ jobs:
           export TFWSIM_DIR="$GITHUB_WORKSPACE/build/agsim"
           make agsim
           GOMEMLIMIT=10GiB GOMAXPROCS=8 go test -race -p 2 -timeout 75m \
-            -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost" ./...
+            -tags="pkcs8,awskms,gcpkms,azurekv,pkcs11,vault,codec_cbor,codec_json,codec_msgpack,frost,qrdb_vlog" ./...
 
       - name: Tear down
         if: always() && runner.environment == 'github-hosted'

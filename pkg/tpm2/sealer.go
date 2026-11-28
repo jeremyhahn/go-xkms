@@ -383,7 +383,14 @@ func (tpm *TPM2) Unseal(ctx context.Context, sealed *types.SealedData, opts *typ
 			return nil, types.SealedDataAuthenticationError("", err)
 		}
 		tpm.logger.Debug("unseal: using provided TPMPublic/TPMPrivate blobs directly")
+		restore, err := resolveSealAuth(keyAttrs)
+		if err != nil {
+			return nil, err
+		}
+		tpm.sealMu.Lock()
 		secret, err := tpm.unsealFromBlobs(keyAttrs, backend, sealed.TPMPublic, sealed.TPMPrivate)
+		tpm.sealMu.Unlock()
+		restore()
 		if err != nil {
 			return nil, err
 		}
@@ -413,9 +420,18 @@ func (tpm *TPM2) SealKey(
 	backend KeyBackend,
 	overwrite bool) (*tpm2.CreateResponse, error) {
 
+	// Resolve first: an unreadable TPM-backed password reports
+	// ErrPlatformPasswordUnavailable, not a seal without protection.
+	restore, err := resolveSealAuth(keyAttrs)
+	if err != nil {
+		return nil, err
+	}
+	defer restore()
 	if err := requireSealProtection(keyAttrs); err != nil {
 		return nil, err
 	}
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
 	return tpm.sealKeyInternal(keyAttrs, backend, overwrite)
 }
 
@@ -426,6 +442,85 @@ func (tpm *TPM2) UnsealKey(
 	keyAttrs *types.KeyAttributes,
 	backend KeyBackend) ([]byte, error) {
 
-	// Delegate to the existing implementation in seal.go
+	restore, err := resolveSealAuth(keyAttrs)
+	if err != nil {
+		return nil, err
+	}
+	defer restore()
+	tpm.sealMu.Lock()
+	defer tpm.sealMu.Unlock()
 	return tpm.unsealKeyInternal(keyAttrs, backend)
+}
+
+// resolveSealAuth resolves a TPM-backed password on keyAttrs and on its
+// parent before a seal operation takes sealMu. A PlatformPassword resolves
+// its bytes by unsealing through this TPM, which takes sealMu again: read
+// inside the serialized operation it would wait on itself forever. The
+// resolved bytes stand in for the password while the operation runs; the
+// returned restore puts the caller's passwords back and releases them.
+func resolveSealAuth(keyAttrs *types.KeyAttributes) (func(), error) {
+	noop := func() {}
+	if keyAttrs == nil {
+		return noop, nil
+	}
+	keyPw, err := resolvedPassword(keyAttrs.Password)
+	if err != nil {
+		return noop, err
+	}
+	var parentPw types.Password
+	if keyAttrs.Parent != nil {
+		parentPw, err = resolvedPassword(keyAttrs.Parent.Password)
+		if err != nil {
+			if keyPw != nil {
+				keyPw.Clear()
+			}
+			return noop, err
+		}
+	}
+	if keyPw == nil && parentPw == nil {
+		return noop, nil
+	}
+	password, parent := keyAttrs.Password, keyAttrs.Parent
+	if keyPw != nil {
+		keyAttrs.Password = keyPw
+	}
+	if parentPw != nil {
+		// A copy: the parent's attributes are shared with other keys.
+		resolvedParent := *keyAttrs.Parent
+		resolvedParent.Password = parentPw
+		keyAttrs.Parent = &resolvedParent
+	}
+	return func() {
+		keyAttrs.Password, keyAttrs.Parent = password, parent
+		if keyPw != nil {
+			keyPw.Clear()
+		}
+		if parentPw != nil {
+			parentPw.Clear()
+		}
+	}, nil
+}
+
+// resolvedPassword returns the resolved bytes of a TPM-backed password as a
+// password of their own, or nil when pw needs no TPM to resolve.
+func resolvedPassword(pw types.Password) (types.Password, error) {
+	platform, ok := pw.(*PlatformPassword)
+	if !ok || platform == nil {
+		return nil, nil
+	}
+	// WithBytes fails closed with ErrPlatformPasswordUnavailable when the
+	// secret cannot be unsealed: an empty stand-in would authorize the seal
+	// with an empty credential.
+	var resolved types.Password
+	err := platform.WithBytes(func(secret []byte) error {
+		auth := append([]byte{}, secret...)
+		defer enclave.Wipe(auth)
+		var err error
+		resolved, err = store.NewPassword(auth)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resolved, nil
 }

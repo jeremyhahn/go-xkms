@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	qrdbseal "github.com/jeremyhahn/go-qrdb/pkg/seal"
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
 
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
@@ -365,7 +366,7 @@ func (s *BarrierService) Initialize(password, strategyID string) (err error) {
 		s.log.Error("barrier: CredentialsFor failed", "error", credErr)
 		return errors.Join(credErr, closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
 
 	if initErr := barrier.Initialize(ctx, creds); initErr != nil {
 		closeErr := base.Close()
@@ -436,7 +437,7 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 			s.mu.Unlock()
 			return s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": s.lastStrategy})
 		}
-		defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+		defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
 
 		if err := s.barrier.Unseal(ctx, creds); err != nil {
 			s.mu.Unlock()
@@ -507,7 +508,7 @@ func (s *BarrierService) Unseal(password, strategyID string) (err error) {
 		s.mu.Unlock()
 		return errors.Join(s.barrierAuditErr(audit.OpBarrierUnsealed, false, credErr, map[string]any{"strategy": strategyID}), closeErr)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
 
 	if err := barrier.Unseal(ctx, creds); err != nil {
 		closeErr := base.Close()
@@ -559,11 +560,35 @@ func (s *BarrierService) Seal() error {
 	return auditErr
 }
 
-// ChangePassword re-seals the barrier root key with new credentials.
-// The barrier must be initialized and unsealed. For hardware-backed
-// strategies this is a no-op because those strategies do not use
-// password-derived wrapping keys.
-func (s *BarrierService) ChangePassword(newPassword string) (err error) {
+// destroyCredentials releases the secret of c. The zero Credentials an empty
+// password yields has a nil Secret; under go-enclave v0.11.1 Secret is an
+// enclave.ByteAccess interface, so a nil one is skipped, never called.
+func destroyCredentials(c xkms.SealCredentials) error {
+	if c.Secret == nil {
+		return nil
+	}
+	return c.Secret.Destroy()
+}
+
+// BarrierCommittedError reports a failure that happened after a barrier
+// password change was persisted (its audit record or credential cleanup).
+// The barrier is sealed with the new password: callers must not undo
+// the credential change that matches it.
+type BarrierCommittedError struct {
+	Err error
+}
+
+func (e *BarrierCommittedError) Error() string {
+	return "barrier_service: password changed, post-commit step failed: " + e.Err.Error()
+}
+
+func (e *BarrierCommittedError) Unwrap() error { return e.Err }
+
+// ChangePassword re-seals the barrier root key with new credentials after
+// proving the current ones. The barrier must be initialized and unsealed.
+// For hardware-backed strategies this is a no-op because those strategies
+// do not use password-derived wrapping keys.
+func (s *BarrierService) ChangePassword(currentPassword, newPassword string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -571,25 +596,165 @@ func (s *BarrierService) ChangePassword(newPassword string) (err error) {
 		return ErrBarrierNotInitialized
 	}
 
+	// Registered first so it runs last: once the rewrite has committed,
+	// every later failure (audit, credential cleanup) is post-commit.
+	committed := false
+	defer func() {
+		if committed && err != nil {
+			err = &BarrierCommittedError{Err: err}
+		}
+	}()
+
 	ctx := s.context()
 	// CredentialsFor: ChangePassword is a no-op for hardware-backed
-	// strategies, which are called with an empty newPassword by design (see
+	// strategies, which are called with empty passwords by design (see
 	// the doc comment above); NewCredentials would reject that empty input.
-	creds, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
+	// An empty password yields the zero Credentials, whose Secret is nil.
+	current, credErr := xkms.CredentialsFor(ctx, []byte(currentPassword))
 	if credErr != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
 	}
-	defer func() { err = errors.Join(err, creds.Secret.Destroy()) }()
+	defer func() { err = errors.Join(err, destroyCredentials(current)) }()
+	next, credErr := xkms.CredentialsFor(ctx, []byte(newPassword))
+	if credErr != nil {
+		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, credErr, nil)
+	}
+	defer func() { err = errors.Join(err, destroyCredentials(next)) }()
 
-	if err := s.barrier.ChangePassword(ctx, creds); err != nil {
+	// go-qrdb v0.58.5: the barrier proves current before re-sealing.
+	if err := s.barrier.ChangePassword(ctx, current, next); err != nil {
 		return s.barrierAuditErr(audit.OpBarrierPasswordChanged, false, err, nil)
 	}
+	committed = true
 
 	if auditErr := s.logBarrierEvent(audit.OpBarrierPasswordChanged, true, nil, nil); auditErr != nil {
 		return auditErr
 	}
 	s.log.Info("barrier password changed")
 	return nil
+}
+
+// PasswordBound reports whether password unseals the live barrier root key,
+// without changing any barrier state. Setup may give the barrier its own
+// password, independent of the user PIN; a PIN change uses this to decide
+// whether the barrier must be resealed with the new PIN.
+//
+// Returns ErrBarrierNotInitialized when no barrier is open and
+// ErrBarrierResealFailed when the barrier is sealed (there is no live key
+// to compare against). Any verification failure is returned, a credential
+// mismatch included: go-qrdb v0.58.5 reports a failure inside the sealing
+// strategy as the same ErrCredentialMismatch, so a mismatch cannot prove
+// the barrier has a password of its own and fails closed with
+// ErrBarrierCredentialUnverified.
+func (s *BarrierService) PasswordBound(password string) (bound bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.barrier == nil {
+		return false, ErrBarrierNotInitialized
+	}
+	if s.barrier.IsSealed() {
+		return false, ErrBarrierResealFailed
+	}
+
+	ctx := s.context()
+	creds, credErr := xkms.CredentialsFor(ctx, []byte(password))
+	if credErr != nil {
+		return false, credErr
+	}
+	defer func() { err = errors.Join(err, destroyCredentials(creds)) }()
+
+	// go-qrdb v0.58.5: VerifyCredentials unseals a candidate key and
+	// compares it with the live one; it never alters barrier state. Its
+	// ErrCredentialMismatch also covers failures inside the strategy
+	// (protected memory, a malformed sealed payload), so it is no proof of
+	// an independent barrier password: every failure stops the caller.
+	verr := s.barrier.VerifyCredentials(ctx, creds)
+	switch {
+	case verr == nil:
+		return true, nil
+	case errors.Is(verr, qrdbseal.ErrCredentialMismatch):
+		return false, &SentinelCauseError{Sentinel: ErrBarrierCredentialUnverified, Cause: verr}
+	default:
+		return false, verr
+	}
+}
+
+// barrierPINBindingFile names the file, under storageDir(), that records
+// whether setup bound the barrier to the user PIN. It holds only the
+// flag, never a credential.
+const barrierPINBindingFile = "barrier_pin_binding"
+
+const (
+	pinBindingBound       = "bound\n"
+	pinBindingIndependent = "independent\n"
+)
+
+// errPINBinding marks a failure to record or read the barrier PIN binding.
+var errPINBinding = errors.New("barrier: PIN binding record")
+
+// recordPINBinding records whether setup bound the barrier to the user
+// PIN (true) or gave it a password of its own (false). The file is
+// written atomically (temp file + rename) with mode 0600.
+func (s *BarrierService) recordPINBinding(bound bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	dir := s.storageDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return errors.Join(errPINBinding, err)
+	}
+	content := pinBindingIndependent
+	if bound {
+		content = pinBindingBound
+	}
+	tmp, err := os.CreateTemp(dir, barrierPINBindingFile+".tmp-*")
+	if err != nil {
+		return errors.Join(errPINBinding, err)
+	}
+	tmpName := tmp.Name()
+	writeErr := tmp.Chmod(0o600)
+	if writeErr == nil {
+		_, writeErr = tmp.WriteString(content)
+	}
+	if writeErr == nil {
+		writeErr = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr == nil {
+		writeErr = os.Rename(tmpName, filepath.Join(dir, barrierPINBindingFile))
+	}
+	if writeErr != nil {
+		_ = os.Remove(tmpName)
+		return errors.Join(errPINBinding, writeErr)
+	}
+	return nil
+}
+
+// pinBinding reads the binding recordPINBinding wrote. A missing record
+// is known=false with a nil error; any other read failure, or content
+// that is neither flag, is returned as an error.
+func (s *BarrierService) pinBinding() (bound, known bool, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	data, err := os.ReadFile(filepath.Join(s.storageDir(), barrierPINBindingFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, false, nil
+	}
+	if err != nil {
+		return false, false, errors.Join(errPINBinding, err)
+	}
+	switch string(data) {
+	case pinBindingBound:
+		return true, true, nil
+	case pinBindingIndependent:
+		return false, true, nil
+	default:
+		return false, false, errors.Join(errPINBinding, errors.New("unrecognized record"))
+	}
 }
 
 // Status returns the current barrier status. If the barrier has not been

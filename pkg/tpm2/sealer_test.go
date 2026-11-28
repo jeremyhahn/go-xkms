@@ -9,6 +9,7 @@ package tpm2
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"testing"
 
 	"github.com/jeremyhahn/go-xkms/pkg/types"
@@ -438,4 +439,77 @@ func TestSeal_Unseal_OptsPassword_RoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, data, got)
+}
+
+// TestResolveSealAuth_UnreadablePlatformPasswordFails checks that a TPM-backed
+// password whose secret cannot be unsealed fails the seal with
+// ErrPlatformPasswordUnavailable and leaves the caller's password in place,
+// instead of standing in an empty credential for it.
+func TestResolveSealAuth_UnreadablePlatformPasswordFails(t *testing.T) {
+	platformPassword := func(data []byte, unsealErr error) *PlatformPassword {
+		return NewPlatformPassword(slog.Default(),
+			&mockTPMForPassword{unsealData: data, unsealErr: unsealErr},
+			&types.KeyAttributes{CN: "platform-password", KeyType: types.KeyTypeHMAC},
+			&mockKeyBackendForPassword{}).(*PlatformPassword)
+	}
+	unreadable := func() *PlatformPassword {
+		return platformPassword(nil, errors.New("unseal failed"))
+	}
+
+	t.Run("key password unreadable", func(t *testing.T) {
+		pw := unreadable()
+		keyAttrs := &types.KeyAttributes{CN: "key", Password: pw}
+		restore, err := resolveSealAuth(keyAttrs)
+		require.ErrorIs(t, err, ErrPlatformPasswordUnavailable)
+		assert.Same(t, pw, keyAttrs.Password, "the original password must stay in place")
+		if restore != nil {
+			restore()
+		}
+		assert.Same(t, pw, keyAttrs.Password)
+	})
+
+	t.Run("parent password unreadable", func(t *testing.T) {
+		pw := unreadable()
+		parent := &types.KeyAttributes{CN: "parent", Password: pw}
+		keyPw := platformPassword([]byte("key-secret"), nil)
+		keyAttrs := &types.KeyAttributes{CN: "key", Password: keyPw, Parent: parent}
+		restore, err := resolveSealAuth(keyAttrs)
+		require.ErrorIs(t, err, ErrPlatformPasswordUnavailable)
+		assert.Same(t, keyPw, keyAttrs.Password, "the key password must stay in place")
+		assert.Same(t, parent, keyAttrs.Parent, "the parent must stay in place")
+		assert.Same(t, pw, keyAttrs.Parent.Password, "the parent password must stay in place")
+		if restore != nil {
+			restore()
+		}
+		assert.Same(t, keyPw, keyAttrs.Password)
+		assert.Same(t, parent, keyAttrs.Parent)
+	})
+
+	t.Run("readable password resolves to the same bytes", func(t *testing.T) {
+		pw := platformPassword([]byte("platform-secret"), nil)
+		parentPw := platformPassword([]byte("parent-secret"), nil)
+		parent := &types.KeyAttributes{CN: "parent", Password: parentPw}
+		keyAttrs := &types.KeyAttributes{CN: "key", Password: pw, Parent: parent}
+		restore, err := resolveSealAuth(keyAttrs)
+		require.NoError(t, err)
+		require.NotNil(t, restore)
+
+		_, stillPlatform := keyAttrs.Password.(*PlatformPassword)
+		assert.False(t, stillPlatform, "the resolved password must replace the TPM-backed one")
+		var got []byte
+		require.NoError(t, keyAttrs.Password.WithBytes(func(b []byte) error {
+			got = append([]byte(nil), b...)
+			return nil
+		}))
+		assert.Equal(t, []byte("platform-secret"), got)
+		require.NoError(t, keyAttrs.Parent.Password.WithBytes(func(b []byte) error {
+			got = append([]byte(nil), b...)
+			return nil
+		}))
+		assert.Equal(t, []byte("parent-secret"), got)
+
+		restore()
+		assert.Same(t, pw, keyAttrs.Password)
+		assert.Same(t, parent, keyAttrs.Parent)
+	})
 }

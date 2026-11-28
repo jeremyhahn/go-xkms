@@ -24,6 +24,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
 	"github.com/jeremyhahn/go-xkms/pkg/ca"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/keypolicy"
 	"github.com/jeremyhahn/go-xkms/pkg/keyversion"
@@ -243,6 +244,10 @@ type CAParams struct {
 	// AuditLogger records CA lifecycle events. Optional.
 	AuditLogger qrdbsdk.NodeAuditLogger
 
+	// TransparencyLog receives the CA's cert-issued and revoked entries.
+	// Optional: nil appends nothing.
+	TransparencyLog tlog.Appender
+
 	// AdoptCertStore runs against the CA's certificate store after the CA is
 	// constructed and before it loads, so a caller can stage certificates
 	// the load must find (xkmsd's cluster-ACME first-node material).
@@ -307,6 +312,7 @@ func BuildCA(ctx context.Context, p CAParams) (ca.TrustedCA, error) {
 		RevocationStore: revocationStore,
 		BackendForStore: p.BackendForStore,
 		AuditLogger:     p.AuditLogger,
+		TransparencyLog: p.TransparencyLog,
 	})
 	if err != nil {
 		return nil, &CAOperationError{Operation: "create", Err: err}

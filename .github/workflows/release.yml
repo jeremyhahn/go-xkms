@@ -460,13 +460,13 @@ jobs:
             # CGO_ENABLED=0 -- this is a required tag whenever cgo is off,
             # not merely an optional one (matches the Makefile's own
             # CLI_BUILD_TAGS).
-            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go"
+            BUILD_FLAGS="-tags=pkcs8,awskms,gcpkms,azurekv,vault,gms_pure_go,qrdb_vlog"
             echo "Building FIPS 140-3 compliant binary with GOFIPS140=v1.0.0"
             echo "Note: FIPS builds exclude TPM2/PKCS11 backends (require CGO)"
             echo "Note: CGO_ENABLED=0 needs no C toolchain on either arch -- GOARCH=${GOARCH} cross-compiles natively, no QEMU (go-xkms#1026)"
           else
             # Standard build with all backends
-            BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,frost"
+            BUILD_FLAGS="-tags=pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,frost,qrdb_vlog"
             echo "Building standard binary with all backends"
           fi
 
@@ -873,7 +873,7 @@ jobs:
 
           RUN CGO_ENABLED=1 GOOS=linux go build \
               -buildvcs=false \
-              -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,frost" \
+              -tags="pkcs8,tpm2,pkcs11,awskms,gcpkms,azurekv,vault,frost,qrdb_vlog" \
               -ldflags="-X main.Version=${VERSION} -X main.GitCommit=${COMMIT} -X main.BuildDate=${DATE} -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -s -w" \
               -o /build/xkmsd \
               ./cmd/xkmsd

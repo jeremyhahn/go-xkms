@@ -752,6 +752,9 @@ func (s *SetupWizardService) ApplySetup(choices *SetupChoices) (*SetupResult, er
 				choices.SealerBackend = "passphrase"
 			}
 		}
+		if barrierInitialized {
+			s.recordBarrierPINBinding(barrierPW == choices.UserPin, result)
+		}
 
 		// Detect a silent hardware->passphrase downgrade. This happens when the
 		// user requested hardware-backed sealing (tpm2 / pkcs11 / tpm_sealed) but
@@ -1137,6 +1140,18 @@ func (s *SetupWizardService) initBarrier(
 	}
 }
 
+// recordBarrierPINBinding records on the barrier whether setup bound it
+// to the user PIN, so a later PIN change knows whether to reseal it. A
+// failure is a setup error like the other barrier errors.
+func (s *SetupWizardService) recordBarrierPINBinding(bound bool, result *SetupResult) {
+	if err := s.barrierSvc.recordPINBinding(bound); err != nil {
+		slog.Error("wizard: barrier PIN binding record failed", "error", err)
+		result.Errors = append(result.Errors,
+			fmt.Sprintf("barrier PIN binding record failed: %v", err))
+		result.Success = false
+	}
+}
+
 // SkipSetup marks the setup wizard as complete without making any changes.
 func (s *SetupWizardService) SkipSetup() error {
 	if s.configFunc == nil || s.configSave == nil {
@@ -1508,6 +1523,9 @@ func (s *SetupWizardService) ApplyUserOnboarding(choices *UserOnboardingChoices)
 			}
 		} else {
 			barrierInitialized = true
+		}
+		if barrierInitialized {
+			s.recordBarrierPINBinding(choices.UserPIN != "" && barrierPW == choices.UserPIN, result)
 		}
 	}
 

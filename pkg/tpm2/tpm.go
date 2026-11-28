@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -363,6 +364,11 @@ type TPM2 struct {
 	ssrkAttrs      *types.KeyAttributes
 	tracker        types.AEADSafetyTracker
 	transport      transport.TPM
+	// sealMu runs one seal or unseal at a time. Each one loads a parent,
+	// starts sessions and loads the sealed object; overlapping operations
+	// exhaust the TPM's session and object slots (TPM_RC_SESSION_MEMORY,
+	// TPM_RC_OBJECT_MEMORY) on a TPM without a resource manager.
+	sealMu sync.Mutex
 	TrustedPlatformModule
 }
 
@@ -525,7 +531,7 @@ func NewTPM2(params *Params) (TrustedPlatformModule, error) {
 		// hash:         hash,
 		simulator: sim,
 		tracker:   tracker,
-		transport: tpmTransport}
+		transport: serialise(tpmTransport)}
 
 	if params.Config.UseEntropy {
 		tpm.random = tpm
@@ -615,7 +621,7 @@ func (tpm *TPM2) Open() error {
 		return ErrInvalidTPMTransport
 	}
 
-	tpm.transport = t
+	tpm.transport = serialise(t)
 	return nil
 }
 

@@ -15,8 +15,10 @@ package services
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 
 	xkms "github.com/jeremyhahn/go-xkms/sdk/go"
@@ -43,6 +45,70 @@ func TestBarrierService_SealStateHookFollowsTransitions(t *testing.T) {
 	require.NoError(t, svc.Unseal("hook-test-password", ""))
 
 	assert.Equal(t, []bool{false, true, false}, seen)
+}
+
+// readFailBackend fails every Get once failReads is set, standing in for a
+// store that can no longer be read.
+type readFailBackend struct {
+	xkms.StorageBackend
+	failReads atomic.Bool
+}
+
+var errStoreRead = errors.New("store read failed")
+
+func (b *readFailBackend) Get(ctx context.Context, key string) ([]byte, error) {
+	if b.failReads.Load() {
+		return nil, errStoreRead
+	}
+	return b.StorageBackend.Get(ctx, key)
+}
+
+func TestBarrierService_PasswordBound_StoreReadFailureIsReturned(t *testing.T) {
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+	var backend *readFailBackend
+	svc.SetBaseBackendFactory(func(dir string) (xkms.StorageBackend, error) {
+		base, err := xkms.StorageOpenEngine(xkms.StorageEngineConfig{Kind: xkms.StorageEngineFile, Path: dir})
+		if err != nil {
+			return nil, err
+		}
+		backend = &readFailBackend{StorageBackend: base}
+		return backend, nil
+	})
+	require.NoError(t, svc.Initialize("old-pin", "passphrase"))
+	require.NotNil(t, backend)
+
+	backend.failReads.Store(true)
+	bound, err := svc.PasswordBound("old-pin")
+	require.ErrorIs(t, err, errStoreRead)
+	assert.False(t, bound)
+}
+
+func TestBarrierService_PasswordBound_CancelledContextIsReturned(t *testing.T) {
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, svc.Initialize("old-pin", "passphrase"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	svc.SetContext(ctx)
+
+	bound, err := svc.PasswordBound("old-pin")
+	require.Error(t, err)
+	assert.False(t, bound)
+}
+
+// go-qrdb v0.58.5 cannot tell a wrong credential from a failure inside the
+// strategy, so a mismatch is returned as an error, never as a verdict.
+func TestBarrierService_PasswordBound_MismatchFailsClosed(t *testing.T) {
+	svc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, svc.Initialize("barrier-password", "passphrase"))
+
+	bound, err := svc.PasswordBound("old-pin")
+	require.ErrorIs(t, err, ErrBarrierCredentialUnverified)
+	assert.False(t, bound)
+
+	bound, err = svc.PasswordBound("barrier-password")
+	require.NoError(t, err)
+	assert.True(t, bound)
 }
 
 // A failed transition leaves the state unchanged and must not notify.
@@ -584,7 +650,20 @@ func TestBarrierService_Unseal_TransparentInitWhenNoRootKey(t *testing.T) {
 func TestBarrierService_ChangePassword_Success(t *testing.T) {
 	svc := newTestBarrierService(t)
 	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
-	require.NoError(t, svc.ChangePassword("newpass"))
+	require.NoError(t, svc.ChangePassword("oldpass", "newpass"))
+}
+
+func TestBarrierService_ChangePassword_WrongCurrentRefused(t *testing.T) {
+	// go-qrdb v0.58.5: ChangePassword proves the current credential before
+	// re-sealing, so a wrong current password leaves the old one in force.
+	svc := newTestBarrierService(t)
+	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
+	require.Error(t, svc.ChangePassword("wrongpass", "newpass"))
+	require.NoError(t, svc.Seal())
+
+	svc2 := NewBarrierService(svc.configDir, slog.Default())
+	require.NoError(t, svc2.Unseal("oldpass", "passphrase"))
+	assert.True(t, svc2.IsUnsealed())
 }
 
 func TestBarrierService_Unseal_EmptyPassword_RejectedNotWrongPassword(t *testing.T) {
@@ -608,7 +687,7 @@ func TestBarrierService_Unseal_EmptyPassword_RejectedNotWrongPassword(t *testing
 
 func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 	svc := newTestBarrierService(t)
-	err := svc.ChangePassword("newpass")
+	err := svc.ChangePassword("oldpass", "newpass")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBarrierNotInitialized)
 }
@@ -616,7 +695,7 @@ func TestBarrierService_ChangePassword_NotInitialized(t *testing.T) {
 func TestBarrierService_ChangePassword_RoundTrip(t *testing.T) {
 	svc := newTestBarrierService(t)
 	require.NoError(t, svc.Initialize("oldpass", "passphrase"))
-	require.NoError(t, svc.ChangePassword("newpass"))
+	require.NoError(t, svc.ChangePassword("oldpass", "newpass"))
 	require.NoError(t, svc.Seal())
 
 	// Must unseal from scratch - new BarrierService uses same configDir

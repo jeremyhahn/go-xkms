@@ -29,6 +29,7 @@ import (
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
 	qrdbnode "github.com/jeremyhahn/go-qrdb/sdk/go/node"
+	qrdbserver "github.com/jeremyhahn/go-qrdb/sdk/go/server"
 
 	"github.com/jeremyhahn/go-xkms/pkg/config"
 )
@@ -231,9 +232,9 @@ func TestServeSealedWindow_CancellationClosesCleanly(t *testing.T) {
 
 	select {
 	case err := <-done:
-		var canceled *qrdbsdk.SealedWindowCanceledError
+		var canceled *qrdbserver.SealedWindowCanceledError
 		require.Error(t, err)
-		assert.True(t, errors.As(err, &canceled), "expected *qrdbsdk.SealedWindowCanceledError, got %T: %v", err, err)
+		assert.True(t, errors.As(err, &canceled), "expected *qrdbserver.SealedWindowCanceledError, got %T: %v", err, err)
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancellation must close the sealed-window listener promptly")
 	}
@@ -324,7 +325,7 @@ func TestServeSealedWindow_NodeServingUsesUnifiedTLS(t *testing.T) {
 
 	// The node gets the TLS material at construction, as
 	// initEmbeddedQRDBNode gives it, for the boot after the window.
-	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, []qrdbsdk.ServerOption{qrdbsdk.WithServerTLS(tlsCfg)},
+	node, err := qrdbnode.NewStandaloneNode(ctx, qcfg, []qrdbserver.ServerOption{qrdbserver.WithServerTLS(tlsCfg)},
 		qrdbnode.WithLogger(slog.Default()), qrdbnode.WithSealPassphrase([]byte("wrong")))
 	require.NoError(t, err)
 	defer func() { _ = node.Close() }()

@@ -71,9 +71,11 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -90,6 +92,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/pkg/acme/ct"
 	backendpkg "github.com/jeremyhahn/go-xkms/pkg/backend"
+	"github.com/jeremyhahn/go-xkms/pkg/ca/tlog"
 	"github.com/jeremyhahn/go-xkms/pkg/certstore"
 	"github.com/jeremyhahn/go-xkms/pkg/spiffe"
 	"github.com/jeremyhahn/go-xkms/pkg/storage"
@@ -98,6 +101,7 @@ import (
 	secure "github.com/jeremyhahn/go-xkms/sdk/go/secure"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	qrdbstorage "github.com/jeremyhahn/go-qrdb/sdk/go/storage"
 )
 
 // Params contains the parameters for creating a new CA instance.
@@ -146,7 +150,7 @@ type Params struct {
 	// and tpm_enrollment.go. If nil, features that require an object store
 	// return ErrObjectStoreRequired when invoked.
 	// Optional.
-	ObjectStore qrdbsdk.Storage
+	ObjectStore qrdbstorage.Storage
 
 	// RevocationStore durably persists certificate revocations and the
 	// derived CRL artifact in the datastore so both survive restarts and
@@ -204,6 +208,11 @@ type Params struct {
 	// audit logging for the CA entirely (opt-in wiring) and is not itself a
 	// failure. Optional.
 	AuditLogger qrdbsdk.NodeAuditLogger
+
+	// TransparencyLog, when set, receives a cert-issued entry for every
+	// issued certificate and a revoked entry for every revocation
+	// (docs/SPEC.md, transparency-log). Nil appends nothing.
+	TransparencyLog tlog.Appender
 }
 
 // Validate checks that all required parameters are present.
@@ -272,7 +281,7 @@ type CA struct {
 	// objectStore is the optional blob store for cross-signed certs, AIA
 	// trust-chain cache, and attestation evidence. May be nil; features that
 	// require it return ErrObjectStoreRequired in that case.
-	objectStore qrdbsdk.Storage
+	objectStore qrdbstorage.Storage
 
 	// revocationStore durably persists revocation records and the derived CRL
 	// artifact in the datastore so both survive restarts (and replicate under
@@ -315,6 +324,10 @@ type CA struct {
 	// auditLogger records CA lifecycle events (see Params.AuditLogger and
 	// pkg/ca/audit.go). nil disables audit logging for this CA instance.
 	auditLogger qrdbsdk.NodeAuditLogger
+
+	// transparencyLog receives the CA's transparency-log entries (see
+	// Params.TransparencyLog); nil appends nothing.
+	transparencyLog tlog.Appender
 
 	// secondaryKeyErr records the error from the most recent
 	// initSecondaryKeys call during Init, or nil if every secondary key
@@ -562,6 +575,7 @@ func New(params *Params) (TrustedCA, error) {
 		revocationStore: params.RevocationStore,
 		revocations:     make(map[string]*RevocationInfo),
 		auditLogger:     params.AuditLogger,
+		transparencyLog: params.TransparencyLog,
 	}
 
 	// Set up serial generator (use memory storage if not provided)
@@ -609,7 +623,7 @@ type MultiIdentityParams struct {
 	// ObjectStore provides blob storage for cross-signed certificates, AIA
 	// trust-chain cache, and attestation evidence.
 	// Optional. If nil, features that require it return ErrObjectStoreRequired.
-	ObjectStore qrdbsdk.Storage
+	ObjectStore qrdbstorage.Storage
 
 	// RevocationStore durably persists certificate revocations and the
 	// derived CRL artifact in the datastore so both survive restarts.
@@ -626,6 +640,11 @@ type MultiIdentityParams struct {
 	// AuditLogger records CA lifecycle events. See Params.AuditLogger.
 	// Optional.
 	AuditLogger qrdbsdk.NodeAuditLogger
+
+	// TransparencyLog, when set, receives a cert-issued entry for every
+	// issued certificate and a revoked entry for every revocation
+	// (docs/SPEC.md, transparency-log). Nil appends nothing.
+	TransparencyLog tlog.Appender
 }
 
 // NewFromMultiIdentityConfig creates a new CA from a MultiIdentityCAConfig.
@@ -691,6 +710,7 @@ func NewFromMultiIdentityConfig(mp *MultiIdentityParams) (TrustedCA, error) {
 		BackendForStore:    mp.BackendForStore,
 		RequireKeyPassword: mp.Config.RequireKeyPassword,
 		AuditLogger:        mp.AuditLogger,
+		TransparencyLog:    mp.TransparencyLog,
 	})
 }
 
@@ -750,6 +770,7 @@ func NewHierarchicalCA(mp *MultiIdentityParams) (TrustedCA, error) {
 		revocationStore: mp.RevocationStore,
 		revocations:     make(map[string]*RevocationInfo),
 		auditLogger:     mp.AuditLogger,
+		transparencyLog: mp.TransparencyLog,
 	}
 	if mp.SerialGen != nil {
 		instance.serialGen = mp.SerialGen
@@ -768,7 +789,7 @@ func NewHierarchicalCA(mp *MultiIdentityParams) (TrustedCA, error) {
 // Used by CA-adjacent features (cross-signing, AIA cache, attestation
 // evidence, CRL snapshots) that need blob storage beyond the CN-keyed
 // CertStore. Callers should check for nil and surface ErrObjectStoreRequired.
-func (ca *CA) ObjectStore() qrdbsdk.Storage {
+func (ca *CA) ObjectStore() qrdbstorage.Storage {
 	return ca.objectStore
 }
 
@@ -2272,6 +2293,23 @@ func (ca *CA) issueSignedSpec(
 	// recording site for both direct CSR signing and keypair issuance --
 	// IssueCertificateWithProfile routes through this method.
 	if err := ca.recordCertTenant(ctx, cert.SerialNumber, tenantID); err != nil {
+		return nil, err
+	}
+
+	// Every issued certificate is appended to the issuance transparency
+	// log (docs/SPEC.md, transparency-log); a failed append fails the
+	// issuance with an *tlog.AppendError.
+	profileName := ""
+	if opts != nil {
+		profileName = opts.Profile
+	}
+	sum := sha256.Sum256(cert.Raw)
+	if err := tlog.AppendEntry(ctx, ca.transparencyLog, tlog.CertIssued{
+		SHA256:  hex.EncodeToString(sum[:]),
+		Serial:  cert.SerialNumber.Text(16),
+		Profile: profileName,
+		Tenant:  tenantID,
+	}); err != nil {
 		return nil, err
 	}
 

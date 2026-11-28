@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	qrdbsdk "github.com/jeremyhahn/go-qrdb/sdk/go"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/audit"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/config"
 )
 
@@ -675,6 +676,161 @@ func TestPINService_ChangeUserPIN_BarrierResealFails(t *testing.T) {
 	err := svc.ChangeUserPIN("old-pin", "new-pin")
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrBarrierResealFailed)
+}
+
+// recordingPINBackend records the PIN changes the backend commits.
+type recordingPINBackend struct {
+	*mockPINBackend
+	changes []string
+}
+
+func (r *recordingPINBackend) ChangeUserPIN(current, next string) error {
+	if err := r.mockPINBackend.ChangeUserPIN(current, next); err != nil {
+		return err
+	}
+	r.changes = append(r.changes, next)
+	return nil
+}
+
+func TestPINService_ChangeUserPIN_UnrecordedBindingFailsClosed(t *testing.T) {
+	backend := &recordingPINBackend{mockPINBackend: &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}}
+	svc := newTestPINService(backend)
+
+	// Setup chose an explicit barrier password different from the PIN.
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("barrier-password", "passphrase"))
+	svc.SetBarrierService(barrierSvc)
+
+	// go-qrdb v0.58.5 cannot prove the barrier's password is its own (a
+	// strategy failure reads as the same mismatch): the change fails closed.
+	require.ErrorIs(t, svc.ChangeUserPIN("old-pin", "new-pin"), ErrBarrierResealFailed)
+	assert.Empty(t, backend.changes)
+
+	// The barrier keeps its own password: the PIN change must not touch it.
+	require.NoError(t, barrierSvc.Seal())
+	svc2 := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.NoError(t, svc2.Unseal("barrier-password", "passphrase"))
+	assert.True(t, svc2.IsUnsealed())
+}
+
+func TestPINService_ChangeUserPIN_RecordedIndependentPasswordKeepsBarrier(t *testing.T) {
+	backend := &recordingPINBackend{mockPINBackend: &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}}
+	svc := newTestPINService(backend)
+
+	// Setup gave the barrier its own password and recorded it as not
+	// bound to the PIN.
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("barrier-password", "passphrase"))
+	require.NoError(t, barrierSvc.recordPINBinding(false))
+	svc.SetBarrierService(barrierSvc)
+
+	require.NoError(t, svc.ChangeUserPIN("old-pin", "new-pin"))
+	assert.Len(t, backend.changes, 1)
+
+	// The barrier was not resealed: it still opens with its own password.
+	require.NoError(t, barrierSvc.Seal())
+	svc2 := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.NoError(t, svc2.Unseal("barrier-password", "passphrase"))
+	assert.True(t, svc2.IsUnsealed())
+}
+
+func TestPINService_ChangeUserPIN_RecordedBoundBarrierMismatchFailsClosed(t *testing.T) {
+	backend := &recordingPINBackend{mockPINBackend: &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}}
+	svc := newTestPINService(backend)
+
+	// The record says the barrier is on the PIN, but the current PIN does
+	// not open it: the change must not go through.
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("barrier-password", "passphrase"))
+	require.NoError(t, barrierSvc.recordPINBinding(true))
+	svc.SetBarrierService(barrierSvc)
+
+	require.ErrorIs(t, svc.ChangeUserPIN("old-pin", "new-pin"), ErrBarrierResealFailed)
+	assert.Empty(t, backend.changes)
+}
+
+func TestPINService_ChangeUserPIN_BarrierFailureLeavesPINUnchanged(t *testing.T) {
+	backend := &recordingPINBackend{mockPINBackend: &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}}
+	svc := newTestPINService(backend)
+
+	// Barrier not initialized: the reseal cannot succeed, so the PIN
+	// change must not be committed either.
+	svc.SetBarrierService(NewBarrierService(t.TempDir(), slog.Default()))
+
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, ErrBarrierResealFailed)
+	assert.Empty(t, backend.changes)
+}
+
+func TestPINService_ChangeUserPIN_PINFailureRestoresBarrier(t *testing.T) {
+	backend := &recordingPINBackend{mockPINBackend: &mockPINBackend{
+		strategy:      qrdbsdk.PINStrategySoftware,
+		userPINSet:    true,
+		changeUserErr: errors.New("wrong current PIN"),
+	}}
+	svc := newTestPINService(backend)
+
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
+	svc.SetBarrierService(barrierSvc)
+
+	require.Error(t, svc.ChangeUserPIN("old-pin", "new-pin"))
+	assert.Empty(t, backend.changes)
+
+	// The barrier still opens with the PIN the backend kept.
+	require.NoError(t, barrierSvc.Seal())
+	svc2 := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.NoError(t, svc2.Unseal("old-pin", "passphrase"))
+}
+
+// committedAuditFailLogger fails the audit write that follows a
+// committed barrier password change; every other entry is accepted.
+type committedAuditFailLogger struct {
+	audit.Logger
+}
+
+var errCommittedAudit = errors.New("audit store unavailable")
+
+func (committedAuditFailLogger) Log(e audit.Entry) error {
+	if e.Operation == audit.OpBarrierPasswordChanged && e.Success {
+		return errCommittedAudit
+	}
+	return nil
+}
+
+func TestPINService_ChangeUserPIN_CommittedResealAuditFailureKeepsNewPIN(t *testing.T) {
+	backend := &recordingPINBackend{mockPINBackend: &mockPINBackend{
+		strategy:   qrdbsdk.PINStrategySoftware,
+		userPINSet: true,
+	}}
+	svc := newTestPINService(backend)
+
+	barrierSvc := NewBarrierService(t.TempDir(), slog.Default())
+	require.NoError(t, barrierSvc.Initialize("old-pin", "passphrase"))
+	barrierSvc.SetAuditLogger(committedAuditFailLogger{})
+	svc.SetBarrierService(barrierSvc)
+
+	// The barrier rewrite commits; only its audit record fails. The PIN
+	// must stay at the new value, matching the barrier.
+	err := svc.ChangeUserPIN("old-pin", "new-pin")
+	require.ErrorIs(t, err, errCommittedAudit)
+	assert.Equal(t, []string{"new-pin"}, backend.changes)
+
+	require.NoError(t, barrierSvc.Seal())
+	svc2 := NewBarrierService(barrierSvc.configDir, slog.Default())
+	require.NoError(t, svc2.Unseal("new-pin", "passphrase"))
 }
 
 func TestPINService_ChangeUserPIN_NoBarrierService(t *testing.T) {
