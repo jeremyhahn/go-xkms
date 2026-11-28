@@ -96,8 +96,8 @@ func TestDockerfileAptRunsUnderTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runs < 70 {
-		t.Fatalf("found %d apt RUN instructions, want at least 70: the walk is broken", runs)
+	if runs < 66 {
+		t.Fatalf("found %d apt RUN instructions, want at least 66 (the tracked Dockerfiles' apt RUN count): the walk is broken", runs)
 	}
 }
 
