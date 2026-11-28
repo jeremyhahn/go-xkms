@@ -17,6 +17,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -160,5 +161,93 @@ func TestNewEmbeddedClient_ServiceError(t *testing.T) {
 	}
 	if client != nil {
 		t.Errorf("expected nil client on error, got %v", client)
+	}
+}
+
+// TestNewEmbeddedClient_WithCA confirms a CA config builds a TrustedCA on
+// the embedded service's file store and wires it, and that a second build on
+// the same KeyDir loads that CA instead of minting a new root.
+func TestNewEmbeddedClient_WithCA(t *testing.T) {
+	dir := t.TempDir()
+	defer Reset()
+	ctx := context.Background()
+
+	client, err := NewEmbeddedClient(EmbeddedServiceConfig{KeyDir: dir, CA: DefaultMultiIdentityCAConfig()})
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() returned error: %v", err)
+	}
+	first, err := client.GetCACertificate(ctx, &GetCACertificateRequest{})
+	if err != nil {
+		t.Fatalf("GetCACertificate() returned error: %v", err)
+	}
+	if !first.IsCA {
+		t.Error("expected IsCA == true")
+	}
+	if !strings.Contains(first.Subject, "Root CA") {
+		t.Errorf("expected a Root CA subject, got %q", first.Subject)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close() returned error: %v", err)
+	}
+
+	reopened, err := NewEmbeddedClient(EmbeddedServiceConfig{KeyDir: dir, CA: DefaultMultiIdentityCAConfig()})
+	if err != nil {
+		t.Fatalf("second NewEmbeddedClient() returned error: %v", err)
+	}
+	defer func() { _ = reopened.Close() }()
+	second, err := reopened.GetCACertificate(ctx, &GetCACertificateRequest{})
+	if err != nil {
+		t.Fatalf("second GetCACertificate() returned error: %v", err)
+	}
+	if second.SerialNumber != first.SerialNumber {
+		t.Errorf("reopen minted a new root: serial %q, want %q", second.SerialNumber, first.SerialNumber)
+	}
+}
+
+func TestNewEmbeddedService_IsolatedLeavesTheSingleton(t *testing.T) {
+	defer Reset()
+	ctx := context.Background()
+
+	if _, err := NewEmbeddedService(EmbeddedServiceConfig{KeyDir: t.TempDir()}); err != nil {
+		t.Fatalf("NewEmbeddedService() returned error: %v", err)
+	}
+	before, _ := Get()
+
+	client, err := NewEmbeddedClient(EmbeddedServiceConfig{
+		KeyDir:   t.TempDir(),
+		CA:       DefaultMultiIdentityCAConfig(),
+		Isolated: true,
+	})
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient(Isolated) returned error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+
+	resp, err := client.GetCACertificate(ctx, &GetCACertificateRequest{})
+	if err != nil {
+		t.Fatalf("GetCACertificate() returned error: %v", err)
+	}
+	if !resp.IsCA {
+		t.Error("expected IsCA == true")
+	}
+	after, _ := Get()
+	if after != before {
+		t.Error("an Isolated embedded service replaced the process-wide singleton")
+	}
+}
+
+// TestNewEmbeddedService_NoCA confirms a nil CA leaves the embedded service
+// without a CA, so GetCACertificate fails.
+func TestNewEmbeddedService_NoCA(t *testing.T) {
+	dir := t.TempDir()
+	defer Reset()
+
+	client, err := NewEmbeddedClient(EmbeddedServiceConfig{KeyDir: dir})
+	if err != nil {
+		t.Fatalf("NewEmbeddedClient() returned error: %v", err)
+	}
+	defer func() { _ = client.Close() }()
+	if _, err := client.GetCACertificate(context.Background(), &GetCACertificateRequest{}); err == nil {
+		t.Fatal("expected an error without a configured CA")
 	}
 }

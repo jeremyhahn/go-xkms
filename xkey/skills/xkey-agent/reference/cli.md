@@ -395,6 +395,7 @@ Inherited by subcommands:
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
+| `--local` | bool | false | serve the CA from xkey's local store (no xkmsd) |
 | `--tls-ca` | string |  | TLS CA certificate file used to verify the xkmsd server |
 
 ## xkey ca bundle

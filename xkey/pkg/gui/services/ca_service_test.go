@@ -373,6 +373,13 @@ func (m *mockCAClient) IssueLAKCertificate(_ context.Context, _ *transport.Issue
 // the PEM-encoded certificate bytes.
 func generateTestCertPEM(t *testing.T) []byte {
 	t.Helper()
+	return generateNamedCACertPEM(t, "Test CA")
+}
+
+// generateNamedCACertPEM returns a self-signed CA certificate PEM whose
+// subject and issuer common name is commonName.
+func generateNamedCACertPEM(t *testing.T, commonName string) []byte {
+	t.Helper()
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -380,11 +387,11 @@ func generateTestCertPEM(t *testing.T) []byte {
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(42),
 		Subject: pkix.Name{
-			CommonName:   "Test CA",
+			CommonName:   commonName,
 			Organization: []string{"Test Org"},
 		},
 		Issuer: pkix.Name{
-			CommonName:   "Test CA",
+			CommonName:   commonName,
 			Organization: []string{"Test Org"},
 		},
 		NotBefore:             time.Now().Add(-1 * time.Hour),
@@ -466,13 +473,69 @@ func TestNewCAService(t *testing.T) {
 	mock := &mockCAClient{}
 	svc := NewCAService(mock)
 	require.NotNil(t, svc)
-	assert.Equal(t, mock, svc.client)
+	client, err := svc.getClient()
+	require.NoError(t, err)
+	assert.Equal(t, transport.Client(mock), client)
 }
 
 func TestNewCAService_NilClient(t *testing.T) {
 	svc := NewCAService(nil)
 	require.NotNil(t, svc)
-	assert.Nil(t, svc.client)
+	_, err := svc.getClient()
+	assert.ErrorIs(t, err, ErrCAServiceNilClient)
+}
+
+func TestCAService_SetClient(t *testing.T) {
+	svc := NewCAService(nil)
+	_, err := svc.GetCAInfo()
+	require.ErrorIs(t, err, ErrCAServiceNilClient)
+
+	svc.SetClient(&mockCAClient{
+		getCACertificateResp: &transport.GetCACertificateResponse{CertificatePEM: generateTestCertPEM(t)},
+	})
+	info, err := svc.GetCAInfo()
+	require.NoError(t, err)
+	assert.Contains(t, info.Subject, "Test CA", "GetCAInfo is served by the client set last")
+
+	svc.SetClient(nil)
+	_, err = svc.GetCAInfo()
+	assert.ErrorIs(t, err, ErrCAServiceNilClient, "SetClient(nil) detaches the client")
+
+	var typedNil *mockCAClient
+	svc.SetClient(typedNil)
+	_, err = svc.GetCAInfo()
+	assert.ErrorIs(t, err, ErrCAServiceNilClient, "a typed-nil client counts as no client")
+}
+
+func TestCAService_LocalClientWithoutServer(t *testing.T) {
+	svc := NewCAService(nil)
+	svc.SetLocalClient(&mockCAClient{
+		getCACertificateResp: &transport.GetCACertificateResponse{CertificatePEM: generateNamedCACertPEM(t, "Local xkey CA")},
+	})
+
+	info, err := svc.GetCAInfo()
+	require.NoError(t, err)
+	assert.Contains(t, info.Subject, "Local xkey CA", "with no server the local CA serves")
+	assert.Equal(t, "local", svc.GetCAMode())
+
+	svc.SetClient(&mockCAClient{
+		getCACertificateResp: &transport.GetCACertificateResponse{CertificatePEM: generateNamedCACertPEM(t, "Server CA")},
+	})
+	info, err = svc.GetCAInfo()
+	require.NoError(t, err)
+	assert.Contains(t, info.Subject, "Server CA", "a connected server replaces the local CA")
+	assert.Equal(t, "remote", svc.GetCAMode())
+
+	svc.SetClient(nil)
+	info, err = svc.GetCAInfo()
+	require.NoError(t, err)
+	assert.Contains(t, info.Subject, "Local xkey CA", "a disconnect falls back to the local CA")
+	assert.Equal(t, "local", svc.GetCAMode())
+
+	svc.SetLocalClient(nil)
+	_, err = svc.GetCAInfo()
+	assert.ErrorIs(t, err, ErrCAServiceNilClient)
+	assert.Equal(t, "none", svc.GetCAMode())
 }
 
 // ---------------------------------------------------------------------------

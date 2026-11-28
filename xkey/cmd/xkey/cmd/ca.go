@@ -23,6 +23,7 @@ import (
 
 	"github.com/jeremyhahn/go-xkms/sdk/go/fsutil"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/localca"
 	"github.com/spf13/cobra"
 )
 
@@ -72,6 +73,11 @@ var (
 
 	// ErrCAInvalidReasonCode indicates an invalid revocation reason code.
 	ErrCAInvalidReasonCode = errors.New("ca: invalid revocation reason code")
+
+	// ErrCALocalStoreBarrierEncrypted indicates --local was given but xkey's
+	// local store is protected by an initialized barrier, which the CLI
+	// cannot unlock; manage it through the xkey app.
+	ErrCALocalStoreBarrierEncrypted = errors.New("ca: local store is barrier-encrypted; unlock via the xkey app")
 )
 
 // reasonCodes maps human-readable reason code names to RFC 5280 integer values.
@@ -84,14 +90,40 @@ var reasonCodes = map[string]int{
 	"cessation-of-operation": 5,
 }
 
-// getSDKClient returns a transport.Client connected to xkmsd's CA. The CA
-// commands are remote-mode only: the certificate authority lives in the
-// daemon (xkey never runs an in-process CA), so every verb is served over the
-// SDK transport resolved by resolveXKMSdEndpoint. An "embedded://" or any
-// other unknown URL scheme is rejected with ErrXKMSdUnsupportedScheme.
-// Callers own Close on the returned client.
+// getSDKClient returns the transport.Client a CA command runs on. Remote is
+// the default: every verb is served by xkmsd's CA over the SDK transport
+// resolved by resolveXKMSdEndpoint, and an "embedded://" or any other unknown
+// URL scheme is rejected with ErrXKMSdUnsupportedScheme. With --local the CA
+// runs in-process on xkey's local store instead (newLocalCAClient), so no
+// xkmsd is needed. A nil cmd is always remote. Callers own Close on the
+// returned client.
 func getSDKClient(cmd *cobra.Command) (transport.Client, error) {
+	if cmd != nil {
+		local, err := commandFlagBool(cmd, "local")
+		if err != nil {
+			return nil, err
+		}
+		if local {
+			return newLocalCAClient()
+		}
+	}
 	return connectXKMSdClient(cmd)
+}
+
+// newLocalCAClient builds the embedded SDK client whose service runs a CA on
+// xkey's local store (KeyDir <data dir>/ca): the CA persisted there is loaded,
+// or a new one is initialized on first use. The CLI has no barrier-unlock
+// flow, so a barrier-encrypted store is refused with
+// ErrCALocalStoreBarrierEncrypted, as the SSH store is.
+func newLocalCAClient() (transport.Client, error) {
+	dataDir, err := resolveXKeySSHDataDir()
+	if err != nil {
+		return nil, err
+	}
+	if barrierRootKeyExists(dataDir) {
+		return nil, ErrCALocalStoreBarrierEncrypted
+	}
+	return localca.NewClient(dataDir, nil)
 }
 
 // caCmd is the parent command for CA operations.
@@ -111,9 +143,17 @@ variable, then the xkmsd_url config key. The URL scheme picks the transport
 XKMSD_TOKEN supplies a bearer token; --tls-ca (or XKMSD_TLS_CA) supplies the
 CA bundle used to verify TLS transports.
 
+With --local the CA runs in-process on xkey's local store instead, without
+xkmsd: the first command initializes the CA hierarchy there, and later commands
+load it. A barrier-encrypted local store is refused; manage it
+through the xkey app.
+
 Examples:
   # Show CA certificate information
   xkey ca info
+
+  # Show the local (standalone) CA, without xkmsd
+  xkey ca --local info
 
   # Issue a server certificate
   xkey ca issue --profile server --cn example.com --san "DNS:*.example.com,IP:10.0.0.1"
@@ -309,6 +349,7 @@ func init() {
 	// transports (https/grpcs/quic/mcps).
 	caCmd.PersistentFlags().String("tls-ca", "",
 		"TLS CA certificate file used to verify the xkmsd server")
+	caCmd.PersistentFlags().Bool("local", false, "serve the CA from xkey's local store (no xkmsd)")
 
 	// Issue command flags
 	caIssueCmd.Flags().String("profile", "", "certificate profile (server, client)")

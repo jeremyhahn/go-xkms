@@ -53,6 +53,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/icon"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/gui/services"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/ipc"
+	"github.com/jeremyhahn/go-xkms/xkey/pkg/localca"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/nativemsg"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/notify"
 	"github.com/jeremyhahn/go-xkms/xkey/pkg/oath"
@@ -145,7 +146,11 @@ type App struct {
 	pkcs11Service            *services.PKCS11Service
 	teamService              *services.TeamService
 	certificateService       *services.CertificateService
-	securityFactorService    *services.SecurityFactorService
+	caService                *services.CAService
+	// localCAClient is xkey's local embedded CA, served by caService while
+	// no server is connected (see initLocalCA).
+	localCAClient         xkmssdk.Client
+	securityFactorService *services.SecurityFactorService
 
 	// backendRegistry tracks all registered cryptographic backends
 	// (local and remote) and their operational state.
@@ -1073,6 +1078,9 @@ func (a *App) initializeDataDir() error {
 	// This provides in-process key management without a remote server connection.
 	a.initLocalKeyStore(barrierBackend)
 
+	// Open xkey's local CA so the CA view works with no server connected.
+	a.initLocalCA(dir, barrierBackend)
+
 	// Initialize shared FIDO2 authenticator for autofill CTAP2 authentication.
 	// This authenticator is shared between the USB HID virtual device and the
 	// browser extension autofill service, so both use the same credentials,
@@ -1383,6 +1391,50 @@ func (a *App) initializeAuthenticator() {
 // file. When no barrier is active (barrierBackend nil), AutoInitialize's own
 // default applies: in-memory, session-only key storage, never a plaintext
 // file fallback.
+// initLocalCA opens xkey's local embedded CA under dir/ca and hands it to
+// the CA service, which serves it while no server is connected. With a
+// barrier active the CA private keys are kept barrier-encrypted under the
+// "ca/" prefix; without one they use the file store shared with
+// `xkey ca --local`. A failure is logged and leaves the CA view with no CA.
+func (a *App) initLocalCA(dir string, barrierBackend xkmssdk.StorageBackend) {
+	a.closeLocalCA()
+	if a.caService == nil {
+		return
+	}
+
+	var keyStorage xkmssdk.StorageBackend
+	if barrierBackend != nil {
+		ns, err := xkmssdk.NewStoragePrefixBackend(barrierBackend, "ca/")
+		if err != nil {
+			a.log.Warn("failed to create the local CA key datastore", "error", err)
+			return
+		}
+		keyStorage = ns
+	}
+
+	client, err := localca.NewClient(dir, keyStorage)
+	if err != nil {
+		a.log.Warn("failed to open the local CA", "error", err)
+		return
+	}
+	a.localCAClient = client
+	a.caService.SetLocalClient(client)
+}
+
+// closeLocalCA detaches and closes the local CA opened by initLocalCA.
+func (a *App) closeLocalCA() {
+	if a.localCAClient == nil {
+		return
+	}
+	if a.caService != nil {
+		a.caService.SetLocalClient(nil)
+	}
+	if err := a.localCAClient.Close(); err != nil {
+		a.log.Warn("failed to close the local CA", "error", err)
+	}
+	a.localCAClient = nil
+}
+
 func (a *App) initLocalKeyStore(barrierBackend xkmssdk.StorageBackend) {
 	xkmssdk.Reset()
 
@@ -1823,6 +1875,7 @@ func NewApp(cfg *GUIConfig) *App {
 
 	// Create certificate service. Client is set after ConnectionService connects.
 	certSvc := services.NewCertificateService()
+	caSvc := services.NewCAService(nil)
 
 	// Create barrier service for cross-platform encrypted storage.
 	barrierSvc := services.NewBarrierService(cfgDir, log)
@@ -2016,6 +2069,7 @@ func NewApp(cfg *GUIConfig) *App {
 		clipboardService:         clipboardSvc,
 		trustService:             trustSvc,
 		certificateService:       certSvc,
+		caService:                caSvc,
 		securityFactorService:    securityFactorSvc,
 		setupWizardService:       setupWizardSvc,
 		pinService:               pinSvc,
@@ -2660,6 +2714,7 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 		a.pivService.SetClient(client)
 		a.tenantService.SetClient(client)
 		a.certificateService.SetClient(client)
+		a.caService.SetClient(client)
 		a.tpmPolicyService.SetClient(client)
 		a.staticPWService.SetClient(client)
 		a.oidcServerService.SetClient(client)
@@ -2668,6 +2723,8 @@ func (a *App) applyConnectionEvent(eventType events.EventType, client xkmssdk.Cl
 	case events.EventServerDisconnected, events.EventServerError:
 		a.pivService.SetClient(nil)
 		a.certificateService.SetClient(nil)
+		// CAService falls back to the local CA (initLocalCA) when cleared.
+		a.caService.SetClient(nil)
 		a.tpmPolicyService.SetClient(nil)
 		a.staticPWService.SetClient(nil)
 		a.oidcServerService.SetClient(nil)
@@ -2820,6 +2877,7 @@ func (a *App) Run() error {
 		a.barrierAutoUnsealService,
 		a.teamService,
 		a.certificateService,
+		a.caService,
 		a.securityFactorService,
 	}
 	// Append optional services that may fail initialization.
@@ -3614,6 +3672,8 @@ func (a *App) shutdown(ctx context.Context) {
 	a.shutdownOnce.Do(func() {
 		a.log.Info("xKey GUI shutting down")
 		a.running.Store(false)
+
+		a.closeLocalCA()
 
 		// Tear down any live SSH connection agents (syncs first-contact pins).
 		if a.sshConnectService != nil {

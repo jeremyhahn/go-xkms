@@ -9,6 +9,7 @@ export type ViewId =
   | 'pairing'
   | 'keys'
   | 'certificates'
+  | 'ca'
   | 'ssh'
   | 'fido2'
   | 'oath'
@@ -33,6 +34,7 @@ export const VIEW_LABELS: Record<ViewId, string> = {
   pairing: 'Pairing',
   keys: 'Keys',
   certificates: 'Certificates',
+  ca: 'Certificate Authority',
   ssh: 'SSH',
   fido2: 'FIDO2',
   oath: 'OATH',
@@ -58,6 +60,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   pairing: 'Pairing',
   keys: 'Key Management',
   certificates: 'Certificates',
+  ca: 'Certificate Authority',
   ssh: 'SSH',
   fido2: 'FIDO2',
   oath: 'OATH Accounts',

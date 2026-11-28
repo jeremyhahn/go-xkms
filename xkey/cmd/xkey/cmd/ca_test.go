@@ -14,11 +14,17 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
+	xkmssdk "github.com/jeremyhahn/go-xkms/sdk/go"
+	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -430,6 +436,85 @@ func TestGetSDKClient_NoServerConfigured(t *testing.T) {
 	assert.Nil(t, client)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrXKMSdURLRequired), "want ErrXKMSdURLRequired, got %v", err)
+}
+
+// newLocalCATestCmd builds a command carrying the ca --local flag (set) plus
+// the issue flags, on its own flag set so the global caCmd stays untouched.
+func newLocalCATestCmd(t *testing.T) *cobra.Command {
+	t.Helper()
+	require.NotNil(t, caCmd.PersistentFlags().Lookup("local"), "caCmd must carry a persistent --local flag")
+	cmd := &cobra.Command{Use: "ca"}
+	cmd.Flags().Bool("local", false, "")
+	cmd.Flags().String("tls-ca", "", "")
+	cmd.Flags().String("profile", "", "")
+	cmd.Flags().String("cn", "", "")
+	cmd.Flags().String("organization", "", "")
+	cmd.Flags().String("san", "", "")
+	cmd.Flags().Int("validity-days", 0, "")
+	cmd.Flags().String("algorithm", "", "")
+	cmd.Flags().String("output", "", "")
+	require.NoError(t, cmd.Flags().Set("local", "true"))
+	return cmd
+}
+
+func TestRunCAInfo_Local(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	withCLIHome(t)
+
+	cmd := newLocalCATestCmd(t)
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	require.NoError(t, runCAInfo(cmd, nil))
+	assert.Contains(t, buf.String(), "Is CA:         true")
+	assert.Contains(t, buf.String(), "Root CA")
+}
+
+func TestRunCAIssue_Local(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	withCLIHome(t)
+
+	cmd := newLocalCATestCmd(t)
+	out := filepath.Join(t.TempDir(), "leaf.pem")
+	require.NoError(t, cmd.Flags().Set("profile", "server"))
+	require.NoError(t, cmd.Flags().Set("cn", "local.example"))
+	require.NoError(t, cmd.Flags().Set("output", out))
+
+	require.NoError(t, runCAIssue(cmd, nil))
+
+	data, err := os.ReadFile(out)
+	require.NoError(t, err)
+	block, _ := pem.Decode(data)
+	require.NotNil(t, block)
+	require.Equal(t, "CERTIFICATE", block.Type)
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	require.NoError(t, err)
+	assert.Equal(t, "local.example", leaf.Subject.CommonName)
+
+	client, err := getSDKClient(cmd)
+	require.NoError(t, err)
+	defer func() { _ = client.Close() }()
+	caInfo, err := client.GetCACertificate(context.Background(), &transport.GetCACertificateRequest{})
+	require.NoError(t, err)
+	require.NotEmpty(t, leaf.Issuer.CommonName)
+	assert.Contains(t, caInfo.Subject, leaf.Issuer.CommonName)
+}
+
+func TestGetSDKClient_LocalRefusesBarrierStore(t *testing.T) {
+	isolateXKMSdEndpoint(t)
+	withCLIHome(t)
+
+	dataDir, err := resolveXKeySSHDataDir()
+	require.NoError(t, err)
+	backend, err := xkmssdk.NewFileStorageBackend(dataDir)
+	require.NoError(t, err)
+	require.NoError(t, backend.Put(t.Context(), defaultBarrierRootKeyPath, []byte("sealed")))
+	require.NoError(t, backend.Close())
+	require.True(t, barrierRootKeyExists(dataDir))
+
+	client, err := getSDKClient(newLocalCATestCmd(t))
+	assert.Nil(t, client)
+	require.ErrorIs(t, err, ErrCALocalStoreBarrierEncrypted)
 }
 
 // TestGetSDKClient_UnreachableServer verifies that a configured but
