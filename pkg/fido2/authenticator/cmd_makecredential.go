@@ -205,6 +205,16 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// CTAP 2.1 §6.1.2 step 1: a zero-length pinUvAuthParam is the CTAP 2.0
+	// selection idiom. It waits for user presence and only then answers
+	// PIN_INVALID or PIN_NOT_SET, never success and never a PIN error
+	// before the touch (#2345). Platforms send it with a pinUvAuthProtocol;
+	// without one the request takes the normal path below, which still asks
+	// for presence before any success.
+	if a.config.EnablePIN && req.PINUVAuthParam != nil && len(req.PINUVAuthParam) == 0 && req.PINUVAuthProtocol > 0 {
+		return nil, a.handleEmptyPinUvAuthParam(req.RP.ID, req.RP.Name, req.User.Name)
+	}
+
 	// The excludeList is deliberately NOT consulted here. CTAP 2.1 §6.1.2
 	// requires the answer to come after the user presence gate below, so a
 	// match cannot be used as a silent probe for which credentials this
@@ -306,7 +316,7 @@ func (a *Authenticator) HandleMakeCredential(data []byte) ([]byte, error) {
 							slog.String("user", req.User.Name),
 						)
 					}
-					if err := a.requestUserPresence(ctx, req.RP.ID, req.RP.Name, req.User.Name, "register"); err != nil {
+					if err := a.requestIntentPresence(ctx, req.RP.ID, req.RP.Name, req.User.Name, "register"); err != nil {
 						debugLog("[MAKECRED] user intent check denied: %v", err)
 						if a.logger != nil {
 							a.logger.Info("MakeCredential user intent check denied, returning OperationDenied",

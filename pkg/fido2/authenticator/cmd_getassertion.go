@@ -825,7 +825,7 @@ func (a *Authenticator) generateAssertionResponseWithPolicy(
 						slog.String("user", credential.UserName),
 					)
 				}
-				if err := a.requestUserPresence(ctx, request.RPID, "", credential.UserName, "authenticate"); err != nil {
+				if err := a.requestIntentPresence(ctx, request.RPID, "", credential.UserName, "authenticate"); err != nil {
 					debugLog("user intent check denied: %v", err)
 					if a.logger != nil {
 						a.logger.Info("user intent check denied, returning OperationDenied",
