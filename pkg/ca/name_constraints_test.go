@@ -28,8 +28,8 @@ import (
 
 func TestCheckIssuerNameConstraints(t *testing.T) {
 	issuer := &x509.Certificate{
-		PermittedIPRanges:       []*net.IPNet{mustCIDR(t, "10.4.0.0/24"), mustCIDR(t, "fd00:4::/64")},
-		ExcludedIPRanges:        []*net.IPNet{mustCIDR(t, "10.4.0.128/25")},
+		PermittedIPRanges:       []*net.IPNet{mustCIDR(t, "198.51.100.0/24"), mustCIDR(t, "fd00:4::/64")},
+		ExcludedIPRanges:        []*net.IPNet{mustCIDR(t, "198.51.100.128/25")},
 		PermittedDNSDomains:     []string{"fabric.example.com", ".svc.example.com"},
 		ExcludedDNSDomains:      []string{"bad.fabric.example.com"},
 		PermittedURIDomains:     []string{"example.org"},
@@ -40,12 +40,12 @@ func TestCheckIssuerNameConstraints(t *testing.T) {
 		leaf x509.Certificate
 		ok   bool
 	}{
-		{"ipv4 inside", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("10.4.0.7")}}, true},
-		{"ipv4 excluded", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("10.4.0.200")}}, false},
+		{"ipv4 inside", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("198.51.100.7")}}, true},
+		{"ipv4 excluded", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("198.51.100.200")}}, false},
 		{"ipv4 outside", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("10.5.0.7")}}, false},
 		{"ipv6 inside", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("fd00:4::9")}}, true},
 		{"ipv6 outside", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("fd00:5::9")}}, false},
-		{"v4-mapped address is treated as IPv4", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("::ffff:10.4.0.7")}}, true},
+		{"v4-mapped address is treated as IPv4", x509.Certificate{IPAddresses: []net.IP{net.ParseIP("::ffff:198.51.100.7")}}, true},
 		{"dns exact", x509.Certificate{DNSNames: []string{"fabric.example.com"}}, true},
 		{"dns subdomain", x509.Certificate{DNSNames: []string{"a.FABRIC.example.com"}}, true},
 		{"dns excluded", x509.Certificate{DNSNames: []string{"x.bad.fabric.example.com"}}, false},
@@ -82,7 +82,7 @@ func TestCheckIssuerNameConstraints(t *testing.T) {
 func TestCheckIssuerNameConstraints_AgreesWithPathValidation(t *testing.T) {
 	f := newOverlayFixture(t)
 	key := newECKey(t, elliptic.P256())
-	for i, ip := range []string{"10.4.0.1", "10.4.0.255", "10.4.1.1", "fd00:4::1", "fd00:4:0:1::1", "192.0.2.1"} {
+	for i, ip := range []string{"198.51.100.1", "198.51.100.255", "198.51.101.1", "fd00:4::1", "fd00:4:0:1::1", "192.0.2.1"} {
 		leaf := &x509.Certificate{
 			SerialNumber: big.NewInt(int64(i + 10)),
 			Subject:      pkix.Name{CommonName: ip},

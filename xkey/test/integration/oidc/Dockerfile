@@ -6,8 +6,8 @@ FROM golang:1.27.4-bookworm
 ENV GOTOOLCHAIN=auto
 
 # Install dependencies (libusb-dev needed for gousb CGO build)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update \
+    && timeout 300 apt-get install -y --no-install-recommends \
         curl \
         netcat-openbsd \
         jq \

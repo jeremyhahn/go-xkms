@@ -8,7 +8,7 @@ FROM golang:1.27.4-bookworm AS builder
 ENV GOTOOLCHAIN=auto
 
 # Install build dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     git \
     ca-certificates \
     tzdata \
@@ -24,7 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # The xkms binary itself needs no SoftHSM to build: PKCS#11 modules are
 # dlopen()ed at run time.
 COPY scripts/build-softhsm.sh /build/build-softhsm.sh
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get install -y --no-install-recommends \
     autoconf automake libtool libssl-dev && \
     rm -rf /var/lib/apt/lists/* && \
     DESTDIR=/build/softhsm-install sh /build/build-softhsm.sh
@@ -61,11 +61,11 @@ RUN CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build \
     -buildvcs=false \
     -tags "pkcs8,tpm2,awskms,gcpkms,azurekv,vault,pkcs11" \
     -ldflags="-w -s -X main.Version=${VERSION:-dev} -X main.GitCommit=${COMMIT:-unknown} -X main.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    -o /build/xkms-grpc-server \
+    -o /build/xkmsd \
     ./cmd/xkmsd/
 
 # Verify binary was built
-RUN test -f /build/xkms-grpc-server || (echo "ERROR: gRPC server binary not built" && exit 1)
+RUN test -f /build/xkmsd || (echo "ERROR: gRPC server binary not built" && exit 1)
 
 # Stage 2: Runtime
 # debian:bookworm-slim rather than alpine: the builder is golang:1.27.4-bookworm
@@ -83,8 +83,8 @@ LABEL org.opencontainers.image.description="gRPC-only xkms server"
 LABEL org.opencontainers.image.vendor="go-xkms"
 
 # Install runtime dependencies
-RUN apt-get update && apt-get upgrade -y && \
-    apt-get install -y --no-install-recommends \
+RUN timeout 300 apt-get update && timeout 300 apt-get upgrade -y && \
+    timeout 300 apt-get install -y --no-install-recommends \
     ca-certificates \
     tzdata \
     libssl3 \
@@ -105,7 +105,7 @@ RUN mkdir -p /app /etc/xkms /var/lib/xkms /data && \
 COPY --from=builder /build/softhsm-install/ /
 
 # Copy binary from builder
-COPY --from=builder --chown=appuser:appuser /build/xkms-grpc-server /app/xkms-grpc-server
+COPY --from=builder --chown=appuser:appuser /build/xkmsd /app/xkmsd
 
 # Switch to non-root user
 USER appuser
@@ -127,7 +127,7 @@ VOLUME ["/var/lib/xkms", "/etc/xkms"]
 ENV KEYSTORE_CONFIG=/etc/xkms/config.yaml
 
 # Set entrypoint
-ENTRYPOINT ["/app/xkms-grpc-server"]
+ENTRYPOINT ["/app/xkmsd"]
 
 # Default command (can be overridden)
-CMD ["--port", "9443", "--data-dir", "/var/lib/xkms"]
+CMD ["--config", "/etc/xkms/config.yaml"]

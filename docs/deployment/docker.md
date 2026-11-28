@@ -66,10 +66,6 @@ docker run -d --name xkms-server \
 Each image is tagged `go-xkms-<profile>:<VERSION>` and
 `go-xkms-<profile>:latest` (`Makefile:3497-3579`).
 
-The gRPC image's default command passes `--port` and `--data-dir`, which
-`xkmsd` does not accept (`cmd/xkmsd/main.go:105-110`); run it with
-`--config /etc/xkms/config.yaml` as the container command.
-
 ## Docker Compose
 
 ### Development Environment
@@ -126,8 +122,11 @@ docker compose -f docker-compose.production.yml down
 
 ### Building Images
 
-Production images embed private `github.com/jeremyhahn/*` Go modules, fetched
-during `go mod download` with the in-house module credential. Each
+Production images fetch their Go modules during `go mod download` through
+proxy.golang.org and sum.golang.org. Private modules are named only by the
+caller's `GOPRIVATE`: the build sets no default, and an empty `GOPRIVATE`
+resolves every module publicly. When the caller names private modules, they
+are fetched with the module credential. Each
 `docker-build-*` Make target stages that credential to a gitignored file via
 `stage-gomodauth` and hands it to BuildKit as a build secret
 (`--secret id=gomodauth`); the Dockerfiles never see it any other way.
@@ -530,7 +529,7 @@ curl -k https://localhost:8445/health
 ### Using CLI Tool
 
 The CLI image's entrypoint is `xkmsctl` (installed as
-`/usr/local/bin/xkms-cli`), so arguments go straight to it:
+`/usr/local/bin/xkmsctl`), so arguments go straight to it:
 
 ```bash
 # Build CLI image

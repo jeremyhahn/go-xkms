@@ -1569,7 +1569,7 @@ func TestIssueEKCertificate_ManufacturerReadableByDevIDEnrollment(t *testing.T) 
 
 	const manufacturer = "id:49465800"
 	request := createTestCertRequest(t, signerKey, issuerCert)
-	request.Subject.CommonName = "lab-node-5-ek"
+	request.Subject.CommonName = "node-01-ek"
 	request.PermanentID = "device-001"
 	request.TPMManufacturer = manufacturer
 

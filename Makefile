@@ -284,12 +284,12 @@ GITEA_INSTEADOF_KEY = url.http://x:$(FORGE_MODULE_TOKEN)@$(GITEA_HOST)/jeremyhah
 # the file is LOADED, so it fails a public checkout before any service starts,
 # which is the opposite of the public-resolution path this exists to provide.
 ifneq ($(GIT_CONFIG_KEY_0),)
-GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
 else ifneq ($(and $(FORGE_MODULE_TOKEN),$(GITEA_HOST)),)
-GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := https://github.com/jeremyhahn/
@@ -1869,8 +1869,17 @@ coverage-xkmsctl:
 # integration-test-bootstrap runs first (ruling 981): Make runs prerequisites
 # in order, and a bootstrap image build failure at the end of the list used to
 # cost the whole two-hour suite; first, it costs minutes.
-integration-test: clean-test-containers integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
+#
+# integration-images runs before the first suite (#2266): it builds the
+# softhsm, swtpm and xkms-server compose images once for the run, and the
+# target-specific XKMS_SERVER_UP_BUILD below makes every PKCS#11 suite start
+# those prebuilt tags instead of rebuilding all three (7-14 min each).
+integration-test: clean-test-containers integration-images integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
+
+# The suites of one integration-test run start the images integration-images
+# built; a sub-suite run on its own keeps the default --build (#2266).
+integration-test: XKMS_SERVER_UP_BUILD :=
 
 # run-image-refs sets the shell variable refs to this run's images: each
 # image of a repository on XKMS_IMAGE_REPOS that carries XKMS_IMAGE_TAG. Its
@@ -1948,6 +1957,13 @@ clean-test-containers:
 		echo "$(RED)✗ Test container cleanup failed:$(RESET)"; \
 		cat $(BUILD_DIR)/clean-test-containers.log; \
 		exit 1; \
+	fi
+	@# CLEAN_RUN_IMAGES=1 (CI teardown only) also removes this run's images: run-image-refs (XKMS_IMAGE_REPOS at tag XKMS_IMAGE_TAG), never IT_IMAGE.
+	@if [ "$(CLEAN_RUN_IMAGES)" = 1 ] && [ -n "$(IT_PROJECT)" ] && [ -n "$(XKMS_IMAGE_TAG)" ]; then \
+		$(call run-image-refs,r=) 2>/dev/null; \
+		keep=""; for ref in $$refs; do [ "$$ref" = '$(IT_IMAGE)' ] || keep="$$keep $$ref"; done; \
+		if [ -n "$$(echo $$keep)" ]; then docker rmi -f $$keep >/dev/null 2>&1 || true; fi; \
+		echo "$(GREEN)✓ Removed this run's images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
 	fi
 
 # ==============================================================================
@@ -2740,6 +2756,9 @@ endef
 #   XKMS_COMPOSE_SERVER=1   always start it, building the image if necessary
 #   XKMS_COMPOSE_SERVER=0   never start it; always use the fallback
 XKMS_COMPOSE_SERVER ?= auto
+# The compose build flag compose_up_xkms_server passes to `up`. integration-test
+# sets it empty because integration-images already built the images (#2266).
+XKMS_SERVER_UP_BUILD ?= --build
 
 define compose_up_xkms_server
 	@$(MAKE) --no-print-directory stage-gomodauth
@@ -2748,12 +2767,12 @@ define compose_up_xkms_server
 			echo "$(YELLOW)xkms-server disabled (XKMS_COMPOSE_SERVER=0); the devcontainer serves the socket.$(RESET)" ;; \
 		1|yes|on) \
 			echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
-			$(DOCKER_COMPOSE) up -d --build xkms-server; \
+			$(DOCKER_COMPOSE) up -d $(XKMS_SERVER_UP_BUILD) xkms-server; \
 			$(MAKE) --no-print-directory devcontainer-server-wait ;; \
 		*) \
 			if docker image inspect $(XKMS_SERVER_IMAGE) >/dev/null 2>&1; then \
 				echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
-				$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
+				$(DOCKER_COMPOSE) up -d $(XKMS_SERVER_UP_BUILD) xkms-server || true; \
 				$(MAKE) --no-print-directory devcontainer-server-wait || \
 					$(DOCKER_COMPOSE) stop xkms-server >/dev/null 2>&1 || true; \
 			else \
@@ -2871,6 +2890,16 @@ devcontainer-verify: stage-gomodauth
 ## devcontainer-server-build: Build the compose xkms-server image (go-xkms-server:dev)
 devcontainer-server-build:
 	$(DOCKER_COMPOSE) build xkms-server
+
+# One build of the compose images per Integration run (#2266): every PKCS#11
+# suite of integration-test used to run `up -d --build xkms-server`, which
+# rebuilt softhsm, swtpm and xkms-server each time. The images carry the
+# per-run XKMS_IMAGE_TAG, so clean-run-images removes them after the run.
+.PHONY: integration-images
+## integration-images: Build the softhsm, swtpm and xkms-server compose images once for integration-test
+integration-images:
+	@$(MAKE) --no-print-directory stage-gomodauth
+	$(DOCKER_COMPOSE) build softhsm swtpm xkms-server
 
 .PHONY: devcontainer-server-up
 ## devcontainer-server-up: Start the compose xkms-server service and wait for its Unix socket
@@ -4058,10 +4087,29 @@ check-insecure-tls:
 	@bash scripts/check-insecure-tls.sh
 
 .PHONY: check-public-literals
-## check-public-literals: Public-release readiness gate -- no lab/fleet/owner literals (go-xkms#1030)
+## check-public-literals: Public-release readiness gate -- no listed internal literal (go-xkms#1030); patterns from RELEASABILITY_PATTERNS or RELEASABILITY_PATTERNS_FILE
+# The pattern list is private, so it is an input: with neither variable set
+# the target refuses (exit 1) rather than pass without checking a literal, so
+# `make lint-gates` and every CI caller must hand it the list; with one set it
+# returns the script's own exit status. The one opt-out is
+# PUBLIC_LITERALS_SKIP=fork-pr, which ci.yml sets only on a pull request whose
+# run has no RELEASABILITY_PATTERNS secret (a fork); the target announces the
+# skip and passes. Any other PUBLIC_LITERALS_SKIP value is refused.
 check-public-literals:
-	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (lab/fleet/owner)...$(RESET)"
-	@bash scripts/check-public-literals.sh
+	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (pattern list from input)...$(RESET)"
+	@if [ -z "$${RELEASABILITY_PATTERNS:-}" ] && [ -z "$${RELEASABILITY_PATTERNS_FILE:-}" ]; then \
+		if [ "$${PUBLIC_LITERALS_SKIP-unset}" = fork-pr ]; then \
+			echo "check-public-literals: skipped -- no pattern input on a pull request without the secret (PUBLIC_LITERALS_SKIP=fork-pr); pushes run the gate"; \
+			exit 0; \
+		fi; \
+		if [ -n "$${PUBLIC_LITERALS_SKIP+set}" ]; then \
+			echo "check-public-literals: refused -- PUBLIC_LITERALS_SKIP accepts only fork-pr" >&2; \
+			exit 1; \
+		fi; \
+		echo "check-public-literals: refused -- no pattern input: set RELEASABILITY_PATTERNS (class<TAB>regex lines) or RELEASABILITY_PATTERNS_FILE (a path to them)" >&2; \
+		exit 1; \
+	fi; \
+	bash scripts/check-public-literals.sh
 
 # GOFLAGS takes one comma-separated -tags value.
 EMPTY :=

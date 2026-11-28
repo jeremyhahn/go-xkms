@@ -57,6 +57,27 @@ func TestCIDevcontainerReadsRunnerDocker(t *testing.T) {
 	}
 }
 
+// integrationRunsOn is the integration job's runs-on (Tenant order
+// 2026-11-27 17:18Z): the preflight runner_integration output, which is
+// bigdisk-docker on a push to main or a same-repository pull request
+// whatever the balance picks, so the integration image build never lands on
+// a hosted runner's small disk; 'bigdisk' off github.com.
+const integrationRunsOn = `${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_integration) || 'bigdisk' }}`
+
+func TestCIIntegrationKeepsBigdiskDocker(t *testing.T) {
+	wf := readDigestWorkflow(t)
+	j, ok := wf.Jobs["integration"]
+	if !ok {
+		t.Fatal("ci.yml has no integration job")
+	}
+	if j.RunsOn != integrationRunsOn {
+		t.Errorf("integration runs-on = %q, want %q", j.RunsOn, integrationRunsOn)
+	}
+	if !slices.Contains(j.Needs, preflightJob) {
+		t.Errorf("integration reads needs.preflight.outputs.runner_integration but does not need %s", preflightJob)
+	}
+}
+
 func TestCIDevcontainerCoverageSkipsAfterFailedBuild(t *testing.T) {
 	wf := readDigestWorkflow(t)
 	j := wf.Jobs[devcontainerJob]
@@ -95,6 +116,7 @@ const runnerSelectStep = "runner"
 var forkEnv = map[string]string{
 	"EVENT":     "${{ github.event_name }}",
 	"HEAD_REPO": "${{ github.event.pull_request.head.repo.full_name }}",
+	"REF":       "${{ github.ref }}",
 	"REPO":      "${{ github.repository }}",
 }
 
@@ -143,8 +165,12 @@ printf 200
 // v1.52: the template's fork clause comes before the variable, so a fork's
 // pull request (under pull_request or pull_request_target, a deleted fork
 // included) takes ubuntu-latest whatever CI_PREFLIGHT_RUNS_ON holds.
+// v1.60 (handbook 1bea157): the variable applies only to a push to main or
+// a same-repository pull_request; every other event (workflow_dispatch,
+// schedule, a push to another branch, pull_request_target) stays hosted.
 const preflightRunsOn = "${{ github.server_url == 'https://github.com' && " +
-	"(!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository)" +
+	"((github.event_name == 'push' && github.ref == 'refs/heads/main') || " +
+	"(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))" +
 	" && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}"
 
 func TestCIPreflightRunsHostedByDefault(t *testing.T) {
@@ -181,6 +207,13 @@ func runRunnerSelect(t *testing.T, script, fork string) (output, calls string) {
 // v1.54's repository variables: CI_HOSTED_SHARE 12, so 12 hosted jobs fill
 // the hosted pool, and 10 units of each self-hosted label, none in use.
 func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int) (output, calls, log string) {
+	t.Helper()
+	return runRunnerSelectEvent(t, script, fork, "pull_request", "refs/pull/1/merge", listed, total)
+}
+
+// runRunnerSelectEvent runs the selector for one event on one ref (v1.60
+// reads "$EVENT:$REF" under set -u, so REF is always set).
+func runRunnerSelectEvent(t *testing.T, script, fork, event, ref string, listed, total int) (output, calls, log string) {
 	t.Helper()
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
@@ -224,7 +257,8 @@ func runRunnerSelectListing(t *testing.T, script, fork string, listed, total int
 		"HS=12",
 		"C1=10",
 		"C2=10",
-		"EVENT=pull_request",
+		"EVENT="+event,
+		"REF="+ref,
 		"REPO=o/r",
 		"HEAD_REPO="+headRepo(fork),
 		"GITHUB_OUTPUT="+out,
@@ -271,8 +305,8 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 			t.Skipf("%s not installed: the selector script needs it", tool)
 		}
 	}
-	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
-	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\nrunner_integration=\"ubuntu-latest\"\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\nrunner_integration=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 
 	// A same-repository run on a full hosted pool goes self-hosted: the stub
 	// reaches the self-hosted branch, so the fork case below tests the fork
@@ -291,11 +325,12 @@ func TestCIRunnerSelectionKeepsForkPullRequestsHosted(t *testing.T) {
 	}
 }
 
-// TestCIRunnerSelectionShortListGoesHosted pins template v1.54 (handbook
-// 1ad68ab8, #104, ruling 1137), which drops v1.50's lower bound: a listing
-// short of its total_count is a count it cannot read, so the run takes the
-// hosted default with a ::warning, whatever the jobs it did list would pick.
-func TestCIRunnerSelectionShortListGoesHosted(t *testing.T) {
+// TestCIRunnerSelectionRefusedEventsStayHosted pins v1.60 (handbook
+// 1bea157): the self-hosted runners accept only a push to main or a pull
+// request, so every other event takes the hosted default with a notice and
+// no Actions API call, while a push to main on a full hosted pool still
+// goes self-hosted.
+func TestCIRunnerSelectionRefusedEventsStayHosted(t *testing.T) {
 	wf := readDigestWorkflow(t)
 	var script string
 	for _, s := range wf.Jobs[preflightJob].Steps {
@@ -311,19 +346,71 @@ func TestCIRunnerSelectionShortListGoesHosted(t *testing.T) {
 			t.Skipf("%s not installed: the selector script needs it", tool)
 		}
 	}
-	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\n"
+	const hosted = "runner=\"ubuntu-latest\"\nrunner_docker=\"ubuntu-latest\"\nrunner_integration=\"ubuntu-latest\"\n"
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\nrunner_integration=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
+	for _, tc := range []struct {
+		event, ref string
+		want       string
+		apiCall    bool
+	}{
+		{"push", "refs/heads/main", overflow, true},
+		{"pull_request", "refs/pull/1/merge", overflow, true},
+		{"workflow_dispatch", "refs/heads/main", hosted, false},
+		{"workflow_dispatch", "refs/heads/feature", hosted, false},
+		{"schedule", "refs/heads/main", hosted, false},
+		{"push", "refs/heads/feature", hosted, false},
+	} {
+		t.Run(tc.event+" "+tc.ref, func(t *testing.T) {
+			out, calls, log := runRunnerSelectEvent(t, script, "false", tc.event, tc.ref, 12, 12)
+			if out != tc.want {
+				t.Errorf("output %q, want %q\n%s", out, tc.want, log)
+			}
+			if got := calls != ""; got != tc.apiCall {
+				t.Errorf("Actions API called = %v, want %v:\n%s", got, tc.apiCall, calls)
+			}
+			if !tc.apiCall {
+				note := "::notice::runner selection: event " + tc.event + " on " + tc.ref + " is not a push to main or a pull request"
+				if !strings.Contains(log, note) {
+					t.Errorf("log lacks %q:\n%s", note, log)
+				}
+			}
+		})
+	}
+}
+
+// TestCIRunnerSelectionShortListIsALowerBound pins template v1.59 (handbook
+// b18e6499, #113): a listing short of its total_count is a lower bound,
+// named in a ::notice, and the choice still uses it; only a failed call goes
+// hosted with a ::warning (v1.54 sent every short listing hosted).
+func TestCIRunnerSelectionShortListIsALowerBound(t *testing.T) {
+	wf := readDigestWorkflow(t)
+	var script string
+	for _, s := range wf.Jobs[preflightJob].Steps {
+		if s.ID == runnerSelectStep {
+			script = s.Run
+		}
+	}
+	if script == "" {
+		t.Fatalf("%s has no step with id: %s", preflightJob, runnerSelectStep)
+	}
+	for _, tool := range []string{"bash", "jq"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not installed: the selector script needs it", tool)
+		}
+	}
+	const overflow = "runner=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk\"]\nrunner_docker=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\nrunner_integration=[\"self-hosted\",\"linux\",\"x64\",\"bigdisk-docker\"]\n"
 	for _, tc := range []struct {
 		name   string
 		listed int
 		want   string
-		note   string
+		why    string
 	}{
 		// 12 of 20 listed: the listed jobs alone fill the hosted pool
-		// (CI_HOSTED_SHARE 12), which would pick self-hosted, yet the short
-		// listing sends the run hosted.
-		{"short list that would pick self-hosted", 12, hosted, "::warning::runner selection: the Actions API gave no complete job list"},
-		// 5 of 20 listed: hosted, with the same warning.
-		{"short list that would pick hosted", 5, hosted, "::warning::runner selection: the Actions API gave no complete job list"},
+		// (CI_HOSTED_SHARE 12), so the run goes self-hosted.
+		{"short list that fills the hosted pool", 12, overflow, "::notice::runner selection: the hosted pool is full (12 of 12)"},
+		// 5 of 20 listed: hosted use 5/12 against no self-hosted use, so
+		// the run goes self-hosted on the balanced rule.
+		{"short list below every limit", 5, overflow, "::notice::runner selection: use hosted 5/12, bigdisk 0/10, bigdisk-docker 0/10"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, calls, log := runRunnerSelectListing(t, script, "false", tc.listed, 20)
@@ -336,8 +423,14 @@ func TestCIRunnerSelectionShortListGoesHosted(t *testing.T) {
 			if strings.Contains(calls, "&page=3") {
 				t.Errorf("%d of 20 jobs listed: the selector read past the empty page:\n%s", tc.listed, calls)
 			}
-			if !strings.Contains(log, tc.note) {
-				t.Errorf("%d of 20 jobs listed: log lacks %q:\n%s", tc.listed, tc.note, log)
+			short := fmt.Sprintf("::notice::runner selection: the listing returned fewer entries than its total (runs/7/jobs?filter=latest: %d of 20 entries); the counts are a lower bound", tc.listed)
+			for _, note := range []string{short, tc.why} {
+				if !strings.Contains(log, note) {
+					t.Errorf("%d of 20 jobs listed: log lacks %q:\n%s", tc.listed, note, log)
+				}
+			}
+			if strings.Contains(log, "::warning::") {
+				t.Errorf("%d of 20 jobs listed: a short listing printed a ::warning:\n%s", tc.listed, log)
 			}
 		})
 	}

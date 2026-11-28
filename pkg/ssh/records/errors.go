@@ -39,3 +39,41 @@ type ConflictError struct {
 func (e *ConflictError) Error() string {
 	return "ssh/records: " + e.Op + " " + e.Path + ": concurrent writers kept changing the record"
 }
+
+// LegacyRecordError reports a pre-DAO record at Path that does not decode or
+// does not hold a valid record.
+type LegacyRecordError struct {
+	Path string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *LegacyRecordError) Error() string {
+	return "ssh/records: legacy record " + e.Path + ": " + e.Err.Error()
+}
+
+// Unwrap returns the decode or validation error.
+func (e *LegacyRecordError) Unwrap() error { return e.Err }
+
+// LegacyPathError reports a pre-DAO record stored at Path whose own scope,
+// owner and name address the record at Record instead.
+type LegacyPathError struct {
+	Path   string
+	Record string
+}
+
+// Error implements the error interface.
+func (e *LegacyPathError) Error() string {
+	return "ssh/records: legacy record " + e.Path + " names the record " + e.Record
+}
+
+// LegacyOwnerConflictError reports a pre-DAO record at Path whose record
+// another owner already holds in the table.
+type LegacyOwnerConflictError struct {
+	Path string
+}
+
+// Error implements the error interface.
+func (e *LegacyOwnerConflictError) Error() string {
+	return "ssh/records: legacy record " + e.Path + " is held by another owner"
+}
