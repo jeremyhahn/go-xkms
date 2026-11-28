@@ -51,6 +51,10 @@ func (s *mockKeystoreServer) ResolveSigningKey(_ context.Context, req *pb.Resolv
 	return &pb.SigningKeyResolution{Repository: req.GetRepository(), KeyId: "release-signing", Default: true}, nil
 }
 
+func (s *mockKeystoreServer) SignReleaseCoRIM(_ context.Context, req *pb.SignReleaseCoRIMRequest) (*pb.SignReleaseCoRIMResponse, error) {
+	return &pb.SignReleaseCoRIMResponse{SignedCorim: append([]byte("signed:"), req.GetCorim()...), KeyId: "release-signing"}, nil
+}
+
 // TestSigningKey_ReachesTheServer proves a connected transport serves the
 // signing-key API over its connection: each request reaches the server and
 // its answer is decoded. The conversions themselves are tested once, in
@@ -79,6 +83,11 @@ func TestSigningKey_ReachesTheServer(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resolution.Default)
 	assert.Equal(t, "release-signing", resolution.KeyID)
+
+	signed, err := tr.SignReleaseCoRIM(ctx, &transport.SignReleaseCoRIMRequest{Repository: signingkeytest.Repository, CoRIM: []byte{0xa0}})
+	require.NoError(t, err)
+	assert.Equal(t, []byte("signed:\xa0"), signed.SignedCoRIM)
+	assert.Equal(t, "release-signing", signed.KeyID)
 }
 
 // TestSigningKey_NotConnected proves every signing-key method refuses

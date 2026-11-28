@@ -91,6 +91,16 @@ func ResolveSigningKeyRequestFromProto(r *pb.ResolveSigningKeyRequest) *transpor
 	return &transport.ResolveSigningKeyRequest{Repository: r.GetRepository()}
 }
 
+// SignReleaseCoRIMRequestFromProto converts a signing request.
+func SignReleaseCoRIMRequestFromProto(r *pb.SignReleaseCoRIMRequest) *transport.SignReleaseCoRIMRequest {
+	return &transport.SignReleaseCoRIMRequest{Repository: r.GetRepository(), CoRIM: r.GetCorim(), SignerName: r.GetSignerName()}
+}
+
+// SignReleaseCoRIMResponseToProto converts a signed CoRIM.
+func SignReleaseCoRIMResponseToProto(r *transport.SignReleaseCoRIMResponse) *pb.SignReleaseCoRIMResponse {
+	return &pb.SignReleaseCoRIMResponse{SignedCorim: r.SignedCoRIM, KeyId: r.KeyID, Backend: r.Backend}
+}
+
 // SigningKeyResolutionToProto converts a resolution to its wire form.
 func SigningKeyResolutionToProto(r *transport.SigningKeyResolution) *pb.SigningKeyResolution {
 	if r == nil {
@@ -183,4 +193,16 @@ func (c SigningKeyClient) ResolveSigningKey(ctx context.Context, req *transport.
 		return nil, err
 	}
 	return SigningKeyResolutionFromProto(resp), nil
+}
+
+// SignReleaseCoRIM implements transport.ReleaseSigningService.
+func (c SigningKeyClient) SignReleaseCoRIM(ctx context.Context, req *transport.SignReleaseCoRIMRequest) (*transport.SignReleaseCoRIMResponse, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+	resp, err := c.Client.SignReleaseCoRIM(ctx, &pb.SignReleaseCoRIMRequest{Repository: req.Repository, Corim: req.CoRIM, SignerName: req.SignerName})
+	if err != nil {
+		return nil, err
+	}
+	return &transport.SignReleaseCoRIMResponse{SignedCoRIM: resp.GetSignedCorim(), KeyID: resp.GetKeyId(), Backend: resp.GetBackend()}, nil
 }

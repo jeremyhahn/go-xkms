@@ -31,8 +31,10 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
+	"github.com/jeremyhahn/go-xkms/pkg/testutil/releasesigningtest"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
 )
 
@@ -163,5 +165,62 @@ func TestSigningKeyWire_NilRequests(t *testing.T) {
 	assert.ErrorIs(t, err, wire.ErrNilRequest)
 	assert.ErrorIs(t, c.DeleteSigningKeyBinding(ctx, nil), wire.ErrNilRequest)
 	_, err = c.ResolveSigningKey(ctx, nil)
+	assert.ErrorIs(t, err, wire.ErrNilRequest)
+}
+
+// releaseSigningClient returns the wire client over the signing-key routes
+// of svc, called by the release pipeline of tenant.
+func releaseSigningClient(t *testing.T, svc *xkms.XKMSService, tenant string) wire.SigningKeyClient {
+	t.Helper()
+	server := &Server{signingKeyHandlers: NewSigningKeyHandlers(svc)}
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			next.ServeHTTP(w, req.WithContext(auth.WithIdentity(req.Context(), releasesigningtest.Identity(tenant))))
+		})
+	})
+	for _, spec := range Routes() {
+		if spec.Resource == auth.ResourceAttestationSigningKeys {
+			r.Method(spec.Method, spec.Pattern, spec.Handler(server))
+		}
+	}
+	return signingKeyClient(t, r)
+}
+
+// TestReleaseSigningREST_SignsWithTheCallersKey proves POST
+// /api/v1/attestation/signing-keys/sign signs a CoRIM with the caller
+// tenant's release key: the answer verifies under that key.
+func TestReleaseSigningREST_SignsWithTheCallersKey(t *testing.T) {
+	f := releasesigningtest.New(t, releasesigningtest.Tenant, releasesigningtest.SignPermission)
+	c := releaseSigningClient(t, f.Service, releasesigningtest.Tenant)
+
+	resp, err := c.SignReleaseCoRIM(context.Background(), releasesigningtest.Request(releasesigningtest.UnsignedCoRIM(t)))
+	require.NoError(t, err)
+	assert.Equal(t, appraisal.ReleaseSigningKeyID, resp.KeyID)
+	m, err := refvalue.VerifySigned(resp.SignedCoRIM, refvalue.VerifyOptions{PublicKey: f.ReleaseKey})
+	require.NoError(t, err)
+	assert.Equal(t, releasesigningtest.Repository, m.Signer)
+
+	_, err = c.SignReleaseCoRIM(context.Background(), releasesigningtest.Request([]byte{0xff}))
+	assert.Equal(t, &errSigningKeyStatus{code: http.StatusBadRequest}, err, "a malformed CoRIM")
+}
+
+// TestReleaseSigningREST_Refusals proves a caller without the sign
+// permission gets 403, a caller of a tenant holding no release key gets
+// 404 and no signature, and a malformed body or CoRIM gets 400.
+func TestReleaseSigningREST_Refusals(t *testing.T) {
+	ctx := context.Background()
+	payload := releasesigningtest.UnsignedCoRIM(t)
+
+	f := releasesigningtest.New(t, releasesigningtest.Tenant, auth.ResourceAttestationSigningKeys+":"+auth.ActionGet)
+	_, err := releaseSigningClient(t, f.Service, releasesigningtest.Tenant).SignReleaseCoRIM(ctx, releasesigningtest.Request(payload))
+	assert.Equal(t, &errSigningKeyStatus{code: http.StatusForbidden}, err)
+
+	f = releasesigningtest.New(t, releasesigningtest.ForeignTenant, releasesigningtest.SignPermission)
+	c := releaseSigningClient(t, f.Service, releasesigningtest.Tenant)
+	resp, err := c.SignReleaseCoRIM(ctx, releasesigningtest.Request(payload))
+	assert.Equal(t, &errSigningKeyStatus{code: http.StatusNotFound}, err)
+	assert.Nil(t, resp)
+	_, err = c.SignReleaseCoRIM(ctx, nil)
 	assert.ErrorIs(t, err, wire.ErrNilRequest)
 }

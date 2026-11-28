@@ -71,3 +71,9 @@ func (s *Server) handleSigningKeyDelete(ctx context.Context, req *JSONRPCRequest
 func (s *Server) handleSigningKeyResolve(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
 	return signingKeyCall(s, ctx, req, "signing key resolve", s.xkmsService.ResolveSigningKey)
 }
+
+// handleSigningKeySign signs a CoRIM with the repository's key in the
+// caller's tenant (attestation_signing_keys:sign).
+func (s *Server) handleSigningKeySign(ctx context.Context, req *JSONRPCRequest) (interface{}, error) {
+	return signingKeyCall(s, ctx, req, "signing key sign", s.xkmsService.SignReleaseCoRIM)
+}

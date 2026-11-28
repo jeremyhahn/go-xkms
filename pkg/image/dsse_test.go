@@ -14,8 +14,12 @@
 package image
 
 import (
+	"crypto"
 	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -30,6 +34,40 @@ func TestPAE(t *testing.T) {
 		"DSSEv1 29 http://example.com/HelloWorld 11 hello world",
 		string(PAE("http://example.com/HelloWorld", []byte("hello world"))))
 	assert.Equal(t, "DSSEv1 0  0 ", string(PAE("", nil)))
+}
+
+func TestSignatureInput_ECDSAHashFollowsCurve(t *testing.T) {
+	message := []byte("pae")
+	tests := map[string]struct {
+		curve elliptic.Curve
+		hash  crypto.Hash
+	}{
+		"P-256": {curve: elliptic.P256(), hash: crypto.SHA256},
+		"P-384": {curve: elliptic.P384(), hash: crypto.SHA384},
+		"P-521": {curve: elliptic.P521(), hash: crypto.SHA512},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			key, err := ecdsa.GenerateKey(tt.curve, rand.Reader)
+			require.NoError(t, err)
+			digest, hash, err := signatureInput(key.Public(), message)
+			require.NoError(t, err)
+			assert.Equal(t, tt.hash, hash)
+			assert.Len(t, digest, tt.hash.Size())
+		})
+	}
+
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	digest, hash, err := signatureInput(rsaKey.Public(), message)
+	require.NoError(t, err)
+	assert.Equal(t, crypto.SHA256, hash, "RSA keeps SHA-256 (PKCS#1 v1.5)")
+	assert.Len(t, digest, crypto.SHA256.Size())
+
+	p224, err := ecdsa.GenerateKey(elliptic.P224(), rand.Reader)
+	require.NoError(t, err)
+	_, _, err = signatureInput(p224.Public(), message)
+	require.ErrorIs(t, err, ErrUnsupportedKey)
 }
 
 func TestSignEnvelope(t *testing.T) {
@@ -94,6 +132,23 @@ func TestVerifyEnvelope_AnySignature(t *testing.T) {
 
 	env.Signatures = env.Signatures[:1]
 	require.ErrorIs(t, verifyEnvelope(env, key.Public()), ErrSignatureInvalid)
+}
+
+func TestVerifyEnvelope_ECDSALegacySHA256(t *testing.T) {
+	payload := []byte(`{"_type":"https://in-toto.io/Statement/v1"}`)
+	for name, curve := range map[string]elliptic.Curve{"P-384": elliptic.P384(), "P-521": elliptic.P521()} {
+		t.Run(name, func(t *testing.T) {
+			key, err := ecdsa.GenerateKey(curve, rand.Reader)
+			require.NoError(t, err)
+			sig, err := ecdsa.SignASN1(rand.Reader, key, sha256Sum(PAE(PayloadTypeInToto, payload)))
+			require.NoError(t, err)
+			env := &Envelope{PayloadType: PayloadTypeInToto, Payload: payload, Signatures: []EnvelopeSignature{{Sig: sig}}}
+			require.NoError(t, verifyEnvelope(env, key.Public()), "a SHA-256 signature made before the per-curve digest still verifies")
+
+			env.Payload = []byte(`{}`)
+			require.ErrorIs(t, verifyEnvelope(env, key.Public()), ErrSignatureInvalid)
+		})
+	}
 }
 
 func TestParseEnvelope(t *testing.T) {

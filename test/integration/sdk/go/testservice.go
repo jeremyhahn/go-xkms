@@ -1434,3 +1434,6 @@ func (*TestXKMSService) DeleteSigningKeyBinding(context.Context, *xkms.DeleteAtt
 func (*TestXKMSService) ResolveSigningKey(context.Context, *xkms.ResolveAttestationSigningKeyRequest) (*xkms.AttestationSigningKeyResolution, error) {
 	return nil, nil
 }
+func (*TestXKMSService) SignReleaseCoRIM(context.Context, *xkms.SignReleaseCoRIMRequest) (*xkms.SignReleaseCoRIMResponse, error) {
+	return nil, nil
+}

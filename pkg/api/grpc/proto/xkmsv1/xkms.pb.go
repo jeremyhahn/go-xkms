@@ -24915,6 +24915,130 @@ func (x *SigningKeyResolution) GetDefault() bool {
 	return false
 }
 
+// SignReleaseCoRIMRequest is an unsigned CoRIM (CBOR) of a repository.
+type SignReleaseCoRIMRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Repository string                 `protobuf:"bytes,1,opt,name=repository,proto3" json:"repository,omitempty"`
+	Corim      []byte                 `protobuf:"bytes,2,opt,name=corim,proto3" json:"corim,omitempty"`
+	// signer_name is the signer entity of the COSE envelope; empty names the
+	// repository.
+	SignerName    string `protobuf:"bytes,3,opt,name=signer_name,json=signerName,proto3" json:"signer_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SignReleaseCoRIMRequest) Reset() {
+	*x = SignReleaseCoRIMRequest{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[376]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SignReleaseCoRIMRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SignReleaseCoRIMRequest) ProtoMessage() {}
+
+func (x *SignReleaseCoRIMRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[376]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SignReleaseCoRIMRequest.ProtoReflect.Descriptor instead.
+func (*SignReleaseCoRIMRequest) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{376}
+}
+
+func (x *SignReleaseCoRIMRequest) GetRepository() string {
+	if x != nil {
+		return x.Repository
+	}
+	return ""
+}
+
+func (x *SignReleaseCoRIMRequest) GetCorim() []byte {
+	if x != nil {
+		return x.Corim
+	}
+	return nil
+}
+
+func (x *SignReleaseCoRIMRequest) GetSignerName() string {
+	if x != nil {
+		return x.SignerName
+	}
+	return ""
+}
+
+// SignReleaseCoRIMResponse is the COSE_Sign1 signed CoRIM and its key.
+type SignReleaseCoRIMResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SignedCorim   []byte                 `protobuf:"bytes,1,opt,name=signed_corim,json=signedCorim,proto3" json:"signed_corim,omitempty"`
+	KeyId         string                 `protobuf:"bytes,2,opt,name=key_id,json=keyId,proto3" json:"key_id,omitempty"`
+	Backend       string                 `protobuf:"bytes,3,opt,name=backend,proto3" json:"backend,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SignReleaseCoRIMResponse) Reset() {
+	*x = SignReleaseCoRIMResponse{}
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[377]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SignReleaseCoRIMResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SignReleaseCoRIMResponse) ProtoMessage() {}
+
+func (x *SignReleaseCoRIMResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[377]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SignReleaseCoRIMResponse.ProtoReflect.Descriptor instead.
+func (*SignReleaseCoRIMResponse) Descriptor() ([]byte, []int) {
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{377}
+}
+
+func (x *SignReleaseCoRIMResponse) GetSignedCorim() []byte {
+	if x != nil {
+		return x.SignedCorim
+	}
+	return nil
+}
+
+func (x *SignReleaseCoRIMResponse) GetKeyId() string {
+	if x != nil {
+		return x.KeyId
+	}
+	return ""
+}
+
+func (x *SignReleaseCoRIMResponse) GetBackend() string {
+	if x != nil {
+		return x.Backend
+	}
+	return ""
+}
+
 // BeginRegistrationRequest begins a WebAuthn registration ceremony.
 type BeginRegistrationRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -24928,7 +25052,7 @@ type BeginRegistrationRequest struct {
 
 func (x *BeginRegistrationRequest) Reset() {
 	*x = BeginRegistrationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[376]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[378]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24940,7 +25064,7 @@ func (x *BeginRegistrationRequest) String() string {
 func (*BeginRegistrationRequest) ProtoMessage() {}
 
 func (x *BeginRegistrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[376]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[378]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24953,7 +25077,7 @@ func (x *BeginRegistrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginRegistrationRequest.ProtoReflect.Descriptor instead.
 func (*BeginRegistrationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{376}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{378}
 }
 
 func (x *BeginRegistrationRequest) GetEmail() string {
@@ -24982,7 +25106,7 @@ type BeginRegistrationResponse struct {
 
 func (x *BeginRegistrationResponse) Reset() {
 	*x = BeginRegistrationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[377]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[379]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -24994,7 +25118,7 @@ func (x *BeginRegistrationResponse) String() string {
 func (*BeginRegistrationResponse) ProtoMessage() {}
 
 func (x *BeginRegistrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[377]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[379]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25007,7 +25131,7 @@ func (x *BeginRegistrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginRegistrationResponse.ProtoReflect.Descriptor instead.
 func (*BeginRegistrationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{377}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{379}
 }
 
 func (x *BeginRegistrationResponse) GetSessionId() string {
@@ -25035,7 +25159,7 @@ type FinishRegistrationRequest struct {
 
 func (x *FinishRegistrationRequest) Reset() {
 	*x = FinishRegistrationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[378]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[380]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25047,7 +25171,7 @@ func (x *FinishRegistrationRequest) String() string {
 func (*FinishRegistrationRequest) ProtoMessage() {}
 
 func (x *FinishRegistrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[378]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[380]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25060,7 +25184,7 @@ func (x *FinishRegistrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishRegistrationRequest.ProtoReflect.Descriptor instead.
 func (*FinishRegistrationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{378}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{380}
 }
 
 func (x *FinishRegistrationRequest) GetSessionId() string {
@@ -25090,7 +25214,7 @@ type FinishRegistrationResponse struct {
 
 func (x *FinishRegistrationResponse) Reset() {
 	*x = FinishRegistrationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[379]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[381]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25102,7 +25226,7 @@ func (x *FinishRegistrationResponse) String() string {
 func (*FinishRegistrationResponse) ProtoMessage() {}
 
 func (x *FinishRegistrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[379]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[381]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25115,7 +25239,7 @@ func (x *FinishRegistrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishRegistrationResponse.ProtoReflect.Descriptor instead.
 func (*FinishRegistrationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{379}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{381}
 }
 
 func (x *FinishRegistrationResponse) GetSuccess() bool {
@@ -25158,7 +25282,7 @@ type BeginAuthenticationRequest struct {
 
 func (x *BeginAuthenticationRequest) Reset() {
 	*x = BeginAuthenticationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[380]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[382]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25170,7 +25294,7 @@ func (x *BeginAuthenticationRequest) String() string {
 func (*BeginAuthenticationRequest) ProtoMessage() {}
 
 func (x *BeginAuthenticationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[380]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[382]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25183,7 +25307,7 @@ func (x *BeginAuthenticationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginAuthenticationRequest.ProtoReflect.Descriptor instead.
 func (*BeginAuthenticationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{380}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{382}
 }
 
 func (x *BeginAuthenticationRequest) GetEmail() string {
@@ -25205,7 +25329,7 @@ type BeginAuthenticationResponse struct {
 
 func (x *BeginAuthenticationResponse) Reset() {
 	*x = BeginAuthenticationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[381]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[383]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25217,7 +25341,7 @@ func (x *BeginAuthenticationResponse) String() string {
 func (*BeginAuthenticationResponse) ProtoMessage() {}
 
 func (x *BeginAuthenticationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[381]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[383]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25230,7 +25354,7 @@ func (x *BeginAuthenticationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginAuthenticationResponse.ProtoReflect.Descriptor instead.
 func (*BeginAuthenticationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{381}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{383}
 }
 
 func (x *BeginAuthenticationResponse) GetSessionId() string {
@@ -25260,7 +25384,7 @@ type FinishAuthenticationRequest struct {
 
 func (x *FinishAuthenticationRequest) Reset() {
 	*x = FinishAuthenticationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[382]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[384]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25272,7 +25396,7 @@ func (x *FinishAuthenticationRequest) String() string {
 func (*FinishAuthenticationRequest) ProtoMessage() {}
 
 func (x *FinishAuthenticationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[382]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[384]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25285,7 +25409,7 @@ func (x *FinishAuthenticationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishAuthenticationRequest.ProtoReflect.Descriptor instead.
 func (*FinishAuthenticationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{382}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{384}
 }
 
 func (x *FinishAuthenticationRequest) GetSessionId() string {
@@ -25322,7 +25446,7 @@ type FinishAuthenticationResponse struct {
 
 func (x *FinishAuthenticationResponse) Reset() {
 	*x = FinishAuthenticationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[383]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[385]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25334,7 +25458,7 @@ func (x *FinishAuthenticationResponse) String() string {
 func (*FinishAuthenticationResponse) ProtoMessage() {}
 
 func (x *FinishAuthenticationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[383]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[385]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25347,7 +25471,7 @@ func (x *FinishAuthenticationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishAuthenticationResponse.ProtoReflect.Descriptor instead.
 func (*FinishAuthenticationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{383}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{385}
 }
 
 func (x *FinishAuthenticationResponse) GetSuccess() bool {
@@ -25390,7 +25514,7 @@ type GetInviteRequest struct {
 
 func (x *GetInviteRequest) Reset() {
 	*x = GetInviteRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[384]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[386]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25402,7 +25526,7 @@ func (x *GetInviteRequest) String() string {
 func (*GetInviteRequest) ProtoMessage() {}
 
 func (x *GetInviteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[384]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[386]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25415,7 +25539,7 @@ func (x *GetInviteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetInviteRequest.ProtoReflect.Descriptor instead.
 func (*GetInviteRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{384}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{386}
 }
 
 func (x *GetInviteRequest) GetTenantId() string {
@@ -25448,7 +25572,7 @@ type GetInviteResponse struct {
 
 func (x *GetInviteResponse) Reset() {
 	*x = GetInviteResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[385]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[387]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25460,7 +25584,7 @@ func (x *GetInviteResponse) String() string {
 func (*GetInviteResponse) ProtoMessage() {}
 
 func (x *GetInviteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[385]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[387]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25473,7 +25597,7 @@ func (x *GetInviteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetInviteResponse.ProtoReflect.Descriptor instead.
 func (*GetInviteResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{385}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{387}
 }
 
 func (x *GetInviteResponse) GetEmail() string {
@@ -25516,7 +25640,7 @@ type BeginInviteRegistrationRequest struct {
 
 func (x *BeginInviteRegistrationRequest) Reset() {
 	*x = BeginInviteRegistrationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[386]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[388]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25528,7 +25652,7 @@ func (x *BeginInviteRegistrationRequest) String() string {
 func (*BeginInviteRegistrationRequest) ProtoMessage() {}
 
 func (x *BeginInviteRegistrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[386]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[388]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25541,7 +25665,7 @@ func (x *BeginInviteRegistrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginInviteRegistrationRequest.ProtoReflect.Descriptor instead.
 func (*BeginInviteRegistrationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{386}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{388}
 }
 
 func (x *BeginInviteRegistrationRequest) GetTenantId() string {
@@ -25571,7 +25695,7 @@ type BeginInviteRegistrationResponse struct {
 
 func (x *BeginInviteRegistrationResponse) Reset() {
 	*x = BeginInviteRegistrationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[387]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[389]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25583,7 +25707,7 @@ func (x *BeginInviteRegistrationResponse) String() string {
 func (*BeginInviteRegistrationResponse) ProtoMessage() {}
 
 func (x *BeginInviteRegistrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[387]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[389]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25596,7 +25720,7 @@ func (x *BeginInviteRegistrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BeginInviteRegistrationResponse.ProtoReflect.Descriptor instead.
 func (*BeginInviteRegistrationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{387}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{389}
 }
 
 func (x *BeginInviteRegistrationResponse) GetSessionId() string {
@@ -25628,7 +25752,7 @@ type FinishInviteRegistrationRequest struct {
 
 func (x *FinishInviteRegistrationRequest) Reset() {
 	*x = FinishInviteRegistrationRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[388]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[390]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25640,7 +25764,7 @@ func (x *FinishInviteRegistrationRequest) String() string {
 func (*FinishInviteRegistrationRequest) ProtoMessage() {}
 
 func (x *FinishInviteRegistrationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[388]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[390]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25653,7 +25777,7 @@ func (x *FinishInviteRegistrationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishInviteRegistrationRequest.ProtoReflect.Descriptor instead.
 func (*FinishInviteRegistrationRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{388}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{390}
 }
 
 func (x *FinishInviteRegistrationRequest) GetTenantId() string {
@@ -25695,7 +25819,7 @@ type FinishInviteRegistrationResponse struct {
 
 func (x *FinishInviteRegistrationResponse) Reset() {
 	*x = FinishInviteRegistrationResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[389]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[391]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25707,7 +25831,7 @@ func (x *FinishInviteRegistrationResponse) String() string {
 func (*FinishInviteRegistrationResponse) ProtoMessage() {}
 
 func (x *FinishInviteRegistrationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[389]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[391]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25720,7 +25844,7 @@ func (x *FinishInviteRegistrationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FinishInviteRegistrationResponse.ProtoReflect.Descriptor instead.
 func (*FinishInviteRegistrationResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{389}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{391}
 }
 
 func (x *FinishInviteRegistrationResponse) GetUserId() uint64 {
@@ -25745,7 +25869,7 @@ type ActivateInvitePIVRequest struct {
 
 func (x *ActivateInvitePIVRequest) Reset() {
 	*x = ActivateInvitePIVRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[390]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[392]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25757,7 +25881,7 @@ func (x *ActivateInvitePIVRequest) String() string {
 func (*ActivateInvitePIVRequest) ProtoMessage() {}
 
 func (x *ActivateInvitePIVRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[390]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[392]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25770,7 +25894,7 @@ func (x *ActivateInvitePIVRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateInvitePIVRequest.ProtoReflect.Descriptor instead.
 func (*ActivateInvitePIVRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{390}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{392}
 }
 
 func (x *ActivateInvitePIVRequest) GetTenantId() string {
@@ -25804,7 +25928,7 @@ type ActivateInvitePIVResponse struct {
 
 func (x *ActivateInvitePIVResponse) Reset() {
 	*x = ActivateInvitePIVResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[391]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[393]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25816,7 +25940,7 @@ func (x *ActivateInvitePIVResponse) String() string {
 func (*ActivateInvitePIVResponse) ProtoMessage() {}
 
 func (x *ActivateInvitePIVResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[391]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[393]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25829,7 +25953,7 @@ func (x *ActivateInvitePIVResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateInvitePIVResponse.ProtoReflect.Descriptor instead.
 func (*ActivateInvitePIVResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{391}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{393}
 }
 
 func (x *ActivateInvitePIVResponse) GetUserId() uint64 {
@@ -25851,7 +25975,7 @@ type SSHKeyRef struct {
 
 func (x *SSHKeyRef) Reset() {
 	*x = SSHKeyRef{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[392]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[394]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25863,7 +25987,7 @@ func (x *SSHKeyRef) String() string {
 func (*SSHKeyRef) ProtoMessage() {}
 
 func (x *SSHKeyRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[392]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[394]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25876,7 +26000,7 @@ func (x *SSHKeyRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHKeyRef.ProtoReflect.Descriptor instead.
 func (*SSHKeyRef) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{392}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{394}
 }
 
 func (x *SSHKeyRef) GetScope() string {
@@ -25920,7 +26044,7 @@ type SSHKeyInfo struct {
 
 func (x *SSHKeyInfo) Reset() {
 	*x = SSHKeyInfo{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[393]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[395]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -25932,7 +26056,7 @@ func (x *SSHKeyInfo) String() string {
 func (*SSHKeyInfo) ProtoMessage() {}
 
 func (x *SSHKeyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[393]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[395]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25945,7 +26069,7 @@ func (x *SSHKeyInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHKeyInfo.ProtoReflect.Descriptor instead.
 func (*SSHKeyInfo) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{393}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{395}
 }
 
 func (x *SSHKeyInfo) GetScope() string {
@@ -26033,7 +26157,7 @@ type SSHGenerateKeyRequest struct {
 
 func (x *SSHGenerateKeyRequest) Reset() {
 	*x = SSHGenerateKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[394]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[396]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26045,7 +26169,7 @@ func (x *SSHGenerateKeyRequest) String() string {
 func (*SSHGenerateKeyRequest) ProtoMessage() {}
 
 func (x *SSHGenerateKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[394]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[396]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26058,7 +26182,7 @@ func (x *SSHGenerateKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHGenerateKeyRequest.ProtoReflect.Descriptor instead.
 func (*SSHGenerateKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{394}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{396}
 }
 
 func (x *SSHGenerateKeyRequest) GetScope() string {
@@ -26123,7 +26247,7 @@ type SSHImportKeyRequest struct {
 
 func (x *SSHImportKeyRequest) Reset() {
 	*x = SSHImportKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[395]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[397]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26135,7 +26259,7 @@ func (x *SSHImportKeyRequest) String() string {
 func (*SSHImportKeyRequest) ProtoMessage() {}
 
 func (x *SSHImportKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[395]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[397]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26148,7 +26272,7 @@ func (x *SSHImportKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHImportKeyRequest.ProtoReflect.Descriptor instead.
 func (*SSHImportKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{395}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{397}
 }
 
 func (x *SSHImportKeyRequest) GetScope() string {
@@ -26195,7 +26319,7 @@ type SSHKeyResponse struct {
 
 func (x *SSHKeyResponse) Reset() {
 	*x = SSHKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[396]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[398]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26207,7 +26331,7 @@ func (x *SSHKeyResponse) String() string {
 func (*SSHKeyResponse) ProtoMessage() {}
 
 func (x *SSHKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[396]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[398]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26220,7 +26344,7 @@ func (x *SSHKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHKeyResponse.ProtoReflect.Descriptor instead.
 func (*SSHKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{396}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{398}
 }
 
 func (x *SSHKeyResponse) GetKey() *SSHKeyInfo {
@@ -26240,7 +26364,7 @@ type SSHListKeysRequest struct {
 
 func (x *SSHListKeysRequest) Reset() {
 	*x = SSHListKeysRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[397]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[399]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26252,7 +26376,7 @@ func (x *SSHListKeysRequest) String() string {
 func (*SSHListKeysRequest) ProtoMessage() {}
 
 func (x *SSHListKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[397]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[399]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26265,7 +26389,7 @@ func (x *SSHListKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListKeysRequest.ProtoReflect.Descriptor instead.
 func (*SSHListKeysRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{397}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{399}
 }
 
 func (x *SSHListKeysRequest) GetScope() string {
@@ -26291,7 +26415,7 @@ type SSHListKeysResponse struct {
 
 func (x *SSHListKeysResponse) Reset() {
 	*x = SSHListKeysResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[398]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[400]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26303,7 +26427,7 @@ func (x *SSHListKeysResponse) String() string {
 func (*SSHListKeysResponse) ProtoMessage() {}
 
 func (x *SSHListKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[398]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[400]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26316,7 +26440,7 @@ func (x *SSHListKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListKeysResponse.ProtoReflect.Descriptor instead.
 func (*SSHListKeysResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{398}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{400}
 }
 
 func (x *SSHListKeysResponse) GetKeys() []*SSHKeyInfo {
@@ -26337,7 +26461,7 @@ type SSHPublicKeyResponse struct {
 
 func (x *SSHPublicKeyResponse) Reset() {
 	*x = SSHPublicKeyResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[399]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[401]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26349,7 +26473,7 @@ func (x *SSHPublicKeyResponse) String() string {
 func (*SSHPublicKeyResponse) ProtoMessage() {}
 
 func (x *SSHPublicKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[399]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[401]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26362,7 +26486,7 @@ func (x *SSHPublicKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHPublicKeyResponse.ProtoReflect.Descriptor instead.
 func (*SSHPublicKeyResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{399}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{401}
 }
 
 func (x *SSHPublicKeyResponse) GetAlgorithm() string {
@@ -26396,7 +26520,7 @@ type SSHSignRequest struct {
 
 func (x *SSHSignRequest) Reset() {
 	*x = SSHSignRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[400]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[402]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26408,7 +26532,7 @@ func (x *SSHSignRequest) String() string {
 func (*SSHSignRequest) ProtoMessage() {}
 
 func (x *SSHSignRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[400]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[402]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26421,7 +26545,7 @@ func (x *SSHSignRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHSignRequest.ProtoReflect.Descriptor instead.
 func (*SSHSignRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{400}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{402}
 }
 
 func (x *SSHSignRequest) GetKey() *SSHKeyRef {
@@ -26448,7 +26572,7 @@ type SSHSignResponse struct {
 
 func (x *SSHSignResponse) Reset() {
 	*x = SSHSignResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[401]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[403]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26460,7 +26584,7 @@ func (x *SSHSignResponse) String() string {
 func (*SSHSignResponse) ProtoMessage() {}
 
 func (x *SSHSignResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[401]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[403]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26473,7 +26597,7 @@ func (x *SSHSignResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHSignResponse.ProtoReflect.Descriptor instead.
 func (*SSHSignResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{401}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{403}
 }
 
 func (x *SSHSignResponse) GetFormat() string {
@@ -26509,7 +26633,7 @@ type SSHPin struct {
 
 func (x *SSHPin) Reset() {
 	*x = SSHPin{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[402]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[404]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26521,7 +26645,7 @@ func (x *SSHPin) String() string {
 func (*SSHPin) ProtoMessage() {}
 
 func (x *SSHPin) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[402]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[404]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26534,7 +26658,7 @@ func (x *SSHPin) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHPin.ProtoReflect.Descriptor instead.
 func (*SSHPin) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{402}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{404}
 }
 
 func (x *SSHPin) GetScope() string {
@@ -26611,7 +26735,7 @@ type SSHAddKnownHostRequest struct {
 
 func (x *SSHAddKnownHostRequest) Reset() {
 	*x = SSHAddKnownHostRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[403]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[405]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26623,7 +26747,7 @@ func (x *SSHAddKnownHostRequest) String() string {
 func (*SSHAddKnownHostRequest) ProtoMessage() {}
 
 func (x *SSHAddKnownHostRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[403]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[405]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26636,7 +26760,7 @@ func (x *SSHAddKnownHostRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHAddKnownHostRequest.ProtoReflect.Descriptor instead.
 func (*SSHAddKnownHostRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{403}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{405}
 }
 
 func (x *SSHAddKnownHostRequest) GetScope() string {
@@ -26698,7 +26822,7 @@ type SSHListKnownHostsRequest struct {
 
 func (x *SSHListKnownHostsRequest) Reset() {
 	*x = SSHListKnownHostsRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[404]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[406]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26710,7 +26834,7 @@ func (x *SSHListKnownHostsRequest) String() string {
 func (*SSHListKnownHostsRequest) ProtoMessage() {}
 
 func (x *SSHListKnownHostsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[404]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[406]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26723,7 +26847,7 @@ func (x *SSHListKnownHostsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListKnownHostsRequest.ProtoReflect.Descriptor instead.
 func (*SSHListKnownHostsRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{404}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{406}
 }
 
 func (x *SSHListKnownHostsRequest) GetScope() string {
@@ -26749,7 +26873,7 @@ type SSHListKnownHostsResponse struct {
 
 func (x *SSHListKnownHostsResponse) Reset() {
 	*x = SSHListKnownHostsResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[405]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[407]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26761,7 +26885,7 @@ func (x *SSHListKnownHostsResponse) String() string {
 func (*SSHListKnownHostsResponse) ProtoMessage() {}
 
 func (x *SSHListKnownHostsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[405]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[407]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26774,7 +26898,7 @@ func (x *SSHListKnownHostsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListKnownHostsResponse.ProtoReflect.Descriptor instead.
 func (*SSHListKnownHostsResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{405}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{407}
 }
 
 func (x *SSHListKnownHostsResponse) GetPins() []*SSHPin {
@@ -26795,7 +26919,7 @@ type SSHRemoveKnownHostRequest struct {
 
 func (x *SSHRemoveKnownHostRequest) Reset() {
 	*x = SSHRemoveKnownHostRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[406]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[408]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26807,7 +26931,7 @@ func (x *SSHRemoveKnownHostRequest) String() string {
 func (*SSHRemoveKnownHostRequest) ProtoMessage() {}
 
 func (x *SSHRemoveKnownHostRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[406]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[408]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26820,7 +26944,7 @@ func (x *SSHRemoveKnownHostRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHRemoveKnownHostRequest.ProtoReflect.Descriptor instead.
 func (*SSHRemoveKnownHostRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{406}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{408}
 }
 
 func (x *SSHRemoveKnownHostRequest) GetScope() string {
@@ -26859,7 +26983,7 @@ type SSHAuthorizedEntry struct {
 
 func (x *SSHAuthorizedEntry) Reset() {
 	*x = SSHAuthorizedEntry{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[407]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[409]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26871,7 +26995,7 @@ func (x *SSHAuthorizedEntry) String() string {
 func (*SSHAuthorizedEntry) ProtoMessage() {}
 
 func (x *SSHAuthorizedEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[407]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[409]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26884,7 +27008,7 @@ func (x *SSHAuthorizedEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHAuthorizedEntry.ProtoReflect.Descriptor instead.
 func (*SSHAuthorizedEntry) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{407}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{409}
 }
 
 func (x *SSHAuthorizedEntry) GetScope() string {
@@ -26943,7 +27067,7 @@ type SSHAddAuthorizedKeyRequest struct {
 
 func (x *SSHAddAuthorizedKeyRequest) Reset() {
 	*x = SSHAddAuthorizedKeyRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[408]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[410]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -26955,7 +27079,7 @@ func (x *SSHAddAuthorizedKeyRequest) String() string {
 func (*SSHAddAuthorizedKeyRequest) ProtoMessage() {}
 
 func (x *SSHAddAuthorizedKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[408]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[410]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26968,7 +27092,7 @@ func (x *SSHAddAuthorizedKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHAddAuthorizedKeyRequest.ProtoReflect.Descriptor instead.
 func (*SSHAddAuthorizedKeyRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{408}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{410}
 }
 
 func (x *SSHAddAuthorizedKeyRequest) GetScope() string {
@@ -27023,7 +27147,7 @@ type SSHListAuthorizedKeysRequest struct {
 
 func (x *SSHListAuthorizedKeysRequest) Reset() {
 	*x = SSHListAuthorizedKeysRequest{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[409]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[411]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27035,7 +27159,7 @@ func (x *SSHListAuthorizedKeysRequest) String() string {
 func (*SSHListAuthorizedKeysRequest) ProtoMessage() {}
 
 func (x *SSHListAuthorizedKeysRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[409]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[411]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27048,7 +27172,7 @@ func (x *SSHListAuthorizedKeysRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListAuthorizedKeysRequest.ProtoReflect.Descriptor instead.
 func (*SSHListAuthorizedKeysRequest) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{409}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{411}
 }
 
 func (x *SSHListAuthorizedKeysRequest) GetScope() string {
@@ -27074,7 +27198,7 @@ type SSHListAuthorizedKeysResponse struct {
 
 func (x *SSHListAuthorizedKeysResponse) Reset() {
 	*x = SSHListAuthorizedKeysResponse{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[410]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[412]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27086,7 +27210,7 @@ func (x *SSHListAuthorizedKeysResponse) String() string {
 func (*SSHListAuthorizedKeysResponse) ProtoMessage() {}
 
 func (x *SSHListAuthorizedKeysResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[410]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[412]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27099,7 +27223,7 @@ func (x *SSHListAuthorizedKeysResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHListAuthorizedKeysResponse.ProtoReflect.Descriptor instead.
 func (*SSHListAuthorizedKeysResponse) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{410}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{412}
 }
 
 func (x *SSHListAuthorizedKeysResponse) GetEntries() []*SSHAuthorizedEntry {
@@ -27120,7 +27244,7 @@ type SSHAuthorizedKeyRef struct {
 
 func (x *SSHAuthorizedKeyRef) Reset() {
 	*x = SSHAuthorizedKeyRef{}
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[411]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[413]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -27132,7 +27256,7 @@ func (x *SSHAuthorizedKeyRef) String() string {
 func (*SSHAuthorizedKeyRef) ProtoMessage() {}
 
 func (x *SSHAuthorizedKeyRef) ProtoReflect() protoreflect.Message {
-	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[411]
+	mi := &file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes[413]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -27145,7 +27269,7 @@ func (x *SSHAuthorizedKeyRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SSHAuthorizedKeyRef.ProtoReflect.Descriptor instead.
 func (*SSHAuthorizedKeyRef) Descriptor() ([]byte, []int) {
-	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{411}
+	return file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP(), []int{413}
 }
 
 func (x *SSHAuthorizedKeyRef) GetScope() string {
@@ -29084,7 +29208,18 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"repository\x12\x15\n" +
 	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12\x18\n" +
 	"\abackend\x18\x03 \x01(\tR\abackend\x12\x18\n" +
-	"\adefault\x18\x04 \x01(\bR\adefault\"S\n" +
+	"\adefault\x18\x04 \x01(\bR\adefault\"p\n" +
+	"\x17SignReleaseCoRIMRequest\x12\x1e\n" +
+	"\n" +
+	"repository\x18\x01 \x01(\tR\n" +
+	"repository\x12\x14\n" +
+	"\x05corim\x18\x02 \x01(\fR\x05corim\x12\x1f\n" +
+	"\vsigner_name\x18\x03 \x01(\tR\n" +
+	"signerName\"n\n" +
+	"\x18SignReleaseCoRIMResponse\x12!\n" +
+	"\fsigned_corim\x18\x01 \x01(\fR\vsignedCorim\x12\x15\n" +
+	"\x06key_id\x18\x02 \x01(\tR\x05keyId\x12\x18\n" +
+	"\abackend\x18\x03 \x01(\tR\abackend\"S\n" +
 	"\x18BeginRegistrationRequest\x12\x14\n" +
 	"\x05email\x18\x01 \x01(\tR\x05email\x12!\n" +
 	"\fdisplay_name\x18\x02 \x01(\tR\vdisplayName\"]\n" +
@@ -29298,7 +29433,7 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x13RESIDENT_KEY_OP_MAC\x10\x02\x12\x1e\n" +
 	"\x1aRESIDENT_KEY_OP_VERIFY_MAC\x10\x03\x12\x18\n" +
 	"\x14RESIDENT_KEY_OP_WRAP\x10\x04\x12\x1a\n" +
-	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\xa3\xa8\x01\n" +
+	"\x16RESIDENT_KEY_OP_UNWRAP\x10\x052\x9f\xa9\x01\n" +
 	"\x0fKeystoreService\x129\n" +
 	"\x06Health\x12\x16.xkms.v1.HealthRequest\x1a\x17.xkms.v1.HealthResponse\x12^\n" +
 	"\fListBackends\x12\x1c.xkms.v1.ListBackendsRequest\x1a\x1d.xkms.v1.ListBackendsResponse\"\x11\xc2\xf3\x18\rbackends:list\x12d\n" +
@@ -29491,7 +29626,8 @@ const file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc = "" +
 	"\x14GetSigningKeyBinding\x12$.xkms.v1.GetSigningKeyBindingRequest\x1a\x1a.xkms.v1.SigningKeyBinding\" \xc2\xf3\x18\x1cattestation_signing_keys:get\x12\x8c\x01\n" +
 	"\x16ListSigningKeyBindings\x12&.xkms.v1.ListSigningKeyBindingsRequest\x1a'.xkms.v1.ListSigningKeyBindingsResponse\"!\xc2\xf3\x18\x1dattestation_signing_keys:list\x12\x8f\x01\n" +
 	"\x17DeleteSigningKeyBinding\x12'.xkms.v1.DeleteSigningKeyBindingRequest\x1a(.xkms.v1.DeleteSigningKeyBindingResponse\"!\xc2\xf3\x18\x1dattestation_signing_keys:bind\x12w\n" +
-	"\x11ResolveSigningKey\x12!.xkms.v1.ResolveSigningKeyRequest\x1a\x1d.xkms.v1.SigningKeyResolution\" \xc2\xf3\x18\x1cattestation_signing_keys:get\x12b\n" +
+	"\x11ResolveSigningKey\x12!.xkms.v1.ResolveSigningKeyRequest\x1a\x1d.xkms.v1.SigningKeyResolution\" \xc2\xf3\x18\x1cattestation_signing_keys:get\x12z\n" +
+	"\x10SignReleaseCoRIM\x12 .xkms.v1.SignReleaseCoRIMRequest\x1a!.xkms.v1.SignReleaseCoRIMResponse\"!\xc2\xf3\x18\x1dattestation_signing_keys:sign\x12b\n" +
 	"\x0ePKCS11StatePut\x12\x1e.xkms.v1.PKCS11StatePutRequest\x1a\x1f.xkms.v1.PKCS11StatePutResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12z\n" +
 	"\x16PKCS11StatePutIfAbsent\x12&.xkms.v1.PKCS11StatePutIfAbsentRequest\x1a'.xkms.v1.PKCS11StatePutIfAbsentResponse\"\x0f\xc2\xf3\x18\vkeys:create\x12b\n" +
 	"\x0ePKCS11StateCAS\x12\x1e.xkms.v1.PKCS11StateCASRequest\x1a\x1f.xkms.v1.PKCS11StateCASResponse\"\x0f\xc2\xf3\x18\vkeys:update\x12b\n" +
@@ -29557,7 +29693,7 @@ func file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDescGZIP() []byte {
 }
 
 var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes = make([]protoimpl.MessageInfo, 424)
+var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_msgTypes = make([]protoimpl.MessageInfo, 426)
 var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_goTypes = []any{
 	(KeyAlgorithm)(0),                          // 0: xkms.v1.KeyAlgorithm
 	(KeyStatus)(0),                             // 1: xkms.v1.KeyStatus
@@ -29940,70 +30076,72 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_goTypes = []any{
 	(*DeleteSigningKeyBindingResponse)(nil),    // 378: xkms.v1.DeleteSigningKeyBindingResponse
 	(*ResolveSigningKeyRequest)(nil),           // 379: xkms.v1.ResolveSigningKeyRequest
 	(*SigningKeyResolution)(nil),               // 380: xkms.v1.SigningKeyResolution
-	(*BeginRegistrationRequest)(nil),           // 381: xkms.v1.BeginRegistrationRequest
-	(*BeginRegistrationResponse)(nil),          // 382: xkms.v1.BeginRegistrationResponse
-	(*FinishRegistrationRequest)(nil),          // 383: xkms.v1.FinishRegistrationRequest
-	(*FinishRegistrationResponse)(nil),         // 384: xkms.v1.FinishRegistrationResponse
-	(*BeginAuthenticationRequest)(nil),         // 385: xkms.v1.BeginAuthenticationRequest
-	(*BeginAuthenticationResponse)(nil),        // 386: xkms.v1.BeginAuthenticationResponse
-	(*FinishAuthenticationRequest)(nil),        // 387: xkms.v1.FinishAuthenticationRequest
-	(*FinishAuthenticationResponse)(nil),       // 388: xkms.v1.FinishAuthenticationResponse
-	(*GetInviteRequest)(nil),                   // 389: xkms.v1.GetInviteRequest
-	(*GetInviteResponse)(nil),                  // 390: xkms.v1.GetInviteResponse
-	(*BeginInviteRegistrationRequest)(nil),     // 391: xkms.v1.BeginInviteRegistrationRequest
-	(*BeginInviteRegistrationResponse)(nil),    // 392: xkms.v1.BeginInviteRegistrationResponse
-	(*FinishInviteRegistrationRequest)(nil),    // 393: xkms.v1.FinishInviteRegistrationRequest
-	(*FinishInviteRegistrationResponse)(nil),   // 394: xkms.v1.FinishInviteRegistrationResponse
-	(*ActivateInvitePIVRequest)(nil),           // 395: xkms.v1.ActivateInvitePIVRequest
-	(*ActivateInvitePIVResponse)(nil),          // 396: xkms.v1.ActivateInvitePIVResponse
-	(*SSHKeyRef)(nil),                          // 397: xkms.v1.SSHKeyRef
-	(*SSHKeyInfo)(nil),                         // 398: xkms.v1.SSHKeyInfo
-	(*SSHGenerateKeyRequest)(nil),              // 399: xkms.v1.SSHGenerateKeyRequest
-	(*SSHImportKeyRequest)(nil),                // 400: xkms.v1.SSHImportKeyRequest
-	(*SSHKeyResponse)(nil),                     // 401: xkms.v1.SSHKeyResponse
-	(*SSHListKeysRequest)(nil),                 // 402: xkms.v1.SSHListKeysRequest
-	(*SSHListKeysResponse)(nil),                // 403: xkms.v1.SSHListKeysResponse
-	(*SSHPublicKeyResponse)(nil),               // 404: xkms.v1.SSHPublicKeyResponse
-	(*SSHSignRequest)(nil),                     // 405: xkms.v1.SSHSignRequest
-	(*SSHSignResponse)(nil),                    // 406: xkms.v1.SSHSignResponse
-	(*SSHPin)(nil),                             // 407: xkms.v1.SSHPin
-	(*SSHAddKnownHostRequest)(nil),             // 408: xkms.v1.SSHAddKnownHostRequest
-	(*SSHListKnownHostsRequest)(nil),           // 409: xkms.v1.SSHListKnownHostsRequest
-	(*SSHListKnownHostsResponse)(nil),          // 410: xkms.v1.SSHListKnownHostsResponse
-	(*SSHRemoveKnownHostRequest)(nil),          // 411: xkms.v1.SSHRemoveKnownHostRequest
-	(*SSHAuthorizedEntry)(nil),                 // 412: xkms.v1.SSHAuthorizedEntry
-	(*SSHAddAuthorizedKeyRequest)(nil),         // 413: xkms.v1.SSHAddAuthorizedKeyRequest
-	(*SSHListAuthorizedKeysRequest)(nil),       // 414: xkms.v1.SSHListAuthorizedKeysRequest
-	(*SSHListAuthorizedKeysResponse)(nil),      // 415: xkms.v1.SSHListAuthorizedKeysResponse
-	(*SSHAuthorizedKeyRef)(nil),                // 416: xkms.v1.SSHAuthorizedKeyRef
-	nil,                                        // 417: xkms.v1.UpdateKeyMetadataRequest.TagsEntry
-	nil,                                        // 418: xkms.v1.BackendStatusResponse.CapabilitiesEntry
-	nil,                                        // 419: xkms.v1.KeyMetadata.TagsEntry
-	nil,                                        // 420: xkms.v1.WrapKeyResponse.MetadataEntry
-	nil,                                        // 421: xkms.v1.UnwrapKeyRequest.MetadataEntry
-	nil,                                        // 422: xkms.v1.ImportKeyRequest.MetadataEntry
-	nil,                                        // 423: xkms.v1.ExportKeyResponse.MetadataEntry
-	nil,                                        // 424: xkms.v1.SealResponse.MetadataEntry
-	nil,                                        // 425: xkms.v1.UnsealRequest.MetadataEntry
-	nil,                                        // 426: xkms.v1.FrostKeyPackage.VerificationSharesEntry
-	nil,                                        // 427: xkms.v1.TPMPolicyCondition.PcrValuesEntry
-	nil,                                        // 428: xkms.v1.SubmitPeerAttestationRequest.PcrsEntry
-	(*timestamppb.Timestamp)(nil),              // 429: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                      // 430: google.protobuf.Empty
+	(*SignReleaseCoRIMRequest)(nil),            // 381: xkms.v1.SignReleaseCoRIMRequest
+	(*SignReleaseCoRIMResponse)(nil),           // 382: xkms.v1.SignReleaseCoRIMResponse
+	(*BeginRegistrationRequest)(nil),           // 383: xkms.v1.BeginRegistrationRequest
+	(*BeginRegistrationResponse)(nil),          // 384: xkms.v1.BeginRegistrationResponse
+	(*FinishRegistrationRequest)(nil),          // 385: xkms.v1.FinishRegistrationRequest
+	(*FinishRegistrationResponse)(nil),         // 386: xkms.v1.FinishRegistrationResponse
+	(*BeginAuthenticationRequest)(nil),         // 387: xkms.v1.BeginAuthenticationRequest
+	(*BeginAuthenticationResponse)(nil),        // 388: xkms.v1.BeginAuthenticationResponse
+	(*FinishAuthenticationRequest)(nil),        // 389: xkms.v1.FinishAuthenticationRequest
+	(*FinishAuthenticationResponse)(nil),       // 390: xkms.v1.FinishAuthenticationResponse
+	(*GetInviteRequest)(nil),                   // 391: xkms.v1.GetInviteRequest
+	(*GetInviteResponse)(nil),                  // 392: xkms.v1.GetInviteResponse
+	(*BeginInviteRegistrationRequest)(nil),     // 393: xkms.v1.BeginInviteRegistrationRequest
+	(*BeginInviteRegistrationResponse)(nil),    // 394: xkms.v1.BeginInviteRegistrationResponse
+	(*FinishInviteRegistrationRequest)(nil),    // 395: xkms.v1.FinishInviteRegistrationRequest
+	(*FinishInviteRegistrationResponse)(nil),   // 396: xkms.v1.FinishInviteRegistrationResponse
+	(*ActivateInvitePIVRequest)(nil),           // 397: xkms.v1.ActivateInvitePIVRequest
+	(*ActivateInvitePIVResponse)(nil),          // 398: xkms.v1.ActivateInvitePIVResponse
+	(*SSHKeyRef)(nil),                          // 399: xkms.v1.SSHKeyRef
+	(*SSHKeyInfo)(nil),                         // 400: xkms.v1.SSHKeyInfo
+	(*SSHGenerateKeyRequest)(nil),              // 401: xkms.v1.SSHGenerateKeyRequest
+	(*SSHImportKeyRequest)(nil),                // 402: xkms.v1.SSHImportKeyRequest
+	(*SSHKeyResponse)(nil),                     // 403: xkms.v1.SSHKeyResponse
+	(*SSHListKeysRequest)(nil),                 // 404: xkms.v1.SSHListKeysRequest
+	(*SSHListKeysResponse)(nil),                // 405: xkms.v1.SSHListKeysResponse
+	(*SSHPublicKeyResponse)(nil),               // 406: xkms.v1.SSHPublicKeyResponse
+	(*SSHSignRequest)(nil),                     // 407: xkms.v1.SSHSignRequest
+	(*SSHSignResponse)(nil),                    // 408: xkms.v1.SSHSignResponse
+	(*SSHPin)(nil),                             // 409: xkms.v1.SSHPin
+	(*SSHAddKnownHostRequest)(nil),             // 410: xkms.v1.SSHAddKnownHostRequest
+	(*SSHListKnownHostsRequest)(nil),           // 411: xkms.v1.SSHListKnownHostsRequest
+	(*SSHListKnownHostsResponse)(nil),          // 412: xkms.v1.SSHListKnownHostsResponse
+	(*SSHRemoveKnownHostRequest)(nil),          // 413: xkms.v1.SSHRemoveKnownHostRequest
+	(*SSHAuthorizedEntry)(nil),                 // 414: xkms.v1.SSHAuthorizedEntry
+	(*SSHAddAuthorizedKeyRequest)(nil),         // 415: xkms.v1.SSHAddAuthorizedKeyRequest
+	(*SSHListAuthorizedKeysRequest)(nil),       // 416: xkms.v1.SSHListAuthorizedKeysRequest
+	(*SSHListAuthorizedKeysResponse)(nil),      // 417: xkms.v1.SSHListAuthorizedKeysResponse
+	(*SSHAuthorizedKeyRef)(nil),                // 418: xkms.v1.SSHAuthorizedKeyRef
+	nil,                                        // 419: xkms.v1.UpdateKeyMetadataRequest.TagsEntry
+	nil,                                        // 420: xkms.v1.BackendStatusResponse.CapabilitiesEntry
+	nil,                                        // 421: xkms.v1.KeyMetadata.TagsEntry
+	nil,                                        // 422: xkms.v1.WrapKeyResponse.MetadataEntry
+	nil,                                        // 423: xkms.v1.UnwrapKeyRequest.MetadataEntry
+	nil,                                        // 424: xkms.v1.ImportKeyRequest.MetadataEntry
+	nil,                                        // 425: xkms.v1.ExportKeyResponse.MetadataEntry
+	nil,                                        // 426: xkms.v1.SealResponse.MetadataEntry
+	nil,                                        // 427: xkms.v1.UnsealRequest.MetadataEntry
+	nil,                                        // 428: xkms.v1.FrostKeyPackage.VerificationSharesEntry
+	nil,                                        // 429: xkms.v1.TPMPolicyCondition.PcrValuesEntry
+	nil,                                        // 430: xkms.v1.SubmitPeerAttestationRequest.PcrsEntry
+	(*timestamppb.Timestamp)(nil),              // 431: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                      // 432: google.protobuf.Empty
 }
 var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
-	429, // 0: xkms.v1.InviteInfo.expires_at:type_name -> google.protobuf.Timestamp
+	431, // 0: xkms.v1.InviteInfo.expires_at:type_name -> google.protobuf.Timestamp
 	5,   // 1: xkms.v1.UserResponse.user:type_name -> xkms.v1.UserInfo
 	7,   // 2: xkms.v1.UserResponse.invite:type_name -> xkms.v1.InviteInfo
 	5,   // 3: xkms.v1.ListUsersResponse.users:type_name -> xkms.v1.UserInfo
 	18,  // 4: xkms.v1.ListUserCredentialsResponse.credentials:type_name -> xkms.v1.UserCredential
 	22,  // 5: xkms.v1.ListBackendsResponse.backends:type_name -> xkms.v1.BackendInfo
 	22,  // 6: xkms.v1.GetBackendInfoResponse.backend:type_name -> xkms.v1.BackendInfo
-	429, // 7: xkms.v1.GenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
-	429, // 8: xkms.v1.KeyInfo.created_at:type_name -> google.protobuf.Timestamp
+	431, // 7: xkms.v1.GenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
+	431, // 8: xkms.v1.KeyInfo.created_at:type_name -> google.protobuf.Timestamp
 	29,  // 9: xkms.v1.ListKeysResponse.keys:type_name -> xkms.v1.KeyInfo
 	29,  // 10: xkms.v1.GetKeyResponse.key:type_name -> xkms.v1.KeyInfo
-	429, // 11: xkms.v1.RotateKeyResponse.rotated_at:type_name -> google.protobuf.Timestamp
+	431, // 11: xkms.v1.RotateKeyResponse.rotated_at:type_name -> google.protobuf.Timestamp
 	45,  // 12: xkms.v1.ListKeyVersionsResponse.versions:type_name -> xkms.v1.KeyVersionInfo
 	59,  // 13: xkms.v1.RotateScopeKeysResponse.results:type_name -> xkms.v1.KeyRotationResult
 	63,  // 14: xkms.v1.RewrapRequest.source:type_name -> xkms.v1.DecryptRequest
@@ -30020,21 +30158,21 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	1,   // 25: xkms.v1.UpdateKeyStatusRequest.status:type_name -> xkms.v1.KeyStatus
 	1,   // 26: xkms.v1.UpdateKeyStatusResponse.status:type_name -> xkms.v1.KeyStatus
 	122, // 27: xkms.v1.GetKeyMetadataResponse.metadata:type_name -> xkms.v1.KeyMetadata
-	417, // 28: xkms.v1.UpdateKeyMetadataRequest.tags:type_name -> xkms.v1.UpdateKeyMetadataRequest.TagsEntry
+	419, // 28: xkms.v1.UpdateKeyMetadataRequest.tags:type_name -> xkms.v1.UpdateKeyMetadataRequest.TagsEntry
 	122, // 29: xkms.v1.UpdateKeyMetadataResponse.metadata:type_name -> xkms.v1.KeyMetadata
 	123, // 30: xkms.v1.SetKeyPolicyRequest.policy:type_name -> xkms.v1.KeyPolicy
 	123, // 31: xkms.v1.GetKeyPolicyResponse.policy:type_name -> xkms.v1.KeyPolicy
 	124, // 32: xkms.v1.SetKeyRotationPolicyRequest.policy:type_name -> xkms.v1.RotationPolicy
 	124, // 33: xkms.v1.SetKeyRotationPolicyResponse.policy:type_name -> xkms.v1.RotationPolicy
 	124, // 34: xkms.v1.GetKeyRotationPolicyResponse.policy:type_name -> xkms.v1.RotationPolicy
-	418, // 35: xkms.v1.BackendStatusResponse.capabilities:type_name -> xkms.v1.BackendStatusResponse.CapabilitiesEntry
+	420, // 35: xkms.v1.BackendStatusResponse.capabilities:type_name -> xkms.v1.BackendStatusResponse.CapabilitiesEntry
 	125, // 36: xkms.v1.SafetyCheckResponse.warnings:type_name -> xkms.v1.SafetyWarning
 	125, // 37: xkms.v1.SafetyReportResponse.all_items:type_name -> xkms.v1.SafetyWarning
 	0,   // 38: xkms.v1.KeyMetadata.algorithm:type_name -> xkms.v1.KeyAlgorithm
 	1,   // 39: xkms.v1.KeyMetadata.status:type_name -> xkms.v1.KeyStatus
 	2,   // 40: xkms.v1.KeyMetadata.usage:type_name -> xkms.v1.KeyUsage
 	124, // 41: xkms.v1.KeyMetadata.rotation_policy:type_name -> xkms.v1.RotationPolicy
-	419, // 42: xkms.v1.KeyMetadata.tags:type_name -> xkms.v1.KeyMetadata.TagsEntry
+	421, // 42: xkms.v1.KeyMetadata.tags:type_name -> xkms.v1.KeyMetadata.TagsEntry
 	2,   // 43: xkms.v1.KeyPolicy.allowed_operations:type_name -> xkms.v1.KeyUsage
 	133, // 44: xkms.v1.DerivedKeyHandle.tpm_handle:type_name -> xkms.v1.TPMDerivedKeyHandle
 	3,   // 45: xkms.v1.DeriveKeyECDHSecureRequest.derivation_mode:type_name -> xkms.v1.KeyDerivationMode
@@ -30048,17 +30186,17 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	3,   // 53: xkms.v1.GenerateEphemeralECDHRequest.derivation_mode:type_name -> xkms.v1.KeyDerivationMode
 	3,   // 54: xkms.v1.GenerateEphemeralECDHResponse.mode:type_name -> xkms.v1.KeyDerivationMode
 	132, // 55: xkms.v1.GenerateEphemeralECDHResponse.handle:type_name -> xkms.v1.DerivedKeyHandle
-	429, // 56: xkms.v1.GetImportParametersResponse.expires_at:type_name -> google.protobuf.Timestamp
-	420, // 57: xkms.v1.WrapKeyResponse.metadata:type_name -> xkms.v1.WrapKeyResponse.MetadataEntry
-	421, // 58: xkms.v1.UnwrapKeyRequest.metadata:type_name -> xkms.v1.UnwrapKeyRequest.MetadataEntry
-	422, // 59: xkms.v1.ImportKeyRequest.metadata:type_name -> xkms.v1.ImportKeyRequest.MetadataEntry
-	423, // 60: xkms.v1.ExportKeyResponse.metadata:type_name -> xkms.v1.ExportKeyResponse.MetadataEntry
-	424, // 61: xkms.v1.SealResponse.metadata:type_name -> xkms.v1.SealResponse.MetadataEntry
-	425, // 62: xkms.v1.UnsealRequest.metadata:type_name -> xkms.v1.UnsealRequest.MetadataEntry
-	429, // 63: xkms.v1.FrostKeyInfo.created_at:type_name -> google.protobuf.Timestamp
-	426, // 64: xkms.v1.FrostKeyPackage.verification_shares:type_name -> xkms.v1.FrostKeyPackage.VerificationSharesEntry
+	431, // 56: xkms.v1.GetImportParametersResponse.expires_at:type_name -> google.protobuf.Timestamp
+	422, // 57: xkms.v1.WrapKeyResponse.metadata:type_name -> xkms.v1.WrapKeyResponse.MetadataEntry
+	423, // 58: xkms.v1.UnwrapKeyRequest.metadata:type_name -> xkms.v1.UnwrapKeyRequest.MetadataEntry
+	424, // 59: xkms.v1.ImportKeyRequest.metadata:type_name -> xkms.v1.ImportKeyRequest.MetadataEntry
+	425, // 60: xkms.v1.ExportKeyResponse.metadata:type_name -> xkms.v1.ExportKeyResponse.MetadataEntry
+	426, // 61: xkms.v1.SealResponse.metadata:type_name -> xkms.v1.SealResponse.MetadataEntry
+	427, // 62: xkms.v1.UnsealRequest.metadata:type_name -> xkms.v1.UnsealRequest.MetadataEntry
+	431, // 63: xkms.v1.FrostKeyInfo.created_at:type_name -> google.protobuf.Timestamp
+	428, // 64: xkms.v1.FrostKeyPackage.verification_shares:type_name -> xkms.v1.FrostKeyPackage.VerificationSharesEntry
 	187, // 65: xkms.v1.FrostGenerateKeyResponse.packages:type_name -> xkms.v1.FrostKeyPackage
-	429, // 66: xkms.v1.FrostGenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
+	431, // 66: xkms.v1.FrostGenerateKeyResponse.created_at:type_name -> google.protobuf.Timestamp
 	187, // 67: xkms.v1.FrostImportKeyRequest.package:type_name -> xkms.v1.FrostKeyPackage
 	186, // 68: xkms.v1.FrostListKeysResponse.keys:type_name -> xkms.v1.FrostKeyInfo
 	186, // 69: xkms.v1.FrostGetKeyResponse.key:type_name -> xkms.v1.FrostKeyInfo
@@ -30077,9 +30215,9 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	255, // 82: xkms.v1.CreateTenantResponse.tenant:type_name -> xkms.v1.TenantInfo
 	255, // 83: xkms.v1.GetTenantResponse.tenant:type_name -> xkms.v1.TenantInfo
 	255, // 84: xkms.v1.ListTenantsResponse.tenants:type_name -> xkms.v1.TenantInfo
-	429, // 85: xkms.v1.PasswordEntry.expires_at:type_name -> google.protobuf.Timestamp
-	429, // 86: xkms.v1.PasswordEntry.created_at:type_name -> google.protobuf.Timestamp
-	429, // 87: xkms.v1.PasswordEntry.updated_at:type_name -> google.protobuf.Timestamp
+	431, // 85: xkms.v1.PasswordEntry.expires_at:type_name -> google.protobuf.Timestamp
+	431, // 86: xkms.v1.PasswordEntry.created_at:type_name -> google.protobuf.Timestamp
+	431, // 87: xkms.v1.PasswordEntry.updated_at:type_name -> google.protobuf.Timestamp
 	269, // 88: xkms.v1.PasswordGetResponse.entry:type_name -> xkms.v1.PasswordEntry
 	269, // 89: xkms.v1.PasswordListResponse.passwords:type_name -> xkms.v1.PasswordEntry
 	307, // 90: xkms.v1.PasswordVaultCredential.key_ref:type_name -> xkms.v1.PasswordVaultKeyRef
@@ -30090,7 +30228,7 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	309, // 95: xkms.v1.PasswordVaultEnrollResponse.factor:type_name -> xkms.v1.PasswordVaultFactor
 	306, // 96: xkms.v1.PasswordVaultRotateRequest.credential:type_name -> xkms.v1.PasswordVaultCredential
 	306, // 97: xkms.v1.PasswordVaultRecoverRequest.credential:type_name -> xkms.v1.PasswordVaultCredential
-	427, // 98: xkms.v1.TPMPolicyCondition.pcr_values:type_name -> xkms.v1.TPMPolicyCondition.PcrValuesEntry
+	429, // 98: xkms.v1.TPMPolicyCondition.pcr_values:type_name -> xkms.v1.TPMPolicyCondition.PcrValuesEntry
 	325, // 99: xkms.v1.TPMPolicyBranch.conditions:type_name -> xkms.v1.TPMPolicyCondition
 	327, // 100: xkms.v1.TPMPolicyBranch.reference:type_name -> xkms.v1.TPMPolicyReference
 	326, // 101: xkms.v1.TPMPolicy.branches:type_name -> xkms.v1.TPMPolicyBranch
@@ -30099,34 +30237,34 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	337, // 104: xkms.v1.TrustRootListResponse.roots:type_name -> xkms.v1.TrustRoot
 	327, // 105: xkms.v1.TPMPolicyBranchVerification.reference:type_name -> xkms.v1.TPMPolicyReference
 	344, // 106: xkms.v1.TPMPolicyVerifyResponse.branches:type_name -> xkms.v1.TPMPolicyBranchVerification
-	429, // 107: xkms.v1.OIDCCredentialTokens.expires_at:type_name -> google.protobuf.Timestamp
+	431, // 107: xkms.v1.OIDCCredentialTokens.expires_at:type_name -> google.protobuf.Timestamp
 	357, // 108: xkms.v1.OIDCCredentialCreateRequest.ref:type_name -> xkms.v1.OIDCCredentialRef
 	358, // 109: xkms.v1.OIDCCredentialCreateRequest.config:type_name -> xkms.v1.OIDCCredentialConfig
 	359, // 110: xkms.v1.OIDCCredentialCreateRequest.tokens:type_name -> xkms.v1.OIDCCredentialTokens
 	357, // 111: xkms.v1.OIDCCredentialImportRequest.ref:type_name -> xkms.v1.OIDCCredentialRef
 	359, // 112: xkms.v1.OIDCCredentialImportRequest.tokens:type_name -> xkms.v1.OIDCCredentialTokens
 	366, // 113: xkms.v1.OIDCCredentialListResponse.credentials:type_name -> xkms.v1.OIDCCredential
-	429, // 114: xkms.v1.OIDCDeviceLogin.expires_at:type_name -> google.protobuf.Timestamp
+	431, // 114: xkms.v1.OIDCDeviceLogin.expires_at:type_name -> google.protobuf.Timestamp
 	357, // 115: xkms.v1.OIDCCredential.ref:type_name -> xkms.v1.OIDCCredentialRef
 	358, // 116: xkms.v1.OIDCCredential.config:type_name -> xkms.v1.OIDCCredentialConfig
-	429, // 117: xkms.v1.OIDCCredential.expires_at:type_name -> google.protobuf.Timestamp
-	429, // 118: xkms.v1.OIDCCredential.last_refresh:type_name -> google.protobuf.Timestamp
+	431, // 117: xkms.v1.OIDCCredential.expires_at:type_name -> google.protobuf.Timestamp
+	431, // 118: xkms.v1.OIDCCredential.last_refresh:type_name -> google.protobuf.Timestamp
 	365, // 119: xkms.v1.OIDCCredential.device_login:type_name -> xkms.v1.OIDCDeviceLogin
-	429, // 120: xkms.v1.OIDCCredential.created_at:type_name -> google.protobuf.Timestamp
-	429, // 121: xkms.v1.OIDCCredential.updated_at:type_name -> google.protobuf.Timestamp
-	429, // 122: xkms.v1.OIDCAccessToken.expires_at:type_name -> google.protobuf.Timestamp
-	429, // 123: xkms.v1.PeerAttestationChallengeResponse.expires_at:type_name -> google.protobuf.Timestamp
-	428, // 124: xkms.v1.SubmitPeerAttestationRequest.pcrs:type_name -> xkms.v1.SubmitPeerAttestationRequest.PcrsEntry
-	429, // 125: xkms.v1.SigningKeyBinding.updated_at:type_name -> google.protobuf.Timestamp
+	431, // 120: xkms.v1.OIDCCredential.created_at:type_name -> google.protobuf.Timestamp
+	431, // 121: xkms.v1.OIDCCredential.updated_at:type_name -> google.protobuf.Timestamp
+	431, // 122: xkms.v1.OIDCAccessToken.expires_at:type_name -> google.protobuf.Timestamp
+	431, // 123: xkms.v1.PeerAttestationChallengeResponse.expires_at:type_name -> google.protobuf.Timestamp
+	430, // 124: xkms.v1.SubmitPeerAttestationRequest.pcrs:type_name -> xkms.v1.SubmitPeerAttestationRequest.PcrsEntry
+	431, // 125: xkms.v1.SigningKeyBinding.updated_at:type_name -> google.protobuf.Timestamp
 	372, // 126: xkms.v1.ListSigningKeyBindingsResponse.bindings:type_name -> xkms.v1.SigningKeyBinding
-	429, // 127: xkms.v1.GetInviteResponse.expires_at:type_name -> google.protobuf.Timestamp
-	429, // 128: xkms.v1.SSHKeyInfo.created_at:type_name -> google.protobuf.Timestamp
-	398, // 129: xkms.v1.SSHKeyResponse.key:type_name -> xkms.v1.SSHKeyInfo
-	398, // 130: xkms.v1.SSHListKeysResponse.keys:type_name -> xkms.v1.SSHKeyInfo
-	397, // 131: xkms.v1.SSHSignRequest.key:type_name -> xkms.v1.SSHKeyRef
-	429, // 132: xkms.v1.SSHPin.added_at:type_name -> google.protobuf.Timestamp
-	407, // 133: xkms.v1.SSHListKnownHostsResponse.pins:type_name -> xkms.v1.SSHPin
-	412, // 134: xkms.v1.SSHListAuthorizedKeysResponse.entries:type_name -> xkms.v1.SSHAuthorizedEntry
+	431, // 127: xkms.v1.GetInviteResponse.expires_at:type_name -> google.protobuf.Timestamp
+	431, // 128: xkms.v1.SSHKeyInfo.created_at:type_name -> google.protobuf.Timestamp
+	400, // 129: xkms.v1.SSHKeyResponse.key:type_name -> xkms.v1.SSHKeyInfo
+	400, // 130: xkms.v1.SSHListKeysResponse.keys:type_name -> xkms.v1.SSHKeyInfo
+	399, // 131: xkms.v1.SSHSignRequest.key:type_name -> xkms.v1.SSHKeyRef
+	431, // 132: xkms.v1.SSHPin.added_at:type_name -> google.protobuf.Timestamp
+	409, // 133: xkms.v1.SSHListKnownHostsResponse.pins:type_name -> xkms.v1.SSHPin
+	414, // 134: xkms.v1.SSHListAuthorizedKeysResponse.entries:type_name -> xkms.v1.SSHAuthorizedEntry
 	20,  // 135: xkms.v1.KeystoreService.Health:input_type -> xkms.v1.HealthRequest
 	23,  // 136: xkms.v1.KeystoreService.ListBackends:input_type -> xkms.v1.ListBackendsRequest
 	25,  // 137: xkms.v1.KeystoreService.GetBackendInfo:input_type -> xkms.v1.GetBackendInfoRequest
@@ -30226,14 +30364,14 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	226, // 231: xkms.v1.KeystoreService.SignTCGCSR:input_type -> xkms.v1.SignTCGCSRRequest
 	228, // 232: xkms.v1.KeystoreService.EnrollDevice:input_type -> xkms.v1.EnrollDeviceRequest
 	230, // 233: xkms.v1.KeystoreService.IssueLAKCertificate:input_type -> xkms.v1.IssueLAKCertificateRequest
-	430, // 234: xkms.v1.KeystoreService.BootstrapListenerKeys:input_type -> google.protobuf.Empty
+	432, // 234: xkms.v1.KeystoreService.BootstrapListenerKeys:input_type -> google.protobuf.Empty
 	233, // 235: xkms.v1.KeystoreService.SetSOPIN:input_type -> xkms.v1.SetSOPINRequest
 	234, // 236: xkms.v1.KeystoreService.SetUserPIN:input_type -> xkms.v1.SetUserPINRequest
 	235, // 237: xkms.v1.KeystoreService.ChangeSOPIN:input_type -> xkms.v1.ChangeSOPINRequest
 	236, // 238: xkms.v1.KeystoreService.ChangeUserPIN:input_type -> xkms.v1.ChangeUserPINRequest
 	237, // 239: xkms.v1.KeystoreService.VerifySOPIN:input_type -> xkms.v1.VerifySOPINRequest
 	238, // 240: xkms.v1.KeystoreService.VerifyUserPIN:input_type -> xkms.v1.VerifyUserPINRequest
-	430, // 241: xkms.v1.KeystoreService.GetLockoutStatus:input_type -> google.protobuf.Empty
+	432, // 241: xkms.v1.KeystoreService.GetLockoutStatus:input_type -> google.protobuf.Empty
 	240, // 242: xkms.v1.KeystoreService.ResetLockout:input_type -> xkms.v1.ResetLockoutRequest
 	242, // 243: xkms.v1.KeystoreService.ListPIVSlots:input_type -> xkms.v1.ListPIVSlotsRequest
 	244, // 244: xkms.v1.KeystoreService.GetPIVCertificate:input_type -> xkms.v1.GetPIVCertificateRequest
@@ -30303,268 +30441,270 @@ var file_pkg_api_grpc_proto_xkmsv1_xkms_proto_depIdxs = []int32{
 	375, // 308: xkms.v1.KeystoreService.ListSigningKeyBindings:input_type -> xkms.v1.ListSigningKeyBindingsRequest
 	377, // 309: xkms.v1.KeystoreService.DeleteSigningKeyBinding:input_type -> xkms.v1.DeleteSigningKeyBindingRequest
 	379, // 310: xkms.v1.KeystoreService.ResolveSigningKey:input_type -> xkms.v1.ResolveSigningKeyRequest
-	280, // 311: xkms.v1.KeystoreService.PKCS11StatePut:input_type -> xkms.v1.PKCS11StatePutRequest
-	282, // 312: xkms.v1.KeystoreService.PKCS11StatePutIfAbsent:input_type -> xkms.v1.PKCS11StatePutIfAbsentRequest
-	284, // 313: xkms.v1.KeystoreService.PKCS11StateCAS:input_type -> xkms.v1.PKCS11StateCASRequest
-	286, // 314: xkms.v1.KeystoreService.PKCS11StateCAD:input_type -> xkms.v1.PKCS11StateCADRequest
-	288, // 315: xkms.v1.KeystoreService.PKCS11StateGet:input_type -> xkms.v1.PKCS11StateGetRequest
-	290, // 316: xkms.v1.KeystoreService.PKCS11StateDelete:input_type -> xkms.v1.PKCS11StateDeleteRequest
-	292, // 317: xkms.v1.KeystoreService.PKCS11StateList:input_type -> xkms.v1.PKCS11StateListRequest
-	294, // 318: xkms.v1.KeystoreService.SealStorePut:input_type -> xkms.v1.SealStorePutRequest
-	296, // 319: xkms.v1.KeystoreService.SealStoreGet:input_type -> xkms.v1.SealStoreGetRequest
-	298, // 320: xkms.v1.KeystoreService.SealStoreDelete:input_type -> xkms.v1.SealStoreDeleteRequest
-	300, // 321: xkms.v1.KeystoreService.SealStoreList:input_type -> xkms.v1.SealStoreListRequest
-	302, // 322: xkms.v1.KeystoreService.SealStoreReseal:input_type -> xkms.v1.SealStoreResealRequest
-	304, // 323: xkms.v1.KeystoreService.SealStoreStatus:input_type -> xkms.v1.SealStoreStatusRequest
-	6,   // 324: xkms.v1.KeystoreService.CreateUser:input_type -> xkms.v1.CreateUserRequest
-	9,   // 325: xkms.v1.KeystoreService.ListUsers:input_type -> xkms.v1.ListUsersRequest
-	11,  // 326: xkms.v1.KeystoreService.GetUser:input_type -> xkms.v1.GetUserRequest
-	12,  // 327: xkms.v1.KeystoreService.DeleteUser:input_type -> xkms.v1.DeleteUserRequest
-	14,  // 328: xkms.v1.KeystoreService.EnableUser:input_type -> xkms.v1.EnableUserRequest
-	15,  // 329: xkms.v1.KeystoreService.DisableUser:input_type -> xkms.v1.DisableUserRequest
-	16,  // 330: xkms.v1.KeystoreService.BindUserCert:input_type -> xkms.v1.BindUserCertRequest
-	17,  // 331: xkms.v1.KeystoreService.ListUserCredentials:input_type -> xkms.v1.ListUserCredentialsRequest
-	381, // 332: xkms.v1.KeystoreService.BeginRegistration:input_type -> xkms.v1.BeginRegistrationRequest
-	383, // 333: xkms.v1.KeystoreService.FinishRegistration:input_type -> xkms.v1.FinishRegistrationRequest
-	385, // 334: xkms.v1.KeystoreService.BeginAuthentication:input_type -> xkms.v1.BeginAuthenticationRequest
-	387, // 335: xkms.v1.KeystoreService.FinishAuthentication:input_type -> xkms.v1.FinishAuthenticationRequest
-	389, // 336: xkms.v1.KeystoreService.GetInvite:input_type -> xkms.v1.GetInviteRequest
-	391, // 337: xkms.v1.KeystoreService.BeginInviteRegistration:input_type -> xkms.v1.BeginInviteRegistrationRequest
-	393, // 338: xkms.v1.KeystoreService.FinishInviteRegistration:input_type -> xkms.v1.FinishInviteRegistrationRequest
-	395, // 339: xkms.v1.KeystoreService.ActivateInvitePIV:input_type -> xkms.v1.ActivateInvitePIVRequest
-	399, // 340: xkms.v1.KeystoreService.SSHGenerateKey:input_type -> xkms.v1.SSHGenerateKeyRequest
-	400, // 341: xkms.v1.KeystoreService.SSHImportKey:input_type -> xkms.v1.SSHImportKeyRequest
-	402, // 342: xkms.v1.KeystoreService.SSHListKeys:input_type -> xkms.v1.SSHListKeysRequest
-	397, // 343: xkms.v1.KeystoreService.SSHGetKey:input_type -> xkms.v1.SSHKeyRef
-	397, // 344: xkms.v1.KeystoreService.SSHDeleteKey:input_type -> xkms.v1.SSHKeyRef
-	397, // 345: xkms.v1.KeystoreService.SSHExportPublic:input_type -> xkms.v1.SSHKeyRef
-	405, // 346: xkms.v1.KeystoreService.SSHSign:input_type -> xkms.v1.SSHSignRequest
-	408, // 347: xkms.v1.KeystoreService.SSHAddKnownHost:input_type -> xkms.v1.SSHAddKnownHostRequest
-	409, // 348: xkms.v1.KeystoreService.SSHListKnownHosts:input_type -> xkms.v1.SSHListKnownHostsRequest
-	411, // 349: xkms.v1.KeystoreService.SSHRemoveKnownHost:input_type -> xkms.v1.SSHRemoveKnownHostRequest
-	413, // 350: xkms.v1.KeystoreService.SSHAddAuthorizedKey:input_type -> xkms.v1.SSHAddAuthorizedKeyRequest
-	414, // 351: xkms.v1.KeystoreService.SSHListAuthorizedKeys:input_type -> xkms.v1.SSHListAuthorizedKeysRequest
-	416, // 352: xkms.v1.KeystoreService.SSHRemoveAuthorizedKey:input_type -> xkms.v1.SSHAuthorizedKeyRef
-	21,  // 353: xkms.v1.KeystoreService.Health:output_type -> xkms.v1.HealthResponse
-	24,  // 354: xkms.v1.KeystoreService.ListBackends:output_type -> xkms.v1.ListBackendsResponse
-	26,  // 355: xkms.v1.KeystoreService.GetBackendInfo:output_type -> xkms.v1.GetBackendInfoResponse
-	28,  // 356: xkms.v1.KeystoreService.GenerateKey:output_type -> xkms.v1.GenerateKeyResponse
-	31,  // 357: xkms.v1.KeystoreService.ListKeys:output_type -> xkms.v1.ListKeysResponse
-	33,  // 358: xkms.v1.KeystoreService.GetKey:output_type -> xkms.v1.GetKeyResponse
-	35,  // 359: xkms.v1.KeystoreService.Sign:output_type -> xkms.v1.SignResponse
-	37,  // 360: xkms.v1.KeystoreService.Verify:output_type -> xkms.v1.VerifyResponse
-	39,  // 361: xkms.v1.KeystoreService.DeleteKey:output_type -> xkms.v1.DeleteKeyResponse
-	41,  // 362: xkms.v1.KeystoreService.RotateKey:output_type -> xkms.v1.RotateKeyResponse
-	28,  // 363: xkms.v1.KeystoreService.CreateOTAImageKey:output_type -> xkms.v1.GenerateKeyResponse
-	41,  // 364: xkms.v1.KeystoreService.RotateOTAImageKey:output_type -> xkms.v1.RotateKeyResponse
-	43,  // 365: xkms.v1.KeystoreService.ExportOTAImagePublicKey:output_type -> xkms.v1.OTAImagePublicKeyResponse
-	35,  // 366: xkms.v1.KeystoreService.SignOTAImage:output_type -> xkms.v1.SignResponse
-	47,  // 367: xkms.v1.KeystoreService.ListKeyVersions:output_type -> xkms.v1.ListKeyVersionsResponse
-	49,  // 368: xkms.v1.KeystoreService.EnableKeyVersion:output_type -> xkms.v1.EnableKeyVersionResponse
-	51,  // 369: xkms.v1.KeystoreService.DisableKeyVersion:output_type -> xkms.v1.DisableKeyVersionResponse
-	53,  // 370: xkms.v1.KeystoreService.EnableAllKeyVersions:output_type -> xkms.v1.EnableAllKeyVersionsResponse
-	55,  // 371: xkms.v1.KeystoreService.DisableAllKeyVersions:output_type -> xkms.v1.DisableAllKeyVersionsResponse
-	57,  // 372: xkms.v1.KeystoreService.RetireKeyVersion:output_type -> xkms.v1.RetireKeyVersionResponse
-	60,  // 373: xkms.v1.KeystoreService.RotateScopeKeys:output_type -> xkms.v1.RotateScopeKeysResponse
-	62,  // 374: xkms.v1.KeystoreService.Encrypt:output_type -> xkms.v1.EncryptResponse
-	64,  // 375: xkms.v1.KeystoreService.Decrypt:output_type -> xkms.v1.DecryptResponse
-	127, // 376: xkms.v1.KeystoreService.EncryptAsym:output_type -> xkms.v1.EncryptAsymResponse
-	66,  // 377: xkms.v1.KeystoreService.Rewrap:output_type -> xkms.v1.RewrapResponse
-	70,  // 378: xkms.v1.KeystoreService.EncryptBatch:output_type -> xkms.v1.EncryptBatchResponse
-	74,  // 379: xkms.v1.KeystoreService.DecryptBatch:output_type -> xkms.v1.DecryptBatchResponse
-	76,  // 380: xkms.v1.KeystoreService.GenerateDataKey:output_type -> xkms.v1.GenerateDataKeyResponse
-	77,  // 381: xkms.v1.KeystoreService.GenerateWrappedDataKey:output_type -> xkms.v1.GenerateWrappedDataKeyResponse
-	79,  // 382: xkms.v1.KeystoreService.GenerateHMAC:output_type -> xkms.v1.GenerateHMACResponse
-	81,  // 383: xkms.v1.KeystoreService.VerifyHMAC:output_type -> xkms.v1.VerifyHMACResponse
-	83,  // 384: xkms.v1.KeystoreService.GenerateRandom:output_type -> xkms.v1.GenerateRandomResponse
-	85,  // 385: xkms.v1.KeystoreService.Hash:output_type -> xkms.v1.HashResponse
-	87,  // 386: xkms.v1.KeystoreService.GetPublicKey:output_type -> xkms.v1.GetPublicKeyResponse
-	89,  // 387: xkms.v1.KeystoreService.RevokeKey:output_type -> xkms.v1.RevokeKeyResponse
-	91,  // 388: xkms.v1.KeystoreService.UpdateKeyStatus:output_type -> xkms.v1.UpdateKeyStatusResponse
-	93,  // 389: xkms.v1.KeystoreService.GetKeyMetadata:output_type -> xkms.v1.GetKeyMetadataResponse
-	95,  // 390: xkms.v1.KeystoreService.UpdateKeyMetadata:output_type -> xkms.v1.UpdateKeyMetadataResponse
-	97,  // 391: xkms.v1.KeystoreService.SetKeyPolicy:output_type -> xkms.v1.SetKeyPolicyResponse
-	99,  // 392: xkms.v1.KeystoreService.GetKeyPolicy:output_type -> xkms.v1.GetKeyPolicyResponse
-	101, // 393: xkms.v1.KeystoreService.DeleteKeyPolicy:output_type -> xkms.v1.DeleteKeyPolicyResponse
-	103, // 394: xkms.v1.KeystoreService.SetKeyRotationPolicy:output_type -> xkms.v1.SetKeyRotationPolicyResponse
-	105, // 395: xkms.v1.KeystoreService.GetKeyRotationPolicy:output_type -> xkms.v1.GetKeyRotationPolicyResponse
-	107, // 396: xkms.v1.KeystoreService.DeleteKeyRotationPolicy:output_type -> xkms.v1.DeleteKeyRotationPolicyResponse
-	109, // 397: xkms.v1.KeystoreService.GetSupportedAlgorithms:output_type -> xkms.v1.GetSupportedAlgorithmsResponse
-	111, // 398: xkms.v1.KeystoreService.BackendStatus:output_type -> xkms.v1.BackendStatusResponse
-	113, // 399: xkms.v1.KeystoreService.BackendTest:output_type -> xkms.v1.BackendTestResponse
-	115, // 400: xkms.v1.KeystoreService.SetKeySafety:output_type -> xkms.v1.SetKeySafetyResponse
-	117, // 401: xkms.v1.KeystoreService.ClearKeySafety:output_type -> xkms.v1.ClearKeySafetyResponse
-	119, // 402: xkms.v1.KeystoreService.SafetyCheck:output_type -> xkms.v1.SafetyCheckResponse
-	121, // 403: xkms.v1.KeystoreService.SafetyReport:output_type -> xkms.v1.SafetyReportResponse
-	129, // 404: xkms.v1.KeystoreService.DeriveKey:output_type -> xkms.v1.DeriveKeyResponse
-	131, // 405: xkms.v1.KeystoreService.DeriveKeyECDH:output_type -> xkms.v1.DeriveKeyECDHResponse
-	137, // 406: xkms.v1.KeystoreService.DeriveKeyECDHSecure:output_type -> xkms.v1.DeriveKeyECDHSecureResponse
-	139, // 407: xkms.v1.KeystoreService.UseResidentKey:output_type -> xkms.v1.UseResidentKeyResponse
-	141, // 408: xkms.v1.KeystoreService.DestroyResidentKey:output_type -> xkms.v1.DestroyResidentKeyResponse
-	143, // 409: xkms.v1.KeystoreService.GenerateEphemeralECDH:output_type -> xkms.v1.GenerateEphemeralECDHResponse
-	145, // 410: xkms.v1.KeystoreService.SaveCert:output_type -> xkms.v1.SaveCertResponse
-	147, // 411: xkms.v1.KeystoreService.GetCert:output_type -> xkms.v1.GetCertResponse
-	149, // 412: xkms.v1.KeystoreService.DeleteCert:output_type -> xkms.v1.DeleteCertResponse
-	151, // 413: xkms.v1.KeystoreService.ListCerts:output_type -> xkms.v1.ListCertsResponse
-	153, // 414: xkms.v1.KeystoreService.CertExists:output_type -> xkms.v1.CertExistsResponse
-	155, // 415: xkms.v1.KeystoreService.SaveCertChain:output_type -> xkms.v1.SaveCertChainResponse
-	157, // 416: xkms.v1.KeystoreService.GetCertChain:output_type -> xkms.v1.GetCertChainResponse
-	159, // 417: xkms.v1.KeystoreService.GetTLSCertificate:output_type -> xkms.v1.GetTLSCertificateResponse
-	161, // 418: xkms.v1.KeystoreService.GetImportParameters:output_type -> xkms.v1.GetImportParametersResponse
-	163, // 419: xkms.v1.KeystoreService.WrapKey:output_type -> xkms.v1.WrapKeyResponse
-	165, // 420: xkms.v1.KeystoreService.UnwrapKey:output_type -> xkms.v1.UnwrapKeyResponse
-	167, // 421: xkms.v1.KeystoreService.WrapKeyByID:output_type -> xkms.v1.WrapKeyByIDResponse
-	169, // 422: xkms.v1.KeystoreService.UnwrapKeyByID:output_type -> xkms.v1.UnwrapKeyByIDResponse
-	171, // 423: xkms.v1.KeystoreService.ImportKey:output_type -> xkms.v1.ImportKeyResponse
-	173, // 424: xkms.v1.KeystoreService.ExportKey:output_type -> xkms.v1.ExportKeyResponse
-	175, // 425: xkms.v1.KeystoreService.ExportKeyMaterial:output_type -> xkms.v1.ExportKeyMaterialResponse
-	177, // 426: xkms.v1.KeystoreService.CopyKey:output_type -> xkms.v1.CopyKeyResponse
-	179, // 427: xkms.v1.KeystoreService.Seal:output_type -> xkms.v1.SealResponse
-	181, // 428: xkms.v1.KeystoreService.Unseal:output_type -> xkms.v1.UnsealResponse
-	183, // 429: xkms.v1.KeystoreService.CanSeal:output_type -> xkms.v1.CanSealResponse
-	185, // 430: xkms.v1.KeystoreService.AttestKey:output_type -> xkms.v1.AttestKeyResponse
-	191, // 431: xkms.v1.KeystoreService.FrostGenerateKey:output_type -> xkms.v1.FrostGenerateKeyResponse
-	193, // 432: xkms.v1.KeystoreService.FrostImportKey:output_type -> xkms.v1.FrostImportKeyResponse
-	195, // 433: xkms.v1.KeystoreService.FrostListKeys:output_type -> xkms.v1.FrostListKeysResponse
-	197, // 434: xkms.v1.KeystoreService.FrostGetKey:output_type -> xkms.v1.FrostGetKeyResponse
-	199, // 435: xkms.v1.KeystoreService.FrostDeleteKey:output_type -> xkms.v1.FrostDeleteKeyResponse
-	201, // 436: xkms.v1.KeystoreService.FrostGenerateNonces:output_type -> xkms.v1.FrostGenerateNoncesResponse
-	203, // 437: xkms.v1.KeystoreService.FrostSignRound:output_type -> xkms.v1.FrostSignRoundResponse
-	205, // 438: xkms.v1.KeystoreService.FrostAggregate:output_type -> xkms.v1.FrostAggregateResponse
-	207, // 439: xkms.v1.KeystoreService.FrostVerify:output_type -> xkms.v1.FrostVerifyResponse
-	209, // 440: xkms.v1.KeystoreService.GetCABundle:output_type -> xkms.v1.GetCABundleResponse
-	211, // 441: xkms.v1.KeystoreService.GetCACertificate:output_type -> xkms.v1.GetCACertificateResponse
-	213, // 442: xkms.v1.KeystoreService.SignCSR:output_type -> xkms.v1.SignCSRResponse
-	215, // 443: xkms.v1.KeystoreService.IssueCertificate:output_type -> xkms.v1.IssueCertificateResponse
-	217, // 444: xkms.v1.KeystoreService.RevokeCertificate:output_type -> xkms.v1.RevokeCertificateResponse
-	219, // 445: xkms.v1.KeystoreService.GenerateCRL:output_type -> xkms.v1.GenerateCRLResponse
-	221, // 446: xkms.v1.KeystoreService.IsRevoked:output_type -> xkms.v1.IsRevokedResponse
-	223, // 447: xkms.v1.KeystoreService.IssueEKCertificate:output_type -> xkms.v1.IssueEKCertificateResponse
-	225, // 448: xkms.v1.KeystoreService.IssueAKCertificate:output_type -> xkms.v1.IssueAKCertificateResponse
-	227, // 449: xkms.v1.KeystoreService.SignTCGCSR:output_type -> xkms.v1.SignTCGCSRResponse
-	229, // 450: xkms.v1.KeystoreService.EnrollDevice:output_type -> xkms.v1.EnrollDeviceResponse
-	231, // 451: xkms.v1.KeystoreService.IssueLAKCertificate:output_type -> xkms.v1.IssueLAKCertificateResponse
-	232, // 452: xkms.v1.KeystoreService.BootstrapListenerKeys:output_type -> xkms.v1.BootstrapListenerKeysResponse
-	430, // 453: xkms.v1.KeystoreService.SetSOPIN:output_type -> google.protobuf.Empty
-	430, // 454: xkms.v1.KeystoreService.SetUserPIN:output_type -> google.protobuf.Empty
-	430, // 455: xkms.v1.KeystoreService.ChangeSOPIN:output_type -> google.protobuf.Empty
-	430, // 456: xkms.v1.KeystoreService.ChangeUserPIN:output_type -> google.protobuf.Empty
-	430, // 457: xkms.v1.KeystoreService.VerifySOPIN:output_type -> google.protobuf.Empty
-	430, // 458: xkms.v1.KeystoreService.VerifyUserPIN:output_type -> google.protobuf.Empty
-	239, // 459: xkms.v1.KeystoreService.GetLockoutStatus:output_type -> xkms.v1.LockoutStatusResponse
-	430, // 460: xkms.v1.KeystoreService.ResetLockout:output_type -> google.protobuf.Empty
-	243, // 461: xkms.v1.KeystoreService.ListPIVSlots:output_type -> xkms.v1.ListPIVSlotsResponse
-	245, // 462: xkms.v1.KeystoreService.GetPIVCertificate:output_type -> xkms.v1.GetPIVCertificateResponse
-	430, // 463: xkms.v1.KeystoreService.StorePIVCertificate:output_type -> google.protobuf.Empty
-	430, // 464: xkms.v1.KeystoreService.DeletePIVCertificate:output_type -> google.protobuf.Empty
-	249, // 465: xkms.v1.KeystoreService.GeneratePIVKey:output_type -> xkms.v1.GeneratePIVKeyResponse
-	430, // 466: xkms.v1.KeystoreService.ImportPIVCertificate:output_type -> google.protobuf.Empty
-	245, // 467: xkms.v1.KeystoreService.ExportPIVCertificate:output_type -> xkms.v1.GetPIVCertificateResponse
-	251, // 468: xkms.v1.KeystoreService.GeneratePIVCSR:output_type -> xkms.v1.GeneratePIVCSRResponse
-	254, // 469: xkms.v1.KeystoreService.Algorithms:output_type -> xkms.v1.AlgorithmsResponse
-	263, // 470: xkms.v1.KeystoreService.CreateTenant:output_type -> xkms.v1.CreateTenantResponse
-	265, // 471: xkms.v1.KeystoreService.GetTenant:output_type -> xkms.v1.GetTenantResponse
-	267, // 472: xkms.v1.KeystoreService.ListTenants:output_type -> xkms.v1.ListTenantsResponse
-	430, // 473: xkms.v1.KeystoreService.DeleteTenant:output_type -> google.protobuf.Empty
-	259, // 474: xkms.v1.KeystoreService.UpdateTenantEntitlements:output_type -> xkms.v1.UpdateTenantEntitlementsResponse
-	261, // 475: xkms.v1.KeystoreService.UpdateTenantQuotas:output_type -> xkms.v1.UpdateTenantQuotasResponse
-	271, // 476: xkms.v1.KeystoreService.PasswordAdd:output_type -> xkms.v1.PasswordAddResponse
-	273, // 477: xkms.v1.KeystoreService.PasswordGet:output_type -> xkms.v1.PasswordGetResponse
-	275, // 478: xkms.v1.KeystoreService.PasswordList:output_type -> xkms.v1.PasswordListResponse
-	277, // 479: xkms.v1.KeystoreService.PasswordUpdate:output_type -> xkms.v1.PasswordUpdateResponse
-	279, // 480: xkms.v1.KeystoreService.PasswordDelete:output_type -> xkms.v1.PasswordDeleteResponse
-	320, // 481: xkms.v1.KeystoreService.PasswordStoreUnlock:output_type -> xkms.v1.PasswordStoreStatusResponse
-	311, // 482: xkms.v1.KeystoreService.PasswordVaultStatus:output_type -> xkms.v1.PasswordVaultStatusResponse
-	313, // 483: xkms.v1.KeystoreService.PasswordVaultEnroll:output_type -> xkms.v1.PasswordVaultEnrollResponse
-	313, // 484: xkms.v1.KeystoreService.PasswordVaultRotate:output_type -> xkms.v1.PasswordVaultEnrollResponse
-	316, // 485: xkms.v1.KeystoreService.PasswordVaultRemoveFactor:output_type -> xkms.v1.PasswordVaultRemoveFactorResponse
-	313, // 486: xkms.v1.KeystoreService.PasswordVaultRecover:output_type -> xkms.v1.PasswordVaultEnrollResponse
-	320, // 487: xkms.v1.KeystoreService.PasswordStoreLock:output_type -> xkms.v1.PasswordStoreStatusResponse
-	320, // 488: xkms.v1.KeystoreService.PasswordStoreStatus:output_type -> xkms.v1.PasswordStoreStatusResponse
-	322, // 489: xkms.v1.KeystoreService.PasswordGenerate:output_type -> xkms.v1.PasswordGenerateResponse
-	324, // 490: xkms.v1.KeystoreService.PasswordStoreSetAccessMode:output_type -> xkms.v1.PasswordStoreSetAccessModeResponse
-	328, // 491: xkms.v1.KeystoreService.TPMPolicyCreate:output_type -> xkms.v1.TPMPolicy
-	328, // 492: xkms.v1.KeystoreService.TPMPolicyGet:output_type -> xkms.v1.TPMPolicy
-	334, // 493: xkms.v1.KeystoreService.TPMPolicyList:output_type -> xkms.v1.TPMPolicyListResponse
-	328, // 494: xkms.v1.KeystoreService.TPMPolicyUpdate:output_type -> xkms.v1.TPMPolicy
-	328, // 495: xkms.v1.KeystoreService.TPMPolicyRevoke:output_type -> xkms.v1.TPMPolicy
-	345, // 496: xkms.v1.KeystoreService.TPMPolicyVerify:output_type -> xkms.v1.TPMPolicyVerifyResponse
-	336, // 497: xkms.v1.KeystoreService.TPMPolicyDelete:output_type -> xkms.v1.TPMPolicyDeleteResponse
-	346, // 498: xkms.v1.KeystoreService.TPMPolicyObjects:output_type -> xkms.v1.TPMPolicyObjectsResponse
-	328, // 499: xkms.v1.KeystoreService.TPMPolicySetAutoUnseal:output_type -> xkms.v1.TPMPolicy
-	328, // 500: xkms.v1.KeystoreService.TPMPolicySetDescription:output_type -> xkms.v1.TPMPolicy
-	349, // 501: xkms.v1.KeystoreService.TPMObjectPolicy:output_type -> xkms.v1.TPMObjectPolicyResponse
-	351, // 502: xkms.v1.KeystoreService.TPMPolicyRotateAuthority:output_type -> xkms.v1.TPMAuthorityRotateResponse
-	353, // 503: xkms.v1.KeystoreService.GetTenantTPMMode:output_type -> xkms.v1.TenantTPMModeResponse
-	353, // 504: xkms.v1.KeystoreService.SetTenantTPMMode:output_type -> xkms.v1.TenantTPMModeResponse
-	356, // 505: xkms.v1.KeystoreService.TenantVTPMStatus:output_type -> xkms.v1.TenantVTPMStatusResponse
-	356, // 506: xkms.v1.KeystoreService.TenantVTPMStart:output_type -> xkms.v1.TenantVTPMStatusResponse
-	356, // 507: xkms.v1.KeystoreService.TenantVTPMStop:output_type -> xkms.v1.TenantVTPMStatusResponse
-	339, // 508: xkms.v1.KeystoreService.TrustRootList:output_type -> xkms.v1.TrustRootListResponse
-	337, // 509: xkms.v1.KeystoreService.TrustRootGet:output_type -> xkms.v1.TrustRoot
-	342, // 510: xkms.v1.KeystoreService.TrustRootImport:output_type -> xkms.v1.TrustRootImportResponse
-	337, // 511: xkms.v1.KeystoreService.TrustRootQuarantine:output_type -> xkms.v1.TrustRoot
-	343, // 512: xkms.v1.KeystoreService.TrustRootRemove:output_type -> xkms.v1.TrustRootRemoveResponse
-	366, // 513: xkms.v1.KeystoreService.OIDCCredentialCreate:output_type -> xkms.v1.OIDCCredential
-	366, // 514: xkms.v1.KeystoreService.OIDCCredentialImport:output_type -> xkms.v1.OIDCCredential
-	366, // 515: xkms.v1.KeystoreService.OIDCCredentialGet:output_type -> xkms.v1.OIDCCredential
-	363, // 516: xkms.v1.KeystoreService.OIDCCredentialList:output_type -> xkms.v1.OIDCCredentialListResponse
-	364, // 517: xkms.v1.KeystoreService.OIDCCredentialDelete:output_type -> xkms.v1.OIDCCredentialDeleteResponse
-	366, // 518: xkms.v1.KeystoreService.OIDCCredentialRefresh:output_type -> xkms.v1.OIDCCredential
-	367, // 519: xkms.v1.KeystoreService.OIDCCredentialGetAccessToken:output_type -> xkms.v1.OIDCAccessToken
-	366, // 520: xkms.v1.KeystoreService.OIDCCredentialDeviceStart:output_type -> xkms.v1.OIDCCredential
-	366, // 521: xkms.v1.KeystoreService.OIDCCredentialDevicePoll:output_type -> xkms.v1.OIDCCredential
-	369, // 522: xkms.v1.KeystoreService.PeerAttestationChallenge:output_type -> xkms.v1.PeerAttestationChallengeResponse
-	371, // 523: xkms.v1.KeystoreService.SubmitPeerAttestation:output_type -> xkms.v1.SubmitPeerAttestationResponse
-	372, // 524: xkms.v1.KeystoreService.SetSigningKeyBinding:output_type -> xkms.v1.SigningKeyBinding
-	372, // 525: xkms.v1.KeystoreService.GetSigningKeyBinding:output_type -> xkms.v1.SigningKeyBinding
-	376, // 526: xkms.v1.KeystoreService.ListSigningKeyBindings:output_type -> xkms.v1.ListSigningKeyBindingsResponse
-	378, // 527: xkms.v1.KeystoreService.DeleteSigningKeyBinding:output_type -> xkms.v1.DeleteSigningKeyBindingResponse
-	380, // 528: xkms.v1.KeystoreService.ResolveSigningKey:output_type -> xkms.v1.SigningKeyResolution
-	281, // 529: xkms.v1.KeystoreService.PKCS11StatePut:output_type -> xkms.v1.PKCS11StatePutResponse
-	283, // 530: xkms.v1.KeystoreService.PKCS11StatePutIfAbsent:output_type -> xkms.v1.PKCS11StatePutIfAbsentResponse
-	285, // 531: xkms.v1.KeystoreService.PKCS11StateCAS:output_type -> xkms.v1.PKCS11StateCASResponse
-	287, // 532: xkms.v1.KeystoreService.PKCS11StateCAD:output_type -> xkms.v1.PKCS11StateCADResponse
-	289, // 533: xkms.v1.KeystoreService.PKCS11StateGet:output_type -> xkms.v1.PKCS11StateGetResponse
-	291, // 534: xkms.v1.KeystoreService.PKCS11StateDelete:output_type -> xkms.v1.PKCS11StateDeleteResponse
-	293, // 535: xkms.v1.KeystoreService.PKCS11StateList:output_type -> xkms.v1.PKCS11StateListResponse
-	295, // 536: xkms.v1.KeystoreService.SealStorePut:output_type -> xkms.v1.SealStorePutResponse
-	297, // 537: xkms.v1.KeystoreService.SealStoreGet:output_type -> xkms.v1.SealStoreGetResponse
-	299, // 538: xkms.v1.KeystoreService.SealStoreDelete:output_type -> xkms.v1.SealStoreDeleteResponse
-	301, // 539: xkms.v1.KeystoreService.SealStoreList:output_type -> xkms.v1.SealStoreListResponse
-	303, // 540: xkms.v1.KeystoreService.SealStoreReseal:output_type -> xkms.v1.SealStoreResealResponse
-	305, // 541: xkms.v1.KeystoreService.SealStoreStatus:output_type -> xkms.v1.SealStoreStatusResponse
-	8,   // 542: xkms.v1.KeystoreService.CreateUser:output_type -> xkms.v1.UserResponse
-	10,  // 543: xkms.v1.KeystoreService.ListUsers:output_type -> xkms.v1.ListUsersResponse
-	8,   // 544: xkms.v1.KeystoreService.GetUser:output_type -> xkms.v1.UserResponse
-	13,  // 545: xkms.v1.KeystoreService.DeleteUser:output_type -> xkms.v1.DeleteUserResponse
-	8,   // 546: xkms.v1.KeystoreService.EnableUser:output_type -> xkms.v1.UserResponse
-	8,   // 547: xkms.v1.KeystoreService.DisableUser:output_type -> xkms.v1.UserResponse
-	8,   // 548: xkms.v1.KeystoreService.BindUserCert:output_type -> xkms.v1.UserResponse
-	19,  // 549: xkms.v1.KeystoreService.ListUserCredentials:output_type -> xkms.v1.ListUserCredentialsResponse
-	382, // 550: xkms.v1.KeystoreService.BeginRegistration:output_type -> xkms.v1.BeginRegistrationResponse
-	384, // 551: xkms.v1.KeystoreService.FinishRegistration:output_type -> xkms.v1.FinishRegistrationResponse
-	386, // 552: xkms.v1.KeystoreService.BeginAuthentication:output_type -> xkms.v1.BeginAuthenticationResponse
-	388, // 553: xkms.v1.KeystoreService.FinishAuthentication:output_type -> xkms.v1.FinishAuthenticationResponse
-	390, // 554: xkms.v1.KeystoreService.GetInvite:output_type -> xkms.v1.GetInviteResponse
-	392, // 555: xkms.v1.KeystoreService.BeginInviteRegistration:output_type -> xkms.v1.BeginInviteRegistrationResponse
-	394, // 556: xkms.v1.KeystoreService.FinishInviteRegistration:output_type -> xkms.v1.FinishInviteRegistrationResponse
-	396, // 557: xkms.v1.KeystoreService.ActivateInvitePIV:output_type -> xkms.v1.ActivateInvitePIVResponse
-	401, // 558: xkms.v1.KeystoreService.SSHGenerateKey:output_type -> xkms.v1.SSHKeyResponse
-	401, // 559: xkms.v1.KeystoreService.SSHImportKey:output_type -> xkms.v1.SSHKeyResponse
-	403, // 560: xkms.v1.KeystoreService.SSHListKeys:output_type -> xkms.v1.SSHListKeysResponse
-	401, // 561: xkms.v1.KeystoreService.SSHGetKey:output_type -> xkms.v1.SSHKeyResponse
-	430, // 562: xkms.v1.KeystoreService.SSHDeleteKey:output_type -> google.protobuf.Empty
-	404, // 563: xkms.v1.KeystoreService.SSHExportPublic:output_type -> xkms.v1.SSHPublicKeyResponse
-	406, // 564: xkms.v1.KeystoreService.SSHSign:output_type -> xkms.v1.SSHSignResponse
-	430, // 565: xkms.v1.KeystoreService.SSHAddKnownHost:output_type -> google.protobuf.Empty
-	410, // 566: xkms.v1.KeystoreService.SSHListKnownHosts:output_type -> xkms.v1.SSHListKnownHostsResponse
-	430, // 567: xkms.v1.KeystoreService.SSHRemoveKnownHost:output_type -> google.protobuf.Empty
-	430, // 568: xkms.v1.KeystoreService.SSHAddAuthorizedKey:output_type -> google.protobuf.Empty
-	415, // 569: xkms.v1.KeystoreService.SSHListAuthorizedKeys:output_type -> xkms.v1.SSHListAuthorizedKeysResponse
-	430, // 570: xkms.v1.KeystoreService.SSHRemoveAuthorizedKey:output_type -> google.protobuf.Empty
-	353, // [353:571] is the sub-list for method output_type
-	135, // [135:353] is the sub-list for method input_type
+	381, // 311: xkms.v1.KeystoreService.SignReleaseCoRIM:input_type -> xkms.v1.SignReleaseCoRIMRequest
+	280, // 312: xkms.v1.KeystoreService.PKCS11StatePut:input_type -> xkms.v1.PKCS11StatePutRequest
+	282, // 313: xkms.v1.KeystoreService.PKCS11StatePutIfAbsent:input_type -> xkms.v1.PKCS11StatePutIfAbsentRequest
+	284, // 314: xkms.v1.KeystoreService.PKCS11StateCAS:input_type -> xkms.v1.PKCS11StateCASRequest
+	286, // 315: xkms.v1.KeystoreService.PKCS11StateCAD:input_type -> xkms.v1.PKCS11StateCADRequest
+	288, // 316: xkms.v1.KeystoreService.PKCS11StateGet:input_type -> xkms.v1.PKCS11StateGetRequest
+	290, // 317: xkms.v1.KeystoreService.PKCS11StateDelete:input_type -> xkms.v1.PKCS11StateDeleteRequest
+	292, // 318: xkms.v1.KeystoreService.PKCS11StateList:input_type -> xkms.v1.PKCS11StateListRequest
+	294, // 319: xkms.v1.KeystoreService.SealStorePut:input_type -> xkms.v1.SealStorePutRequest
+	296, // 320: xkms.v1.KeystoreService.SealStoreGet:input_type -> xkms.v1.SealStoreGetRequest
+	298, // 321: xkms.v1.KeystoreService.SealStoreDelete:input_type -> xkms.v1.SealStoreDeleteRequest
+	300, // 322: xkms.v1.KeystoreService.SealStoreList:input_type -> xkms.v1.SealStoreListRequest
+	302, // 323: xkms.v1.KeystoreService.SealStoreReseal:input_type -> xkms.v1.SealStoreResealRequest
+	304, // 324: xkms.v1.KeystoreService.SealStoreStatus:input_type -> xkms.v1.SealStoreStatusRequest
+	6,   // 325: xkms.v1.KeystoreService.CreateUser:input_type -> xkms.v1.CreateUserRequest
+	9,   // 326: xkms.v1.KeystoreService.ListUsers:input_type -> xkms.v1.ListUsersRequest
+	11,  // 327: xkms.v1.KeystoreService.GetUser:input_type -> xkms.v1.GetUserRequest
+	12,  // 328: xkms.v1.KeystoreService.DeleteUser:input_type -> xkms.v1.DeleteUserRequest
+	14,  // 329: xkms.v1.KeystoreService.EnableUser:input_type -> xkms.v1.EnableUserRequest
+	15,  // 330: xkms.v1.KeystoreService.DisableUser:input_type -> xkms.v1.DisableUserRequest
+	16,  // 331: xkms.v1.KeystoreService.BindUserCert:input_type -> xkms.v1.BindUserCertRequest
+	17,  // 332: xkms.v1.KeystoreService.ListUserCredentials:input_type -> xkms.v1.ListUserCredentialsRequest
+	383, // 333: xkms.v1.KeystoreService.BeginRegistration:input_type -> xkms.v1.BeginRegistrationRequest
+	385, // 334: xkms.v1.KeystoreService.FinishRegistration:input_type -> xkms.v1.FinishRegistrationRequest
+	387, // 335: xkms.v1.KeystoreService.BeginAuthentication:input_type -> xkms.v1.BeginAuthenticationRequest
+	389, // 336: xkms.v1.KeystoreService.FinishAuthentication:input_type -> xkms.v1.FinishAuthenticationRequest
+	391, // 337: xkms.v1.KeystoreService.GetInvite:input_type -> xkms.v1.GetInviteRequest
+	393, // 338: xkms.v1.KeystoreService.BeginInviteRegistration:input_type -> xkms.v1.BeginInviteRegistrationRequest
+	395, // 339: xkms.v1.KeystoreService.FinishInviteRegistration:input_type -> xkms.v1.FinishInviteRegistrationRequest
+	397, // 340: xkms.v1.KeystoreService.ActivateInvitePIV:input_type -> xkms.v1.ActivateInvitePIVRequest
+	401, // 341: xkms.v1.KeystoreService.SSHGenerateKey:input_type -> xkms.v1.SSHGenerateKeyRequest
+	402, // 342: xkms.v1.KeystoreService.SSHImportKey:input_type -> xkms.v1.SSHImportKeyRequest
+	404, // 343: xkms.v1.KeystoreService.SSHListKeys:input_type -> xkms.v1.SSHListKeysRequest
+	399, // 344: xkms.v1.KeystoreService.SSHGetKey:input_type -> xkms.v1.SSHKeyRef
+	399, // 345: xkms.v1.KeystoreService.SSHDeleteKey:input_type -> xkms.v1.SSHKeyRef
+	399, // 346: xkms.v1.KeystoreService.SSHExportPublic:input_type -> xkms.v1.SSHKeyRef
+	407, // 347: xkms.v1.KeystoreService.SSHSign:input_type -> xkms.v1.SSHSignRequest
+	410, // 348: xkms.v1.KeystoreService.SSHAddKnownHost:input_type -> xkms.v1.SSHAddKnownHostRequest
+	411, // 349: xkms.v1.KeystoreService.SSHListKnownHosts:input_type -> xkms.v1.SSHListKnownHostsRequest
+	413, // 350: xkms.v1.KeystoreService.SSHRemoveKnownHost:input_type -> xkms.v1.SSHRemoveKnownHostRequest
+	415, // 351: xkms.v1.KeystoreService.SSHAddAuthorizedKey:input_type -> xkms.v1.SSHAddAuthorizedKeyRequest
+	416, // 352: xkms.v1.KeystoreService.SSHListAuthorizedKeys:input_type -> xkms.v1.SSHListAuthorizedKeysRequest
+	418, // 353: xkms.v1.KeystoreService.SSHRemoveAuthorizedKey:input_type -> xkms.v1.SSHAuthorizedKeyRef
+	21,  // 354: xkms.v1.KeystoreService.Health:output_type -> xkms.v1.HealthResponse
+	24,  // 355: xkms.v1.KeystoreService.ListBackends:output_type -> xkms.v1.ListBackendsResponse
+	26,  // 356: xkms.v1.KeystoreService.GetBackendInfo:output_type -> xkms.v1.GetBackendInfoResponse
+	28,  // 357: xkms.v1.KeystoreService.GenerateKey:output_type -> xkms.v1.GenerateKeyResponse
+	31,  // 358: xkms.v1.KeystoreService.ListKeys:output_type -> xkms.v1.ListKeysResponse
+	33,  // 359: xkms.v1.KeystoreService.GetKey:output_type -> xkms.v1.GetKeyResponse
+	35,  // 360: xkms.v1.KeystoreService.Sign:output_type -> xkms.v1.SignResponse
+	37,  // 361: xkms.v1.KeystoreService.Verify:output_type -> xkms.v1.VerifyResponse
+	39,  // 362: xkms.v1.KeystoreService.DeleteKey:output_type -> xkms.v1.DeleteKeyResponse
+	41,  // 363: xkms.v1.KeystoreService.RotateKey:output_type -> xkms.v1.RotateKeyResponse
+	28,  // 364: xkms.v1.KeystoreService.CreateOTAImageKey:output_type -> xkms.v1.GenerateKeyResponse
+	41,  // 365: xkms.v1.KeystoreService.RotateOTAImageKey:output_type -> xkms.v1.RotateKeyResponse
+	43,  // 366: xkms.v1.KeystoreService.ExportOTAImagePublicKey:output_type -> xkms.v1.OTAImagePublicKeyResponse
+	35,  // 367: xkms.v1.KeystoreService.SignOTAImage:output_type -> xkms.v1.SignResponse
+	47,  // 368: xkms.v1.KeystoreService.ListKeyVersions:output_type -> xkms.v1.ListKeyVersionsResponse
+	49,  // 369: xkms.v1.KeystoreService.EnableKeyVersion:output_type -> xkms.v1.EnableKeyVersionResponse
+	51,  // 370: xkms.v1.KeystoreService.DisableKeyVersion:output_type -> xkms.v1.DisableKeyVersionResponse
+	53,  // 371: xkms.v1.KeystoreService.EnableAllKeyVersions:output_type -> xkms.v1.EnableAllKeyVersionsResponse
+	55,  // 372: xkms.v1.KeystoreService.DisableAllKeyVersions:output_type -> xkms.v1.DisableAllKeyVersionsResponse
+	57,  // 373: xkms.v1.KeystoreService.RetireKeyVersion:output_type -> xkms.v1.RetireKeyVersionResponse
+	60,  // 374: xkms.v1.KeystoreService.RotateScopeKeys:output_type -> xkms.v1.RotateScopeKeysResponse
+	62,  // 375: xkms.v1.KeystoreService.Encrypt:output_type -> xkms.v1.EncryptResponse
+	64,  // 376: xkms.v1.KeystoreService.Decrypt:output_type -> xkms.v1.DecryptResponse
+	127, // 377: xkms.v1.KeystoreService.EncryptAsym:output_type -> xkms.v1.EncryptAsymResponse
+	66,  // 378: xkms.v1.KeystoreService.Rewrap:output_type -> xkms.v1.RewrapResponse
+	70,  // 379: xkms.v1.KeystoreService.EncryptBatch:output_type -> xkms.v1.EncryptBatchResponse
+	74,  // 380: xkms.v1.KeystoreService.DecryptBatch:output_type -> xkms.v1.DecryptBatchResponse
+	76,  // 381: xkms.v1.KeystoreService.GenerateDataKey:output_type -> xkms.v1.GenerateDataKeyResponse
+	77,  // 382: xkms.v1.KeystoreService.GenerateWrappedDataKey:output_type -> xkms.v1.GenerateWrappedDataKeyResponse
+	79,  // 383: xkms.v1.KeystoreService.GenerateHMAC:output_type -> xkms.v1.GenerateHMACResponse
+	81,  // 384: xkms.v1.KeystoreService.VerifyHMAC:output_type -> xkms.v1.VerifyHMACResponse
+	83,  // 385: xkms.v1.KeystoreService.GenerateRandom:output_type -> xkms.v1.GenerateRandomResponse
+	85,  // 386: xkms.v1.KeystoreService.Hash:output_type -> xkms.v1.HashResponse
+	87,  // 387: xkms.v1.KeystoreService.GetPublicKey:output_type -> xkms.v1.GetPublicKeyResponse
+	89,  // 388: xkms.v1.KeystoreService.RevokeKey:output_type -> xkms.v1.RevokeKeyResponse
+	91,  // 389: xkms.v1.KeystoreService.UpdateKeyStatus:output_type -> xkms.v1.UpdateKeyStatusResponse
+	93,  // 390: xkms.v1.KeystoreService.GetKeyMetadata:output_type -> xkms.v1.GetKeyMetadataResponse
+	95,  // 391: xkms.v1.KeystoreService.UpdateKeyMetadata:output_type -> xkms.v1.UpdateKeyMetadataResponse
+	97,  // 392: xkms.v1.KeystoreService.SetKeyPolicy:output_type -> xkms.v1.SetKeyPolicyResponse
+	99,  // 393: xkms.v1.KeystoreService.GetKeyPolicy:output_type -> xkms.v1.GetKeyPolicyResponse
+	101, // 394: xkms.v1.KeystoreService.DeleteKeyPolicy:output_type -> xkms.v1.DeleteKeyPolicyResponse
+	103, // 395: xkms.v1.KeystoreService.SetKeyRotationPolicy:output_type -> xkms.v1.SetKeyRotationPolicyResponse
+	105, // 396: xkms.v1.KeystoreService.GetKeyRotationPolicy:output_type -> xkms.v1.GetKeyRotationPolicyResponse
+	107, // 397: xkms.v1.KeystoreService.DeleteKeyRotationPolicy:output_type -> xkms.v1.DeleteKeyRotationPolicyResponse
+	109, // 398: xkms.v1.KeystoreService.GetSupportedAlgorithms:output_type -> xkms.v1.GetSupportedAlgorithmsResponse
+	111, // 399: xkms.v1.KeystoreService.BackendStatus:output_type -> xkms.v1.BackendStatusResponse
+	113, // 400: xkms.v1.KeystoreService.BackendTest:output_type -> xkms.v1.BackendTestResponse
+	115, // 401: xkms.v1.KeystoreService.SetKeySafety:output_type -> xkms.v1.SetKeySafetyResponse
+	117, // 402: xkms.v1.KeystoreService.ClearKeySafety:output_type -> xkms.v1.ClearKeySafetyResponse
+	119, // 403: xkms.v1.KeystoreService.SafetyCheck:output_type -> xkms.v1.SafetyCheckResponse
+	121, // 404: xkms.v1.KeystoreService.SafetyReport:output_type -> xkms.v1.SafetyReportResponse
+	129, // 405: xkms.v1.KeystoreService.DeriveKey:output_type -> xkms.v1.DeriveKeyResponse
+	131, // 406: xkms.v1.KeystoreService.DeriveKeyECDH:output_type -> xkms.v1.DeriveKeyECDHResponse
+	137, // 407: xkms.v1.KeystoreService.DeriveKeyECDHSecure:output_type -> xkms.v1.DeriveKeyECDHSecureResponse
+	139, // 408: xkms.v1.KeystoreService.UseResidentKey:output_type -> xkms.v1.UseResidentKeyResponse
+	141, // 409: xkms.v1.KeystoreService.DestroyResidentKey:output_type -> xkms.v1.DestroyResidentKeyResponse
+	143, // 410: xkms.v1.KeystoreService.GenerateEphemeralECDH:output_type -> xkms.v1.GenerateEphemeralECDHResponse
+	145, // 411: xkms.v1.KeystoreService.SaveCert:output_type -> xkms.v1.SaveCertResponse
+	147, // 412: xkms.v1.KeystoreService.GetCert:output_type -> xkms.v1.GetCertResponse
+	149, // 413: xkms.v1.KeystoreService.DeleteCert:output_type -> xkms.v1.DeleteCertResponse
+	151, // 414: xkms.v1.KeystoreService.ListCerts:output_type -> xkms.v1.ListCertsResponse
+	153, // 415: xkms.v1.KeystoreService.CertExists:output_type -> xkms.v1.CertExistsResponse
+	155, // 416: xkms.v1.KeystoreService.SaveCertChain:output_type -> xkms.v1.SaveCertChainResponse
+	157, // 417: xkms.v1.KeystoreService.GetCertChain:output_type -> xkms.v1.GetCertChainResponse
+	159, // 418: xkms.v1.KeystoreService.GetTLSCertificate:output_type -> xkms.v1.GetTLSCertificateResponse
+	161, // 419: xkms.v1.KeystoreService.GetImportParameters:output_type -> xkms.v1.GetImportParametersResponse
+	163, // 420: xkms.v1.KeystoreService.WrapKey:output_type -> xkms.v1.WrapKeyResponse
+	165, // 421: xkms.v1.KeystoreService.UnwrapKey:output_type -> xkms.v1.UnwrapKeyResponse
+	167, // 422: xkms.v1.KeystoreService.WrapKeyByID:output_type -> xkms.v1.WrapKeyByIDResponse
+	169, // 423: xkms.v1.KeystoreService.UnwrapKeyByID:output_type -> xkms.v1.UnwrapKeyByIDResponse
+	171, // 424: xkms.v1.KeystoreService.ImportKey:output_type -> xkms.v1.ImportKeyResponse
+	173, // 425: xkms.v1.KeystoreService.ExportKey:output_type -> xkms.v1.ExportKeyResponse
+	175, // 426: xkms.v1.KeystoreService.ExportKeyMaterial:output_type -> xkms.v1.ExportKeyMaterialResponse
+	177, // 427: xkms.v1.KeystoreService.CopyKey:output_type -> xkms.v1.CopyKeyResponse
+	179, // 428: xkms.v1.KeystoreService.Seal:output_type -> xkms.v1.SealResponse
+	181, // 429: xkms.v1.KeystoreService.Unseal:output_type -> xkms.v1.UnsealResponse
+	183, // 430: xkms.v1.KeystoreService.CanSeal:output_type -> xkms.v1.CanSealResponse
+	185, // 431: xkms.v1.KeystoreService.AttestKey:output_type -> xkms.v1.AttestKeyResponse
+	191, // 432: xkms.v1.KeystoreService.FrostGenerateKey:output_type -> xkms.v1.FrostGenerateKeyResponse
+	193, // 433: xkms.v1.KeystoreService.FrostImportKey:output_type -> xkms.v1.FrostImportKeyResponse
+	195, // 434: xkms.v1.KeystoreService.FrostListKeys:output_type -> xkms.v1.FrostListKeysResponse
+	197, // 435: xkms.v1.KeystoreService.FrostGetKey:output_type -> xkms.v1.FrostGetKeyResponse
+	199, // 436: xkms.v1.KeystoreService.FrostDeleteKey:output_type -> xkms.v1.FrostDeleteKeyResponse
+	201, // 437: xkms.v1.KeystoreService.FrostGenerateNonces:output_type -> xkms.v1.FrostGenerateNoncesResponse
+	203, // 438: xkms.v1.KeystoreService.FrostSignRound:output_type -> xkms.v1.FrostSignRoundResponse
+	205, // 439: xkms.v1.KeystoreService.FrostAggregate:output_type -> xkms.v1.FrostAggregateResponse
+	207, // 440: xkms.v1.KeystoreService.FrostVerify:output_type -> xkms.v1.FrostVerifyResponse
+	209, // 441: xkms.v1.KeystoreService.GetCABundle:output_type -> xkms.v1.GetCABundleResponse
+	211, // 442: xkms.v1.KeystoreService.GetCACertificate:output_type -> xkms.v1.GetCACertificateResponse
+	213, // 443: xkms.v1.KeystoreService.SignCSR:output_type -> xkms.v1.SignCSRResponse
+	215, // 444: xkms.v1.KeystoreService.IssueCertificate:output_type -> xkms.v1.IssueCertificateResponse
+	217, // 445: xkms.v1.KeystoreService.RevokeCertificate:output_type -> xkms.v1.RevokeCertificateResponse
+	219, // 446: xkms.v1.KeystoreService.GenerateCRL:output_type -> xkms.v1.GenerateCRLResponse
+	221, // 447: xkms.v1.KeystoreService.IsRevoked:output_type -> xkms.v1.IsRevokedResponse
+	223, // 448: xkms.v1.KeystoreService.IssueEKCertificate:output_type -> xkms.v1.IssueEKCertificateResponse
+	225, // 449: xkms.v1.KeystoreService.IssueAKCertificate:output_type -> xkms.v1.IssueAKCertificateResponse
+	227, // 450: xkms.v1.KeystoreService.SignTCGCSR:output_type -> xkms.v1.SignTCGCSRResponse
+	229, // 451: xkms.v1.KeystoreService.EnrollDevice:output_type -> xkms.v1.EnrollDeviceResponse
+	231, // 452: xkms.v1.KeystoreService.IssueLAKCertificate:output_type -> xkms.v1.IssueLAKCertificateResponse
+	232, // 453: xkms.v1.KeystoreService.BootstrapListenerKeys:output_type -> xkms.v1.BootstrapListenerKeysResponse
+	432, // 454: xkms.v1.KeystoreService.SetSOPIN:output_type -> google.protobuf.Empty
+	432, // 455: xkms.v1.KeystoreService.SetUserPIN:output_type -> google.protobuf.Empty
+	432, // 456: xkms.v1.KeystoreService.ChangeSOPIN:output_type -> google.protobuf.Empty
+	432, // 457: xkms.v1.KeystoreService.ChangeUserPIN:output_type -> google.protobuf.Empty
+	432, // 458: xkms.v1.KeystoreService.VerifySOPIN:output_type -> google.protobuf.Empty
+	432, // 459: xkms.v1.KeystoreService.VerifyUserPIN:output_type -> google.protobuf.Empty
+	239, // 460: xkms.v1.KeystoreService.GetLockoutStatus:output_type -> xkms.v1.LockoutStatusResponse
+	432, // 461: xkms.v1.KeystoreService.ResetLockout:output_type -> google.protobuf.Empty
+	243, // 462: xkms.v1.KeystoreService.ListPIVSlots:output_type -> xkms.v1.ListPIVSlotsResponse
+	245, // 463: xkms.v1.KeystoreService.GetPIVCertificate:output_type -> xkms.v1.GetPIVCertificateResponse
+	432, // 464: xkms.v1.KeystoreService.StorePIVCertificate:output_type -> google.protobuf.Empty
+	432, // 465: xkms.v1.KeystoreService.DeletePIVCertificate:output_type -> google.protobuf.Empty
+	249, // 466: xkms.v1.KeystoreService.GeneratePIVKey:output_type -> xkms.v1.GeneratePIVKeyResponse
+	432, // 467: xkms.v1.KeystoreService.ImportPIVCertificate:output_type -> google.protobuf.Empty
+	245, // 468: xkms.v1.KeystoreService.ExportPIVCertificate:output_type -> xkms.v1.GetPIVCertificateResponse
+	251, // 469: xkms.v1.KeystoreService.GeneratePIVCSR:output_type -> xkms.v1.GeneratePIVCSRResponse
+	254, // 470: xkms.v1.KeystoreService.Algorithms:output_type -> xkms.v1.AlgorithmsResponse
+	263, // 471: xkms.v1.KeystoreService.CreateTenant:output_type -> xkms.v1.CreateTenantResponse
+	265, // 472: xkms.v1.KeystoreService.GetTenant:output_type -> xkms.v1.GetTenantResponse
+	267, // 473: xkms.v1.KeystoreService.ListTenants:output_type -> xkms.v1.ListTenantsResponse
+	432, // 474: xkms.v1.KeystoreService.DeleteTenant:output_type -> google.protobuf.Empty
+	259, // 475: xkms.v1.KeystoreService.UpdateTenantEntitlements:output_type -> xkms.v1.UpdateTenantEntitlementsResponse
+	261, // 476: xkms.v1.KeystoreService.UpdateTenantQuotas:output_type -> xkms.v1.UpdateTenantQuotasResponse
+	271, // 477: xkms.v1.KeystoreService.PasswordAdd:output_type -> xkms.v1.PasswordAddResponse
+	273, // 478: xkms.v1.KeystoreService.PasswordGet:output_type -> xkms.v1.PasswordGetResponse
+	275, // 479: xkms.v1.KeystoreService.PasswordList:output_type -> xkms.v1.PasswordListResponse
+	277, // 480: xkms.v1.KeystoreService.PasswordUpdate:output_type -> xkms.v1.PasswordUpdateResponse
+	279, // 481: xkms.v1.KeystoreService.PasswordDelete:output_type -> xkms.v1.PasswordDeleteResponse
+	320, // 482: xkms.v1.KeystoreService.PasswordStoreUnlock:output_type -> xkms.v1.PasswordStoreStatusResponse
+	311, // 483: xkms.v1.KeystoreService.PasswordVaultStatus:output_type -> xkms.v1.PasswordVaultStatusResponse
+	313, // 484: xkms.v1.KeystoreService.PasswordVaultEnroll:output_type -> xkms.v1.PasswordVaultEnrollResponse
+	313, // 485: xkms.v1.KeystoreService.PasswordVaultRotate:output_type -> xkms.v1.PasswordVaultEnrollResponse
+	316, // 486: xkms.v1.KeystoreService.PasswordVaultRemoveFactor:output_type -> xkms.v1.PasswordVaultRemoveFactorResponse
+	313, // 487: xkms.v1.KeystoreService.PasswordVaultRecover:output_type -> xkms.v1.PasswordVaultEnrollResponse
+	320, // 488: xkms.v1.KeystoreService.PasswordStoreLock:output_type -> xkms.v1.PasswordStoreStatusResponse
+	320, // 489: xkms.v1.KeystoreService.PasswordStoreStatus:output_type -> xkms.v1.PasswordStoreStatusResponse
+	322, // 490: xkms.v1.KeystoreService.PasswordGenerate:output_type -> xkms.v1.PasswordGenerateResponse
+	324, // 491: xkms.v1.KeystoreService.PasswordStoreSetAccessMode:output_type -> xkms.v1.PasswordStoreSetAccessModeResponse
+	328, // 492: xkms.v1.KeystoreService.TPMPolicyCreate:output_type -> xkms.v1.TPMPolicy
+	328, // 493: xkms.v1.KeystoreService.TPMPolicyGet:output_type -> xkms.v1.TPMPolicy
+	334, // 494: xkms.v1.KeystoreService.TPMPolicyList:output_type -> xkms.v1.TPMPolicyListResponse
+	328, // 495: xkms.v1.KeystoreService.TPMPolicyUpdate:output_type -> xkms.v1.TPMPolicy
+	328, // 496: xkms.v1.KeystoreService.TPMPolicyRevoke:output_type -> xkms.v1.TPMPolicy
+	345, // 497: xkms.v1.KeystoreService.TPMPolicyVerify:output_type -> xkms.v1.TPMPolicyVerifyResponse
+	336, // 498: xkms.v1.KeystoreService.TPMPolicyDelete:output_type -> xkms.v1.TPMPolicyDeleteResponse
+	346, // 499: xkms.v1.KeystoreService.TPMPolicyObjects:output_type -> xkms.v1.TPMPolicyObjectsResponse
+	328, // 500: xkms.v1.KeystoreService.TPMPolicySetAutoUnseal:output_type -> xkms.v1.TPMPolicy
+	328, // 501: xkms.v1.KeystoreService.TPMPolicySetDescription:output_type -> xkms.v1.TPMPolicy
+	349, // 502: xkms.v1.KeystoreService.TPMObjectPolicy:output_type -> xkms.v1.TPMObjectPolicyResponse
+	351, // 503: xkms.v1.KeystoreService.TPMPolicyRotateAuthority:output_type -> xkms.v1.TPMAuthorityRotateResponse
+	353, // 504: xkms.v1.KeystoreService.GetTenantTPMMode:output_type -> xkms.v1.TenantTPMModeResponse
+	353, // 505: xkms.v1.KeystoreService.SetTenantTPMMode:output_type -> xkms.v1.TenantTPMModeResponse
+	356, // 506: xkms.v1.KeystoreService.TenantVTPMStatus:output_type -> xkms.v1.TenantVTPMStatusResponse
+	356, // 507: xkms.v1.KeystoreService.TenantVTPMStart:output_type -> xkms.v1.TenantVTPMStatusResponse
+	356, // 508: xkms.v1.KeystoreService.TenantVTPMStop:output_type -> xkms.v1.TenantVTPMStatusResponse
+	339, // 509: xkms.v1.KeystoreService.TrustRootList:output_type -> xkms.v1.TrustRootListResponse
+	337, // 510: xkms.v1.KeystoreService.TrustRootGet:output_type -> xkms.v1.TrustRoot
+	342, // 511: xkms.v1.KeystoreService.TrustRootImport:output_type -> xkms.v1.TrustRootImportResponse
+	337, // 512: xkms.v1.KeystoreService.TrustRootQuarantine:output_type -> xkms.v1.TrustRoot
+	343, // 513: xkms.v1.KeystoreService.TrustRootRemove:output_type -> xkms.v1.TrustRootRemoveResponse
+	366, // 514: xkms.v1.KeystoreService.OIDCCredentialCreate:output_type -> xkms.v1.OIDCCredential
+	366, // 515: xkms.v1.KeystoreService.OIDCCredentialImport:output_type -> xkms.v1.OIDCCredential
+	366, // 516: xkms.v1.KeystoreService.OIDCCredentialGet:output_type -> xkms.v1.OIDCCredential
+	363, // 517: xkms.v1.KeystoreService.OIDCCredentialList:output_type -> xkms.v1.OIDCCredentialListResponse
+	364, // 518: xkms.v1.KeystoreService.OIDCCredentialDelete:output_type -> xkms.v1.OIDCCredentialDeleteResponse
+	366, // 519: xkms.v1.KeystoreService.OIDCCredentialRefresh:output_type -> xkms.v1.OIDCCredential
+	367, // 520: xkms.v1.KeystoreService.OIDCCredentialGetAccessToken:output_type -> xkms.v1.OIDCAccessToken
+	366, // 521: xkms.v1.KeystoreService.OIDCCredentialDeviceStart:output_type -> xkms.v1.OIDCCredential
+	366, // 522: xkms.v1.KeystoreService.OIDCCredentialDevicePoll:output_type -> xkms.v1.OIDCCredential
+	369, // 523: xkms.v1.KeystoreService.PeerAttestationChallenge:output_type -> xkms.v1.PeerAttestationChallengeResponse
+	371, // 524: xkms.v1.KeystoreService.SubmitPeerAttestation:output_type -> xkms.v1.SubmitPeerAttestationResponse
+	372, // 525: xkms.v1.KeystoreService.SetSigningKeyBinding:output_type -> xkms.v1.SigningKeyBinding
+	372, // 526: xkms.v1.KeystoreService.GetSigningKeyBinding:output_type -> xkms.v1.SigningKeyBinding
+	376, // 527: xkms.v1.KeystoreService.ListSigningKeyBindings:output_type -> xkms.v1.ListSigningKeyBindingsResponse
+	378, // 528: xkms.v1.KeystoreService.DeleteSigningKeyBinding:output_type -> xkms.v1.DeleteSigningKeyBindingResponse
+	380, // 529: xkms.v1.KeystoreService.ResolveSigningKey:output_type -> xkms.v1.SigningKeyResolution
+	382, // 530: xkms.v1.KeystoreService.SignReleaseCoRIM:output_type -> xkms.v1.SignReleaseCoRIMResponse
+	281, // 531: xkms.v1.KeystoreService.PKCS11StatePut:output_type -> xkms.v1.PKCS11StatePutResponse
+	283, // 532: xkms.v1.KeystoreService.PKCS11StatePutIfAbsent:output_type -> xkms.v1.PKCS11StatePutIfAbsentResponse
+	285, // 533: xkms.v1.KeystoreService.PKCS11StateCAS:output_type -> xkms.v1.PKCS11StateCASResponse
+	287, // 534: xkms.v1.KeystoreService.PKCS11StateCAD:output_type -> xkms.v1.PKCS11StateCADResponse
+	289, // 535: xkms.v1.KeystoreService.PKCS11StateGet:output_type -> xkms.v1.PKCS11StateGetResponse
+	291, // 536: xkms.v1.KeystoreService.PKCS11StateDelete:output_type -> xkms.v1.PKCS11StateDeleteResponse
+	293, // 537: xkms.v1.KeystoreService.PKCS11StateList:output_type -> xkms.v1.PKCS11StateListResponse
+	295, // 538: xkms.v1.KeystoreService.SealStorePut:output_type -> xkms.v1.SealStorePutResponse
+	297, // 539: xkms.v1.KeystoreService.SealStoreGet:output_type -> xkms.v1.SealStoreGetResponse
+	299, // 540: xkms.v1.KeystoreService.SealStoreDelete:output_type -> xkms.v1.SealStoreDeleteResponse
+	301, // 541: xkms.v1.KeystoreService.SealStoreList:output_type -> xkms.v1.SealStoreListResponse
+	303, // 542: xkms.v1.KeystoreService.SealStoreReseal:output_type -> xkms.v1.SealStoreResealResponse
+	305, // 543: xkms.v1.KeystoreService.SealStoreStatus:output_type -> xkms.v1.SealStoreStatusResponse
+	8,   // 544: xkms.v1.KeystoreService.CreateUser:output_type -> xkms.v1.UserResponse
+	10,  // 545: xkms.v1.KeystoreService.ListUsers:output_type -> xkms.v1.ListUsersResponse
+	8,   // 546: xkms.v1.KeystoreService.GetUser:output_type -> xkms.v1.UserResponse
+	13,  // 547: xkms.v1.KeystoreService.DeleteUser:output_type -> xkms.v1.DeleteUserResponse
+	8,   // 548: xkms.v1.KeystoreService.EnableUser:output_type -> xkms.v1.UserResponse
+	8,   // 549: xkms.v1.KeystoreService.DisableUser:output_type -> xkms.v1.UserResponse
+	8,   // 550: xkms.v1.KeystoreService.BindUserCert:output_type -> xkms.v1.UserResponse
+	19,  // 551: xkms.v1.KeystoreService.ListUserCredentials:output_type -> xkms.v1.ListUserCredentialsResponse
+	384, // 552: xkms.v1.KeystoreService.BeginRegistration:output_type -> xkms.v1.BeginRegistrationResponse
+	386, // 553: xkms.v1.KeystoreService.FinishRegistration:output_type -> xkms.v1.FinishRegistrationResponse
+	388, // 554: xkms.v1.KeystoreService.BeginAuthentication:output_type -> xkms.v1.BeginAuthenticationResponse
+	390, // 555: xkms.v1.KeystoreService.FinishAuthentication:output_type -> xkms.v1.FinishAuthenticationResponse
+	392, // 556: xkms.v1.KeystoreService.GetInvite:output_type -> xkms.v1.GetInviteResponse
+	394, // 557: xkms.v1.KeystoreService.BeginInviteRegistration:output_type -> xkms.v1.BeginInviteRegistrationResponse
+	396, // 558: xkms.v1.KeystoreService.FinishInviteRegistration:output_type -> xkms.v1.FinishInviteRegistrationResponse
+	398, // 559: xkms.v1.KeystoreService.ActivateInvitePIV:output_type -> xkms.v1.ActivateInvitePIVResponse
+	403, // 560: xkms.v1.KeystoreService.SSHGenerateKey:output_type -> xkms.v1.SSHKeyResponse
+	403, // 561: xkms.v1.KeystoreService.SSHImportKey:output_type -> xkms.v1.SSHKeyResponse
+	405, // 562: xkms.v1.KeystoreService.SSHListKeys:output_type -> xkms.v1.SSHListKeysResponse
+	403, // 563: xkms.v1.KeystoreService.SSHGetKey:output_type -> xkms.v1.SSHKeyResponse
+	432, // 564: xkms.v1.KeystoreService.SSHDeleteKey:output_type -> google.protobuf.Empty
+	406, // 565: xkms.v1.KeystoreService.SSHExportPublic:output_type -> xkms.v1.SSHPublicKeyResponse
+	408, // 566: xkms.v1.KeystoreService.SSHSign:output_type -> xkms.v1.SSHSignResponse
+	432, // 567: xkms.v1.KeystoreService.SSHAddKnownHost:output_type -> google.protobuf.Empty
+	412, // 568: xkms.v1.KeystoreService.SSHListKnownHosts:output_type -> xkms.v1.SSHListKnownHostsResponse
+	432, // 569: xkms.v1.KeystoreService.SSHRemoveKnownHost:output_type -> google.protobuf.Empty
+	432, // 570: xkms.v1.KeystoreService.SSHAddAuthorizedKey:output_type -> google.protobuf.Empty
+	417, // 571: xkms.v1.KeystoreService.SSHListAuthorizedKeys:output_type -> xkms.v1.SSHListAuthorizedKeysResponse
+	432, // 572: xkms.v1.KeystoreService.SSHRemoveAuthorizedKey:output_type -> google.protobuf.Empty
+	354, // [354:573] is the sub-list for method output_type
+	135, // [135:354] is the sub-list for method input_type
 	135, // [135:135] is the sub-list for extension type_name
 	135, // [135:135] is the sub-list for extension extendee
 	0,   // [0:135] is the sub-list for field type_name
@@ -30583,7 +30723,7 @@ func file_pkg_api_grpc_proto_xkmsv1_xkms_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc), len(file_pkg_api_grpc_proto_xkmsv1_xkms_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   424,
+			NumMessages:   426,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

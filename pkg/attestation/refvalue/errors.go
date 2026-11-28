@@ -27,6 +27,11 @@ var (
 	// corim-meta, or an unsigned CoRIM that fails validation.
 	ErrMalformed = errors.New("refvalue: not a well-formed signed CoRIM")
 
+	// ErrCoSWIDTagVersion reports an embedded CoSWID tag without the
+	// tag-version field (key 12) RFC 9393 requires; it is joined with
+	// ErrMalformed.
+	ErrCoSWIDTagVersion = errors.New("refvalue: coswid: tag-version is required")
+
 	// ErrSignerChain reports a COSE x5chain header that is absent, does not
 	// parse, or does not chain to the configured roots.
 	ErrSignerChain = errors.New("refvalue: signer certificate chain is not trusted")

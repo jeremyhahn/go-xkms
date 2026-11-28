@@ -21,6 +21,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peer"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/peergate"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/refvalue"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/truststore"
 	"github.com/jeremyhahn/go-xkms/pkg/backend"
 	tpm2backend "github.com/jeremyhahn/go-xkms/pkg/backend/tpm2"
@@ -336,11 +337,28 @@ var SigningKeySentinelClasses = []SentinelClass{
 	{appraisal.ErrInvalidTenant, ClassInvalidArgument},
 	{appraisal.ErrRecordNotFound, ClassNotFound},
 	{appraisal.ErrStoreUnavailable, ClassUnavailable},
+	{xkms.ErrKeyNotFound, ClassNotFound},
+	{refvalue.ErrMalformed, ClassInvalidArgument},
+	{refvalue.ErrUnsupportedKey, ClassFailedPrecondition},
 }
 
 // SigningKeyClassOf classifies an error of the repository signing-key verbs.
+// A repository signer admits its key under key policy on every Sign, so the
+// key-policy refusals classify through KeyPolicyClassOf; a retained signer
+// whose key moved to a newer version is a failed precondition (obtain a new
+// signer), not a missing key.
 func SigningKeyClassOf(err error) (Class, bool) {
-	return ClassOf(SigningKeySentinelClasses, err)
+	// Checked first: the error also matches the key-not-found sentinel.
+	if As[*xkms.RepositorySigningKeyChangedError](err) {
+		return ClassFailedPrecondition, true
+	}
+	if As[*xkms.KeyVersionMissingError](err) {
+		return ClassFailedPrecondition, true
+	}
+	if class, ok := ClassOf(SigningKeySentinelClasses, err); ok {
+		return class, true
+	}
+	return KeyPolicyClassOf(err)
 }
 
 // TypedClass classifies a typed error: Match reports whether an error's

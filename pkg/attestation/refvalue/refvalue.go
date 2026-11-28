@@ -39,11 +39,15 @@ import (
 	"bytes"
 	"crypto"
 	"crypto/x509"
+	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
+	"github.com/fxamacker/cbor/v2"
 	"github.com/veraison/corim/comid"
 	"github.com/veraison/corim/corim"
+	"github.com/veraison/corim/cots"
 	cose "github.com/veraison/go-cose"
 	"github.com/veraison/swid"
 
@@ -429,9 +433,9 @@ func buildManifest(signed *corim.SignedCorim) (*Manifest, error) {
 		if !ok {
 			continue // a CoSWID or CoTS tag carries no reference-value triples
 		}
-		var c comid.Comid
-		if err := c.FromCBOR(body); err != nil {
-			return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+		c, err := decodeCoMID(body)
+		if err != nil {
+			return nil, err
 		}
 		if c.Triples.ReferenceValues == nil {
 			continue
@@ -441,6 +445,182 @@ func buildManifest(signed *corim.SignedCorim) (*Manifest, error) {
 		}
 	}
 	return m, nil
+}
+
+// decodeCoMID decodes the body of an embedded CoMID tag. The body must be one
+// well-formed CBOR item with bounded container sizes first: the pinned comid
+// decoder indexes past the end of a bare tag head and panics. A panic the
+// decoder still raises on well-formed input is returned as ErrMalformed.
+func decodeCoMID(body []byte) (c *comid.Comid, err error) {
+	if err := wellformedMode.Wellformed(body); err != nil {
+		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			c, err = nil, &errs.Joined{Lead: ErrMalformed, Cause: fmt.Errorf("comid decoder: %v", r)}
+		}
+	}()
+	c = &comid.Comid{}
+	if err := c.FromCBOR(body); err != nil {
+		return nil, &errs.Joined{Lead: ErrMalformed, Cause: err}
+	}
+	return c, nil
+}
+
+// checkTags checks every embedded tag of an unsigned CoRIM before it is
+// signed: each tag is well-formed CBOR, and each CoMID decodes and is valid.
+func checkTags(tags []corim.Tag) error {
+	for _, tag := range tags {
+		if err := wellformedMode.Wellformed(tag); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		if err := checkTag(tag); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkTag decodes and validates one embedded tag by its CBOR tag number:
+// a CoMID (506), CoSWID (505) or CoTS (507). Any other item, tagged or
+// not, is not a CoRIM tag and is refused with ErrMalformed.
+func checkTag(tag corim.Tag) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = &errs.Joined{Lead: ErrMalformed, Cause: fmt.Errorf("tag decoder: %v", r)}
+		}
+	}()
+	if body, ok := bytes.CutPrefix(tag, corim.ComidTag); ok {
+		c, err := decodeCoMID(body)
+		if err != nil {
+			return err
+		}
+		if err := c.Valid(); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		return nil
+	}
+	if body, ok := bytes.CutPrefix(tag, corim.CoswidTag); ok {
+		var s swid.SoftwareIdentity
+		if err := s.FromCBOR(body); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		if err := checkCoSWID(&s, body); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		return nil
+	}
+	if body, ok := bytes.CutPrefix(tag, cots.CotsTag); ok {
+		var c cots.ConciseTaStore
+		if err := c.FromCBOR(body); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		if err := c.Valid(); err != nil {
+			return &errs.Joined{Lead: ErrMalformed, Cause: err}
+		}
+		return nil
+	}
+	return &errs.Joined{Lead: ErrMalformed, Cause: errors.New("tag is not a CoMID, CoSWID or CoTS")}
+}
+
+// checkCoSWID enforces the fields RFC 9393 requires of a concise-swid-tag
+// that the decoder fills with zero values when they are absent: a tag-id
+// (a decoded zero TagID marshals as CBOR null), a tag-version (read from
+// body, the raw tag, since 0 is legal), a software-name, and at
+// least one entity, each named with a valid role, one of them the
+// tag-creator.
+func checkCoSWID(s *swid.SoftwareIdentity, body []byte) error {
+	id, err := s.TagID.MarshalCBOR()
+	if err != nil || bytes.Equal(id, []byte{0xf6}) || s.TagID.String() == "" {
+		return errors.New("coswid: tag-id is required")
+	}
+	if s.SoftwareName == "" {
+		return errors.New("coswid: software-name is required")
+	}
+	if len(s.Entities) == 0 {
+		return errors.New("coswid: entity is required")
+	}
+	for i, e := range s.Entities {
+		if e.EntityName == "" {
+			return fmt.Errorf("coswid: entity %d: entity-name is required", i)
+		}
+		if err := e.Roles.Check(); err != nil {
+			return fmt.Errorf("coswid: entity %d: %w", i, err)
+		}
+	}
+	var tag map[any]cbor.RawMessage
+	if err := cbor.Unmarshal(body, &tag); err != nil {
+		return fmt.Errorf("coswid: %w", err)
+	}
+	// The decoder fills a missing tag-version with 0, a legal value, so
+	// presence is read from the wire.
+	if _, ok := tag[uint64(coswidKeyTagVersion)]; !ok {
+		return ErrCoSWIDTagVersion
+	}
+	tagCreator, err := coswidHasTagCreator(tag)
+	if err != nil {
+		return fmt.Errorf("coswid: %w", err)
+	}
+	if !tagCreator {
+		return errors.New("coswid: an entity with the tag-creator role is required")
+	}
+	return nil
+}
+
+// CoSWID map keys (RFC 9393) read from the raw tag.
+const (
+	coswidKeyEntity     = 2
+	coswidKeyTagVersion = 12
+	coswidKeyRole       = 33
+)
+
+// coswidHasTagCreator reports whether an entity of the raw concise-swid-tag
+// map holds the registered tag-creator role, code point 1
+// (swid.RoleTagCreator). It reads the wire form because the swid decoder
+// turns the text "tagCreator" into code point 1 and swid.Roles.String joins
+// code points and free text alike: only the unsigned integer 1 counts, a
+// text role never does, whatever it spells.
+func coswidHasTagCreator(tag map[any]cbor.RawMessage) (bool, error) {
+	entities, err := cborOneOrMany(tag[uint64(coswidKeyEntity)])
+	if err != nil {
+		return false, fmt.Errorf("entity: %w", err)
+	}
+	for i, raw := range entities {
+		var entity map[any]cbor.RawMessage
+		if err := cbor.Unmarshal(raw, &entity); err != nil {
+			return false, fmt.Errorf("entity %d: %w", i, err)
+		}
+		roles, err := cborOneOrMany(entity[uint64(coswidKeyRole)])
+		if err != nil {
+			return false, fmt.Errorf("entity %d: role: %w", i, err)
+		}
+		for _, r := range roles {
+			var v any
+			if err := cbor.Unmarshal(r, &v); err != nil {
+				return false, fmt.Errorf("entity %d: role: %w", i, err)
+			}
+			if n, ok := v.(uint64); ok && n == uint64(swid.RoleTagCreator) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// cborOneOrMany splits a CoSWID "one-or-more" value: a CBOR array yields
+// its items, any other item is the only value, and an absent key none.
+func cborOneOrMany(raw cbor.RawMessage) ([]cbor.RawMessage, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if raw[0]>>5 != 4 { // not CBOR major type 4 (array)
+		return []cbor.RawMessage{raw}, nil
+	}
+	var items []cbor.RawMessage
+	if err := cbor.Unmarshal(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 // convertReferenceValue maps one Veraison reference-value triple.
