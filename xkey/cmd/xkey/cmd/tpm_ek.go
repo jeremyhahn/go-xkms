@@ -209,12 +209,22 @@ func runEKShow(cmd *cobra.Command, args []string) (err error) {
 	}
 
 	// Output based on format
+	// Output based on format. With an xkmsd server configured, the EK
+	// certificate verified locally is appraised under the tenant's
+	// endorsements too; the JSON form prints the verdict on stderr so stdout
+	// stays one JSON document.
+	verdictOut := out
 	switch tpmCfg.outputFormat {
 	case "json":
-		return outputEKJSON(out, ekAttrs, ekCert)
+		err = outputEKJSON(out, ekAttrs, ekCert)
+		verdictOut = cmd.ErrOrStderr()
 	default:
-		return outputEKText(out, ekAttrs, ekCert)
+		err = outputEKText(out, ekAttrs, ekCert)
 	}
+	if err != nil || ekCert == nil {
+		return err
+	}
+	return appraiseEKCertificateRemote(cmd, verdictOut, ekCert.Raw)
 }
 
 // readRSAEK reads the persistent RSA EK and its certificate.

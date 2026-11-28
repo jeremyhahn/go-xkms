@@ -22,6 +22,7 @@ import (
 	"strings"
 	"testing"
 
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 	"github.com/stretchr/testify/assert"
@@ -1835,5 +1836,37 @@ func (*mockCAClient) DeleteSigningKeyBinding(context.Context, *transport.DeleteS
 	return nil
 }
 func (*mockCAClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*mockCAClient) PutAttestationEndorsement(context.Context, *transport.PutAttestationEndorsementRequest) (*transport.AttestationEndorsement, error) {
+	return nil, nil
+}
+func (*mockCAClient) ListAttestationEndorsements(context.Context, *transport.ListAttestationEndorsementsRequest) (*transport.ListAttestationEndorsementsResponse, error) {
+	return nil, nil
+}
+func (*mockCAClient) DeleteAttestationEndorsement(context.Context, *transport.DeleteAttestationEndorsementRequest) error {
+	return nil
+}
+func (*mockCAClient) PutAttestationReferenceValues(context.Context, *transport.PutAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*mockCAClient) GetAttestationReferenceValues(context.Context, *transport.GetAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*mockCAClient) ListAttestationReferenceValues(context.Context) (*transport.ListAttestationReferenceValuesResponse, error) {
+	return nil, nil
+}
+func (*mockCAClient) DeleteAttestationReferenceValues(context.Context, *transport.DeleteAttestationReferenceValuesRequest) error {
+	return nil
+}
+func (*mockCAClient) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*mockCAClient) AppraiseAndroidKeyAttestation(context.Context, *pkgtransport.AppraiseAndroidKeyAttestationRequest) (*pkgtransport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*mockCAClient) AppraiseEKCertificate(context.Context, *pkgtransport.AppraiseEKCertificateRequest) (*pkgtransport.AttestationResult, error) {
 	return nil, nil
 }

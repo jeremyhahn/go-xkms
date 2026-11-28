@@ -1,0 +1,1 @@
+- **Attestation appraisal through the SDK client.** `transport.Client` embeds `AttestationAppraisalService`, and `sdk/go/transport` re-exports it with its request and response types, so a caller holding a `Client` can put endorsements and reference values and appraise a TPM quote without a type assertion to a concrete transport.

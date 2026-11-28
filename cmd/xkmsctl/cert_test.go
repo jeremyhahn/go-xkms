@@ -27,6 +27,7 @@ import (
 	"strings"
 	"testing"
 
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	client "github.com/jeremyhahn/go-xkms/sdk/go"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
@@ -3309,5 +3310,37 @@ func (*mockCertClient) DeleteSigningKeyBinding(context.Context, *transport.Delet
 	return nil
 }
 func (*mockCertClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*mockCertClient) PutAttestationEndorsement(context.Context, *transport.PutAttestationEndorsementRequest) (*transport.AttestationEndorsement, error) {
+	return nil, nil
+}
+func (*mockCertClient) ListAttestationEndorsements(context.Context, *transport.ListAttestationEndorsementsRequest) (*transport.ListAttestationEndorsementsResponse, error) {
+	return nil, nil
+}
+func (*mockCertClient) DeleteAttestationEndorsement(context.Context, *transport.DeleteAttestationEndorsementRequest) error {
+	return nil
+}
+func (*mockCertClient) PutAttestationReferenceValues(context.Context, *transport.PutAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*mockCertClient) GetAttestationReferenceValues(context.Context, *transport.GetAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*mockCertClient) ListAttestationReferenceValues(context.Context) (*transport.ListAttestationReferenceValuesResponse, error) {
+	return nil, nil
+}
+func (*mockCertClient) DeleteAttestationReferenceValues(context.Context, *transport.DeleteAttestationReferenceValuesRequest) error {
+	return nil
+}
+func (*mockCertClient) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*mockCertClient) AppraiseAndroidKeyAttestation(context.Context, *pkgtransport.AppraiseAndroidKeyAttestationRequest) (*pkgtransport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*mockCertClient) AppraiseEKCertificate(context.Context, *pkgtransport.AppraiseEKCertificateRequest) (*pkgtransport.AttestationResult, error) {
 	return nil, nil
 }

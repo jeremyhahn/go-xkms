@@ -16,6 +16,8 @@ package transport
 import (
 	"context"
 	"testing"
+
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 )
 
 // stubClient is a minimal implementation of Client used for compile-time
@@ -558,6 +560,7 @@ var (
 	_ TPMPolicyService            = (*stubClient)(nil)
 	_ TenantService               = (*stubClient)(nil)
 	_ CredentialManagementService = (*stubClient)(nil)
+	_ AttestationAppraisalService = (*stubClient)(nil)
 )
 
 // TestClientComposesAllSubInterfaces verifies that a value satisfying the
@@ -587,6 +590,10 @@ func TestClientComposesAllSubInterfaces(t *testing.T) {
 		{"TenantService", func() bool { var v TenantService = c; return v != nil }},
 		{"CredentialManagementService", func() bool {
 			var v CredentialManagementService = c
+			return v != nil
+		}},
+		{"AttestationAppraisalService", func() bool {
+			var v AttestationAppraisalService = c
 			return v != nil
 		}},
 	}
@@ -675,6 +682,30 @@ func TestClientAssignableFromSubInterfaces(t *testing.T) {
 	var _ Client = stub
 }
 
+// TestDeviceAppraisalRequestAliases pins the two device appraisal request
+// types to the pkg/api/transport types they alias: a pointer to the SDK type
+// is assignable to a pointer to the server type only when the two are the
+// same type.
+func TestDeviceAppraisalRequestAliases(t *testing.T) {
+	// pin compiles only when the SDK pointers are the server's types.
+	pin := func(*pkgtransport.AppraiseAndroidKeyAttestationRequest, *pkgtransport.AppraiseEKCertificateRequest) {}
+	android := &AppraiseAndroidKeyAttestationRequest{
+		ChainDER: [][]byte{{0x30, 0x01}},
+	}
+	ek := &AppraiseEKCertificateRequest{
+		CertificateDER:   []byte{0x30, 0x02},
+		IntermediatesDER: [][]byte{{0x30, 0x03}},
+	}
+	pin(android, ek)
+
+	if len(android.ChainDER) != 1 || android.ChainDER[0][1] != 0x01 {
+		t.Fatalf("AppraiseAndroidKeyAttestationRequest.ChainDER = %v, want the SDK value", android.ChainDER)
+	}
+	if ek.CertificateDER[1] != 0x02 || len(ek.IntermediatesDER) != 1 {
+		t.Fatalf("AppraiseEKCertificateRequest = %+v, want the SDK value", ek)
+	}
+}
+
 func (*stubClient) SetSigningKeyBinding(context.Context, *SetSigningKeyBindingRequest) (*SigningKeyBinding, error) {
 	return nil, nil
 }
@@ -688,5 +719,37 @@ func (*stubClient) DeleteSigningKeyBinding(context.Context, *DeleteSigningKeyBin
 	return nil
 }
 func (*stubClient) ResolveSigningKey(context.Context, *ResolveSigningKeyRequest) (*SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*stubClient) PutAttestationEndorsement(context.Context, *PutAttestationEndorsementRequest) (*AttestationEndorsement, error) {
+	return nil, nil
+}
+func (*stubClient) ListAttestationEndorsements(context.Context, *ListAttestationEndorsementsRequest) (*ListAttestationEndorsementsResponse, error) {
+	return nil, nil
+}
+func (*stubClient) DeleteAttestationEndorsement(context.Context, *DeleteAttestationEndorsementRequest) error {
+	return nil
+}
+func (*stubClient) PutAttestationReferenceValues(context.Context, *PutAttestationReferenceValuesRequest) (*AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*stubClient) GetAttestationReferenceValues(context.Context, *GetAttestationReferenceValuesRequest) (*AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*stubClient) ListAttestationReferenceValues(context.Context) (*ListAttestationReferenceValuesResponse, error) {
+	return nil, nil
+}
+func (*stubClient) DeleteAttestationReferenceValues(context.Context, *DeleteAttestationReferenceValuesRequest) error {
+	return nil
+}
+func (*stubClient) AppraiseAttestationQuote(context.Context, *AppraiseAttestationQuoteRequest) (*AttestationResult, error) {
+	return nil, nil
+}
+
+func (*stubClient) AppraiseAndroidKeyAttestation(context.Context, *AppraiseAndroidKeyAttestationRequest) (*AttestationResult, error) {
+	return nil, nil
+}
+
+func (*stubClient) AppraiseEKCertificate(context.Context, *AppraiseEKCertificateRequest) (*AttestationResult, error) {
 	return nil, nil
 }

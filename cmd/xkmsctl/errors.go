@@ -849,6 +849,54 @@ var (
 	// image".
 	ErrSignOTAImageFailed = errors.New("failed to sign the OTA image")
 
+	// ErrPutAttestationEndorsementFailed is the sentinel error "failed to put
+	// the attestation endorsement".
+	ErrPutAttestationEndorsementFailed = errors.New("failed to put the attestation endorsement")
+
+	// ErrListAttestationEndorsementsFailed is the sentinel error "failed to
+	// list the attestation endorsements".
+	ErrListAttestationEndorsementsFailed = errors.New("failed to list the attestation endorsements")
+
+	// ErrDeleteAttestationEndorsementFailed is the sentinel error "failed to
+	// delete the attestation endorsement".
+	ErrDeleteAttestationEndorsementFailed = errors.New("failed to delete the attestation endorsement")
+
+	// ErrInvalidEndorsementFlags is the sentinel error "invalid attestation
+	// endorsement flags".
+	ErrInvalidEndorsementFlags = errors.New("invalid attestation endorsement flags")
+
+	// ErrPutAttestationReferenceValuesFailed is the sentinel error "failed to
+	// put the attestation reference values".
+	ErrPutAttestationReferenceValuesFailed = errors.New("failed to put the attestation reference values")
+
+	// ErrGetAttestationReferenceValuesFailed is the sentinel error "failed to
+	// get the attestation reference values".
+	ErrGetAttestationReferenceValuesFailed = errors.New("failed to get the attestation reference values")
+
+	// ErrListAttestationReferenceValuesFailed is the sentinel error "failed to
+	// list the attestation reference values".
+	ErrListAttestationReferenceValuesFailed = errors.New("failed to list the attestation reference values")
+
+	// ErrDeleteAttestationReferenceValuesFailed is the sentinel error "failed
+	// to delete the attestation reference values".
+	ErrDeleteAttestationReferenceValuesFailed = errors.New("failed to delete the attestation reference values")
+
+	// ErrInvalidReferenceValuesFlags is the sentinel error "invalid
+	// attestation reference-values flags".
+	ErrInvalidReferenceValuesFlags = errors.New("invalid attestation reference-values flags")
+
+	// ErrAppraiseAttestationQuoteFailed is the sentinel error "failed to
+	// appraise the attestation quote".
+	ErrAppraiseAttestationQuoteFailed = errors.New("failed to appraise the attestation quote")
+
+	// ErrAttestationNotVerified is the sentinel error "attestation not
+	// verified": the appraisal ran and its result is not verified.
+	ErrAttestationNotVerified = errors.New("attestation not verified")
+
+	// ErrInvalidAppraiseFlags is the sentinel error "invalid attestation
+	// appraise flags".
+	ErrInvalidAppraiseFlags = errors.New("invalid attestation appraise flags")
+
 	// ErrChangeKeyVersionFailed is the sentinel error "failed to change the
 	// key version".
 	ErrChangeKeyVersionFailed = errors.New("failed to change the key version")

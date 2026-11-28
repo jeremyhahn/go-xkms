@@ -539,6 +539,19 @@ var rpcMethods = map[string]rpcMethod{
 	"attestation.signing_key.delete":  handle(auth.ResourceAttestationSigningKeys, auth.ActionBind, (*Server).handleSigningKeyDelete),
 	"attestation.signing_key.resolve": handle(auth.ResourceAttestationSigningKeys, auth.ActionGet, (*Server).handleSigningKeyResolve),
 
+	// Attestation Verifier appraisal (row 1660): the same resource:action
+	// pairs as the /api/v1/attestation/ REST routes.
+	"attestation.endorsement.put":         handle(auth.ResourceAttestationEndorsements, auth.ActionCreate, (*Server).handleAttestationEndorsementPut),
+	"attestation.endorsement.list":        handle(auth.ResourceAttestationEndorsements, auth.ActionList, (*Server).handleAttestationEndorsementList),
+	"attestation.endorsement.delete":      handle(auth.ResourceAttestationEndorsements, auth.ActionDelete, (*Server).handleAttestationEndorsementDelete),
+	"attestation.reference_values.put":    handle(auth.ResourceAttestationReferenceValues, auth.ActionCreate, (*Server).handleAttestationReferenceValuesPut),
+	"attestation.reference_values.get":    handle(auth.ResourceAttestationReferenceValues, auth.ActionGet, (*Server).handleAttestationReferenceValuesGet),
+	"attestation.reference_values.list":   handle(auth.ResourceAttestationReferenceValues, auth.ActionList, (*Server).handleAttestationReferenceValuesList),
+	"attestation.reference_values.delete": handle(auth.ResourceAttestationReferenceValues, auth.ActionDelete, (*Server).handleAttestationReferenceValuesDelete),
+	"attestation.appraise":                handle(auth.ResourceAttestationVerifier, auth.ActionVerify, (*Server).handleAttestationAppraise),
+	"attestation.appraise.android_key":    handle(auth.ResourceAttestationVerifier, auth.ActionVerify, (*Server).handleAttestationAppraiseAndroidKey),
+	"attestation.appraise.ek_certificate": handle(auth.ResourceAttestationVerifier, auth.ActionVerify, (*Server).handleAttestationAppraiseEKCertificate),
+
 	// Attested-caller evidence (pkg/attestation/peergate) --
 	// pkg/auth.ResourcePeerAttestation, an xkms-owned resource family scoped
 	// in pkg/apimodule/module_scopes.go and exempt from the gate itself.

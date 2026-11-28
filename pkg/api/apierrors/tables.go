@@ -343,6 +343,35 @@ func SigningKeyClassOf(err error) (Class, bool) {
 	return ClassOf(SigningKeySentinelClasses, err)
 }
 
+// AttestationAppraisalSentinelClasses classifies the errors of the
+// attestation appraisal verbs (pkg/xkms's appraisal servicer methods over
+// pkg/attestation/appraisal, go-xkms#1660). A server without an Appraiser
+// has nothing to answer with; a request the Appraiser cannot use, or
+// evidence it refuses, is the caller's fault. The appraisal's typed errors
+// wrap these sentinels. The REST handlers
+// (pkg/api/rest/handlers_attestation_appraisal.go), the MCP handlers
+// (pkg/api/mcp/handlers_attestation_appraisal.go) and the gRPC service
+// (pkg/api/grpc/service_attestation_appraisal.go) all read this one table.
+var AttestationAppraisalSentinelClasses = []SentinelClass{
+	{xkms.ErrNotConfigured, ClassUnavailable},
+	{appraisal.ErrNilRequest, ClassInvalidArgument},
+	{appraisal.ErrInvalidName, ClassInvalidArgument},
+	{appraisal.ErrInvalidTenant, ClassInvalidArgument},
+	{appraisal.ErrInvalidRepository, ClassInvalidArgument},
+	{appraisal.ErrEndorsementInvalid, ClassInvalidArgument},
+	{appraisal.ErrReferenceValuesRejected, ClassInvalidArgument},
+	{appraisal.ErrInvalidAKIntermediate, ClassInvalidArgument},
+	{appraisal.ErrEvidenceRefused, ClassInvalidArgument},
+	{appraisal.ErrRecordNotFound, ClassNotFound},
+	{appraisal.ErrStoreUnavailable, ClassUnavailable},
+}
+
+// AttestationAppraisalClassOf classifies an error of the attestation
+// appraisal verbs.
+func AttestationAppraisalClassOf(err error) (Class, bool) {
+	return ClassOf(AttestationAppraisalSentinelClasses, err)
+}
+
 // TypedClass classifies a typed error: Match reports whether an error's
 // chain holds the type.
 type TypedClass struct {

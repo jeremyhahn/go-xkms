@@ -31,6 +31,7 @@ import (
 	"github.com/jeremyhahn/go-xkms/pkg/api/rest/wire"
 	"github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal/appraisaltest"
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
 	"github.com/jeremyhahn/go-xkms/pkg/testutil"
 	"github.com/jeremyhahn/go-xkms/pkg/xkms"
@@ -84,7 +85,9 @@ func signingKeyXKMS(t *testing.T) *xkms.XKMSService {
 	t.Helper()
 	store, err := appraisal.NewStore(appraisal.StoreConfig{DAOs: testutil.NewMemoryDAOFactory()})
 	require.NoError(t, err)
-	appraiser, err := appraisal.NewAppraiser(store)
+	appraiser, err := appraisal.NewAppraiser(store, appraisal.WithAndroidApplications(appraisal.AndroidApplicationPolicies{
+		"acme": {appraisaltest.FixtureApplicationPackage: {appraisaltest.FixtureApplicationDigest}},
+	}))
 	require.NoError(t, err)
 	svc := &xkms.XKMSService{}
 	svc.SetAttestationAppraiser(appraiser)

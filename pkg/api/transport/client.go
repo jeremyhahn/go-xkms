@@ -715,6 +715,7 @@ type Client interface {
 	SealStoreService
 	TPMPolicyService
 	SigningKeyService
+	AttestationAppraisalService
 	TrustRootService
 	OIDCCredentialService
 	TenantService

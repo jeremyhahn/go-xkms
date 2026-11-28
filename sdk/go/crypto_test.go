@@ -25,6 +25,7 @@ import (
 	"errors"
 	"testing"
 
+	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
 	"github.com/jeremyhahn/go-xkms/sdk/go/transport"
 )
 
@@ -1012,5 +1013,37 @@ func (*noopClient) DeleteSigningKeyBinding(context.Context, *transport.DeleteSig
 	return nil
 }
 func (*noopClient) ResolveSigningKey(context.Context, *transport.ResolveSigningKeyRequest) (*transport.SigningKeyResolution, error) {
+	return nil, nil
+}
+func (*noopClient) PutAttestationEndorsement(context.Context, *transport.PutAttestationEndorsementRequest) (*transport.AttestationEndorsement, error) {
+	return nil, nil
+}
+func (*noopClient) ListAttestationEndorsements(context.Context, *transport.ListAttestationEndorsementsRequest) (*transport.ListAttestationEndorsementsResponse, error) {
+	return nil, nil
+}
+func (*noopClient) DeleteAttestationEndorsement(context.Context, *transport.DeleteAttestationEndorsementRequest) error {
+	return nil
+}
+func (*noopClient) PutAttestationReferenceValues(context.Context, *transport.PutAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*noopClient) GetAttestationReferenceValues(context.Context, *transport.GetAttestationReferenceValuesRequest) (*transport.AttestationReferenceValues, error) {
+	return nil, nil
+}
+func (*noopClient) ListAttestationReferenceValues(context.Context) (*transport.ListAttestationReferenceValuesResponse, error) {
+	return nil, nil
+}
+func (*noopClient) DeleteAttestationReferenceValues(context.Context, *transport.DeleteAttestationReferenceValuesRequest) error {
+	return nil
+}
+func (*noopClient) AppraiseAttestationQuote(context.Context, *transport.AppraiseAttestationQuoteRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*noopClient) AppraiseAndroidKeyAttestation(context.Context, *pkgtransport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	return nil, nil
+}
+
+func (*noopClient) AppraiseEKCertificate(context.Context, *pkgtransport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
 	return nil, nil
 }

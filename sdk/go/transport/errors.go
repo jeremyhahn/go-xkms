@@ -15,6 +15,7 @@ package transport
 
 import (
 	pkgtransport "github.com/jeremyhahn/go-xkms/pkg/api/transport"
+	"github.com/jeremyhahn/go-xkms/pkg/attestation/appraisal"
 )
 
 // Sentinel errors re-exported from pkg/transport.
@@ -31,6 +32,11 @@ var (
 	ErrInvalidResponse      = pkgtransport.ErrInvalidResponse
 	ErrTLSHandshakeFailed   = pkgtransport.ErrTLSHandshakeFailed
 	ErrAuthenticationFailed = pkgtransport.ErrAuthenticationFailed
+
+	// ErrEvidenceRefused is wrapped by the error a refused device evidence
+	// appraisal (AppraiseAndroidKeyAttestation, AppraiseEKCertificate)
+	// returns.
+	ErrEvidenceRefused = appraisal.ErrEvidenceRefused
 )
 
 // Error code type and constants re-exported from pkg/transport.

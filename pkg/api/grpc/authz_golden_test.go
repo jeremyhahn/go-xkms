@@ -179,11 +179,25 @@ var goldenRPCPermissions = map[string]string{
 	// pkg/auth.ResourceAttestationSigningKeys, an xkms-owned resource family.
 	// Changing a binding is bind; reading one or resolving a repository's
 	// key is get.
-	"SetSigningKeyBinding":     "attestation_signing_keys:bind",
-	"GetSigningKeyBinding":     "attestation_signing_keys:get",
-	"ListSigningKeyBindings":   "attestation_signing_keys:list",
-	"DeleteSigningKeyBinding":  "attestation_signing_keys:bind",
-	"ResolveSigningKey":        "attestation_signing_keys:get",
+	"SetSigningKeyBinding":    "attestation_signing_keys:bind",
+	"GetSigningKeyBinding":    "attestation_signing_keys:get",
+	"ListSigningKeyBindings":  "attestation_signing_keys:list",
+	"DeleteSigningKeyBinding": "attestation_signing_keys:bind",
+	"ResolveSigningKey":       "attestation_signing_keys:get",
+
+	// The attestation Verifier's appraisal verbs (go-xkms#1660), the pairs
+	// of their REST and MCP routes.
+	"PutAttestationEndorsement":        "attestation_endorsements:create",
+	"ListAttestationEndorsements":      "attestation_endorsements:list",
+	"DeleteAttestationEndorsement":     "attestation_endorsements:delete",
+	"PutAttestationReferenceValues":    "attestation_reference_values:create",
+	"GetAttestationReferenceValues":    "attestation_reference_values:get",
+	"ListAttestationReferenceValues":   "attestation_reference_values:list",
+	"DeleteAttestationReferenceValues": "attestation_reference_values:delete",
+	"AppraiseAttestationQuote":         "attestation_verifier:verify",
+	"AppraiseAndroidKeyAttestation":    "attestation_verifier:verify",
+	"AppraiseEKCertificate":            "attestation_verifier:verify",
+
 	"PeerAttestationChallenge": "peer_attestation:challenge",
 	"SubmitPeerAttestation":    "peer_attestation:submit",
 	// A tenant's TPM mode and vTPM (system scope only; tenants:set_tpm_mode

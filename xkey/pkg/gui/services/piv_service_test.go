@@ -50,9 +50,10 @@ type mockPIVClient struct {
 	// it.
 	transport.TrustRootService
 
-	// SigningKeyService completes transport.Client; these tests never call
-	// it.
+	// SigningKeyService and AttestationAppraisalService complete
+	// transport.Client; these tests never call them.
 	transport.SigningKeyService
+	transport.AttestationAppraisalService
 
 	listPIVSlotsResp *transport.ListPIVSlotsResponse
 	listPIVSlotsErr  error

@@ -313,6 +313,12 @@ func runDeviceAttest(cmd *cobra.Command, args []string) (err error) {
 		printAttestationCertificateChainWithTrustInfo(chain, matchedRoot)
 
 		printKeyDescription(desc)
+
+		// With an xkmsd server configured, the chain verified above is
+		// appraised under the tenant's endorsements too.
+		if err := appraiseAndroidChainRemote(cmd, os.Stdout, result.CertificateChain); err != nil {
+			return err
+		}
 	} else {
 		// Always show full certificate chain details without verification
 		printAttestationCertificateChain(chain)

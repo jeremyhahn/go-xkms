@@ -68,9 +68,34 @@ type baseSDKClient struct {
 	// it.
 	transport.TrustRootService
 
-	// SigningKeyService completes transport.Client; these tests never call
-	// it.
+	// SigningKeyService and AttestationAppraisalService complete
+	// transport.Client; these tests never call them.
 	transport.SigningKeyService
+	transport.AttestationAppraisalService
+}
+
+// fakeAttestationAppraisal is the AttestationAppraisalService a
+// baseSDKClient carries in the device appraisal tests: it records the device
+// evidence each appraisal receives and answers with result or err. Every
+// other appraisal method stays on the nil embed and is never called.
+type fakeAttestationAppraisal struct {
+	transport.AttestationAppraisalService
+
+	result *transport.AttestationResult
+	err    error
+
+	androidRequests []*transport.AppraiseAndroidKeyAttestationRequest
+	ekRequests      []*transport.AppraiseEKCertificateRequest
+}
+
+func (f *fakeAttestationAppraisal) AppraiseAndroidKeyAttestation(_ context.Context, req *transport.AppraiseAndroidKeyAttestationRequest) (*transport.AttestationResult, error) {
+	f.androidRequests = append(f.androidRequests, req)
+	return f.result, f.err
+}
+
+func (f *fakeAttestationAppraisal) AppraiseEKCertificate(_ context.Context, req *transport.AppraiseEKCertificateRequest) (*transport.AttestationResult, error) {
+	f.ekRequests = append(f.ekRequests, req)
+	return f.result, f.err
 }
 
 func (b *baseSDKClient) ListKeyVersions(context.Context, *transport.ListKeyVersionsRequest) (*transport.ListKeyVersionsResponse, error) {
