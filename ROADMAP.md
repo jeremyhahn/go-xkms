@@ -155,7 +155,7 @@ Scope and boundaries: [docs/SPEC.md](docs/SPEC.md).
 
 ## Future
 
-- **hsm-device-protocol** — xkmsd-to-HSM-device wire protocol, FRDM-IMX95-PRO first — [#1521](../../issues/1521) — open
+- **hsm-device-protocol** — HSM device is an xkmsd node on the existing service API over mTLS, FRDM-IMX95-PRO first — [#1573](../../issues/1573) — open
 - **hsm-self-defence** — lockdown or key wipe as predetermined HSM device responses — [SPEC](docs/SPEC.md#features) — open
 - **media-signing** — multi-signer photo and video signing — [xkey/docs/roadmap/media.md](xkey/docs/roadmap/media.md) — open
 - **piv-i** — PIV-I profiles on FIPS-validated hardware — [xkey/docs/roadmap/piv.md](xkey/docs/roadmap/piv.md) — open
