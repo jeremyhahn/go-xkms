@@ -34,8 +34,9 @@ services:
     # job's checkout (DS-4181).
     environment:
       - XKMS_CONFIG=/workspace/test/integration/api/config.test.yaml
-      # The harness runs barrier/auth disabled by design (tests drive the
-      # API surface directly); opt out of the refuse-to-start security gate.
+      # Throwaway test SO PIN: `xkmsd init` makes it the barrier passphrase.
+      - XKMS_SO_PIN=${XKMS_TEST_SO_PIN:-xkms-integration-test-so-pin}
+      - XKMS_STATE_DIR=/data
       - KEYSTORE_LOG_LEVEL=debug
       - KEYSTORE_DATA_DIR=/data
       # TPM configuration
@@ -53,7 +54,7 @@ services:
       softhsm:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
+      test: ["CMD", "wget", "--quiet", "--tries=1", "-O", "/dev/null", "--ca-certificate=/etc/xkms/certs/ca.crt", "https://localhost:8443/health"]
       interval: 5s
       timeout: 5s
       retries: 15
@@ -62,29 +63,8 @@ services:
       - xkms-integration
     # Run as root for integration tests (allows cert generation and UDP buffer config)
     user: root
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        # Set UDP buffer sizes for QUIC
-        echo "Configuring UDP buffers for QUIC..."
-        echo 2500000 > /proc/sys/net/core/rmem_max 2>/dev/null || echo "Warning: Could not set rmem_max"
-        echo 2500000 > /proc/sys/net/core/wmem_max 2>/dev/null || echo "Warning: Could not set wmem_max"
-        cat /proc/sys/net/core/rmem_max || true
-        # Ensure directories exist
-        mkdir -p /etc/xkms/certs /var/run/xkms /data
-        # Generate TLS certificates for QUIC
-        echo "Generating TLS certificates..."
-        /workspace/test/integration/api/scripts/generate-test-certs.sh
-        # Verify certificates were created
-        ls -la /etc/xkms/certs/
-        # Initialize the in-process SoftHSM2 token (idempotent) — the pkcs11
-        # backend loads libsofthsm2.so in THIS container, not the sidecar.
-        mkdir -p /var/lib/softhsm/tokens
-        softhsm2-util --show-slots | grep -q "test-token" || \
-          softhsm2-util --init-token --free --label test-token --so-pin 123456 --pin 123456
-        echo "Starting xkms server..."
-        exec /app/xkmsd
+    # Inits a fresh volume with `xkmsd init`, starts xkmsd and unseals it with the SO PIN.
+    entrypoint: ["/workspace/test/integration/api/scripts/start-xkms-server.sh"]
 
   # SWTPM TPM 2.0 Simulator
   swtpm:
@@ -153,13 +133,15 @@ services:
     volumes:
       - xkms-socket:/var/run/xkms
       - xkms-certs:/etc/xkms/certs:ro
+      # The init admin's mTLS credential, which every suite authenticates with.
+      - xkms-data:/xkms-data:ro
       - cli-build:/app/build
       - go-cache:/root/go
       - go-build-cache:/root/.cache/go-build
     environment:
       - CGO_ENABLED=1
       - GOWORK=off
-      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GITEA_HOST:+github.com/jeremyhahn/*}}
+      - GOPRIVATE=${GOMODAUTH_GOPRIVATE:-${GOPRIVATE:-}}
       - GIT_CONFIG_COUNT=${GOMODAUTH_GIT_CONFIG_COUNT:-${GITEA_HOST:+1}}
       - GIT_CONFIG_KEY_0=${GOMODAUTH_GIT_CONFIG_KEY_0:-url.http://x:${FORGE_MODULE_TOKEN}@${GITEA_HOST}/jeremyhahn/.insteadOf}
       - GIT_CONFIG_VALUE_0=${GOMODAUTH_GIT_CONFIG_VALUE_0:-https://github.com/jeremyhahn/}
@@ -172,6 +154,8 @@ services:
       - KEYSTORE_CLI_BIN=/app/build/bin/xkmsctl
       # TLS configuration - use CA certificate for proper verification
       - KEYSTORE_TLS_CA=/etc/xkms/certs/ca.crt
+      - KEYSTORE_TLS_CERT=/xkms-data/storage/admin-cert.pem
+      - KEYSTORE_TLS_KEY=/xkms-data/storage/admin-key.pem
       # Test configuration
       - INTEGRATION_TIMEOUT=60s
       - GO_TEST_FLAGS=-v -tags=integration,frost
@@ -194,7 +178,7 @@ services:
       ls -la /etc/xkms/certs/ || true &&
       echo 'Building CLI binary...' &&
       mkdir -p /app/build/bin &&
-      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
+      CGO_ENABLED=0 go build -buildvcs=false -tags='frost gms_pure_go codec_cbor codec_json codec_msgpack' -o /app/build/bin/xkmsctl ./cmd/xkmsctl &&
       echo 'Running integration tests...' &&
       go test -v -tags=integration,frost,codec_cbor,codec_json,codec_msgpack ./test/integration/api/... -timeout 15m
       "

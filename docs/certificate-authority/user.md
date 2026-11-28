@@ -129,7 +129,7 @@ These are in-process only; see the API reference for why. The flow:
 1. Create a name-constrained subordinate for a key you hold:
    `trustedCA.(SubordinateIssuer).IssueSubordinateCA(ctx, &SubordinateCARequest{...})`.
    - **Tunnel subordinate:** `PermittedIPRanges` covering the fabric, for
-     example `10.4.0.0/24` and `fd00:4::/64`.
+     example `198.51.100.0/24` and `fd00:4::/64`.
    - **SPIFFE subordinate:** `PermittedURIDomains: []string{"example.org"}`.
 2. Sign the endpoint's or workload's CSR with
    `SignOptions{Profile: ProfileNameIPsecVTEP or ProfileNameX509SVID, Signer: <subordinate key>, IssuerCert: <subordinate cert>, SANS: <the names you decided>}`.

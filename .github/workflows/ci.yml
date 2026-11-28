@@ -1,4 +1,10 @@
-# ci-template: v1.54 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# ci-template: v1.60 runner selection on v1.34.1 + v1.42 hermetic gate (customized)
+# v1.60 (handbook 1bea157, #123): a selection tie goes self-hosted; preflight and the selection go self-hosted only on a push to main or a same-repository pull request.
+# v1.59 (handbook b18e6499, #113): the step `Balanced runner pool (ruling
+# 1137)` is copied from the template at v1.59. A listing short of its
+# total_count is a lower bound again, named in a ::notice, and the choice
+# still uses it; only a failed call goes hosted with a ::warning. The v1.54
+# note below says otherwise about short listings; v1.59 replaces it.
 # v1.54 (handbook 1ad68ab8, #104; Tenant Agent ruling 1137): the preflight
 # step `Balanced runner pool (ruling 1137)`, verbatim, replaces v1.48's
 # `Hosted or overflow runner (ruling 1024)` with the same `runner` and
@@ -797,7 +803,7 @@ jobs:
     # repository while the bigdisk pool has no online runner for 10 minutes,
     # and unsets it when the pool is back; go-xkms keeps ubuntu-latest as the
     # default when it is unset (ruling 999).
-    runs-on: ${{ github.server_url == 'https://github.com' && (!startsWith(github.event_name, 'pull_request') || github.event.pull_request.head.repo.full_name == github.repository) && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}   # v1.52
+    runs-on: ${{ github.server_url == 'https://github.com' && ((github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && vars.CI_PREFLIGHT_RUNS_ON != '' && fromJSON(vars.CI_PREFLIGHT_RUNS_ON) || 'ubuntu-latest' }}   # v1.52
     # v1.26: a draft PR runs no CI; every job that needs this one skips with it.
     if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 10       # v1.34: the three jobs had 5 each
@@ -818,6 +824,9 @@ jobs:
       # (v1.54: whichever pool `Balanced runner pool (ruling 1137)` picks).
       runner: ${{ steps.runner.outputs.runner }}
       runner_docker: ${{ steps.runner.outputs.runner_docker }}
+      # Tenant order 2026-11-27 17:18Z: the integration job's runs-on,
+      # bigdisk-docker on a push to main or a same-repository pull request.
+      runner_integration: ${{ steps.runner.outputs.runner_integration }}
     steps:
       - name: Is a main push run of this workflow in flight?
         id: guard
@@ -962,11 +971,11 @@ jobs:
       # hosted default with a ::warning). Hosted use is H/HS; self-hosted use
       # is the larger of S1/C1 and S2/C2. Then:
       #   - both below their limit: the lower use wins, compared by
-      #     cross-multiplication (self-hosted wins only when S1*HS < H*C1 and
-      #     S2*HS < H*C2); a tie goes hosted;
+      #     cross-multiplication (self-hosted wins when S1*HS <= H*C1 and
+      #     S2*HS <= H*C2); a tie goes self-hosted;
       #   - one pool full (H >= HS; or S1 >= C1 or S2 >= C2): the other pool;
       #   - both full: the pool with fewer queued jobs (bigdisk and
-      #     bigdisk-docker together for the Dells); a tie goes hosted.
+      #     bigdisk-docker together for the Dells); a tie goes self-hosted.
       # The units are shared across repositories, so C1 and C2 can overstate
       # this repository's free room: when they are busy elsewhere its jobs
       # queue, S1 or S2 rises, and its runs go hosted.
@@ -985,12 +994,20 @@ jobs:
       # it makes no call and outputs the hosted default with a ::notice: a
       # fork never reaches a self-hosted runner. Its tests:
       # internal/buildgates/ci_sched_devcontainer_test.go (TestCIRunnerSelection*).
+      # Tenant order 2026-11-27 17:18Z (#2434): a third output,
+      # `runner_integration`, read by the integration job only. Integration
+      # always takes bigdisk-docker on a push to main or a same-repository
+      # pull request, whatever the balance picks or whether a count could be
+      # read (a hosted runner's disk is too small for the integration image
+      # build); a fork, an event the self-hosted runners refuse and off
+      # github.com keep the hosted default.
       - name: Balanced runner pool (ruling 1137)
         id: runner
         env:
           SERVER: ${{ github.server_url }}
           EVENT: ${{ github.event_name }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REF: ${{ github.ref }}
           REPO: ${{ github.repository }}
           API: ${{ github.api_url }}/repos/${{ github.repository }}/actions
           RUN_ID: ${{ github.run_id }}
@@ -1002,19 +1019,22 @@ jobs:
           set -uo pipefail
           HOSTED='"ubuntu-latest"'
           selfhosted() { printf '["self-hosted","linux","x64","%s"]' "$1"; }
+          # $3 is runner_integration (Tenant order 2026-11-27 17:18Z):
+          # bigdisk-docker past the fork and refused-event gates, whatever
+          # the balance picks; the hosted default before them.
           emit() {
-            echo "runner: $1; runner_docker: $2"
-            { echo "runner=$1"; echo "runner_docker=$2"; } >> "$GITHUB_OUTPUT"
+            echo "runner: $1; runner_docker: $2; runner_integration: $3"
+            { echo "runner=$1"; echo "runner_docker=$2"; echo "runner_integration=$3"; } >> "$GITHUB_OUTPUT"
           }
           # hosted <why>: no count, so the default, with the reason shown.
           hosted() {
-            echo "::warning::runner selection: $1; every job of this run takes the GitHub-hosted default, ubuntu-latest, and none runs on the Dells (ci-template v1.54, ruling 1137)"
-            emit "$HOSTED" "$HOSTED"
+            echo "::warning::runner selection: $1; every job of this run but Integration takes the GitHub-hosted default, ubuntu-latest; Integration keeps bigdisk-docker (Tenant order 2026-11-27 17:18Z) (ci-template v1.54, ruling 1137)"
+            emit "$HOSTED" "$HOSTED" "$(selfhosted bigdisk-docker)"
             exit 0
           }
           if [ "$SERVER" != https://github.com ]; then
             echo "not github.com: each job keeps its forge label (bigdisk, ci-gate); no selection"
-            emit "$HOSTED" "$HOSTED"
+            emit "$HOSTED" "$HOSTED" "$HOSTED"
             exit 0
           fi
           # v1.52: a fork's pull request runs every job on GitHub-hosted runners.
@@ -1022,9 +1042,17 @@ jobs:
             pull_request|pull_request_target)
               if [ "$HEAD_REPO" != "$REPO" ]; then
                 echo "::notice::runner selection: this pull request's head repository is not this repository (a fork); every job of this run takes the GitHub-hosted default, ubuntu-latest, and none reaches a self-hosted runner (ci-template v1.52)"
-                emit "$HOSTED" "$HOSTED"
+                emit "$HOSTED" "$HOSTED" "$HOSTED"
                 exit 0
               fi ;;
+          esac
+          # The self-hosted runners refuse every event but a push to main and a pull request.
+          case "$EVENT:$REF" in
+            push:refs/heads/main | pull_request:*) ;;
+            *)
+              echo "::notice::runner selection: event $EVENT on $REF is not a push to main or a pull request, which the self-hosted runners refuse; every job of this run takes the GitHub-hosted default, ubuntu-latest"
+              emit "$HOSTED" "$HOSTED" "$HOSTED"
+              exit 0 ;;
           esac
           # whole <value>: a whole number above 0, at most 6 digits.
           whole() { [[ "$1" =~ ^[0-9]{1,6}$ ]] && [ "$((10#$1))" -gt 0 ]; }
@@ -1047,7 +1075,9 @@ jobs:
           }
           # pages <url> <key> <out>: every page of a listing, its <key> items
           # one JSON object per line in <out>. 1, with WHY set, when a reply is
-          # not 200 or the items fall short of total_count.
+          # not 200, has no total_count or list, or passes 1000 entries. A list
+          # short of its total_count (runs change state while it is read) is
+          # kept as a lower bound and named in SHORT (v1.59).
           pages() {
             local p=1 got=0 total n
             : > "$3"
@@ -1061,8 +1091,10 @@ jobs:
               [ "$p" -lt 10 ] || { WHY="$1: more than 1000 entries"; return 1; }
               p=$((p + 1))
             done
-            [ "$got" -ge "$total" ] || { WHY="$1: $got of $total entries"; return 1; }
+            [ "$got" -ge "$total" ] || SHORT="${SHORT:+$SHORT; }${1#"$API"/}: $got of $total entries"
+            return 0
           }
+          SHORT=
           : > "$RUNNER_TEMP/sel-runs.jsonl"
           for st in queued in_progress; do
             pages "$API/runs?status=$st" workflow_runs "$RUNNER_TEMP/sel-r.jsonl" || hosted "the Actions API gave no complete run list ($WHY)"
@@ -1092,27 +1124,29 @@ jobs:
               | map(tostring) | join(" ")' "$RUNNER_TEMP/sel-jobs.jsonl") || hosted "the job list could not be counted"
           [ -n "${SQ:-}" ] || hosted "the job list could not be counted"
           echo "this repository: hosted $H of CI_HOSTED_SHARE=$HS ($HQ queued); bigdisk $S1 of CI_SELF_HOSTED_BIGDISK=$C1, bigdisk-docker $S2 of CI_SELF_HOSTED_BIGDISK_DOCKER=$C2 ($SQ self-hosted queued)"
+          # v1.59: a short listing is a lower bound; still choose.
+          [ -z "$SHORT" ] || echo "::notice::runner selection: the listing returned fewer entries than its total ($SHORT); the counts are a lower bound and the choice below uses them (ci-template v1.59)"
           pick=hosted hfull=0 sfull=0
           [ "$H" -lt "$HS" ] || hfull=1
           { [ "$S1" -lt "$C1" ] && [ "$S2" -lt "$C2" ]; } || sfull=1
           if [ "$hfull" = 1 ] && [ "$sfull" = 1 ]; then
-            [ "$SQ" -lt "$HQ" ] && pick=self
+            [ "$SQ" -le "$HQ" ] && pick=self
             why="both pools full: hosted $HQ queued, self-hosted $SQ queued"
           elif [ "$hfull" = 1 ]; then
             pick=self; why="the hosted pool is full ($H of $HS)"
           elif [ "$sfull" = 1 ]; then
             why="the self-hosted pool is full (bigdisk $S1 of $C1, bigdisk-docker $S2 of $C2)"
           else
-            # self-hosted use, max(S1/C1, S2/C2), below hosted use H/HS.
-            [ $((S1 * HS)) -lt $((H * C1)) ] && [ $((S2 * HS)) -lt $((H * C2)) ] && pick=self
+            # self-hosted use, max(S1/C1, S2/C2), at or below hosted use H/HS.
+            [ $((S1 * HS)) -le $((H * C1)) ] && [ $((S2 * HS)) -le $((H * C2)) ] && pick=self
             why="use hosted $H/$HS, bigdisk $S1/$C1, bigdisk-docker $S2/$C2"
           fi
           if [ "$pick" = self ]; then
             echo "::notice::runner selection: $why; this run's jobs run on the Dells (bigdisk, bigdisk-docker) (ci-template v1.54, ruling 1137)"
-            emit "$(selfhosted bigdisk)" "$(selfhosted bigdisk-docker)"
+            emit "$(selfhosted bigdisk)" "$(selfhosted bigdisk-docker)" "$(selfhosted bigdisk-docker)"
           else
-            echo "::notice::runner selection: $why; this run's jobs take the GitHub-hosted default, ubuntu-latest (ci-template v1.54, ruling 1137)"
-            emit "$HOSTED" "$HOSTED"
+            echo "::notice::runner selection: $why; this run's jobs take the GitHub-hosted default, ubuntu-latest, but Integration keeps bigdisk-docker (Tenant order 2026-11-27 17:18Z) (ci-template v1.54, ruling 1137)"
+            emit "$HOSTED" "$HOSTED" "$(selfhosted bigdisk-docker)"
           fi
 
       # v1.34: the full history on a PR run for the changed-files diff, one
@@ -1458,9 +1492,25 @@ jobs:
       # for any other stage to select. check-skill-reference fails when xkey's
       # SKILL.md cites a command or flag xkey does not have, and
       # check-public-literals keeps internal literals out of the public tree.
+      # It refuses without its private pattern list, which comes from the
+      # RELEASABILITY_PATTERNS secret (in-toolchain-image.sh forwards it by
+      # name). As in the Releasability step: a push without the secret fails;
+      # any other run without it (a fork pull request) notes it and runs the
+      # gates with the one opt-out, PUBLIC_LITERALS_SKIP=fork-pr.
       - name: go-xkms checks (fmt, vet, gate tests, skill reference, public literals)
         if: ${{ !cancelled() && env.TOOLCHAIN_IMAGE != '' }}
+        env:
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+          EVENT: ${{ github.event_name }}
         run: |
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$EVENT" = push ]; then
+              echo "::error::RELEASABILITY_PATTERNS is not set; make check-public-literals needs the private pattern file (public-hygiene.md)"
+              exit 1
+            fi
+            echo "::notice::RELEASABILITY_PATTERNS is not available to this run; check-public-literals is skipped (PUBLIC_LITERALS_SKIP=fork-pr), pushes run it"
+            export PUBLIC_LITERALS_SKIP=fork-pr
+          fi
           scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" '
             set -e
             make fmt-check
@@ -1650,7 +1700,21 @@ jobs:
         if: ${{ !cancelled() && runner.environment == 'github-hosted' && steps.probe.outputs.has_target == 'true' && env.TOOLCHAIN_IMAGE != '' }}
         env:
           IN_IMAGE_NETWORK: none   # CUSTOMIZE: bridge when a gate needs the module proxy or a network
-        run: scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make lint-gates GO_BUILD_TAGS='$GO_BUILD_TAGS'"
+          # >>> CUSTOMIZE (go-xkms): check-public-literals's pattern input, with
+          # the image job's empty-secret rule (push fails, else fork-pr opt-out).
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$EVENT" = push ]; then
+              echo "::error::RELEASABILITY_PATTERNS is not set; make check-public-literals needs the private pattern file (public-hygiene.md)"
+              exit 1
+            fi
+            echo "::notice::RELEASABILITY_PATTERNS is not available to this run; check-public-literals is skipped (PUBLIC_LITERALS_SKIP=fork-pr), pushes run it"
+            export PUBLIC_LITERALS_SKIP=fork-pr
+          fi
+          # <<< CUSTOMIZE
+          scripts/in-toolchain-image.sh "$TOOLCHAIN_IMAGE" "make lint-gates GO_BUILD_TAGS='$GO_BUILD_TAGS'"
 
       # The bigdisk pool: the same target, natively. Go from setup-go at
       # GO_VERSION; the gate tools the toolchain image carries, at its pins
@@ -1679,8 +1743,21 @@ jobs:
         env:
           GOTOOLCHAIN: local
           XKMS_NATIVE_BUILD: '1'
+          # >>> CUSTOMIZE (go-xkms): check-public-literals's pattern input, with
+          # the image job's empty-secret rule (push fails, else fork-pr opt-out).
+          RELEASABILITY_PATTERNS: ${{ secrets.RELEASABILITY_PATTERNS }}
+          EVENT: ${{ github.event_name }}
         run: |
           scripts/ci-go-integrity.sh
+          if [ -z "$RELEASABILITY_PATTERNS" ]; then
+            if [ "$EVENT" = push ]; then
+              echo "::error::RELEASABILITY_PATTERNS is not set; make check-public-literals needs the private pattern file (public-hygiene.md)"
+              exit 1
+            fi
+            echo "::notice::RELEASABILITY_PATTERNS is not available to this run; check-public-literals is skipped (PUBLIC_LITERALS_SKIP=fork-pr), pushes run it"
+            export PUBLIC_LITERALS_SKIP=fork-pr
+          fi
+          # <<< CUSTOMIZE
           make lint-gates GO_BUILD_TAGS="$GO_BUILD_TAGS"
 
       - name: Tear down
@@ -1792,10 +1869,13 @@ jobs:
     # only on the schedule guard's `run`.
     needs: preflight   # v1.34
     if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && !github.event.pull_request.draft && needs.preflight.outputs.verdict == 'run' }}
-    # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing):
-    # ubuntu-latest, or the bigdisk-docker pool when the preflight's
-    # `runner_docker` reports the hosted pool full.
-    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_docker) || 'bigdisk' }}   # v1.48
+    # v1.48 (ruling 1024; replaces the #2240 / ruling 740 routing), Tenant
+    # order 2026-11-27 17:18Z: Integration always takes the bigdisk-docker
+    # pool on a push to main or a same-repository pull request (the
+    # preflight's `runner_integration`), whatever the balance picks: a
+    # hosted runner's disk is too small for the integration image build. A
+    # fork pull request and a refused event stay on ubuntu-latest.
+    runs-on: ${{ github.server_url == 'https://github.com' && fromJSON(needs.preflight.outputs.runner_integration) || 'bigdisk' }}   # v1.48
     timeout-minutes: 180      # CUSTOMIZE (go-xkms): the Integration job's bound before v1.25
     env:
       CI_STACK_PREFIX: ${{ github.event.repository.name }}-ci-
@@ -1890,7 +1970,7 @@ jobs:
       # devcontainer-clean the devcontainer project it leaves.
       - name: Tear down the integration stacks
         if: always()
-        run: make clean-test-containers IT_PROJECT="$IT_PROJECT"
+        run: make clean-test-containers IT_PROJECT="$IT_PROJECT" IT_IMAGE="$IT_IMAGE" CLEAN_RUN_IMAGES=1
 
       - name: Tear down the devcontainer
         if: always()
@@ -2026,7 +2106,7 @@ jobs:
           [ -s "$RUNNER_TEMP/soak-project" ] || exit 0
           last=$(cat "$RUNNER_TEMP/soak-project")
           for i in $(seq 1 "${last##*-}"); do
-            make clean-test-containers IT_PROJECT="$IT_PROJECT-$i" || true
+            make clean-test-containers IT_PROJECT="$IT_PROJECT-$i" IT_IMAGE="$IT_IMAGE" CLEAN_RUN_IMAGES=1 || true
             make devcontainer-clean IT_PROJECT="$IT_PROJECT-$i" || true
           done
       # <<< CUSTOMIZE

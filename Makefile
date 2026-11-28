@@ -284,12 +284,12 @@ GITEA_INSTEADOF_KEY = url.http://x:$(FORGE_MODULE_TOKEN)@$(GITEA_HOST)/jeremyhah
 # the file is LOADED, so it fails a public checkout before any service starts,
 # which is the opposite of the public-resolution path this exists to provide.
 ifneq ($(GIT_CONFIG_KEY_0),)
-GOMODAUTH_GOPRIVATE := $(if $(GOPRIVATE),$(GOPRIVATE),github.com/jeremyhahn/*)
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GIT_CONFIG_KEY_0)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := $(GIT_CONFIG_VALUE_0)
 else ifneq ($(and $(FORGE_MODULE_TOKEN),$(GITEA_HOST)),)
-GOMODAUTH_GOPRIVATE := github.com/jeremyhahn/*
+GOMODAUTH_GOPRIVATE := $(GOPRIVATE)
 GOMODAUTH_GIT_CONFIG_COUNT := 1
 GOMODAUTH_GIT_CONFIG_KEY_0 := $(GITEA_INSTEADOF_KEY)
 GOMODAUTH_GIT_CONFIG_VALUE_0 := https://github.com/jeremyhahn/
@@ -1115,6 +1115,8 @@ test-scripts:
 	@bash test/scripts/ci-registry.test.sh
 	@bash test/scripts/build-web-deps.test.sh
 	@bash test/scripts/in-toolchain-image.test.sh
+	@bash test/scripts/touched-features.test.sh
+	@bash test/scripts/touched-packages.test.sh
 	@echo "$(GREEN)✓ Shell script tests passed$(RESET)"
 
 # test-buildgates: the CI tier gate (#1483) -- every ci.yml job is in CI Gate
@@ -1867,8 +1869,17 @@ coverage-xkmsctl:
 # integration-test-bootstrap runs first (ruling 981): Make runs prerequisites
 # in order, and a bootstrap image build failure at the end of the list used to
 # cost the whole two-hour suite; first, it costs minutes.
-integration-test: clean-test-containers integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
+#
+# integration-images runs before the first suite (#2266): it builds the
+# softhsm, swtpm and xkms-server compose images once for the run, and the
+# target-specific XKMS_SERVER_UP_BUILD below makes every PKCS#11 suite start
+# those prebuilt tags instead of rebuilding all three (7-14 min each).
+integration-test: clean-test-containers integration-images integration-test-bootstrap integration-test-software integration-test-pkcs8 integration-test-pkcs11 integration-test-pkcs11-barrier integration-test-pkcs11-module-all integration-test-tpm2 integration-test-challenges integration-test-awskms integration-test-gcpkms integration-test-azurekv integration-test-vault integration-test-storage integration-test-utils integration-test-quantum integration-test-frost integration-test-webauthn integration-test-fido2 integration-test-cli integration-test-api-all integration-test-sdk-go integration-test-sshagent integration-test-initceremony
 	@echo "$(GREEN)$(BOLD)✓ All integration tests complete!$(RESET)"
+
+# The suites of one integration-test run start the images integration-images
+# built; a sub-suite run on its own keeps the default --build (#2266).
+integration-test: XKMS_SERVER_UP_BUILD :=
 
 # run-image-refs sets the shell variable refs to this run's images: each
 # image of a repository on XKMS_IMAGE_REPOS that carries XKMS_IMAGE_TAG. Its
@@ -1946,6 +1957,13 @@ clean-test-containers:
 		echo "$(RED)✗ Test container cleanup failed:$(RESET)"; \
 		cat $(BUILD_DIR)/clean-test-containers.log; \
 		exit 1; \
+	fi
+	@# CLEAN_RUN_IMAGES=1 (CI teardown only) also removes this run's images: run-image-refs (XKMS_IMAGE_REPOS at tag XKMS_IMAGE_TAG), never IT_IMAGE.
+	@if [ "$(CLEAN_RUN_IMAGES)" = 1 ] && [ -n "$(IT_PROJECT)" ] && [ -n "$(XKMS_IMAGE_TAG)" ]; then \
+		$(call run-image-refs,r=) 2>/dev/null; \
+		keep=""; for ref in $$refs; do [ "$$ref" = '$(IT_IMAGE)' ] || keep="$$keep $$ref"; done; \
+		if [ -n "$$(echo $$keep)" ]; then docker rmi -f $$keep >/dev/null 2>&1 || true; fi; \
+		echo "$(GREEN)✓ Removed this run's images tagged :$(XKMS_IMAGE_TAG)$(RESET)"; \
 	fi
 
 # ==============================================================================
@@ -2738,6 +2756,9 @@ endef
 #   XKMS_COMPOSE_SERVER=1   always start it, building the image if necessary
 #   XKMS_COMPOSE_SERVER=0   never start it; always use the fallback
 XKMS_COMPOSE_SERVER ?= auto
+# The compose build flag compose_up_xkms_server passes to `up`. integration-test
+# sets it empty because integration-images already built the images (#2266).
+XKMS_SERVER_UP_BUILD ?= --build
 
 define compose_up_xkms_server
 	@$(MAKE) --no-print-directory stage-gomodauth
@@ -2746,12 +2767,12 @@ define compose_up_xkms_server
 			echo "$(YELLOW)xkms-server disabled (XKMS_COMPOSE_SERVER=0); the devcontainer serves the socket.$(RESET)" ;; \
 		1|yes|on) \
 			echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
-			$(DOCKER_COMPOSE) up -d --build xkms-server; \
+			$(DOCKER_COMPOSE) up -d $(XKMS_SERVER_UP_BUILD) xkms-server; \
 			$(MAKE) --no-print-directory devcontainer-server-wait ;; \
 		*) \
 			if docker image inspect $(XKMS_SERVER_IMAGE) >/dev/null 2>&1; then \
 				echo "$(CYAN)$(BOLD)→ Starting xkms-server (compose)...$(RESET)"; \
-				$(DOCKER_COMPOSE) up -d --build xkms-server || true; \
+				$(DOCKER_COMPOSE) up -d $(XKMS_SERVER_UP_BUILD) xkms-server || true; \
 				$(MAKE) --no-print-directory devcontainer-server-wait || \
 					$(DOCKER_COMPOSE) stop xkms-server >/dev/null 2>&1 || true; \
 			else \
@@ -2870,6 +2891,16 @@ devcontainer-verify: stage-gomodauth
 devcontainer-server-build:
 	$(DOCKER_COMPOSE) build xkms-server
 
+# One build of the compose images per Integration run (#2266): every PKCS#11
+# suite of integration-test used to run `up -d --build xkms-server`, which
+# rebuilt softhsm, swtpm and xkms-server each time. The images carry the
+# per-run XKMS_IMAGE_TAG, so clean-run-images removes them after the run.
+.PHONY: integration-images
+## integration-images: Build the softhsm, swtpm and xkms-server compose images once for integration-test
+integration-images:
+	@$(MAKE) --no-print-directory stage-gomodauth
+	$(DOCKER_COMPOSE) build softhsm swtpm xkms-server
+
 .PHONY: devcontainer-server-up
 ## devcontainer-server-up: Start the compose xkms-server service and wait for its Unix socket
 # Deliberately does NOT pass --build. The image's build context is the whole
@@ -2960,7 +2991,7 @@ devcontainer-server-wait:
 # seam (cmd/xkmsctl/fido2_virtual.go) the CLI-exec tests below need. The release
 # binary (make build / make release-*) never carries those tags. See #807.
 integration-test-fido2:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2)' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration fido2 gms_pure_go codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration fido2 $(BUILD_TAGS))' ./test/integration/fido2/... -timeout 10m,integration-test-fido2)
 
 .PHONY: integration-test-fido2-cli
 ## integration-test-fido2-cli: Run FIDO2 CLI command tests (runs in devcontainer)
@@ -2977,7 +3008,7 @@ integration-test-fido2-hardware:
 .PHONY: integration-test-fido2-webauthn
 ## integration-test-fido2-webauthn: Run FIDO2 WebAuthn server integration tests (runs in devcontainer)
 integration-test-fido2-webauthn:
-	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration$(comma)fido2$(comma)gms_pure_go)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration$(comma)fido2$(comma)webauthn)' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
+	$(call run_in_devcontainer,mkdir -p build/bin && CGO_ENABLED=0 $(GO) build -buildvcs=false -tags='$(call go_tags,integration fido2 gms_pure_go codec_cbor codec_json codec_msgpack)' -o build/bin/xkmsctl ./cmd/xkmsctl && $(GO) test -v -tags='$(call go_tags,integration fido2 webauthn $(BUILD_TAGS))' ./test/integration/fido2/... -run 'WebAuthn' -timeout 10m,integration-test-fido2-webauthn)
 
 .PHONY: integration-test-fido2-multiprotocol
 ## integration-test-fido2-multiprotocol: Run FIDO2 multi-protocol tests with virtual device (runs in devcontainer)
@@ -4056,10 +4087,29 @@ check-insecure-tls:
 	@bash scripts/check-insecure-tls.sh
 
 .PHONY: check-public-literals
-## check-public-literals: Public-release readiness gate -- no lab/fleet/owner literals (go-xkms#1030)
+## check-public-literals: Public-release readiness gate -- no listed internal literal (go-xkms#1030); patterns from RELEASABILITY_PATTERNS or RELEASABILITY_PATTERNS_FILE
+# The pattern list is private, so it is an input: with neither variable set
+# the target refuses (exit 1) rather than pass without checking a literal, so
+# `make lint-gates` and every CI caller must hand it the list; with one set it
+# returns the script's own exit status. The one opt-out is
+# PUBLIC_LITERALS_SKIP=fork-pr, which ci.yml sets only on a pull request whose
+# run has no RELEASABILITY_PATTERNS secret (a fork); the target announces the
+# skip and passes. Any other PUBLIC_LITERALS_SKIP value is refused.
 check-public-literals:
-	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (lab/fleet/owner)...$(RESET)"
-	@bash scripts/check-public-literals.sh
+	@echo "$(CYAN)$(BOLD)→ Checking for internal literals (pattern list from input)...$(RESET)"
+	@if [ -z "$${RELEASABILITY_PATTERNS:-}" ] && [ -z "$${RELEASABILITY_PATTERNS_FILE:-}" ]; then \
+		if [ "$${PUBLIC_LITERALS_SKIP-unset}" = fork-pr ]; then \
+			echo "check-public-literals: skipped -- no pattern input on a pull request without the secret (PUBLIC_LITERALS_SKIP=fork-pr); pushes run the gate"; \
+			exit 0; \
+		fi; \
+		if [ -n "$${PUBLIC_LITERALS_SKIP+set}" ]; then \
+			echo "check-public-literals: refused -- PUBLIC_LITERALS_SKIP accepts only fork-pr" >&2; \
+			exit 1; \
+		fi; \
+		echo "check-public-literals: refused -- no pattern input: set RELEASABILITY_PATTERNS (class<TAB>regex lines) or RELEASABILITY_PATTERNS_FILE (a path to them)" >&2; \
+		exit 1; \
+	fi; \
+	bash scripts/check-public-literals.sh
 
 # GOFLAGS takes one comma-separated -tags value.
 EMPTY :=
@@ -4870,7 +4920,7 @@ integration-test-api-unix:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/unix/... -timeout 10m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/unix/... -timeout 10m"
 	@echo "$(GREEN)✓ Unix socket protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-rest
@@ -4881,7 +4931,7 @@ integration-test-api-rest:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/rest/... -timeout 10m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/rest/... -timeout 10m"
 	@echo "$(GREEN)✓ REST API protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-grpc
@@ -4892,7 +4942,7 @@ integration-test-api-grpc:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/grpc/... -timeout 10m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/grpc/... -timeout 10m"
 	@echo "$(GREEN)✓ gRPC protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-quic
@@ -4903,7 +4953,7 @@ integration-test-api-quic:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/quic/... -timeout 10m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/quic/... -timeout 10m"
 	@echo "$(GREEN)✓ QUIC/HTTP3 protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-mcp
@@ -4914,7 +4964,7 @@ integration-test-api-mcp:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'MCP|Mcp' -timeout 10m"
 	@echo "$(GREEN)✓ MCP protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-api-ssh
@@ -4925,7 +4975,7 @@ integration-test-api-ssh:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && go build -tags='$(call go_tags,codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'XkeySSH' -timeout 10m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && (cd xkey && go build -tags='$(call go_tags,codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkey ./cmd/xkey) && XKMS_SSH_TEST_BACKENDS=software,tpm2,pkcs11 XKEY_CLI_BIN=/app/build/bin/xkey go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'XkeySSH' -timeout 10m"
 	@echo "$(GREEN)✓ SSH multi-protocol integration tests complete$(RESET)"
 
 .PHONY: integration-test-ssh-backends
@@ -4965,7 +5015,7 @@ ifeq ($(WITH_FROST),1)
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'FROST' -timeout 15m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'FROST' -timeout 15m"
 	@echo "$(GREEN)✓ FROST API integration tests complete$(RESET)"
 else
 	@echo "$(YELLOW)⚠ Skipping FROST API tests (WITH_FROST=0)$(RESET)"
@@ -4980,7 +5030,7 @@ integration-test-api-parity:
 	@$(API_COMPOSE) build
 	@trap '$(API_COMPOSE) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM ; \
 		$(API_COMPOSE) run --rm integration-tests \
-		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m"
+		sh -c "mkdir -p /app/build/bin && CGO_ENABLED=0 go build -buildvcs=false -tags='$(call go_tags,frost gms_pure_go codec_cbor codec_json codec_msgpack)' -o /app/build/bin/xkmsctl ./cmd/xkmsctl && go test -v -tags='$(call go_tags,integration frost codec_cbor codec_json codec_msgpack)' ./test/integration/api/... -run 'Parity|AllProtocols' -timeout 20m"
 	@echo "$(GREEN)✓ API protocol parity tests complete$(RESET)"
 
 .PHONY: integration-test-sdk-go
@@ -4994,7 +5044,7 @@ integration-test-sdk-go:
 ## integration-test-sshagent: Run agent-only SSH session acceptance tests (real git commit -S through the agent socket)
 integration-test-sshagent:
 	@echo "$(CYAN)$(BOLD)→ Running agent-only SSH session integration tests...$(RESET)"
-	$(call run_in_devcontainer,$(GO) test -v -tags='$(call go_tags,integration)' ./test/integration/sshagent/... -timeout 5m,integration-test-sshagent)
+	$(call run_in_devcontainer,$(GO) test -v -tags='$(call go_tags,integration $(BUILD_TAGS))' ./test/integration/sshagent/... -timeout 5m,integration-test-sshagent)
 	@echo "$(GREEN)✓ Agent-only SSH session integration tests complete$(RESET)"
 
 .PHONY: integration-test-initceremony
@@ -5030,7 +5080,7 @@ AWSKMS_COMPOSE := $(call compose,awskms) -f $(CURDIR)/test/integration/awskms/do
 integration-test-bootstrap: stage-gomodauth
 	@echo "$(CYAN)$(BOLD)→ Running bootstrap integration tests...$(RESET)"
 	@cd test/integration/bootstrap && $(call compose,bootstrap) down -v >/dev/null 2>&1 || true
-	@cd test/integration/bootstrap && trap '$(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1' EXIT INT TERM && \
+	@cd test/integration/bootstrap && trap 'rc=$$?; if [ $$rc -ne 0 ]; then echo "--- xkms-server log ---"; $(call compose,bootstrap) logs --no-color --tail=200 xkms-server; echo "--- xkms-server health ---"; docker inspect --format "{{json .State.Health}}" $$($(call compose,bootstrap) ps -aq xkms-server) || true; fi; $(call compose,bootstrap) down -v --remove-orphans >/dev/null 2>&1; trap - EXIT; exit $$rc' EXIT INT TERM && \
 		$(call compose,bootstrap) run --build --rm test
 	@echo "$(GREEN)✓ Bootstrap integration tests complete$(RESET)"
 
@@ -5437,6 +5487,19 @@ integration_dir = $(or $(wildcard ./test/integration/$(1)),$(error ./test/integr
 # simulator and fail without it, so the per-package targets that reach them
 # build it first, as test-go, race and coverage-full do.
 test-acme coverage-acme: agsim
+
+# Unit tests of one package directory under the unit-test flags and tags
+# ($(TEST_FLAGS), from $(TEST_TAGS)) (handbook testing-guidelines.md
+# section 4): make test-pkg PKG=pkg/acme/admin.
+# scripts/touched-packages.sh <base> <tip> prints the PKG values a diff needs.
+.PHONY: test-pkg
+test-pkg: $(if $(filter pkg/acme/%,$(PKG)/),agsim)
+	@if [ -z "$(PKG)" ] || [ ! -d "./$(PKG)" ]; then \
+		echo "usage: make test-pkg PKG=<package dir>, e.g. PKG=pkg/acme/admin" >&2; exit 2; \
+	fi
+	@echo "$(CYAN)→ Running tests for ./$(PKG)...$(RESET)"
+	@$(GO) test $(TEST_FLAGS) ./$(PKG)
+	@echo "$(GREEN)✓ Tests passed for ./$(PKG)$(RESET)"
 
 # Dynamic test target for individual packages and binaries
 # Usage: make test-backend, make test-xkms, make test-xkmsd, etc.
