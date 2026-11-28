@@ -358,6 +358,18 @@ func sshUseServer(cmd *cobra.Command) (bool, error) {
 	return !local, nil
 }
 
+// sshTargetsServer reports whether the ssh command's key store is an xkmsd
+// server (the --server flag, or a configured xkmsd URL without --local)
+// rather than the embedded local store; it mirrors sshServerEndpoint
+// without resolving a token.
+func sshTargetsServer(cmd *cobra.Command) bool {
+	if strings.TrimSpace(commandFlagString(cmd, "server")) != "" {
+		return true
+	}
+	useServer, err := sshUseServer(cmd)
+	return err == nil && useServer
+}
+
 // sshClientForEndpoint constructs the SDK SSH client for an xkmsd endpoint.
 // The scheme dispatch (http(s)→REST, grpc(s)→gRPC, unix→gRPC-over-UDS,
 // quic→HTTP/3, mcp(s)→JSON-RPC) lives in the SDK so xkey and other consumers

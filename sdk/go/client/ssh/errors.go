@@ -47,6 +47,20 @@ func (e *InvalidAlgorithmError) Error() string {
 	return "sdk/ssh: invalid algorithm: " + e.Value
 }
 
+// UnsupportedSignatureAlgorithmError is returned when a sign request names
+// an SSH signature algorithm the key cannot produce: anything other than
+// the key's own type, or rsa-sha2-256/512 for an ssh-rsa key whose signer
+// is an ssh.AlgorithmSigner. The signer never falls back to another format.
+type UnsupportedSignatureAlgorithmError struct {
+	Algorithm string
+	KeyType   string
+}
+
+// Error implements the error interface.
+func (e *UnsupportedSignatureAlgorithmError) Error() string {
+	return "sdk/ssh: signature algorithm " + e.Algorithm + " is not supported for " + e.KeyType + " keys"
+}
+
 // BackendUnavailableError is returned when a GenerateRequest selects a
 // crypto backend but the embedded transport was constructed without a
 // BackendProvider (or a backend-backed key's signer is requested without

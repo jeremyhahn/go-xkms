@@ -21,9 +21,11 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/spf13/cobra"
+	gossh "golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 
 	sshsdk "github.com/jeremyhahn/go-xkms/sdk/go/client/ssh"
@@ -46,18 +48,26 @@ func init() {
 	SSHCmd.AddCommand(sshConsoleCmd)
 	sshConsoleCmd.Flags().String("key", "", "SSH key name to authenticate with")
 	sshConsoleCmd.Flags().String("key-scope", "user", "Key scope")
-	sshConsoleCmd.Flags().String("key-owner", "", "Key owner (defaults to local)")
+	sshConsoleCmd.Flags().String("key-owner", "", "Key owner (default: none sent to an xkmsd server, which uses the caller; local for the local store, --local, --identity or no key)")
 	sshConsoleCmd.Flags().Int("port", 0, "Target port (default 22)")
 	sshConsoleCmd.Flags().String("user", "", "Remote user")
 	sshConsoleCmd.Flags().Bool("local", false, "Authenticate using the local ssh-agent/~/.ssh identities instead of an xkey-managed key")
 	sshConsoleCmd.Flags().String("identity", "", "Local identity to authenticate with: an identity file path or agent:<SHA256-fingerprint> (implies --local)")
 }
 
-func runSSHConsole(cmd *cobra.Command, args []string) error {
-	target := strings.TrimSpace(args[0])
-	if target == "" {
-		return ErrSSHConnectTarget
-	}
+// sshConsoleResolved is the target, key and key source runSSHConsole
+// resolved from its flags and an optional saved profile.
+type sshConsoleResolved struct {
+	host, user                  string
+	port                        int
+	keyName, keyScope, keyOwner string
+	identity                    string
+	local                       bool
+}
+
+// resolveSSHConsole resolves the console flags and the saved profile named
+// by target (if any) into the target, key and key source.
+func resolveSSHConsole(cmd *cobra.Command, target string) sshConsoleResolved {
 	keyName, _ := cmd.Flags().GetString("key")
 	keyScope, _ := cmd.Flags().GetString("key-scope")
 	keyOwner, _ := cmd.Flags().GetString("key-owner")
@@ -68,9 +78,6 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 	identity = strings.TrimSpace(identity)
 	if identity != "" {
 		local = true
-	}
-	if keyOwner == "" {
-		keyOwner = "local"
 	}
 
 	host := target
@@ -109,6 +116,26 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 	if keyName == "" {
 		local = true
 	}
+	// Only the local store path (local identities, or no xkmsd server)
+	// defaults the owner to "local": it has no logged-in caller. A server
+	// resolves an empty owner to the caller.
+	keyOwner = defaultSSHKeyOwner(keyOwner, local || !sshTargetsServer(cmd))
+	return sshConsoleResolved{
+		host: host, user: user, port: port,
+		keyName: keyName, keyScope: keyScope, keyOwner: keyOwner,
+		identity: identity, local: local,
+	}
+}
+
+func runSSHConsole(cmd *cobra.Command, args []string) error {
+	target := strings.TrimSpace(args[0])
+	if target == "" {
+		return ErrSSHConnectTarget
+	}
+	r := resolveSSHConsole(cmd, target)
+	host, user, port := r.host, r.user, r.port
+	keyScope, keyOwner := r.keyScope, r.keyOwner
+	identity, local := r.identity, r.local
 
 	// Initial terminal size + type.
 	rows, cols := 24, 80
@@ -145,20 +172,55 @@ func runSSHConsole(cmd *cobra.Command, args []string) error {
 		return runConsoleSession(cons, fd)
 	}
 
-	client, closer, err := sshClient(cmd)
-	if err != nil {
-		return err
-	}
-	defer closer()
-
-	cons, err = client.Console(context.Background(), sshsdk.ConsoleConnectRequest{
-		KeyScope: keyScope, KeyOwner: keyOwner, KeyName: keyName,
-		Host: host, Port: port, User: user,
-	}, consoleCfg)
+	cons, err := openSSHConsole(cmd, r, consoleCfg)
 	if err != nil {
 		return err
 	}
 	return runConsoleSession(cons, fd)
+}
+
+// openSSHConsole opens the console for a managed (xkey-held) key r names.
+// The PTY session runs in this process: the key signs through the
+// client's Keys().Signer (an xkmsd server signs remotely; no owner is sent
+// unless --key-owner gave one) and the host is verified against this
+// machine's pin store under sshHostPinOwner, like `xkey ssh connect`.
+// The returned session releases the client when it is closed.
+// The remote signer is an ssh.AlgorithmSigner, so a server-held RSA key
+// negotiates rsa-sha2-256/512 rather than ssh-rsa (Codex round 5 on #2360).
+func openSSHConsole(cmd *cobra.Command, r sshConsoleResolved, cfg sshsdk.ConsoleConfig) (sshsdk.ConsoleSession, error) {
+	client, hostKeys, closer, err := sshConnectClient(cmd)
+	if err != nil {
+		return nil, err
+	}
+	ctx := context.Background()
+	signer, err := client.Keys().Signer(ctx, sshsdk.GetKeyRequest{Scope: r.keyScope, Owner: r.keyOwner, Name: r.keyName})
+	if err != nil {
+		closer()
+		return nil, err
+	}
+	cons, err := sshsdk.OpenConsoleWithSigners(ctx, []gossh.Signer{signer}, sshsdk.ConsoleRequest{
+		Host: r.host, Port: r.port, User: r.user,
+		HostKeys: hostKeys, Scope: r.keyScope, Owner: sshHostPinOwner(r.keyOwner),
+	}, cfg)
+	if err != nil {
+		closer()
+		return nil, err
+	}
+	return &closingConsole{ConsoleSession: cons, release: closer}, nil
+}
+
+// closingConsole runs release once after the wrapped session closes, so the
+// client the session signs through outlives it.
+type closingConsole struct {
+	sshsdk.ConsoleSession
+	release func()
+	once    sync.Once
+}
+
+func (c *closingConsole) Close() error {
+	err := c.ConsoleSession.Close()
+	c.once.Do(c.release)
+	return err
 }
 
 // runConsoleSession bridges a live console session to the current terminal:

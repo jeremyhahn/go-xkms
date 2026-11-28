@@ -216,7 +216,7 @@ func (s *Server) handleSSHKeysSign(ctx context.Context, req *JSONRPCRequest) (in
 	if err != nil {
 		return nil, mapSSHError(err)
 	}
-	sig, err := signer.Sign(rand.Reader, params.Digest)
+	sig, err := sdkssh.SignWithAlgorithm(signer, rand.Reader, params.Digest, params.Algorithm)
 	if err != nil {
 		return nil, mapSSHError(err)
 	}

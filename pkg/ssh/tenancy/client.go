@@ -151,6 +151,7 @@ func (c *client) Session() sdkssh.SessionClient { return &sessionClient{c: c} }
 // pins are both addressed by (KeyScope, KeyOwner), so one binding covers
 // both.
 func (c *client) Console(ctx context.Context, req sdkssh.ConsoleConnectRequest, cfg sdkssh.ConsoleConfig) (sdkssh.ConsoleSession, error) {
+	req.KeyOwner = c.ownerOf(ctx, req.KeyScope, req.KeyOwner)
 	p, err := c.serve(ctx, req.KeyScope, req.KeyOwner)
 	if err != nil {
 		return nil, err
@@ -246,6 +247,26 @@ type partition struct {
 // serve binds a request addressing (rawScope, owner) to the caller and opens
 // the partition that serves it. An unrecognized scope is answered as the SDK
 // answers it for every caller.
+// ownerOf returns the owner a request addresses. An omitted user-scope owner
+// is the authenticated caller's own subject (rulings 937, 938), so a client
+// that sends no owner reaches the caller's keys and pins; it is resolved
+// before authorization and storage access. Any other scope, an invalid
+// scope, or a caller with no identity keeps the owner as given.
+func (c *client) ownerOf(ctx context.Context, rawScope, owner string) string {
+	if owner != "" {
+		return owner
+	}
+	sc, err := pkgscope.Parse(rawScope)
+	if err != nil || sc != pkgscope.User {
+		return owner
+	}
+	who := callerOf(ctx)
+	if !who.principal.Authenticated {
+		return owner
+	}
+	return who.principal.Subject
+}
+
 func (c *client) serve(ctx context.Context, rawScope, owner string) (partition, error) {
 	sc, err := pkgscope.Parse(rawScope)
 	if err != nil {

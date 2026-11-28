@@ -17,6 +17,10 @@ import (
 	"context"
 	"testing"
 
+	gossh "golang.org/x/crypto/ssh"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	pb "github.com/jeremyhahn/go-xkms/pkg/api/grpc/proto/xkmsv1"
 	"github.com/jeremyhahn/go-xkms/pkg/backend/software"
 	sshbackend "github.com/jeremyhahn/go-xkms/pkg/ssh/backend"
@@ -113,6 +117,51 @@ func TestService_SSHGenerateListSignDelete(t *testing.T) {
 	if len(listResp.GetKeys()) != 0 {
 		t.Fatalf("expected 0 keys after delete, got %d", len(listResp.GetKeys()))
 	}
+}
+
+// TestService_SSHSignAlgorithm proves SSHSign carries the requested SSH
+// signature algorithm: an RSA key signs rsa-sha2-512 when asked, and an
+// algorithm the key cannot produce is InvalidArgument rather than a silent
+// legacy ssh-rsa signature (Codex round 5 on #2360).
+func TestService_SSHSignAlgorithm(t *testing.T) {
+	ctx := context.Background()
+	svc := newSSHService(t)
+
+	if _, err := svc.SSHGenerateKey(ctx, &pb.SSHGenerateKeyRequest{
+		Scope: "user", Owner: "alice", Name: "rsa-key", Algorithm: "rsa",
+	}); err != nil {
+		t.Fatalf("SSHGenerateKey: %v", err)
+	}
+	pubResp, err := svc.SSHExportPublic(ctx, &pb.SSHKeyRef{Scope: "user", Owner: "alice", Name: "rsa-key"})
+	if err != nil {
+		t.Fatalf("SSHExportPublic: %v", err)
+	}
+	pub, _, _, _, err := gossh.ParseAuthorizedKey([]byte(pubResp.GetLine()))
+	if err != nil {
+		t.Fatalf("ParseAuthorizedKey: %v", err)
+	}
+	digest := []byte("payload to sign")
+	ref := &pb.SSHKeyRef{Scope: "user", Owner: "alice", Name: "rsa-key"}
+
+	t.Run("rsa-sha2-512", func(t *testing.T) {
+		resp, err := svc.SSHSign(ctx, &pb.SSHSignRequest{Key: ref, Digest: digest, Algorithm: gossh.KeyAlgoRSASHA512})
+		if err != nil {
+			t.Fatalf("SSHSign: %v", err)
+		}
+		if resp.GetFormat() != gossh.KeyAlgoRSASHA512 {
+			t.Fatalf("format = %q, want %q", resp.GetFormat(), gossh.KeyAlgoRSASHA512)
+		}
+		if err := pub.Verify(digest, &gossh.Signature{Format: resp.GetFormat(), Blob: resp.GetBlob()}); err != nil {
+			t.Fatalf("Verify: %v", err)
+		}
+	})
+
+	t.Run("wrong algorithm refused", func(t *testing.T) {
+		_, err := svc.SSHSign(ctx, &pb.SSHSignRequest{Key: ref, Digest: digest, Algorithm: gossh.KeyAlgoED25519})
+		if got := status.Code(err); got != codes.InvalidArgument {
+			t.Fatalf("code = %v (%v), want InvalidArgument", got, err)
+		}
+	})
 }
 
 func TestService_SSHUnavailableWhenUnset(t *testing.T) {

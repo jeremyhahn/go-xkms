@@ -101,7 +101,7 @@ func init() {
 	SSHCmd.AddCommand(sshConnectCmd)
 	sshConnectCmd.Flags().String("key", "", "SSH key name to authenticate with")
 	sshConnectCmd.Flags().String("key-scope", "user", "Key scope")
-	sshConnectCmd.Flags().String("key-owner", "", "Key owner (defaults to local for GUI keys, $USER for CLI keys)")
+	sshConnectCmd.Flags().String("key-owner", "", "Key owner (default: none sent to an xkmsd server, which uses the caller; local for the local store, --local, --identity or --ssh-config-alias)")
 	sshConnectCmd.Flags().Int("port", 0, "Target port (default 22)")
 	sshConnectCmd.Flags().String("user", "", "Remote user (for user@host targets without an inline user)")
 	sshConnectCmd.Flags().String("known-hosts-policy", "barrier", "Where to record host-key pins: barrier|system|both")
@@ -118,7 +118,7 @@ func init() {
 	sshProfileAddCmd.Flags().String("user", "", "Remote user")
 	sshProfileAddCmd.Flags().String("key", "", "SSH key name")
 	sshProfileAddCmd.Flags().String("key-scope", "user", "Key scope")
-	sshProfileAddCmd.Flags().String("key-owner", "", "Key owner (defaults to local)")
+	sshProfileAddCmd.Flags().String("key-owner", "", "Key owner (default: none for a server profile, which uses the caller; local with --key-source=local)")
 	sshProfileAddCmd.Flags().String("key-source", "", "Authentication key source: \"\" (xkey-managed, default) or \"local\" (ssh-agent/~/.ssh)")
 	sshProfileAddCmd.Flags().String("ssh-config-alias", "", "ssh_config(5) Host alias to connect through when --key-source=local (implies --key-source=local)")
 	sshProfileAddCmd.Flags().String("identity", "", "Local identity pin: an identity file path or agent:<SHA256-fingerprint> (implies --key-source=local)")
@@ -188,14 +188,12 @@ func resolveSSHConnect(cmd *cobra.Command, args []string) (*sshConnectResolved, 
 	if r.Alias != "" || r.Identity != "" {
 		r.Local = true
 	}
-	if r.KeyOwner == "" {
-		r.KeyOwner = "local"
-	}
 
 	r.Host = target
 	// If the target matches a saved profile, use its settings.
 	p, ok := lookupSSHProfile(target)
 	if !ok {
+		r.KeyOwner = defaultSSHKeyOwner(r.KeyOwner, r.Local || !sshTargetsServer(cmd))
 		return r, nil
 	}
 	r.Host = p.Host
@@ -223,8 +221,35 @@ func resolveSSHConnect(cmd *cobra.Command, args []string) (*sshConnectResolved, 
 	if r.Identity == "" {
 		r.Identity = p.LocalIdentity
 	}
+	r.KeyOwner = defaultSSHKeyOwner(r.KeyOwner, r.Local || !sshTargetsServer(cmd))
 	return r, nil
 }
+
+// defaultSSHKeyOwner returns the key owner to send. An owner given by flag
+// or profile is kept. Otherwise the local store path gets "local": the local
+// store (local identities, or the embedded store when no xkmsd server is
+// configured) has no logged-in caller to resolve an owner to. A server gets no
+// owner and resolves an empty user-scope owner to the caller (rulings 937,
+// 938), so an account-bound caller's own keys are found.
+func defaultSSHKeyOwner(owner string, local bool) string {
+	if owner == "" && local {
+		return "local"
+	}
+	return owner
+}
+
+// sshHostPinOwner returns the owner of the host-key pins a connect seeds from
+// and writes back to this machine's own pin store. Only the remote key owner
+// may be omitted (the server resolves it to the caller): the local pin store
+// has no caller to resolve, and an empty owner there lists every owner's pins
+// and refuses to record new ones, so an omitted key owner pins under "local".
+func sshHostPinOwner(keyOwner string) string {
+	return defaultSSHKeyOwner(keyOwner, true)
+}
+
+// sshConnectClient opens the SSH client and the host-key pin store a managed
+// key connect uses; tests replace it to stand in for an xkmsd server.
+var sshConnectClient = sshClientWithHostKeys
 
 // lookupSSHProfile returns the saved profile named name. It reports false
 // when name is empty, names no profile, or the profile store cannot be
@@ -272,7 +297,7 @@ func runSSHConnect(cmd *cobra.Command, args []string) error {
 		return ErrSSHConnectTarget
 	}
 
-	client, hostKeys, closer, err := sshClientWithHostKeys(cmd)
+	client, hostKeys, closer, err := sshConnectClient(cmd)
 	if err != nil {
 		return err
 	}
@@ -299,7 +324,7 @@ func runSSHConnect(cmd *cobra.Command, args []string) error {
 		Signer:          signer,
 		HostKeys:        hostKeys,
 		Scope:           r.KeyScope,
-		Owner:           r.KeyOwner,
+		Owner:           sshHostPinOwner(r.KeyOwner),
 		ExtraKnownHosts: extraKnownHosts,
 		SkipStore:       skipStore,
 	})
@@ -424,12 +449,12 @@ func runSSHProfileAdd(cmd *cobra.Command, _ []string) error {
 	keyScope, _ := cmd.Flags().GetString("key-scope")
 	keyOwner, _ := cmd.Flags().GetString("key-owner")
 	notes, _ := cmd.Flags().GetString("notes")
-	if keyOwner == "" {
-		keyOwner = "local"
-	}
 	if (sshConfigAlias != "" || localIdentity != "") && keySource == "" {
 		keySource = "local"
 	}
+	// A server profile stores no owner unless given, so a later connect
+	// or console lets the server resolve the caller.
+	keyOwner = defaultSSHKeyOwner(keyOwner, keySource == "local")
 
 	store, closeStore, err := xkeyProfileStore()
 	if err != nil {

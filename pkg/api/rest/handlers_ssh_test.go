@@ -17,6 +17,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -456,6 +457,45 @@ func TestSSHHandleSign(t *testing.T) {
 		require.NoError(t, err)
 		defer resp.Body.Close()
 		assert.Equal(t, http.StatusInternalServerError, resp.StatusCode)
+	})
+}
+
+// TestSSHHandleSign_Algorithm proves POST .../sign carries the requested SSH
+// signature algorithm: an RSA key signs rsa-sha2-512 when asked, and an
+// algorithm the key cannot produce is 400 rather than a silent legacy
+// ssh-rsa signature (Codex round 5 on #2360).
+func TestSSHHandleSign_Algorithm(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	signer, err := gossh.NewSignerFromKey(rsaKey)
+	require.NoError(t, err)
+	digest := "hello world digest!!"
+
+	post := func(t *testing.T, algorithm string) *http.Response {
+		t.Helper()
+		mc := newMockSSHClient()
+		mc.keys.signer = signer
+		srv := newSSHTestServer(t, mc)
+		resp, err := http.Post(srv.URL+"/xkms/v1/ssh/keys/user/alice/k/sign", "application/json",
+			strings.NewReader(`{"digest":"`+base64Std(digest)+`","algorithm":"`+algorithm+`"}`))
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = resp.Body.Close() })
+		return resp
+	}
+
+	t.Run("rsa-sha2-512", func(t *testing.T) {
+		resp := post(t, gossh.KeyAlgoRSASHA512)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		var out restSignResponseDTO
+		require.NoError(t, json.NewDecoder(resp.Body).Decode(&out))
+		require.Equal(t, gossh.KeyAlgoRSASHA512, out.Format)
+		require.NoError(t, signer.PublicKey().Verify([]byte(digest),
+			&gossh.Signature{Format: out.Format, Blob: out.Blob, Rest: out.Rest}))
+	})
+
+	t.Run("wrong algorithm refused", func(t *testing.T) {
+		resp := post(t, gossh.KeyAlgoED25519)
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
 }
 

@@ -36,10 +36,11 @@ import (
 // mcpSignResult, mcpKnownHostVerifyParams) — the JSON tags must match
 // exactly since this file decodes what that client sends.
 type mcpTestSignParams struct {
-	Scope  string `json:"scope"`
-	Owner  string `json:"owner"`
-	Name   string `json:"name"`
-	Digest []byte `json:"digest"`
+	Scope     string `json:"scope"`
+	Owner     string `json:"owner"`
+	Name      string `json:"name"`
+	Digest    []byte `json:"digest"`
+	Algorithm string `json:"algorithm,omitempty"`
 }
 
 type mcpTestSignResult struct {
@@ -110,8 +111,12 @@ func newMCPSSHFixture(t *testing.T) sdkssh.Client {
 		if err != nil {
 			return nil, err.Error(), qrdbsdk.MCPCodeInternal
 		}
-		sig, err := signer.Sign(rand.Reader, req.Digest)
+		sig, err := sdkssh.SignWithAlgorithm(signer, rand.Reader, req.Digest, req.Algorithm)
 		if err != nil {
+			var unsupported *sdkssh.UnsupportedSignatureAlgorithmError
+			if errors.As(err, &unsupported) {
+				return nil, err.Error(), qrdbsdk.MCPCodeInvalidArgument
+			}
 			return nil, err.Error(), qrdbsdk.MCPCodeInternal
 		}
 		return mcpTestSignResult{Format: sig.Format, Blob: sig.Blob, Rest: sig.Rest}, "", qrdbsdk.MCPCodeOK

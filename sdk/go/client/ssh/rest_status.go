@@ -31,6 +31,7 @@ import "net/http"
 //	*pkg/ssh/known_hosts.MismatchError        -> 409 (MITM)
 //	*InvalidScopeError                        -> 400
 //	*InvalidAlgorithmError                    -> 400
+//	*UnsupportedSignatureAlgorithmError       -> 400
 //	*pkg/ssh/keys.NilInputError               -> 400
 //	*pkg/ssh/known_hosts.NilInputError        -> 400
 //	*pkg/ssh/authorized.NilInputError         -> 400

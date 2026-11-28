@@ -20,6 +20,7 @@ package ssh
 import (
 	"crypto/tls"
 	"errors"
+	"io"
 	"net"
 
 	gossh "golang.org/x/crypto/ssh"
@@ -78,4 +79,27 @@ func stripCallbackPort(hostname string) string {
 		return hostname
 	}
 	return host
+}
+
+// SignWithAlgorithm signs data with signer in the named SSH signature
+// algorithm. An empty algorithm, or one equal to the key type, signs in the
+// key's default format. For an ssh-rsa key, rsa-sha2-256 and rsa-sha2-512
+// require signer to be an ssh.AlgorithmSigner. Any other combination
+// returns *UnsupportedSignatureAlgorithmError; it never falls back to
+// legacy ssh-rsa (SHA-1).
+func SignWithAlgorithm(signer gossh.Signer, rand io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
+	if signer == nil {
+		return nil, &NilInputError{Field: "signer"}
+	}
+	keyType := signer.PublicKey().Type()
+	if algorithm == "" || algorithm == keyType {
+		return signer.Sign(rand, data)
+	}
+	if keyType == gossh.KeyAlgoRSA &&
+		(algorithm == gossh.KeyAlgoRSASHA256 || algorithm == gossh.KeyAlgoRSASHA512) {
+		if as, ok := signer.(gossh.AlgorithmSigner); ok {
+			return as.SignWithAlgorithm(rand, data, algorithm)
+		}
+	}
+	return nil, &UnsupportedSignatureAlgorithmError{Algorithm: algorithm, KeyType: keyType}
 }

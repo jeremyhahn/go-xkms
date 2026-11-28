@@ -241,12 +241,24 @@ type grpcSigner struct {
 	pub   gossh.PublicKey
 }
 
+// grpcSigner carries the requested signature algorithm to the server.
+var _ gossh.AlgorithmSigner = (*grpcSigner)(nil)
+
 func (s *grpcSigner) PublicKey() gossh.PublicKey { return s.pub }
 
-func (s *grpcSigner) Sign(_ io.Reader, data []byte) (*gossh.Signature, error) {
+// Sign forwards the digest to the server and returns the signature in the
+// key's default format.
+func (s *grpcSigner) Sign(rand io.Reader, data []byte) (*gossh.Signature, error) {
+	return s.SignWithAlgorithm(rand, data, "")
+}
+
+// SignWithAlgorithm forwards the digest and the requested SSH signature
+// algorithm (empty for the key's default, rsa-sha2-256/512 for RSA keys).
+func (s *grpcSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
 	resp, err := s.svc.SSHSign(context.Background(), &pb.SSHSignRequest{
-		Key:    &pb.SSHKeyRef{Scope: s.scope, Owner: s.owner, Name: s.name},
-		Digest: data,
+		Key:       &pb.SSHKeyRef{Scope: s.scope, Owner: s.owner, Name: s.name},
+		Digest:    data,
+		Algorithm: algorithm,
 	})
 	if err != nil {
 		return nil, mapGRPCError(err)

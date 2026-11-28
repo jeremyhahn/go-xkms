@@ -372,11 +372,19 @@ type restSigner struct {
 func (s *restSigner) PublicKey() gossh.PublicKey { return s.pub }
 
 // Sign forwards the digest to the server and returns the assembled
-// *ssh.Signature.
-func (s *restSigner) Sign(_ io.Reader, data []byte) (*gossh.Signature, error) {
+// *ssh.Signature in the key's default format.
+func (s *restSigner) Sign(rand io.Reader, data []byte) (*gossh.Signature, error) {
+	return s.SignWithAlgorithm(rand, data, "")
+}
+
+// SignWithAlgorithm forwards the digest and the requested SSH signature
+// algorithm (empty for the key's default, rsa-sha2-256/512 for RSA keys)
+// to the server, so a server-held RSA key never signs legacy ssh-rsa
+// when the peer asked for RSA-SHA2.
+func (s *restSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm string) (*gossh.Signature, error) {
 	path := fmt.Sprintf("/keys/%s/%s/%s/sign",
 		url.PathEscape(s.scope), url.PathEscape(s.owner), url.PathEscape(s.name))
-	req := restSignRequest{Digest: data}
+	req := restSignRequest{Digest: data, Algorithm: algorithm}
 	body, err := s.c.do(context.Background(), http.MethodPost, path, req)
 	if err != nil {
 		return nil, err
@@ -585,12 +593,12 @@ func (s *restSessionClient) Dial(ctx context.Context, req SessionDialRequest) (S
 
 // Ensure the interface wiring is compile-time checked.
 var (
-	_ Client               = (*restClient)(nil)
-	_ KeysClient           = (*restKeysClient)(nil)
-	_ KnownHostsClient     = (*restKnownHostsClient)(nil)
-	_ AuthorizedKeysClient = (*restAuthorizedKeysClient)(nil)
-	_ SessionClient        = (*restSessionClient)(nil)
-	_ gossh.Signer         = (*restSigner)(nil)
+	_ Client                = (*restClient)(nil)
+	_ KeysClient            = (*restKeysClient)(nil)
+	_ KnownHostsClient      = (*restKnownHostsClient)(nil)
+	_ AuthorizedKeysClient  = (*restAuthorizedKeysClient)(nil)
+	_ SessionClient         = (*restSessionClient)(nil)
+	_ gossh.AlgorithmSigner = (*restSigner)(nil)
 )
 
 // Ensure errors referenced above are not accidentally dropped.

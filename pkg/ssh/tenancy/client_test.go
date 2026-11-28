@@ -212,6 +212,219 @@ func TestKeys_OwnerBinding(t *testing.T) {
 	}
 }
 
+// TestKeys_OmittedUserOwnerIsCaller pins rulings 937/938 on the server path
+// (#2284): a user-scope request that names no owner addresses the
+// authenticated caller's own keys and pins, before authorization and storage
+// access, so a client that sends no --key-owner still reaches its own signer.
+func TestKeys_OmittedUserOwnerIsCaller(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	generate(t, c, bobA, "user", "bob", "bob-key")
+
+	created := generate(t, c, aliceA, "user", "", "laptop")
+	assert.Equal(t, "alice", created.Owner, "an omitted owner is stored as the caller")
+
+	own := sdkssh.GetKeyRequest{Scope: "user", Owner: "", Name: "laptop"}
+	got, err := c.Keys().Get(as(aliceA), own)
+	require.NoError(t, err)
+	assert.Equal(t, created.Fingerprint, got.Fingerprint)
+	signer, err := c.Keys().Signer(as(aliceA), own)
+	require.NoError(t, err)
+	require.NotNil(t, signer)
+	_, err = c.Keys().ExportPublic(as(aliceA), sdkssh.ExportRequest(own))
+	require.NoError(t, err)
+
+	// The omitted owner is the caller, never another user of the tenant.
+	_, err = c.Keys().Signer(as(aliceA), sdkssh.GetKeyRequest{Scope: "user", Name: "bob-key"})
+	require.Error(t, err, "alice reached bob's key through an omitted owner")
+
+	// A caller with no identity gets no owner filled in.
+	_, err = c.Keys().Signer(context.Background(), own)
+	require.Error(t, err)
+
+	// Known-host pins follow the same rule.
+	line, _ := publicLine(t)
+	require.NoError(t, c.KnownHosts().Add(as(aliceA), sdkssh.AddKnownHostRequest{Scope: "user", Host: "h.example.com", PublicKey: line}))
+	pins, err := c.KnownHosts().List(as(aliceA), sdkssh.ListKnownHostsRequest{Scope: "user", Owner: "alice"})
+	require.NoError(t, err)
+	require.Len(t, pins, 1)
+	assert.Equal(t, "alice", pins[0].Owner)
+
+	require.NoError(t, c.Keys().Delete(as(aliceA), sdkssh.DeleteKeyRequest(own)))
+	_, err = c.Keys().Get(as(aliceA), sdkssh.GetKeyRequest{Scope: "user", Owner: "alice", Name: "laptop"})
+	require.Error(t, err, "delete with an omitted owner removes the caller's key")
+}
+
+// TestSession_OmittedKeyOwnerIsCaller dials with no key owner and no
+// host-key owner: the binding resolves both to the caller, so the dial
+// gets past the owner binding and fails only on the unreachable target.
+// Known-host Verify and Callback resolve an omitted owner the same way.
+func TestSession_OmittedKeyOwnerIsCaller(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	generate(t, c, bobA, "user", "bob", "bob-key")
+	generate(t, c, adminB, "tenant", tenantB, "b-key")
+	h1, h2 := newHandshakeServer(t), newHandshakeServer(t)
+	// 127.0.0.1 is pinned to H1 for the caller and to H2 for another
+	// owner of the same scope, so the handshake passes only when the
+	// dial reads the caller's own pins.
+	pinHost(t, c, bobA, "user", "bob", h1.hostLine)
+	pinHost(t, c, aliceA, "user", "alice", h2.hostLine)
+	pinHost(t, c, adminB, "user", "b-admin", h1.hostLine)
+	pinHost(t, c, aliceB, "user", "alice", h2.hostLine)
+
+	cases := map[string]struct {
+		id  *auth.Identity
+		req sdkssh.SessionDialRequest
+	}{
+		"omitted key owner": {bobA, sdkssh.SessionDialRequest{KeyScope: "user", KeyName: "bob-key"}},
+		"omitted key and host-key owner": {bobA, sdkssh.SessionDialRequest{KeyScope: "user", KeyName: "bob-key",
+			HostKeyScope: "user"}},
+		"explicit key owner, omitted host-key owner": {bobA, sdkssh.SessionDialRequest{KeyScope: "user", KeyOwner: "bob",
+			KeyName: "bob-key"}},
+		"user host keys under a tenant key": {adminB, sdkssh.SessionDialRequest{KeyScope: "tenant", KeyOwner: tenantB,
+			KeyName: "b-key", HostKeyScope: "user"}},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			tc.req.Host, tc.req.User, tc.req.TimeoutSeconds = "127.0.0.1", "u", 5
+
+			accept := tc.req
+			accept.Port = h1.port
+			session, err := c.Session().Dial(as(tc.id), accept)
+			require.NoError(t, err, "the caller's H1 pin admits the handshake")
+			require.NoError(t, session.Close())
+
+			reject := tc.req
+			reject.Port = h2.port
+			session, err = c.Session().Dial(as(tc.id), reject)
+			requireHostKeyRefused(t, session, err)
+		})
+	}
+
+	line, pub := publicLine(t)
+	require.NoError(t, c.KnownHosts().Add(as(aliceA), sdkssh.AddKnownHostRequest{Scope: "user", Host: "h.example.com", PublicKey: line}))
+	require.NoError(t, c.KnownHosts().Verify(as(aliceA), "user", "", "h.example.com", pub))
+	require.NoError(t, c.KnownHosts().Callback(as(aliceA), "user", "")("h.example.com:22", &net.TCPAddr{}, pub))
+}
+
+// handshakeServer is an in-process SSH server on 127.0.0.1 with one host
+// key; it accepts any client key and every session channel request.
+type handshakeServer struct {
+	port     int
+	hostLine string
+}
+
+func newHandshakeServer(t *testing.T) handshakeServer {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	signer, err := gossh.NewSignerFromKey(priv)
+	require.NoError(t, err)
+	cfg := &gossh.ServerConfig{
+		PublicKeyCallback: func(gossh.ConnMetadata, gossh.PublicKey) (*gossh.Permissions, error) { return nil, nil },
+	}
+	cfg.AddHostKey(signer)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go serveHandshake(conn, cfg)
+		}
+	}()
+	return handshakeServer{
+		port:     ln.Addr().(*net.TCPAddr).Port,
+		hostLine: strings.TrimSpace(string(gossh.MarshalAuthorizedKey(signer.PublicKey()))),
+	}
+}
+
+func serveHandshake(conn net.Conn, cfg *gossh.ServerConfig) {
+	defer func() { _ = conn.Close() }()
+	sc, chans, reqs, err := gossh.NewServerConn(conn, cfg)
+	if err != nil {
+		return
+	}
+	defer func() { _ = sc.Close() }()
+	go gossh.DiscardRequests(reqs)
+	for nc := range chans {
+		if nc.ChannelType() != "session" {
+			_ = nc.Reject(gossh.UnknownChannelType, "session only")
+			continue
+		}
+		ch, chReqs, err := nc.Accept()
+		if err != nil {
+			continue
+		}
+		go func() {
+			for r := range chReqs {
+				if r.WantReply {
+					_ = r.Reply(true, nil)
+				}
+			}
+			_ = ch.Close()
+		}()
+	}
+}
+
+func pinHost(t *testing.T, c sdkssh.Client, id *auth.Identity, scope, owner, line string) {
+	t.Helper()
+	require.NoError(t, c.KnownHosts().Add(as(id), sdkssh.AddKnownHostRequest{Scope: scope, Owner: owner,
+		Host: "127.0.0.1", PublicKey: line}))
+}
+
+// requireHostKeyRefused asserts a dial failed host-key verification: the
+// target's key is pinned only under another owner.
+func requireHostKeyRefused(t *testing.T, session interface{ Close() error }, err error) {
+	t.Helper()
+	if err == nil {
+		_ = session.Close()
+		t.Fatal("the handshake passed against a key pinned only under another owner")
+	}
+	var refusal *OwnerBindingError
+	require.False(t, errors.As(err, &refusal), "an omitted owner was refused: %v", err)
+	var mismatch *pkgknownhosts.MismatchError
+	var notFound *pkgknownhosts.NotFoundError
+	require.True(t, errors.As(err, &mismatch) || errors.As(err, &notFound),
+		"want a host-key mismatch or unknown host, got %v", err)
+}
+
+// TestConsole_OmittedKeyOwnerIsCaller covers the tenancy (embedded) console:
+// with no key owner it keeps the console's authentication key and host-key
+// pins under the caller. `xkey ssh console` against an xkmsd server is
+// covered in xkey/cmd/xkey/cmd/ssh_console_server_test.go.
+func TestConsole_OmittedKeyOwnerIsCaller(t *testing.T) {
+	c, _ := newTestClient(t, false)
+	generate(t, c, aliceA, "user", "alice", "laptop")
+	generate(t, c, bobA, "user", "bob", "bob-key")
+	h1, h2 := newHandshakeServer(t), newHandshakeServer(t)
+	pinHost(t, c, bobA, "user", "bob", h1.hostLine)
+	pinHost(t, c, aliceA, "user", "alice", h2.hostLine)
+	cfg := sdkssh.ConsoleConfig{}
+
+	for name, owner := range map[string]string{"omitted key owner": "", "explicit key owner": "bob"} {
+		t.Run(name, func(t *testing.T) {
+			req := sdkssh.ConsoleConnectRequest{KeyScope: "user", KeyOwner: owner, KeyName: "bob-key",
+				Host: "127.0.0.1", Port: h1.port, User: "u"}
+			console, err := c.Console(as(bobA), req, cfg)
+			require.NoError(t, err, "the caller's H1 pin admits the handshake")
+			require.NoError(t, console.Close())
+
+			req.Port = h2.port
+			console, err = c.Console(as(bobA), req, cfg)
+			requireHostKeyRefused(t, console, err)
+		})
+	}
+
+	_, err := c.Console(as(aliceA), sdkssh.ConsoleConnectRequest{KeyScope: "user", KeyName: "bob-key",
+		Host: "127.0.0.1", Port: h1.port, User: "u"}, cfg)
+	var notFound *pkgkeys.KeyNotFoundError
+	require.True(t, errors.As(err, &notFound), "alice reached bob's key through an omitted owner: %v", err)
+}
+
 // TestKeys_ServiceScope proves a service-scoped key is reachable only with
 // the explicit ssh:service permission, only in the caller's own tenant, and
 // not at all when no permission checker is wired.

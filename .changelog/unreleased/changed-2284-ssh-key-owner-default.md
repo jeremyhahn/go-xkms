@@ -1,0 +1,3 @@
+- **ssh:** `xkey ssh connect` and `xkey ssh console` send no key owner to an xkmsd server unless `--key-owner` or a profile gives one; the server resolves an omitted user-scope owner (keys, known hosts, authorized keys, session and console host-key pins) to the authenticated caller, and host keys `ssh connect` pins in the local store stay under `local` (#2284).
+- **ssh:** `xkey ssh console` against an xkmsd server signs through the server-held key and verifies the host against the local pin store, like `connect`, instead of failing as unsupported (#2284).
+- **ssh:** remote SSH signers (REST, gRPC, MCP) carry the signature algorithm, so server-held RSA keys sign rsa-sha2-256/512 and authenticate to targets that refuse ssh-rsa (#2284).
