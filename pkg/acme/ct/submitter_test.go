@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -222,8 +223,10 @@ func TestHTTPLogSubmitter_SubmitPrecert(t *testing.T) {
 			t.Cleanup(server.Close)
 			return LogGroup{URL: server.URL, PublicKey: newP256Key(t).Public(), Enabled: true}
 		}
-		closed := httptest.NewServer(http.NotFoundHandler())
-		closed.Close()
+		// The unreachable log must fail at the dial on every run. A closed
+		// httptest server is not enough: its freed port can be handed to a
+		// server opened later in this test, so the dial reaches a live log.
+		unreachable := NewHTTPLogSubmitter(&http.Client{Transport: dialFailingTransport{}})
 		cancelled, cancel := context.WithCancel(ctx)
 		cancel()
 
@@ -231,21 +234,26 @@ func TestHTTPLogSubmitter_SubmitPrecert(t *testing.T) {
 			name string
 			ctx  context.Context
 			log  LogGroup
+			sub  *HTTPLogSubmitter
 		}{
 			{"HTTP error status", ctx, failing(t, func(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "log unavailable", http.StatusServiceUnavailable)
-			})},
+			}), nil},
 			{"invalid JSON", ctx, failing(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")
 				_, err := w.Write([]byte("{not json"))
 				assert.NoError(t, err)
-			})},
-			{"cancelled context", cancelled, newTestCTLog(t, newP256Key(t), entry).group()},
-			{"log unreachable", ctx, LogGroup{URL: closed.URL, PublicKey: newP256Key(t).Public(), Enabled: true}},
+			}), nil},
+			{"cancelled context", cancelled, newTestCTLog(t, newP256Key(t), entry).group(), nil},
+			{"log unreachable", ctx, LogGroup{URL: "http://ct-log.invalid", PublicKey: newP256Key(t).Public(), Enabled: true}, unreachable},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				_, err := submitter.SubmitPrecert(tt.ctx, entry.der, entry.chain, tt.log)
+				sub := submitter
+				if tt.sub != nil {
+					sub = tt.sub
+				}
+				_, err := sub.SubmitPrecert(tt.ctx, entry.der, entry.chain, tt.log)
 				var caErr *caerrors.TrustedCAError
 				assert.ErrorAs(t, err, &caErr)
 			})
@@ -474,4 +482,13 @@ func TestMockLogSubmitter(t *testing.T) {
 		submissions := submitter.GetSubmissions()
 		assert.Len(t, submissions, 10)
 	})
+}
+
+// dialFailingTransport fails every request the way a refused dial does,
+// without opening a socket, so a log-unreachable case cannot reach a server
+// that happens to listen on a reused port.
+type dialFailingTransport struct{}
+
+func (dialFailingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
 }
