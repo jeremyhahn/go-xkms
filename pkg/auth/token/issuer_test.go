@@ -333,6 +333,7 @@ func TestMemoryRefreshStore_Lifecycle(t *testing.T) {
 	rec := &Record{
 		JTI:       "jti-1",
 		Family:    "fam-1",
+		Tenant:    "t1",
 		Subject:   "user-123",
 		ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}
@@ -384,6 +385,7 @@ func TestMemoryRefreshStore_ExpiryIsRevocation(t *testing.T) {
 	require.NoError(t, store.Save(ctx, &Record{
 		JTI:       "jti-old",
 		Family:    "fam-old",
+		Tenant:    "t1",
 		Subject:   "user-123",
 		ExpiresAt: time.Now().Add(-time.Minute).Unix(),
 	}))

@@ -118,7 +118,7 @@ func newQRDBStore(t *testing.T, kv qrdbtransport.KVClient) *QRDBRefreshStore {
 
 func TestQRDBRefreshStore_Save_PutError(t *testing.T) {
 	store := newQRDBStore(t, newErrorKV("put"))
-	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	rec := &Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 
 	err := store.Save(context.Background(), rec)
 	var se *StoreError
@@ -129,7 +129,7 @@ func TestQRDBRefreshStore_Save_PutError(t *testing.T) {
 
 func TestQRDBRefreshStore_Save_FamilyRevokedCheckError(t *testing.T) {
 	store := newQRDBStore(t, newErrorKV("get"))
-	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	rec := &Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 
 	err := store.Save(context.Background(), rec)
 	var se *StoreError
@@ -145,7 +145,7 @@ func TestQRDBRefreshStore_Save_WithdrawOnRevokedFamilyFails(t *testing.T) {
 	require.NoError(t, store.RevokeFamily(ctx, "f1"))
 	kv.failOp = "comparedelete"
 
-	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	rec := &Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	err := store.Save(ctx, rec)
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
@@ -159,7 +159,7 @@ func TestQRDBRefreshStore_Save_RevokedFamilyIsWithdrawn(t *testing.T) {
 
 	require.NoError(t, store.RevokeFamily(ctx, "f1"))
 
-	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	rec := &Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	err := store.Save(ctx, rec)
 	var fre *FamilyRevokedError
 	require.ErrorAs(t, err, &fre)
@@ -195,7 +195,7 @@ func TestQRDBRefreshStore_Load_ExpiredRecordIsCleanedUp(t *testing.T) {
 	store := newQRDBStore(t, kv)
 	ctx := context.Background()
 	require.NoError(t, store.Save(ctx, &Record{
-		JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(-time.Minute).Unix(),
+		JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(-time.Minute).Unix(),
 	}))
 
 	got, err := store.Get(ctx, "f1", "j1")
@@ -229,7 +229,7 @@ func TestQRDBRefreshStore_RevokeFamily_DeleteError(t *testing.T) {
 	store := newQRDBStore(t, kv)
 	ctx := context.Background()
 	require.NoError(t, store.Save(ctx, &Record{
-		JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}))
 	kv.failOp = "delete"
 
@@ -241,7 +241,7 @@ func TestQRDBRefreshStore_RevokeFamily_DeleteError(t *testing.T) {
 
 func TestQRDBRefreshStore_RevokeBySubject_ScanError(t *testing.T) {
 	store := newQRDBStore(t, newErrorKV("scan"))
-	err := store.RevokeBySubject(context.Background(), "alice")
+	err := store.RevokeBySubject(context.Background(), "t1", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "scan", se.Op)
@@ -255,7 +255,7 @@ func TestQRDBRefreshStore_RevokeBySubject_DecodeErrorSurfaces(t *testing.T) {
 	require.NoError(t, kv.Put(context.Background(), refreshKey("f1", "j1"), []byte("not json")))
 	store := newQRDBStore(t, kv)
 
-	err := store.RevokeBySubject(context.Background(), "alice")
+	err := store.RevokeBySubject(context.Background(), "t1", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "decode", se.Op)
@@ -266,11 +266,11 @@ func TestQRDBRefreshStore_RevokeBySubject_RevokeFamilyErrorPropagates(t *testing
 	store := newQRDBStore(t, kv)
 	ctx := context.Background()
 	require.NoError(t, store.Save(ctx, &Record{
-		JTI: "j1", Family: "f1", Subject: "alice", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		JTI: "j1", Family: "f1", Tenant: "t1", Subject: "alice", ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}))
 	kv.failOp = "putifabsent"
 
-	err := store.RevokeBySubject(ctx, "alice")
+	err := store.RevokeBySubject(ctx, "t1", "alice")
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
 	assert.Equal(t, "put-if-absent", se.Op)
@@ -278,7 +278,7 @@ func TestQRDBRefreshStore_RevokeBySubject_RevokeFamilyErrorPropagates(t *testing
 
 func TestQRDBRefreshStore_FamilyRevoked_GetErrorPropagates(t *testing.T) {
 	store := newQRDBStore(t, newErrorKV("get"))
-	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	rec := &Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	// Save reaches familyRevoked internally after a successful Put, so drive
 	// the get-error branch through Save rather than duplicating the call.
 	err := store.Save(context.Background(), rec)
@@ -292,7 +292,7 @@ func TestQRDBRefreshStore_FamilyRevoked_DecodeErrorSurfaces(t *testing.T) {
 	store := newQRDBStore(t, kv)
 	require.NoError(t, kv.Put(context.Background(), revokedKey("f1"), []byte("{not valid json")))
 
-	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	rec := &Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	err := store.Save(context.Background(), rec)
 	var se *StoreError
 	require.ErrorAs(t, err, &se)
@@ -308,7 +308,7 @@ func TestQRDBRefreshStore_FamilyRevoked_ExpiredTombstoneIsCleanedUp(t *testing.T
 	})))
 
 	// An expired tombstone no longer guards the family: Save must succeed.
-	rec := &Record{JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
+	rec := &Record{JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix()}
 	require.NoError(t, store.Save(ctx, rec))
 
 	exists, err := kv.Exists(ctx, revokedKey("f1"))
@@ -329,7 +329,7 @@ func TestQRDBRefreshStore_MarkRotated_CompareAndSwapError(t *testing.T) {
 	store := newQRDBStore(t, kv)
 	ctx := context.Background()
 	require.NoError(t, store.Save(ctx, &Record{
-		JTI: "j1", Family: "f1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+		JTI: "j1", Family: "f1", Tenant: "t1", Subject: "s1", ExpiresAt: time.Now().Add(time.Hour).Unix(),
 	}))
 	kv.failOp = "compareswap"
 

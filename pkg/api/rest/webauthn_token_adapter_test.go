@@ -14,7 +14,15 @@
 package rest
 
 import (
+	"bytes"
 	"context"
+	stdcrypto "crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -23,6 +31,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/jeremyhahn/go-xkms/pkg/auth"
+	"github.com/jeremyhahn/go-xkms/pkg/auth/token"
+	"github.com/jeremyhahn/go-xkms/pkg/types"
 	"github.com/jeremyhahn/go-xkms/pkg/webauthn"
 )
 
@@ -50,7 +60,7 @@ func authenticateMinted(t *testing.T, issuerKeyed *WebAuthnTokenAdapter, accessT
 // email — the key the ceremony itself is keyed by — reaches the identity the
 // minted token authenticates as.
 func TestWebAuthnTokenAdapter_IdentityCarriesEmail(t *testing.T) {
-	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a")
+	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a", nil)
 	user := webauthn.NewDefaultUser([]byte("user-1"), "alice@example.com", "Alice")
 
 	id := adapter.identityFor(user)
@@ -72,7 +82,7 @@ func TestWebAuthnTokenAdapter_IdentityCarriesEmail(t *testing.T) {
 // through JWTAuthenticator's own narrower claim-to-metadata mapping -- never
 // has to guess the encoding at refresh time.
 func TestWebAuthnTokenAdapter_IdentityDeclaresUserHandleSubjectKind(t *testing.T) {
-	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a")
+	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "tenant-a", nil)
 	user := webauthn.NewDefaultUser([]byte("user-1"), "alice@example.com", "Alice")
 
 	id := adapter.identityFor(user)
@@ -87,7 +97,7 @@ func TestWebAuthnTokenAdapter_IdentityDeclaresUserHandleSubjectKind(t *testing.T
 // TestWebAuthnTokenAdapter_IdentityOmitsEmptyEmail proves a user without an
 // email yields no key at all, on the identity and in the minted token.
 func TestWebAuthnTokenAdapter_IdentityOmitsEmptyEmail(t *testing.T) {
-	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "")
+	adapter := NewWebAuthnTokenAdapter(newTestTokenIssuer(t), "", nil)
 	user := webauthn.NewDefaultUser([]byte("user-2"), "", "Nameless")
 
 	id := adapter.identityFor(user)
@@ -100,4 +110,42 @@ func TestWebAuthnTokenAdapter_IdentityOmitsEmptyEmail(t *testing.T) {
 	authenticated := authenticateMinted(t, adapter, accessToken)
 	_, present = authenticated.Metadata["email"]
 	assert.False(t, present, "the token must not carry an empty email claim: %v", authenticated.Metadata)
+}
+
+// failingSaveStore refuses every Save, so Issuer.Mint fails after signing.
+type failingSaveStore struct {
+	token.RefreshStore
+}
+
+func (failingSaveStore) Save(context.Context, *token.Record) error {
+	return errors.New("refresh store unavailable")
+}
+
+// TestWebAuthnTokenAdapter_MintFailureReachesConfiguredLogger pins the
+// Codex round 4 P2 on #2293: a mint failure is logged through the logger
+// the host configured, not slog.Default(), so xkmsd's debug level and a
+// host's own log sink both see it.
+func TestWebAuthnTokenAdapter_MintFailureReachesConfiguredLogger(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	issuer, err := token.NewIssuer(&token.Config{
+		Signer: key,
+		KeyAttributes: &types.KeyAttributes{
+			KeyAlgorithm:       x509.ECDSA,
+			SignatureAlgorithm: x509.ECDSAWithSHA256,
+			Hash:               stdcrypto.SHA256,
+		},
+		RefreshStore: failingSaveStore{RefreshStore: token.NewMemoryRefreshStore()},
+	})
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	adapter := NewWebAuthnTokenAdapter(issuer, "tenant-a", logger)
+
+	_, _, err = adapter.GenerateTokenPair(context.Background(),
+		webauthn.NewDefaultUser([]byte("user-1"), "alice@example.com", "Alice"))
+	require.Error(t, err)
+	assert.Contains(t, buf.String(), "webauthn login: token mint failed")
+	assert.Contains(t, buf.String(), "refresh store unavailable")
 }

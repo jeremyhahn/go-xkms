@@ -228,7 +228,7 @@ func TestPIVLogin_UntrustedIssuerRejected(t *testing.T) {
 func TestAuthRefresh_RotatesPair(t *testing.T) {
 	server := newAuthTestServer(t, nil)
 
-	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})
 	require.NoError(t, err)
 
 	body, err := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})
@@ -257,7 +257,7 @@ func TestAuthRefresh_InvalidToken(t *testing.T) {
 func TestAuthRefresh_ReuseRevokesFamily(t *testing.T) {
 	server := newAuthTestServer(t, nil)
 
-	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})
 	require.NoError(t, err)
 
 	send := func(refresh string) *httptest.ResponseRecorder {
@@ -291,7 +291,7 @@ func TestAuthRefresh_UserResolver_DisabledAccountRefused(t *testing.T) {
 		c.TokenIssuer = newTestTokenIssuerWithResolver(t, resolver)
 	})
 
-	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})
 	require.NoError(t, err)
 
 	body, err := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})
@@ -314,7 +314,7 @@ func TestAuthRefresh_UserResolver_DeletedAccountRefused(t *testing.T) {
 		c.TokenIssuer = newTestTokenIssuerWithResolver(t, resolver)
 	})
 
-	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})
 	require.NoError(t, err)
 
 	body, err := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})
@@ -339,7 +339,7 @@ func TestAuthRefresh_UserResolver_RoleChangeReflected(t *testing.T) {
 		c.TokenIssuer = newTestTokenIssuerWithResolver(t, resolver)
 	})
 
-	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", Roles: []string{"stale-role"}})
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system", Roles: []string{"stale-role"}})
 	require.NoError(t, err)
 
 	body, err := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})
@@ -544,7 +544,7 @@ func TestAuthValidate_ReturnsSubject(t *testing.T) {
 func TestAuthLogout_IdempotentAndRevokes(t *testing.T) {
 	server := newAuthTestServer(t, nil)
 
-	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})
 	require.NoError(t, err)
 
 	logout := func(refresh string) *httptest.ResponseRecorder {

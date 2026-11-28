@@ -514,6 +514,8 @@ func (s *Server) handlePIVLogin(w http.ResponseWriter, r *http.Request) {
 
 	pair, err := s.tokenIssuer.Mint(r.Context(), identity)
 	if err != nil {
+		s.logger.Debug("piv login: token mint failed",
+			"user", user.Username, "tenant", identity.TenantID, "error", err.Error())
 		if s.auditAuthDenyOrFail(w, r, user.Username, "auth.login.piv", "token mint failed") {
 			return
 		}

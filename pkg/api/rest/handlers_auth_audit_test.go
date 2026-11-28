@@ -145,7 +145,7 @@ func TestAuthLogout_EmitsAuditEvent_OnSuccess(t *testing.T) {
 		c.AuditLogger = auditLog
 	})
 
-	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})
@@ -169,7 +169,7 @@ func TestAuthLogout_AuditWriteFailure_FailsLogout(t *testing.T) {
 		c.AuditLogger = &failingAuthAuditLogger{Err: errAssertAuditUnavailable}
 	})
 
-	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	pair, err := server.tokenIssuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})
 	require.NoError(t, err)
 
 	body, _ := json.Marshal(authRefreshRequest{RefreshToken: pair.RefreshToken})

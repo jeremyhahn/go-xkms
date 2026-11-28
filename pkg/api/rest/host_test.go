@@ -76,7 +76,7 @@ func TestBuildTokenIssuer_Success(t *testing.T) {
 
 	// The provisioning path actually generated a key: verify by minting a
 	// real token pair and checking it carries the expected subject.
-	pair, err := issuer.Mint(context.Background(), &auth.Identity{Subject: "alice"})
+	pair, err := issuer.Mint(context.Background(), &auth.Identity{Subject: "alice", TenantID: "system"})
 	require.NoError(t, err)
 	assert.NotEmpty(t, pair.AccessToken)
 	assert.NotEmpty(t, pair.RefreshToken)
