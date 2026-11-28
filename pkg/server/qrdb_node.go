@@ -137,7 +137,11 @@ func (s *Server) initEmbeddedQRDBNode() error {
 	if err != nil {
 		return &QRDBNodeError{Stage: "new qrdb audit sink", Err: err}
 	}
+	// The node lifecycle fields are published under s.mu; stopQRDBNode
+	// snapshots and clears them under the same lock (#2332).
+	s.mu.Lock()
 	s.qrdbAuditSink = sink
+	s.mu.Unlock()
 
 	// Initialize the hardware auth-factor registry before assembling server
 	// options so it can be injected into the qrdb node constructor below.
@@ -274,7 +278,9 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		return &QRDBNodeError{Stage: "new qrdb node", Err: err}
 	}
 
+	s.mu.Lock()
 	s.qrdbNode = node
+	s.mu.Unlock()
 
 	// Node-barrier flip: we gated construction on auto-unseal credentials
 	// being available, so auto-unseal is normally unattended. It can still
@@ -312,7 +318,10 @@ func (s *Server) initEmbeddedQRDBNode() error {
 		s.logger.Info("adopted the qrdb node barrier (single barrier; data plane encrypted at rest)")
 	}
 
-	s.qrdbClient = node.Client()
+	client := node.Client()
+	s.mu.Lock()
+	s.qrdbClient = client
+	s.mu.Unlock()
 	s.logger.Info("qrdb engine started in-process",
 		"data_dir", qcfg.Raft.DataDir, "clustered", s.config.Cluster.Enabled)
 
@@ -374,14 +383,22 @@ func (s *Server) waitForClusterLeader() error {
 // stopQRDBNode closes the hosted qrdb node and clears the references. It is
 // idempotent; a nil node is silently skipped.
 func (s *Server) stopQRDBNode() error {
+	// Snapshot and clear the lifecycle fields under s.mu, the lock
+	// initEmbeddedQRDBNode publishes them under (#2332), then close outside
+	// it: a node goroutine Close drains may call a resolver that takes s.mu.
+	s.mu.Lock()
 	node := s.qrdbNode
 	if node == nil {
+		s.mu.Unlock()
 		return nil
 	}
 	sink := s.qrdbAuditSink
+	sealClose := s.nodeSealClose
 	s.qrdbNode = nil
 	s.qrdbClient = nil
 	s.qrdbAuditSink = nil
+	s.nodeSealClose = nil
+	s.mu.Unlock()
 	if err := node.Close(); err != nil {
 		return &QRDBNodeError{Stage: "close", Err: err}
 	}
@@ -395,10 +412,8 @@ func (s *Server) stopQRDBNode() error {
 	// Release the single autodetect TPM open LAST, after the node (whose barrier
 	// seal strategy used it) and the tpm2 backend (which shared the connection)
 	// are both closed. externalTPM kept those from closing it early.
-	if s.nodeSealClose != nil {
-		closeFn := s.nodeSealClose
-		s.nodeSealClose = nil
-		if err := closeFn(); err != nil {
+	if sealClose != nil {
+		if err := sealClose(); err != nil {
 			s.logger.Warn("node barrier: failed to close the shared TPM open", "error", err)
 		}
 	}
